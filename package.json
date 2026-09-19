@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "workspaces": [
-    "src/packages/*",
-    "src/connectors/*"
+    "packages/*",
+    "connectors/*"
   ],
   "scripts": {
     "build": "tsc -b",

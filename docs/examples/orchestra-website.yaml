@@ -10,7 +10,7 @@ tasks:
       kind: connector
       connector: email
       op: fetch_new
-      args: { folder: INBOX, since_uid: ${state.email.last_uid} }
+      args: { folder: INBOX, since_uid: "${state.email.last_uid}" }
     state_updates:
       email.last_uid: ${result.last_uid}
     emit:
@@ -116,7 +116,7 @@ tasks:
         - shell: ["git", "commit", "-am", "site: ${result.summary}"]
     emit:
       - type: orchestra.change_ready
-        payload: { summary: ${result.summary}, diff: ${result.diff_stat}, worktree: ${run.workspace} }
+        payload: { summary: "${result.summary}", diff: "${result.diff_stat}", worktree: "${run.workspace}" }
 
   # 4b. Approval gate via chat. No LLM.
   - name: approve_general_change
@@ -148,7 +148,7 @@ tasks:
     action:
       kind: shell
       cwd: /var/lib/online-agent/repos/orchestra-site
-      env: { LFTP_PASSWORD: ${secrets.ftp_pass} }
+      env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
       cmd:
         - bash
         - -c

@@ -1,0 +1,17 @@
+# Global daemon config (ARCHITECTURE §7). Paths are relative to this file.
+# Start with: online-agent-core --config docs/examples/agent.yaml
+
+db: /var/lib/online-agent/state.db
+socket: /run/online-agent/core.sock
+tasks: orchestra-website.yaml     # one tasks file for now; tasks.d/ comes later
+workers: 4
+log: { level: info }
+limits: { max_event_depth: 32 }
+defaults:
+  timeout: 15m
+  llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
+  agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
+  retry: { attempts: 3, backoff: exponential, base: 30s }
+secrets: { backend: systemd-credentials }
+budgets: { daily_usd: 10 }
+retention: { events: 90d, runs: 90d, workspaces: 7d }

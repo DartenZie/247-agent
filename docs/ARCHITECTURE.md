@@ -66,21 +66,26 @@ Connector ──emits──▶ Event ──matches──▶ Trigger ──starts
 ```json
 { "id": "evt_01J…", "type": "email.received", "source": "email",
   "ts": "2026-09-19T10:00:00Z", "correlation_id": "cor_…",
-  "parent_id": "evt_…", "dedup_key": "email:<msg-id>",
+  "parent_id": "evt_…", "dedup_key": "email:<msg-id>", "depth": 0,
   "payload": { "from": "…", "subject": "…", "body": "…" } }
 ```
 
 - `correlation_id` threads one real-world happening (an email) through every task it
   triggers, so runs, costs and logs can be traced end-to-end and approvals can resume.
 - `dedup_key` makes delivery idempotent: a second event with the same key is dropped.
+- `source` is the connector name, `scheduler`, `manual`, or `task:<name>` for events produced
+  by a task's runs. **A task never triggers on events with its own `task:<name>` source**, so
+  `notify` on `task.*.failed` cannot loop on its own failure.
+- `depth` counts hops from the root of a causal chain (via `parent_id`). The dispatcher drops
+  events deeper than `limits.max_event_depth` (default 32) as a runaway-loop guard.
 
 **Trigger** — what starts a task.
 
 | kind | config | produces |
 |---|---|---|
-| `cron` | `schedule: "*/5 * * * *"` | one run per tick (skipped if the previous is still running, unless `overlap: allow`) |
-| `event` | `type: email.received` (or `type_any: [...]`, globs allowed: `task.*.failed`), optional `filter: <JMESPath>` | one run per matching event |
-| `manual` | — | via CLI `oa run <task>` |
+| `cron` | `schedule: "*/5 * * * *"`, optional `tz`, `overlap: skip\|allow` | each tick is a `cron.tick` event (`payload: {task, scheduled_at}`, `dedup_key: cron:<task>:<scheduled_at>`); one run per tick, skipped while a run of the task is queued, running or waiting unless `overlap: allow`. Ticks missed while the daemon was down are not replayed. |
+| `event` | `type: email.received` (or `type_any: [...]`, globs allowed: `task.*.failed`, `*` = exactly one dot-separated segment), optional `filter: <JMESPath>` evaluated against the whole event with JMESPath truthiness | one run per matching event |
+| `manual` | — | no automatic trigger. **Any** task can be run by hand: `oa run <task>` publishes a `manual.run` event (`payload: {task, event?}`) that bypasses filters and overlap |
 
 "Output of another task" is just an `event` trigger on `task.<name>.succeeded` or on any
 event the task emitted. Tasks never reference each other directly; they are decoupled
@@ -102,14 +107,14 @@ One daemon, `online-agent-core`, with these internal modules:
 
 | Module | Responsibility |
 |---|---|
-| **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP (running runs finish under the old config). |
+| **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP (running runs finish under the old config). An invalid file on reload is logged and the previous config stays active. |
 | **Scheduler** | Cron → `cron.tick` events (with task name in payload). Also fires `wait` timeouts. |
-| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs. At-least-once + `dedup_key` = effectively once. |
-| **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). |
+| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` are dropped. |
+| **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). A filter that throws at run time counts as no match and is logged. |
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Delegates to an *action runner* per kind. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). |
 | **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
-| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`): `POST /v1/events`, `GET/PUT /v1/state/…`, `GET /v1/runs`, `POST /v1/runs` (manual), `GET /v1/health`. Also what the CLI talks to. |
+| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET/PUT /v1/state/…` (with the KV store). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes (or defers to systemd units), restarts with backoff, passes the socket path + secrets via env. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
@@ -120,7 +125,8 @@ store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams)
 All actions receive a **context**: `event` (the triggering event), `task` (config), `state`
 (KV), `secrets` (named refs resolved at run time), and return a JSON **result** which the
 core turns into `task.<name>.succeeded` + any `emit` events. Templates use `${ <JMESPath> }`
-against `{event, result, state, env}`.
+against `{event, result, state, env}`. Inside YAML flow mappings `{ … }` a template must be
+quoted (`{ since_uid: "${state.email.last_uid}" }`) because `{` would start a nested map.
 
 ### 5.1 `shell` — deterministic step, zero LLM
 
@@ -129,7 +135,7 @@ action:
   kind: shell
   cmd: ["lftp", "-e", "mirror -R --delete site/ /public_html; quit", "sftp://${secrets.ftp_user}@ftp.example.cz"]
   cwd: ${state.site_worktree}
-  env: { LFTP_PASSWORD: ${secrets.ftp_pass} }
+  env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}          # optional, JSON on stdin
   result: json_stdout | text_stdout | exit_code
 ```
@@ -221,7 +227,7 @@ action:
   kind: connector
   connector: email
   op: fetch_new                    # an MCP tool name
-  args: { folder: INBOX, since_cursor: ${state.email_cursor} }
+  args: { folder: INBOX, since_cursor: "${state.email_cursor}" }
 ```
 
 This is how "cron → fetch emails" works without any LLM: the core is an MCP client.
@@ -268,7 +274,7 @@ emit:
     payload: ${item}
   - type: orchestra.classified
     when: "result.kind != 'ignore'"
-    payload: { kind: ${result.kind}, summary: ${result.summary}, email: ${event.payload} }
+    payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
 
 ## 6. Connector interface (sub-programs)
@@ -278,11 +284,11 @@ A connector is any executable with a manifest. It may implement one or both halv
 ```yaml
 # connectors.d/email.yaml
 name: email
-exec: ["node", "src/connectors/email/dist/main.js"]  # or any executable, any language
+exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any language
 transport: stdio                                     # MCP transport for ops: stdio | http
 emits: [email.received]                              # documented, schema-checked
 ops: [fetch_new, mark_read, send]                    # MCP tools it serves
-config: { host: imap.example.cz, user: ${secrets.imap_user}, folder: INBOX }
+config: { host: imap.example.cz, user: "${secrets.imap_user}", folder: INBOX }
 health: { interval: 60s }
 ```
 
@@ -332,7 +338,10 @@ their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (b
 
 ```yaml
 db: /var/lib/online-agent/state.db
+socket: /run/online-agent/core.sock
+tasks: tasks.yaml      # relative paths resolve against agent.yaml's directory
 workers: 4
+log: { level: info }
 secrets: { backend: systemd-credentials }   # or env, or file
 defaults:
   llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
@@ -341,10 +350,13 @@ defaults:
 budgets:
   daily_usd: 10          # global circuit breaker → all llm/agent tasks pause, alert emitted
 retention: { events: 90d, runs: 90d, workspaces: 7d }
+limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
 
 The whole `/etc/online-agent` tree is meant to live in a git repo; `oa validate` checks
-it in CI.
+it in CI. `oa validate` takes tasks files and `agent.yaml` files alike (a file whose
+`tasks` is a list is a tasks file) and follows `agent.yaml` to the tasks file it names.
+`docs/examples/agent.yaml` is the reference.
 
 ## 8. Worked example: orchestra website
 
@@ -384,6 +396,10 @@ same action kind; only the config differs.
 - **Durability:** events and runs are committed to SQLite before anything acts on them.
   On startup, runs left in `running` are retried or failed per `retry`; `waiting` runs are
   restored.
+- **Dispatch:** one transaction per batch: read events past the cursor, insert `queued` runs,
+  advance the cursor. `UNIQUE(task, event_id)` makes a replay after a crash a no-op: one run per
+  (task, event); retries are attempts of the same run. The dispatcher always queues;
+  `concurrency` is enforced by the executor.
 - **Delivery:** at-least-once dispatch + `dedup_key` on events + idempotent actions
   (agent worktree per run, `publish` is a mirror, not an incremental push).
 - **Retries:** per-task policy with backoff; `agent` actions retry with a fresh worktree
@@ -427,13 +443,16 @@ ProtectSystem=strict
 NoNewPrivileges=yes
 ```
 
-Logs go to journald as structured JSON (`run_id`, `task`, `correlation_id` on every line).
-Optional Prometheus `/metrics` on the socket. CLI:
+`online-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
+then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in
+flight are aborted and recovered as interrupted on the next start). Logs go to journald as
+structured JSON (`run_id`, `task`, `correlation_id` on every line). Optional Prometheus
+`/metrics` on the socket. CLI (`--socket`, else `$OA_CORE_SOCKET`, else the path above):
 
 ```
-oa validate                     # config + schema check
-oa run <task> [--event f.json]  # manual trigger
-oa emit <type> <payload.json>   # inject an event
+oa validate <file>...           # tasks files and agent.yaml, schema + semantic checks
+oa run <task> [--event f.json]  # manual trigger; --wait blocks and exits 1 on failure
+oa emit <type> [payload.json|-] # inject an event (--source, --dedup-key, --parent)
 oa events tail [--type …]
 oa runs ls|show <id>|logs <id>
 oa cost --by task --since 7d
@@ -443,19 +462,23 @@ oa connectors status
 ## 13. Repository layout
 
 ```
-package.json                 # workspaces: src/packages/*, src/connectors/*
-src/packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
+package.json                 # workspaces: packages/*, connectors/*
+packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml, tasks, connectors; loader + hot reload
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
-  src/bus/                   # dispatch loop, dedup, cursor
+  src/bus/                   # publish, matcher, dispatch loop, manual runs
+  src/scheduler/             # croner jobs → cron.tick events
   src/actions/               # shell.ts, llm.ts, agent.ts, connector.ts, wait.ts, sequence.ts
-  src/connectors/            # supervisor, MCP client pool, built-in poller
-  src/api/                   # HTTP over unix socket (fastify or node:http)
-  src/expr/                  # jmespath + ${…} templating
-src/packages/cli/            # `oa` (commander); talks to the socket
-src/packages/connector-sdk/  # tiny helper for TS connectors: emitEvent(), state get/put, MCP server boilerplate
-src/connectors/email/        # imapflow + nodemailer
-src/connectors/chat/         # grammy (Telegram) or matrix-js-sdk
+  src/executor/              # worker pool: concurrency, timeouts, lifecycle events, recovery
+  connectors/            # supervisor, MCP client pool, built-in poller
+  src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
+  daemon.ts, main.ts         # agent.yaml → core → api; the `online-agent-core` binary with signal handling
+  src/expr/                  # type globs, jmespath filters (+ ${…} templating later)
+  ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
+packages/cli/            # `oa` (commander); talks to the socket
+packages/connector-sdk/  # tiny helper for TS connectors: emitEvent(), state get/put, MCP server boilerplate
+connectors/email/        # imapflow + nodemailer
+connectors/chat/         # grammy (Telegram) or matrix-js-sdk
 docs/                        # ARCHITECTURE.md, examples/
 ```
 
@@ -483,6 +506,15 @@ Runtime notes
 4. `agent` action on `claude-agent-sdk` with worktree workspace, post gates.
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
+
+Status: the executor, the `shell` action, the daemon (`online-agent-core`), the socket API
+and `oa validate|run|emit` exist. Where the code is behind this document: `${…}` templating,
+`emit` routing, `state_updates`, `retry` and `shell.user` are not applied yet (templates run
+literally, `user:` is rejected by `oa validate`); a run found `running` at startup is failed
+as interrupted rather than retried; `agent.yaml` names one tasks file (`tasks:`) rather than
+merging `tasks.d/*.yaml`, `connectors.d/` is not read, and its `secrets`, `budgets`,
+`retention` and `defaults.llm|agent|retry` keys validate but are not applied; `/v1/state`
+waits for the KV store.
 
 ## 15. Open decisions
 

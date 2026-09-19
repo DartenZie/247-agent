@@ -14,7 +14,7 @@ truth for concepts, action semantics, the connector protocol and the config form
 
 - TypeScript, Node.js 22 LTS, npm workspaces. Strict TS, ESM.
 - SQLite via `better-sqlite3` (WAL). Config schemas with `zod`. Cron with `croner`.
-  Expressions with `jmespath`. Subprocesses with `execa`.
+  Expressions with `jmespath`. YAML with `yaml`. Subprocesses with `execa`.
 - LLM: `@anthropic-ai/sdk` for `llm` actions (structured outputs via
   `client.messages.parse()` / `output_config.format`), `@anthropic-ai/claude-agent-sdk`
   for `agent` actions. MCP client from `@modelcontextprotocol/sdk`.
@@ -23,10 +23,10 @@ truth for concepts, action semantics, the connector protocol and the config form
 ## Layout
 
 ```
-src/packages/core/           daemon: config, store, bus, actions, connectors, api, expr
-src/packages/cli/            `oa` command, talks to the core socket
-src/packages/connector-sdk/  helpers for writing TS connectors
-src/connectors/<name>/       one package per connector (email, chat, ...)
+packages/core/           daemon: config, store, bus, actions, connectors, api, expr
+packages/cli/            `oa` command, talks to the core socket
+packages/connector-sdk/  helpers for writing TS connectors
+connectors/<name>/       one package per connector (email, chat, ...)
 docs/                        ARCHITECTURE.md, examples/
 ```
 
@@ -55,14 +55,17 @@ npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run lint           # eslint + prettier check
-node src/packages/cli/dist/main.js validate docs/examples/orchestra-website.yaml
+node packages/cli/dist/main.js validate docs/examples/*.yaml
+node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
+node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
+node packages/cli/dist/main.js emit <type> [payload.json|-]
 ```
 
-(Scripts exist once the scaffold lands; keep this list in sync with `package.json`.)
+(Keep this list in sync with `package.json`.)
 
 ## Conventions
 
-- Small modules, one action runner per file under `src/packages/core/src/actions/`.
+- Small modules, one action runner per file under `packages/core/src/actions/`.
 - Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and fake
   connectors, never the network or a real model.
 - Log lines are structured JSON with `run_id`, `task`, `correlation_id`.

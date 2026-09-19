@@ -1,0 +1,30 @@
+{
+  "name": "@online-agent/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Daemon: config, store, bus, actions, connectors, api, expr.",
+  "type": "module",
+  "bin": {
+    "online-agent-core": "dist/main.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "croner": "^10.0.1",
+    "execa": "^9.6.1",
+    "jmespath": "^0.16.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/jmespath": "^0.15.2"
+  }
+}
