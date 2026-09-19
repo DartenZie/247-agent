@@ -1,0 +1,9 @@
+# Chat connector manifest: a Telegram/Matrix bot that asks questions and relays replies.
+name: chat
+exec: ["node", "connectors/chat/dist/main.js"]
+transport: stdio
+emits: [chat.message, chat.reply]
+ops: [send, ask]
+config:
+  token: "${secrets.chat_token}"
+  chat_id: "${secrets.chat_id}"

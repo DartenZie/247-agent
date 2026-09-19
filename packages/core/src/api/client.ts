@@ -4,7 +4,8 @@ import type { ManualInput } from '../bus/manual.js';
 import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
 import type { RunFilter } from '../store/runs.js';
-import type { EventRecord, NewEvent, RunRecord } from '../store/types.js';
+import type { StateEntry } from '../store/state.js';
+import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
 import type { HealthBody, RunResponse } from './routes.js';
 
 export const DEFAULT_SOCKET = '/run/online-agent/core.sock';
@@ -107,7 +108,40 @@ export class ApiClient {
     return this.request<EventRecord>('GET', `/v1/events/${encodeURIComponent(id)}`);
   }
 
-  private request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  /** `undefined` when the key is not set. */
+  async getState(namespace: string, key: string): Promise<StateEntry | undefined> {
+    try {
+      return await this.request<StateEntry>('GET', statePath(namespace, key));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  putState(namespace: string, key: string, value: JsonValue): Promise<StateEntry> {
+    return this.request<StateEntry>('PUT', statePath(namespace, key), { value });
+  }
+
+  async deleteState(namespace: string, key: string): Promise<boolean> {
+    const r = await this.request<{ deleted: boolean }>('DELETE', statePath(namespace, key));
+    return r.deleted;
+  }
+
+  async listState(namespace: string): Promise<StateEntry[]> {
+    const r = await this.request<{ entries: StateEntry[] }>(
+      'GET',
+      `/v1/state/${encodeURIComponent(namespace)}`,
+    );
+    return r.entries;
+  }
+
+  private request<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     return new Promise<T>((resolve, reject) => {
       const req = httpRequest(
@@ -166,4 +200,8 @@ export class ApiClient {
       req.end(payload);
     });
   }
+}
+
+function statePath(namespace: string, key: string): string {
+  return `/v1/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`;
 }

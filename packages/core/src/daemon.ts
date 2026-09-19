@@ -1,10 +1,13 @@
-import type { ActionRunners } from './actions/types.js';
+import { dirname } from 'node:path';
+
+import type { ActionRunners, ConnectorClients } from './actions/types.js';
 import { createApiServer, type ApiServer } from './api/server.js';
 import { systemClock, type Clock } from './clock.js';
 import { loadAgentFile, type AgentConfig, type AgentLoadResult } from './config/agent.js';
-import type { LoadResult } from './config/load.js';
+import { loadConnectors, type TasksLoadResult } from './config/load.js';
 import { createCore, type Core } from './core.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
+import { createSecretsBackend } from './secrets/secrets.js';
 
 export interface DaemonOptions {
   /** Path of `agent.yaml`. */
@@ -15,14 +18,18 @@ export interface DaemonOptions {
   log?: Logger;
   clock?: Clock;
   runners?: ActionRunners;
+  /** Replaces the connector supervisor (tests). */
+  connectors?: ConnectorClients;
+  /** The daemon's environment; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface Daemon {
   readonly config: AgentConfig;
   readonly core: Core;
   readonly api: ApiServer;
-  /** SIGHUP: re-reads the tasks file; `agent.yaml` itself needs a restart. */
-  reload(): LoadResult;
+  /** SIGHUP: re-reads the tasks files; `agent.yaml` and connectors need a restart. */
+  reload(): TasksLoadResult;
   /** Closes the socket, aborts runs in flight, closes the store. */
   stop(): Promise<void>;
 }
@@ -35,6 +42,36 @@ export class AgentConfigError extends Error {
     );
     this.name = 'AgentConfigError';
   }
+}
+
+export class ConnectorConfigError extends Error {
+  constructor(readonly result: ReturnType<typeof loadConnectors>) {
+    super(
+      'invalid connector config:\n' +
+        result.files
+          .flatMap((f) =>
+            (f.issues ?? []).map(
+              (i) => `  ${f.file}: ${i.path === '' ? '' : i.path + ': '}${i.message}`,
+            ),
+          )
+          .join('\n'),
+    );
+    this.name = 'ConnectorConfigError';
+  }
+}
+
+/** The `env` template scope: the daemon's environment minus the secrets backend's variables. */
+export function templateEnv(
+  env: NodeJS.ProcessEnv,
+  secretPrefix: string | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined && (secretPrefix === undefined || !k.startsWith(secretPrefix))) {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 /**
@@ -53,15 +90,26 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     opts.log ??
     createLogger({ level: opts.logLevel ?? config.log.level, clock: () => clock.now() });
   const startedAt = clock.now();
+  const env = opts.env ?? process.env;
+  const secrets = createSecretsBackend(config.secrets, dirname(config.file), env);
+  const manifests = loadConnectors(config.connectorPaths, config.connectors);
+  if (!manifests.ok) {
+    throw new ConnectorConfigError(manifests);
+  }
 
   const core = createCore({
-    tasksFile: config.tasks,
+    tasksFiles: config.tasks,
     dbPath: config.db,
     clock,
     log,
     workers: config.workers,
     maxEventDepth: config.limits.max_event_depth,
     defaultTimeout: config.defaults.timeout,
+    defaultRetry: config.defaults.retry,
+    secrets,
+    env: templateEnv(env, config.secrets.backend === 'env' ? config.secrets.prefix : undefined),
+    socketPath: config.socket,
+    connectors: opts.connectors ?? manifests.connectors ?? [],
     ...(opts.runners === undefined ? {} : { runners: opts.runners }),
   });
   const api = createApiServer({
@@ -74,7 +122,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
 
   try {
-    core.start();
+    await core.start();
     await api.listen();
   } catch (err) {
     await api.close();

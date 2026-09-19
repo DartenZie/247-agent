@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { nullLogger } from '../log.js';
 import type { JsonValue } from '../store/types.js';
 import { runShell, ShellAction, ShellError } from './shell.js';
+import { testContext } from './testing.js';
 import type { ActionContext } from './types.js';
 
 function ctx(signal: AbortSignal = new AbortController().signal): ActionContext {
-  // The shell runner only uses `signal` and `log`; the rest is opaque to it.
-  return { run: {}, event: {}, task: {}, signal, log: nullLogger } as unknown as ActionContext;
+  return testContext({ signal });
 }
 
 const run = (action: Record<string, unknown>, c = ctx()): Promise<JsonValue> =>

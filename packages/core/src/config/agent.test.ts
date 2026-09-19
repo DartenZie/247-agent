@@ -28,18 +28,61 @@ describe('parseAgent', () => {
       file: '/etc/online-agent/agent.yaml',
       db: '/var/lib/online-agent/state.db',
       socket: '/run/online-agent/core.sock',
-      tasks: '/etc/online-agent/tasks.yaml',
+      tasks: ['/etc/online-agent/tasks.yaml'],
+      connectorPaths: [],
+      connectors: [],
       workers: 4,
       log: { level: 'info' },
       limits: { max_event_depth: 32 },
-      defaults: { timeout: '15m' },
+      defaults: {
+        timeout: '15m',
+        retry: { attempts: 1, backoff: 'exponential', base: '30s', max: '1h' },
+      },
+      secrets: { backend: 'env', prefix: 'OA_SECRET_' },
     });
   });
 
   it('keeps relative paths relative to the agent file, not the cwd', () => {
     const r = parseAgent('db: ./data/state.db\ntasks: tasks/main.yaml\n', '/srv/oa/agent.yaml');
     expect(r.ok && r.config.db).toBe('/srv/oa/data/state.db');
-    expect(r.ok && r.config.tasks).toBe('/srv/oa/tasks/main.yaml');
+    expect(r.ok && r.config.tasks).toEqual(['/srv/oa/tasks/main.yaml']);
+  });
+
+  it('accepts lists of tasks paths, connector paths and inline manifests', () => {
+    const r = parseAgent(
+      [
+        'tasks: [tasks.yaml, tasks.d]',
+        'connectors:',
+        '  - connectors.d',
+        '  - { name: chat, exec: [node, chat.js], config: { token: "${secrets.chat_token}" } }',
+        'secrets: { backend: file, path: secrets.yaml }',
+        'defaults: { retry: { attempts: 3 } }',
+      ].join('\n'),
+      '/srv/oa/agent.yaml',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.config.tasks).toEqual(['/srv/oa/tasks.yaml', '/srv/oa/tasks.d']);
+    expect(r.config.connectorPaths).toEqual(['/srv/oa/connectors.d']);
+    expect(r.config.connectors).toMatchObject([{ name: 'chat', file: '/srv/oa/agent.yaml' }]);
+    expect(r.config.secrets).toEqual({ backend: 'file', path: 'secrets.yaml' });
+    expect(r.config.defaults.retry).toMatchObject({ attempts: 3, backoff: 'exponential' });
+
+    const bad = parseAgent(
+      'connectors:\n  - { name: Bad, exec: [], config: { t: "${event.x}" } }\n',
+      '/srv/oa/agent.yaml',
+    );
+    expect(bad.ok).toBe(false);
+    if (bad.ok) {
+      return;
+    }
+    expect(bad.issues.map((i) => i.path).sort()).toEqual([
+      'connectors[0].config',
+      'connectors[0].exec',
+      'connectors[0].name',
+    ]);
   });
 
   it('reports unknown keys, bad values and YAML errors as issues', () => {
@@ -58,7 +101,8 @@ describe('parseAgent', () => {
   it('accepts the documented example', () => {
     const r = loadAgentFile(join(EXAMPLES, 'agent.yaml'));
     expect(r.ok).toBe(true);
-    expect(r.ok && r.config.tasks).toBe(join(EXAMPLES, 'orchestra-website.yaml'));
+    expect(r.ok && r.config.tasks).toEqual([join(EXAMPLES, 'orchestra-website.yaml')]);
+    expect(r.ok && r.config.connectorPaths).toEqual([join(EXAMPLES, 'connectors.d')]);
   });
 
   it('treats a missing file as an issue', () => {

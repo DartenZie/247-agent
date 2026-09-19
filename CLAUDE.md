@@ -23,11 +23,12 @@ truth for concepts, action semantics, the connector protocol and the config form
 ## Layout
 
 ```
-packages/core/           daemon: config, store, bus, actions, connectors, api, expr
+packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
+packages/core/test/fixtures/  fake connectors for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
-packages/connector-sdk/  helpers for writing TS connectors
+packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, chat, ...)
-docs/                        ARCHITECTURE.md, examples/
+docs/                        ARCHITECTURE.md, examples/ (agent.yaml, orchestra-website.yaml, connectors.d/)
 ```
 
 ## Rules
@@ -43,7 +44,8 @@ docs/                        ARCHITECTURE.md, examples/
   and never publish.
 - Secrets are resolved by name from the configured backend at run time. Never write them
   to the DB, run logs, or event payloads.
-- Config changes must keep `oa validate` passing on `docs/examples/*.yaml`.
+- Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and
+  `docs/examples/connectors.d/*.yaml`.
 - Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
@@ -55,7 +57,7 @@ npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run lint           # eslint + prettier check
-node packages/cli/dist/main.js validate docs/examples/*.yaml
+node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
@@ -67,7 +69,10 @@ node packages/cli/dist/main.js emit <type> [payload.json|-]
 
 - Small modules, one action runner per file under `packages/core/src/actions/`.
 - Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and fake
-  connectors, never the network or a real model.
+  connectors (`packages/core/test/fixtures/`), never the network or a real model.
+- Templates: `${…}` is JMESPath over `{event, result, state, secrets, env, run, item,
+  steps}`; a whole-string template yields the raw value. `secrets` are allowed in actions
+  only, as `secrets.<name>`.
 - Log lines are structured JSON with `run_id`, `task`, `correlation_id`.
 - When the architecture and the code disagree, fix one of them in the same change and say
   which.

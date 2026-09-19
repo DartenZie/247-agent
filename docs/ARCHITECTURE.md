@@ -108,14 +108,14 @@ One daemon, `online-agent-core`, with these internal modules:
 | Module | Responsibility |
 |---|---|
 | **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP (running runs finish under the old config). An invalid file on reload is logged and the previous config stays active. |
-| **Scheduler** | Cron → `cron.tick` events (with task name in payload). Also fires `wait` timeouts. |
-| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` are dropped. |
+| **Scheduler** | Cron → `cron.tick` events (with task name in payload). |
+| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` are dropped. The same loop ends `wait`s: an event matching a waiting run's wait, or a wait past its timeout (checked on every dispatch, so within the 1s safety-net interval), re-queues the run. |
 | **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). A filter that throws at run time counts as no match and is logged. |
-| **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Delegates to an *action runner* per kind. |
-| **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). |
+| **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
+| **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
-| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET/PUT /v1/state/…` (with the KV store). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
-| **Connector supervisor** | Spawns configured connectors as child processes (or defers to systemd units), restarts with backoff, passes the socket path + secrets via env. |
+| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. Deferring to systemd units is not implemented. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
 store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams).
@@ -123,10 +123,19 @@ store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams)
 ## 5. Action types
 
 All actions receive a **context**: `event` (the triggering event), `task` (config), `state`
-(KV), `secrets` (named refs resolved at run time), and return a JSON **result** which the
-core turns into `task.<name>.succeeded` + any `emit` events. Templates use `${ <JMESPath> }`
-against `{event, result, state, env}`. Inside YAML flow mappings `{ … }` a template must be
-quoted (`{ since_uid: "${state.email.last_uid}" }`) because `{` would start a nested map.
+(KV snapshot), `secrets` (only the names the task's templates use, resolved at run time),
+and return a JSON **result** which the core turns into `task.<name>.succeeded` + any `emit`
+events. Templates use `${ <JMESPath> }` against `{event, result, state, secrets, env, run,
+item, steps}`: `event` is the trigger event (for `oa run --event`, the given event under the
+`manual.run` event's ids), `result` exists in `emit`/`state_updates`, `item` inside an
+`each` fan-out, `steps` inside a sequence, `run` is `{id, task, attempt, event_id,
+correlation_id}`, `env` the daemon's environment (minus the secrets backend's variables).
+A string that is exactly one `${…}` renders to the expression's raw value (`stdin:
+${event.payload}` stays JSON); text around or between templates makes a string, with
+non-strings JSON-encoded and `null` empty. `secrets` may only appear in actions, never in
+`emit` or `state_updates`, and only as `secrets.<name>`; `oa validate` enforces both and
+every template's syntax. Inside YAML flow mappings `{ … }` a template must be quoted
+(`{ since_uid: "${state.email.last_uid}" }`) because `{` would start a nested map.
 
 ### 5.1 `shell` — deterministic step, zero LLM
 
@@ -140,8 +149,9 @@ action:
   result: json_stdout | text_stdout | exit_code
 ```
 
-Runs as the service user (or `user:` override), with `timeout`, stdout/stderr captured
-into the run log. Result is parsed JSON from stdout when `result: json_stdout`.
+Runs as the service user, with `timeout`, stdout/stderr captured into the run log.
+`cmd`, `cwd` and `env` values render to strings, `stdin` to its raw value. Result is
+parsed JSON from stdout when `result: json_stdout`. A `user:` override is not supported.
 
 ### 5.2 `llm` — single model call, structured output, no loop
 
@@ -230,21 +240,32 @@ action:
   args: { folder: INBOX, since_cursor: "${state.email_cursor}" }
 ```
 
-This is how "cron → fetch emails" works without any LLM: the core is an MCP client.
+This is how "cron → fetch emails" works without any LLM: the core is an MCP client. `args`
+values are templated; the result is the tool's `structuredContent`, else its text content
+parsed as JSON when it is JSON. An `isError` result or an op outside the manifest's `ops`
+fails the run without retry; a connector that is down fails it with retry. Optional
+`timeout` bounds the call (default 60s).
 
 ### 5.5 `wait` — suspend the run until an event arrives (human in the loop)
 
 ```yaml
 action:
   kind: wait
-  for: { type: chat.reply, filter: "payload.correlation_id == `${event.correlation_id}` && payload.approved == `true`" }
+  for: { type: chat.reply, filter: "payload.correlation_id == '${event.correlation_id}' && payload.approved == `true`" }
   timeout: 24h
   on_timeout: fail
 ```
 
 Combined with a `connector` action that calls `chat.ask("Apply this change? …")`, this is
-an approval gate. The run sits in `waiting` in SQLite, survives restarts, and resumes when
-the chat connector emits the reply.
+an approval gate. The run sits in `waiting` in SQLite (the `waits` table), survives
+restarts, and resumes when the chat connector emits the reply. `for.type` is a type pattern
+(`*` = one segment); `for.filter` is rendered as a template first (so `${event.…}` is the
+waiting run's own event), then evaluated as a JMESPath over each incoming event. Events
+published after the run's trigger but before the wait was armed are checked too, so a reply
+that races the asking step is not lost. The result is the matched event (`payload`, `id`,
+`type`, …). On `timeout` (fired by the dispatch loop) the run fails without retry, or with
+`on_timeout: succeed` gets `{timed_out: true}`. The task `timeout` bounds each stretch of
+active work, not the time spent waiting.
 
 ### 5.6 `sequence` — a few steps in one run, without inventing events for each
 
@@ -257,9 +278,13 @@ action:
     - { kind: shell, when: "steps[1].payload.approved == `true`", cmd: [git, push] }
 ```
 
-Steps share one run and one workspace; `steps[i]` exposes earlier results. Use it for
-tightly coupled steps (ask → wait → act). Use separate tasks and events for anything that
-another workflow might want to reuse or observe.
+Steps share one run and one workspace; `steps[i]` exposes earlier results (`null` for a
+skipped step) to later steps' templates and `when` expressions, and the run result is
+`{steps: [...]}`. Steps are `shell`, `connector` or `wait`, each with an optional `when`
+(JMESPath over the scope). A `wait` step checkpoints the step index and earlier results;
+after a restart or a retry the sequence continues from that step with the matched event.
+Use it for tightly coupled steps (ask → wait → act). Use separate tasks and events for
+anything that another workflow might want to reuse or observe.
 
 ### 5.7 Routing: `emit`
 
@@ -277,6 +302,13 @@ emit:
     payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
 
+`when` is a JMESPath over `{event, result, state, env, run}`; `each` must be a single
+`${…}` that renders to an array (`null` emits nothing; anything else fails the run). Emitted
+events carry `source: task:<name>` and the trigger event as `parent_id`, so they inherit
+its correlation id. Rendering happens before anything is written: a rule that cannot be
+rendered fails the run (no retry) and nothing is emitted. `state_updates` (`<ns>.<key>:
+value`) are applied in the same transaction.
+
 ## 6. Connector interface (sub-programs)
 
 A connector is any executable with a manifest. It may implement one or both halves.
@@ -285,12 +317,17 @@ A connector is any executable with a manifest. It may implement one or both halv
 # connectors.d/email.yaml
 name: email
 exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any language
-transport: stdio                                     # MCP transport for ops: stdio | http
-emits: [email.received]                              # documented, schema-checked
-ops: [fetch_new, mark_read, send]                    # MCP tools it serves
+transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only
+emits: [email.received]                              # documented, shape-checked
+ops: [fetch_new, mark_read, send]                    # allowlist of MCP tools the core may call; [] = any
 config: { host: imap.example.cz, user: "${secrets.imap_user}", folder: INBOX }
-health: { interval: 60s }
+restart: { base: 1s, max: 60s }                      # crash backoff
+health: { interval: 60s }                            # accepted, not used yet
 ```
+
+`config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only. `cwd` is
+relative to the manifest. Manifests live in `connectors.d/*.yaml` or inline in the
+`connectors:` list of `agent.yaml`; names must be unique.
 
 **Events out (connector → core):** `POST http://unix:/run/online-agent/core.sock/v1/events`
 with the Event JSON (core assigns `id`/`ts`, honours `dedup_key`). A one-line curl in
@@ -310,9 +347,16 @@ without writing a poller for each.
 **State:** `GET/PUT /v1/state/{connector}/{key}` so connectors stay stateless processes
 (IMAP UID cursor, last seen PR).
 
-**Lifecycle:** spawned by the core supervisor (default) or as a `online-agent-connector@name`
-systemd unit for connectors that need their own privileges. Env provided:
-`OA_CORE_SOCKET`, `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON`, plus resolved secrets.
+**Lifecycle:** spawned by the core supervisor. Env provided: `OA_CORE_SOCKET`,
+`OA_CONNECTOR_NAME`, `OA_CONFIG_JSON` (the manifest's `config` with secrets rendered) and
+the manifest's `env`, on top of a minimal inherited environment (`PATH`, `HOME`, …).
+Stderr lines are logged as `connector.output`. A `online-agent-connector@name` systemd unit
+for connectors that need their own privileges is not implemented yet.
+
+**SDK (`@online-agent/connector-sdk`):** `connectorEnv()`, `CoreClient` (`emitEvent`,
+`getState`/`putState` in the connector's own namespace), `defineTool` +
+`createConnectorServer` + `serveStdio`, or `runConnector({tools, setup})` for all of it. The
+module has no local imports so Node can run a connector straight from TypeScript source.
 
 Planned connectors: `email` (IMAP/SMTP), `chat` (Telegram or Matrix; emits `chat.message`,
 `chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
@@ -339,10 +383,11 @@ their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (b
 ```yaml
 db: /var/lib/online-agent/state.db
 socket: /run/online-agent/core.sock
-tasks: tasks.yaml      # relative paths resolve against agent.yaml's directory
+tasks: [tasks.yaml, tasks.d]   # files and/or directories of *.yaml, merged; relative to agent.yaml
+connectors: connectors.d       # manifest files/directories, or inline manifests
 workers: 4
 log: { level: info }
-secrets: { backend: systemd-credentials }   # or env, or file
+secrets: { backend: systemd-credentials }   # $CREDENTIALS_DIRECTORY/<name>; or { backend: env, prefix: OA_SECRET_ } (OA_SECRET_<NAME>); or { backend: file, path: secrets.yaml }
 defaults:
   llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
@@ -354,9 +399,11 @@ limits: { max_event_depth: 32 }   # drop events deeper than this in a causal cha
 ```
 
 The whole `/etc/online-agent` tree is meant to live in a git repo; `oa validate` checks
-it in CI. `oa validate` takes tasks files and `agent.yaml` files alike (a file whose
-`tasks` is a list is a tasks file) and follows `agent.yaml` to the tasks file it names.
-`docs/examples/agent.yaml` is the reference.
+it in CI. `oa validate` takes tasks files, connector manifests and `agent.yaml` files alike
+(a file whose `tasks` is a list of tasks is a tasks file; one with `name` and `exec` is a
+manifest) and follows `agent.yaml` to every tasks file and manifest it names, checking
+task and connector names are unique across files. `docs/examples/agent.yaml` is the
+reference.
 
 ## 8. Worked example: orchestra website
 
@@ -394,17 +441,24 @@ same action kind; only the config differs.
 ## 10. Reliability
 
 - **Durability:** events and runs are committed to SQLite before anything acts on them.
-  On startup, runs left in `running` are retried or failed per `retry`; `waiting` runs are
-  restored.
+  On startup, runs left in `running` are re-queued when `retry.attempts` allows another
+  attempt (continuing from a sequence's last wait checkpoint if any), otherwise failed as
+  interrupted; `waiting` runs stay waiting, and those whose wait already ended resume.
 - **Dispatch:** one transaction per batch: read events past the cursor, insert `queued` runs,
   advance the cursor. `UNIQUE(task, event_id)` makes a replay after a crash a no-op: one run per
   (task, event); retries are attempts of the same run. The dispatcher always queues;
   `concurrency` is enforced by the executor.
 - **Delivery:** at-least-once dispatch + `dedup_key` on events + idempotent actions
   (agent worktree per run, `publish` is a mirror, not an incremental push).
-- **Retries:** per-task policy with backoff; `agent` actions retry with a fresh worktree
-  and the previous failure appended to the prompt (once).
-- **Timeouts:** every action has one; agent timeouts are wall-clock plus `max_turns`.
+- **Retries:** per-task policy (`retry: {attempts, backoff: fixed|exponential, base, max}`,
+  default from `defaults.retry`) with backoff; attempts belong to the same run, the run
+  stays `running` between them with the last error recorded, and `task.<name>.failed`
+  fires once after the last attempt. Timeouts and connector-down errors are retried;
+  wait timeouts, missing secrets, unknown connectors, `isError` op results and unrenderable
+  `emit` rules are not. `agent` actions will retry with a fresh worktree and the previous
+  failure appended to the prompt (once).
+- **Timeouts:** every action has one, per attempt of active work (a `waiting` run holds no
+  timer); agent timeouts are wall-clock plus `max_turns`.
 - **Concurrency:** `concurrency: 1` default for agent tasks touching the same repo; global
   worker cap.
 - **Poison events:** after `retry.attempts`, the run is `failed`, `task.<name>.failed`
@@ -468,15 +522,17 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
-  src/actions/               # shell.ts, llm.ts, agent.ts, connector.ts, wait.ts, sequence.ts
-  src/executor/              # worker pool: concurrency, timeouts, lifecycle events, recovery
-  connectors/            # supervisor, MCP client pool, built-in poller
+  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts (llm.ts, agent.ts to come); types.ts = ActionContext
+  src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff (built-in poller to come)
+  src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `online-agent-core` binary with signal handling
-  src/expr/                  # type globs, jmespath filters (+ ${…} templating later)
+  src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
-packages/cli/            # `oa` (commander); talks to the socket
-packages/connector-sdk/  # tiny helper for TS connectors: emitEvent(), state get/put, MCP server boilerplate
+  test/fixtures/             # fake connectors (email, chat, generic MCP, plain) run by Node from source
+packages/cli/            # `oa` (node:util parseArgs); talks to the socket
+packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
 connectors/email/        # imapflow + nodemailer
 connectors/chat/         # grammy (Telegram) or matrix-js-sdk
 docs/                        # ARCHITECTURE.md, examples/
@@ -507,14 +563,17 @@ Runtime notes
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
-Status: the executor, the `shell` action, the daemon (`online-agent-core`), the socket API
-and `oa validate|run|emit` exist. Where the code is behind this document: `${…}` templating,
-`emit` routing, `state_updates`, `retry` and `shell.user` are not applied yet (templates run
-literally, `user:` is rejected by `oa validate`); a run found `running` at startup is failed
-as interrupted rather than retried; `agent.yaml` names one tasks file (`tasks:`) rather than
-merging `tasks.d/*.yaml`, `connectors.d/` is not read, and its `secrets`, `budgets`,
-`retention` and `defaults.llm|agent|retry` keys validate but are not applied; `/v1/state`
-waits for the KV store.
+Status: steps 1, 2 (minus the `poller` built-in and a real `email` connector) and 5 (minus
+a real `chat` connector) are done: `shell`, `connector`, `wait` and `sequence` actions,
+`${…}` templating, `emit` routing, the state KV with `/v1/state`, secrets backends, `retry`
+with recovery by policy, the connector supervisor, `tasks.d`/`connectors.d` merging, the
+connector SDK, and an integration test that runs the non-LLM path of the orchestra workflow
+on a real daemon with fake connectors. Where the code is behind this document: `llm` and
+`agent` actions validate `kind` only and have no runner (a run of one fails with "no
+runner"); `budgets`, `retention` and `defaults.llm|agent` validate but are not applied;
+there is no cost ledger, no `poller`, no retention GC, no metrics, no sandbox wrapper;
+`SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is
+rejected; `health.interval` in manifests is accepted but unused.
 
 ## 15. Open decisions
 

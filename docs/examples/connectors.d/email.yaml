@@ -1,0 +1,12 @@
+# Email connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
+name: email
+exec: ["node", "connectors/email/dist/main.js"]
+transport: stdio
+emits: [email.received]
+ops: [fetch_new, mark_read, send]
+config:
+  host: imap.example.cz
+  user: "${secrets.imap_user}"
+  password: "${secrets.imap_pass}"
+  folder: INBOX
+restart: { base: 1s, max: 60s }

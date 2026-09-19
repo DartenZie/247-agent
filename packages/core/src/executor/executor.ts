@@ -1,11 +1,33 @@
-import type { ActionContext, ActionRunners } from '../actions/types.js';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+import {
+  isRetryable,
+  NonRetryableError,
+  withScope,
+  type ActionContext,
+  type ActionRunners,
+  type ConnectorClients,
+  type ResumeInfo,
+  type WaitSpec,
+} from '../actions/types.js';
+import { eventView } from '../actions/wait.js';
 import type { EventBus } from '../bus/bus.js';
 import { MANUAL_RUN, taskSource, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
+import { Retry, type EmitRuleConfig, type RetryConfig } from '../config/schema.js';
+import { isJmesTruthy } from '../expr/jmespath.js';
+import {
+  evaluateExpr,
+  renderTemplate,
+  renderText,
+  renderValue,
+  type TemplateScope,
+} from '../expr/template.js';
 import type { Logger } from '../log.js';
+import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
-import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
+import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
 
 export interface ExecutorOptions {
   store: Store;
@@ -19,13 +41,23 @@ export interface ExecutorOptions {
   workers?: number;
   /** For tasks without `timeout`. */
   defaultTimeout?: string;
+  /** For tasks without `retry`. */
+  defaultRetry?: RetryConfig;
+  /** Resolves `${secrets.<name>}`; defaults to a backend with no secrets. */
+  secrets?: SecretsBackend;
+  /** Connector ops for `connector` actions and sequence steps. */
+  connectors?: ConnectorClients;
+  /** The `env` template scope. */
+  env?: Record<string, string>;
 }
 
 export interface RecoveryResult {
-  /** Runs found `running` at startup and failed as interrupted. */
+  /** Runs found `running` at startup and failed as interrupted (no attempts left). */
   interrupted: number;
-  /** Runs found `queued` at startup and taken over. */
+  /** Runs found `queued` or `running` at startup and taken over. */
   resumed: number;
+  /** Runs found `waiting` at startup whose wait is still armed. */
+  waiting: number;
 }
 
 /** Why the executor aborted a run's signal; runners rethrow it so the executor can tell. */
@@ -43,9 +75,18 @@ export class RunStoppedError extends Error {
   }
 }
 
-type Outcome = { ok: true; result: JsonValue } | { ok: false; error: string };
+/** The signal `ctx.suspend()` rejects with; runners let it propagate. */
+export class RunSuspendedError extends Error {
+  constructor() {
+    super('run suspended');
+    this.name = 'RunSuspendedError';
+  }
+}
+
+type Outcome = { ok: true; result: JsonValue } | { ok: false; error: string; retryable: boolean };
 
 const INTERRUPTED = 'interrupted: the daemon restarted while the run was in progress';
+const NO_SECRETS = staticSecrets({});
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -75,15 +116,101 @@ export function contextEvent(trigger: EventRecord): EventRecord {
   };
 }
 
+/** Milliseconds to wait before attempt `attempt + 1`. */
+export function backoffDelay(policy: RetryConfig, attempt: number): number {
+  const base = parseDuration(policy.base);
+  if (policy.backoff === 'fixed') {
+    return base;
+  }
+  return Math.min(base * 2 ** Math.max(0, attempt - 1), parseDuration(policy.max));
+}
+
+/**
+ * Renders a task's `emit` rules (ARCHITECTURE §5.7) into events to publish. Throws
+ * `NonRetryableError` when a rule cannot be rendered.
+ */
+export function renderEmits(
+  rules: readonly EmitRuleConfig[],
+  scope: TemplateScope,
+  source: string,
+  parentId: string,
+): NewEvent[] {
+  const out: NewEvent[] = [];
+  rules.forEach((rule, i) => {
+    try {
+      if (rule.when !== undefined && !isJmesTruthy(evaluateExpr(rule.when, scope))) {
+        return;
+      }
+      let items: unknown[] = [undefined];
+      if (rule.each !== undefined) {
+        const rendered = renderTemplate(rule.each, scope);
+        if (rendered === null) {
+          return; // nothing to fan out
+        }
+        if (!Array.isArray(rendered)) {
+          throw new Error(`each did not render to an array (got ${typeof rendered})`);
+        }
+        items = rendered;
+      }
+      for (const item of items) {
+        const s: TemplateScope = item === undefined ? scope : { ...scope, item };
+        out.push({
+          type: rule.type,
+          source,
+          parent_id: parentId,
+          dedup_key: rule.dedup_key === undefined ? undefined : renderText(rule.dedup_key, s),
+          payload: rule.payload === undefined ? null : (renderValue(rule.payload, s) as JsonValue),
+        });
+      }
+    } catch (err) {
+      throw new NonRetryableError(`emit[${String(i)}] (${rule.type}): ${errorMessage(err)}`, {
+        cause: err,
+      });
+    }
+  });
+  return out;
+}
+
+/** Renders `state_updates` into `(namespace, key, value)` triples. */
+export function renderStateUpdates(
+  updates: Readonly<Record<string, unknown>> | undefined,
+  scope: TemplateScope,
+): { namespace: string; key: string; value: JsonValue }[] {
+  if (updates === undefined) {
+    return [];
+  }
+  return Object.entries(updates).map(([path, template]) => {
+    const dot = path.indexOf('.');
+    try {
+      return {
+        namespace: path.slice(0, dot),
+        key: path.slice(dot + 1),
+        value: renderValue(template, scope) as JsonValue,
+      };
+    } catch (err) {
+      throw new NonRetryableError(`state_updates.${path}: ${errorMessage(err)}`, { cause: err });
+    }
+  });
+}
+
+interface Slot {
+  /** Aborted by `stop()`; attempts combine it with their own timeout signal. */
+  readonly stop: AbortController;
+}
+
 /**
  * Worker pool over queued runs (ARCHITECTURE §4, §10). The dispatcher hands runs over via
  * `bus.onQueued`; on `start()` the executor also adopts whatever is `queued` in the store
- * and fails whatever was left `running` by a previous process. Per-task `concurrency` and
- * the global `workers` cap are enforced here, never by the dispatcher. Every finished run
- * publishes `task.<name>.succeeded|failed` with `source: task:<name>` and the trigger event
- * as parent, so downstream tasks chain through events only.
+ * and recovers whatever was left `running` or `waiting` by a previous process. Per-task
+ * `concurrency` and the global `workers` cap are enforced here, never by the dispatcher.
  *
- * Retries, `emit` routing and `state_updates` are not applied yet.
+ * Per run: secrets named by the task's templates are resolved, the action runs with a
+ * timeout per attempt, failures are retried per `retry` with backoff, and on success
+ * `state_updates` are applied and `emit` events published in one transaction with the
+ * `task.<name>.succeeded` event (`source: task:<name>`, the trigger event as parent).
+ * `task.<name>.failed` fires after the last attempt only. A `wait` parks the run in
+ * `waiting` (freeing its worker slot); the dispatcher re-queues it when the awaited event
+ * arrives or the wait expires, and the runner is started again with `ctx.resume`.
  */
 export class Executor {
   private readonly store: Store;
@@ -94,10 +221,14 @@ export class Executor {
   private readonly runners: ActionRunners;
   private readonly workers: number;
   private readonly defaultTimeout: string;
+  private readonly defaultRetry: RetryConfig;
+  private readonly secrets: SecretsBackend;
+  private readonly connectors: ConnectorClients | undefined;
+  private readonly env: Record<string, string>;
 
   private readonly pending: RunRecord[] = [];
   private readonly known = new Set<string>();
-  private readonly inFlight = new Map<string, AbortController>();
+  private readonly inFlight = new Map<string, Slot>();
   private readonly perTask = new Map<string, number>();
   private readonly idleWaiters: (() => void)[] = [];
   private unsubscribe: (() => void) | undefined;
@@ -112,6 +243,10 @@ export class Executor {
     this.runners = opts.runners;
     this.workers = opts.workers ?? 4;
     this.defaultTimeout = opts.defaultTimeout ?? '15m';
+    this.defaultRetry = opts.defaultRetry ?? Retry.parse({});
+    this.secrets = opts.secrets ?? NO_SECRETS;
+    this.connectors = opts.connectors;
+    this.env = opts.env ?? {};
     parseDuration(this.defaultTimeout); // fail fast on a bad default
   }
 
@@ -122,17 +257,45 @@ export class Executor {
       this.enqueue(runs);
     });
     let interrupted = 0;
+    let resumed = 0;
+    let waiting = 0;
+    const config = this.config();
     for (const run of this.store.runs.listByStatus('running', 1_000_000)) {
       if (this.inFlight.has(run.id)) {
         continue; // ours: start() after stop() in the same process
       }
-      this.finish(run, { ok: false, error: INTERRUPTED }, this.log.child(runFields(run)));
+      const task = config.byName.get(run.task);
+      const log = this.log.child(runFields(run));
+      if (task !== undefined && run.attempt < this.retryFor(task).attempts) {
+        log.warn('run.recovered', { attempt: run.attempt });
+        resumed += this.enqueue([run]);
+        continue;
+      }
+      this.finish(run, { ok: false, error: INTERRUPTED, retryable: false }, task, log);
       interrupted++;
     }
-    const queued = this.store.runs.listByStatus('queued', 1_000_000);
-    const resumed = this.enqueue(queued);
-    this.log.info('executor.started', { workers: this.workers, interrupted, resumed });
-    return { interrupted, resumed };
+    for (const run of this.store.runs.listByStatus('waiting', 1_000_000)) {
+      const wait = this.store.waits.get(run.id);
+      const log = this.log.child(runFields(run));
+      if (wait === undefined) {
+        const task = config.byName.get(run.task);
+        this.finish(
+          run,
+          { ok: false, error: 'waiting run has no wait record', retryable: false },
+          task,
+          log,
+        );
+        interrupted++;
+      } else if (wait.outcome !== null) {
+        this.store.runs.setStatus(run.id, 'queued');
+        resumed += this.enqueue([{ ...run, status: 'queued' }]);
+      } else {
+        waiting++;
+      }
+    }
+    resumed += this.enqueue(this.store.runs.listByStatus('queued', 1_000_000));
+    this.log.info('executor.started', { workers: this.workers, interrupted, resumed, waiting });
+    return { interrupted, resumed, waiting };
   }
 
   /** Takes runs from the dispatcher. Returns how many were new to the executor. */
@@ -152,7 +315,7 @@ export class Executor {
 
   /**
    * Stops taking runs, aborts the ones in flight and waits for them to settle. Aborted runs
-   * stay `running` in the store; the next `start()` fails them as interrupted, exactly as
+   * stay `running` in the store; the next `start()` retries or fails them, exactly as
    * after a crash. Runs still `queued` are left for the next start too.
    */
   async stop(): Promise<void> {
@@ -162,8 +325,8 @@ export class Executor {
     for (const run of this.pending.splice(0)) {
       this.known.delete(run.id);
     }
-    for (const controller of this.inFlight.values()) {
-      controller.abort(new RunStoppedError());
+    for (const slot of this.inFlight.values()) {
+      slot.stop.abort(new RunStoppedError());
     }
     await this.idle();
   }
@@ -178,6 +341,10 @@ export class Executor {
 
   stats(): { pending: number; in_flight: number } {
     return { pending: this.pending.length, in_flight: this.inFlight.size };
+  }
+
+  private retryFor(task: CompiledTask | undefined): RetryConfig {
+    return task?.config.retry ?? this.defaultRetry;
   }
 
   private pump(): void {
@@ -203,21 +370,62 @@ export class Executor {
 
   private async execute(run: RunRecord, task: CompiledTask | undefined): Promise<void> {
     const log = this.log.child(runFields(run));
-    const controller = new AbortController();
-    this.inFlight.set(run.id, controller);
+    const slot: Slot = { stop: new AbortController() };
+    this.inFlight.set(run.id, slot);
     this.perTask.set(run.task, (this.perTask.get(run.task) ?? 0) + 1);
+    let suspended = false;
     try {
-      const current: RunRecord = { ...run, attempt: run.attempt + 1, status: 'running' };
-      this.store.runs.setStatus(run.id, 'running', {
-        started_at: this.clock.now().toISOString(),
-        attempt: current.attempt,
-      });
-      log.info('run.started', { attempt: current.attempt, event_id: run.event_id });
-      const outcome = await this.perform(current, task, controller, log);
-      if (outcome === 'stopped') {
-        log.warn('run.abandoned', { attempt: current.attempt });
-      } else {
-        this.finish(current, outcome, log);
+      // A run re-queued by the dispatcher after its wait ended continues its attempt.
+      const wait = this.store.waits.get(run.id);
+      const resume = wait?.outcome === null || wait === undefined ? undefined : wait;
+      const resuming = resume !== undefined && run.status === 'queued';
+      let attempt = run.attempt + (resuming ? 0 : 1);
+      const policy = this.retryFor(task);
+      for (;;) {
+        const current: RunRecord = { ...run, attempt, status: 'running' };
+        this.store.runs.setStatus(run.id, 'running', {
+          started_at: this.clock.now().toISOString(),
+          attempt,
+        });
+        log.info(resuming ? 'run.resumed' : 'run.started', { attempt, event_id: run.event_id });
+        const resumeInfo: ResumeInfo | undefined =
+          resume === undefined
+            ? undefined
+            : {
+                resume: resume.resume,
+                outcome: resume.outcome ?? 'timeout',
+                event:
+                  resume.event_id === null ? undefined : this.store.events.getById(resume.event_id),
+              };
+        const performed = await this.perform(current, task, slot, resumeInfo, log);
+        if (performed === 'stopped') {
+          log.warn('run.abandoned', { attempt });
+          return;
+        }
+        if (performed === 'suspended') {
+          suspended = true;
+          return;
+        }
+        const outcome = performed;
+        if (outcome.ok || !outcome.retryable || attempt >= policy.attempts || this.stopping) {
+          this.finish(current, outcome, task, log);
+          return;
+        }
+        const delay = backoffDelay(policy, attempt);
+        log.warn('run.retry', {
+          attempt,
+          attempts: policy.attempts,
+          delay_ms: delay,
+          error: outcome.error,
+        });
+        this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
+        try {
+          await sleep(delay, undefined, { signal: slot.stop.signal });
+        } catch {
+          log.warn('run.abandoned', { attempt });
+          return; // stopping: stays `running`, recovered on the next start
+        }
+        attempt++;
       }
     } catch (err) {
       // Bookkeeping failure (store, bus); the run itself already went through `perform`.
@@ -230,6 +438,14 @@ export class Executor {
         this.perTask.delete(run.task);
       } else {
         this.perTask.set(run.task, n);
+      }
+      if (suspended) {
+        // The wait may have ended while we were still cleaning up; the dispatcher's hand-off
+        // was then refused because the run was still known. Pick it up from the store.
+        const fresh = this.store.runs.getById(run.id);
+        if (fresh?.status === 'queued') {
+          this.enqueue([fresh]);
+        }
       }
       this.pump();
       if (this.pending.length === 0 && this.inFlight.size === 0) {
@@ -244,82 +460,191 @@ export class Executor {
   private async perform(
     run: RunRecord,
     task: CompiledTask | undefined,
-    controller: AbortController,
+    slot: Slot,
+    resume: ResumeInfo | undefined,
     log: Logger,
-  ): Promise<Outcome | 'stopped'> {
+  ): Promise<Outcome | 'stopped' | 'suspended'> {
     if (task === undefined) {
-      return { ok: false, error: `task "${run.task}" is no longer configured` };
+      return fatal(`task "${run.task}" is no longer configured`);
     }
     const kind = task.config.action.kind;
     const runner = this.runners[kind];
     if (runner === undefined) {
-      return { ok: false, error: `action kind "${kind}" has no runner` };
+      return fatal(`action kind "${kind}" has no runner`);
     }
     const trigger = this.store.events.getById(run.event_id);
     if (trigger === undefined) {
-      return { ok: false, error: `trigger event "${run.event_id}" not found` };
+      return fatal(`trigger event "${run.event_id}" not found`);
+    }
+    let secrets: Record<string, string>;
+    try {
+      secrets = this.secrets.resolve(task.secretNames);
+    } catch (err) {
+      if (err instanceof SecretError) {
+        return { ok: false, error: err.message, retryable: false };
+      }
+      return { ok: false, error: errorMessage(err), retryable: true };
     }
     const timeout = task.config.timeout ?? this.defaultTimeout;
+    const attemptController = new AbortController();
     const timer = setTimeout(() => {
-      controller.abort(new RunTimeoutError(timeout));
+      attemptController.abort(new RunTimeoutError(timeout));
     }, parseDuration(timeout));
-    const ctx: ActionContext = {
-      run,
-      event: contextEvent(trigger),
-      task: task.config,
-      signal: controller.signal,
-      log,
+    const signal = AbortSignal.any([slot.stop.signal, attemptController.signal]);
+    const event = contextEvent(trigger);
+    const scope: TemplateScope = {
+      event: eventView(event),
+      state: this.store.state.snapshot(),
+      secrets,
+      env: this.env,
+      run: runView(run),
     };
+    const base: ActionContext = {
+      run,
+      event,
+      task: task.config,
+      signal,
+      log,
+      state: scope.state as ActionContext['state'],
+      secrets,
+      scope,
+      render: () => null,
+      renderText: () => '',
+      connectors: this.connectors,
+      suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
+      resume,
+    };
+    const ctx = withScope(base, {});
     try {
       const result = await runner(task.config.action, ctx);
       return { ok: true, result };
     } catch (err) {
-      if (controller.signal.reason instanceof RunStoppedError) {
+      if (err instanceof RunSuspendedError) {
+        return 'suspended';
+      }
+      if (slot.stop.signal.aborted) {
         return 'stopped';
       }
-      if (controller.signal.reason instanceof RunTimeoutError) {
-        return { ok: false, error: controller.signal.reason.message };
+      if (attemptController.signal.aborted) {
+        return {
+          ok: false,
+          error: (attemptController.signal.reason as Error).message,
+          retryable: true,
+        };
       }
-      return { ok: false, error: errorMessage(err) };
+      return { ok: false, error: errorMessage(err), retryable: isRetryable(err) };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  /** Persists the terminal status and publishes the lifecycle event. */
-  private finish(run: RunRecord, outcome: Outcome, log: Logger): void {
-    const finishedAt = this.clock.now().toISOString();
-    const source = taskSource(run.task);
-    if (outcome.ok) {
-      this.store.runs.setStatus(run.id, 'succeeded', {
-        finished_at: finishedAt,
-        result: outcome.result,
+  /**
+   * `ctx.suspend`: records the wait and parks the run. Events published since the run's
+   * trigger are checked right away, so a reply that arrived while the asking step was still
+   * running is not missed. Always rejects with `RunSuspendedError`.
+   */
+  private suspend(
+    run: RunRecord,
+    trigger: EventRecord,
+    spec: WaitSpec,
+    resume: JsonValue,
+    log: Logger,
+  ): Promise<never> {
+    const now = this.clock.now();
+    const expiresAt =
+      spec.timeoutMs === undefined ? null : new Date(now.getTime() + spec.timeoutMs).toISOString();
+    this.store.transaction(() => {
+      this.store.waits.insert({
+        run_id: run.id,
+        task: run.task,
+        type: spec.type,
+        filter: spec.filter ?? null,
+        expires_at: expiresAt,
+        on_timeout: spec.on_timeout,
+        resume,
+        created_at: now.toISOString(),
       });
-      log.info('run.succeeded');
-      this.publish({
-        type: `task.${run.task}.succeeded`,
-        source,
-        parent_id: run.event_id,
-        payload: { run_id: run.id, task: run.task, result: outcome.result },
+      this.store.runs.setStatus(run.id, 'waiting');
+      const matched = this.bus.dispatcher.matchWaitAgainstBacklog(run.id, trigger.seq);
+      log.info('run.waiting', {
+        wait_type: spec.type,
+        expires_at: expiresAt,
+        matched_event_id: matched?.id ?? null,
       });
-    } else {
-      this.store.runs.setStatus(run.id, 'failed', {
-        finished_at: finishedAt,
-        error: outcome.error,
-      });
-      log.error('run.failed', { error: outcome.error });
-      this.publish({
-        type: `task.${run.task}.failed`,
-        source,
-        parent_id: run.event_id,
-        payload: { run_id: run.id, task: run.task, error: outcome.error, attempt: run.attempt },
-      });
-    }
+    });
+    return Promise.reject(new RunSuspendedError());
   }
 
-  private publish(event: Parameters<EventBus['publish']>[0]): void {
+  /** Persists the terminal status, applies routing and publishes the lifecycle event. */
+  private finish(
+    run: RunRecord,
+    outcome: Outcome,
+    task: CompiledTask | undefined,
+    log: Logger,
+  ): void {
+    const source = taskSource(run.task);
+    let emitted: NewEvent[] = [];
+    let updates: ReturnType<typeof renderStateUpdates> = [];
+    let final = outcome;
+    if (outcome.ok && task !== undefined) {
+      try {
+        const trigger = this.store.events.getById(run.event_id);
+        const scope: TemplateScope = {
+          event: trigger === undefined ? null : eventView(contextEvent(trigger)),
+          result: outcome.result,
+          state: this.store.state.snapshot(),
+          env: this.env,
+          run: runView(run),
+        };
+        emitted = renderEmits(task.config.emit ?? [], scope, source, run.event_id);
+        updates = renderStateUpdates(task.config.state_updates, scope);
+      } catch (err) {
+        final = { ok: false, error: errorMessage(err), retryable: false };
+      }
+    }
+    const finishedAt = this.clock.now().toISOString();
+    this.store.transaction(() => {
+      this.store.waits.delete(run.id);
+      if (final.ok) {
+        this.store.runs.setStatus(run.id, 'succeeded', {
+          finished_at: finishedAt,
+          result: final.result,
+        });
+        for (const u of updates) {
+          this.store.state.put(u.namespace, u.key, u.value, finishedAt);
+        }
+        log.info('run.succeeded', { emitted: emitted.length, state_updates: updates.length });
+        this.publish({
+          type: `task.${run.task}.succeeded`,
+          source,
+          parent_id: run.event_id,
+          payload: { run_id: run.id, task: run.task, result: final.result },
+        });
+        for (const e of emitted) {
+          this.publish(e);
+        }
+      } else {
+        this.store.runs.setStatus(run.id, 'failed', {
+          finished_at: finishedAt,
+          error: final.error,
+        });
+        log.error('run.failed', { error: final.error, attempt: run.attempt });
+        this.publish({
+          type: `task.${run.task}.failed`,
+          source,
+          parent_id: run.event_id,
+          payload: { run_id: run.id, task: run.task, error: final.error, attempt: run.attempt },
+        });
+      }
+    });
+  }
+
+  private publish(event: NewEvent): void {
     try {
-      this.bus.publish(event);
+      const r = this.bus.publish(event);
+      if (r.status === 'duplicate') {
+        this.log.debug('run.emit_duplicate', { event_type: event.type, dedup_key: r.dedup_key });
+      }
     } catch (err) {
       this.log.error('run.lifecycle_publish_failed', {
         event_type: event.type,
@@ -327,6 +652,20 @@ export class Executor {
       });
     }
   }
+}
+
+function fatal(error: string): Outcome {
+  return { ok: false, error, retryable: false };
+}
+
+function runView(run: RunRecord): Record<string, JsonValue> {
+  return {
+    id: run.id,
+    task: run.task,
+    attempt: run.attempt,
+    event_id: run.event_id,
+    correlation_id: run.correlation_id,
+  };
 }
 
 function runFields(run: RunRecord): { run_id: string; task: string; correlation_id: string } {

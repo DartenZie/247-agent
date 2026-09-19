@@ -131,7 +131,7 @@ tasks:
             text: "Site change ready: ${event.payload.summary}\n${event.payload.diff}\nApprove?"
             correlation_id: ${event.correlation_id}
         - kind: wait
-          for: { type: chat.reply, filter: "payload.correlation_id == `${event.correlation_id}`" }
+          for: { type: chat.reply, filter: "payload.correlation_id == '${event.correlation_id}'" }
           timeout: 24h
           on_timeout: fail
         - kind: shell

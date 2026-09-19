@@ -1,16 +1,23 @@
 import { z } from 'zod';
 
+import { ConnectorAction } from '../actions/connector.js';
+import { SequenceAction } from '../actions/sequence.js';
 import { ShellAction } from '../actions/shell.js';
+import { WaitAction } from '../actions/wait.js';
+import { collectTemplateRefs } from '../expr/template.js';
 import { DURATION } from './duration.js';
 import {
   validateCron,
+  validateEventType,
   validateJmespath,
+  validateTemplate,
   validateTimezone,
   validateTypePattern,
 } from './validators.js';
 
 const NAME = /^[a-z][a-z0-9_]*$/;
 const OWN_LIFECYCLE = /^task\.([a-z][a-z0-9_]*)\.(succeeded|failed)$/;
+const STATE_KEY = /^[a-z0-9_-]+\.[a-z0-9_-]+$/;
 
 export const CronTrigger = z
   .strictObject({
@@ -75,12 +82,88 @@ export const Trigger = z.discriminatedUnion('kind', [CronTrigger, EventTrigger, 
 
 /**
  * Each action kind is validated by the schema its runner exports; kinds without a runner
- * yet are checked for `kind` only.
+ * yet (`llm`, `agent`) are checked for `kind` only.
  */
 export const Action = z.discriminatedUnion('kind', [
   ShellAction,
-  z.looseObject({ kind: z.enum(['connector', 'llm', 'agent', 'wait', 'sequence']) }),
+  ConnectorAction,
+  WaitAction,
+  SequenceAction,
+  z.looseObject({ kind: z.enum(['llm', 'agent']) }),
 ]);
+
+/** ARCHITECTURE §5.7: one domain event (or one per `each` item) after a successful run. */
+export const EmitRule = z
+  .strictObject({
+    type: z.string().min(1),
+    /** JMESPath over `{event, result, state, env, run}`; a falsy value skips the rule. */
+    when: z.string().min(1).optional(),
+    /** A whole `${…}` template that renders to an array; one event per `item`. */
+    each: z.string().min(1).optional(),
+    dedup_key: z.string().min(1).optional(),
+    payload: z.unknown().optional(),
+  })
+  .superRefine((r, ctx) => {
+    const typeErr = validateEventType(r.type);
+    if (typeErr !== null) {
+      ctx.addIssue({ code: 'custom', path: ['type'], message: typeErr });
+    }
+    if (r.when !== undefined) {
+      const err = validateJmespath(r.when);
+      if (err !== null) {
+        ctx.addIssue({ code: 'custom', path: ['when'], message: `invalid JMESPath: ${err}` });
+      }
+    }
+    if (r.each !== undefined) {
+      const err = validateTemplate(r.each);
+      if (err !== null) {
+        ctx.addIssue({ code: 'custom', path: ['each'], message: err });
+      } else if (!/^\s*\$\{[\s\S]*\}\s*$/.test(r.each)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['each'],
+          message: 'each must be a single ${…} template that renders to an array',
+        });
+      }
+    }
+  });
+
+/** ARCHITECTURE §10. Retries are attempts of the same run; `task.<name>.failed` fires after the last. */
+export const Retry = z.strictObject({
+  attempts: z.number().int().min(1).max(100).default(1),
+  backoff: z.enum(['fixed', 'exponential']).default('exponential'),
+  base: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('30s'),
+  max: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('1h'),
+});
+
+export type RetryConfig = z.infer<typeof Retry>;
+
+/** Adds issues for templates that reference `secrets` or do not compile. */
+function checkTemplates(
+  value: unknown,
+  path: (string | number)[],
+  ctx: z.RefinementCtx,
+  opts: { secrets: boolean },
+): void {
+  const refs = collectTemplateRefs(value);
+  for (const e of refs.errors) {
+    ctx.addIssue({ code: 'custom', path, message: `${e.message} (in "${e.template}")` });
+  }
+  for (const t of refs.wholeSecrets) {
+    ctx.addIssue({
+      code: 'custom',
+      path,
+      message: `reference secrets by name (secrets.<name>), not as a whole (in "${t}")`,
+    });
+  }
+  if (!opts.secrets && refs.roots.has('secrets')) {
+    ctx.addIssue({
+      code: 'custom',
+      path,
+      message: 'secrets cannot be used here: they would be written to the store or an event',
+    });
+  }
+}
 
 export const Task = z
   .strictObject({
@@ -88,14 +171,38 @@ export const Task = z
     trigger: Trigger,
     action: Action,
     concurrency: z.number().int().positive().default(1),
+    /** Wall-clock limit per attempt of active work; time spent `waiting` does not count. */
     timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').optional(),
-    retry: z.unknown().optional(),
+    /** Overrides `defaults.retry` from agent.yaml. */
+    retry: Retry.optional(),
     budget: z.unknown().optional(),
     on_failure: z.unknown().optional(),
-    emit: z.array(z.unknown()).optional(),
+    emit: z.array(EmitRule).optional(),
+    /** `<namespace>.<key>: <value or template>`, applied after a successful run. */
     state_updates: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((task, ctx) => {
+    checkTemplates(task.action, ['action'], ctx, { secrets: true });
+    task.emit?.forEach((rule, i) => {
+      checkTemplates(
+        { each: rule.each, dedup_key: rule.dedup_key, payload: rule.payload },
+        ['emit', i],
+        ctx,
+        { secrets: false },
+      );
+    });
+    if (task.state_updates !== undefined) {
+      for (const key of Object.keys(task.state_updates)) {
+        if (!STATE_KEY.test(key)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['state_updates', key],
+            message: 'state keys are <namespace>.<key>, each [a-z0-9_-]+',
+          });
+        }
+      }
+      checkTemplates(task.state_updates, ['state_updates'], ctx, { secrets: false });
+    }
     if (task.trigger.kind !== 'event') {
       return;
     }
@@ -136,5 +243,6 @@ export type CronTriggerConfig = z.infer<typeof CronTrigger>;
 export type EventTriggerConfig = z.infer<typeof EventTrigger>;
 export type ManualTriggerConfig = z.infer<typeof ManualTrigger>;
 export type TriggerConfig = z.infer<typeof Trigger>;
+export type EmitRuleConfig = z.infer<typeof EmitRule>;
 export type TaskConfig = z.infer<typeof Task>;
 export type TasksFileConfig = z.infer<typeof TasksFile>;

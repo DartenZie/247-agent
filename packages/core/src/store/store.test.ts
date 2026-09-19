@@ -40,12 +40,12 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(1);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(2);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(1);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(2);
   });
 });
 
@@ -138,5 +138,77 @@ describe('transaction', () => {
     ).toThrow('boom');
     expect(store.events.listAfter(0, 10)).toEqual([]);
     expect(store.cursors.get('dispatch')).toBe(0);
+  });
+});
+
+describe('StateStore', () => {
+  it('puts, gets, lists, deletes and snapshots by namespace', () => {
+    expect(store.state.get('email', 'last_uid')).toBeUndefined();
+    store.state.put('email', 'last_uid', 41, '2026-09-19T10:00:00.000Z');
+    store.state.put('email', 'last_uid', 42, '2026-09-19T10:01:00.000Z');
+    store.state.put('email', 'folder', { name: 'INBOX' }, '2026-09-19T10:01:00.000Z');
+    store.state.put('chat', 'last_seen', null, '2026-09-19T10:01:00.000Z');
+    expect(store.state.get('email', 'last_uid')).toEqual({
+      namespace: 'email',
+      key: 'last_uid',
+      value: 42,
+      updated_at: '2026-09-19T10:01:00.000Z',
+    });
+    expect(store.state.list('email').map((e) => e.key)).toEqual(['folder', 'last_uid']);
+    expect(store.state.snapshot()).toEqual({
+      email: { last_uid: 42, folder: { name: 'INBOX' } },
+      chat: { last_seen: null },
+    });
+    expect(store.state.delete('email', 'folder')).toBe(true);
+    expect(store.state.delete('email', 'folder')).toBe(false);
+  });
+});
+
+describe('WaitStore', () => {
+  it('inserts one wait per run, lists pending/expired/resolved and resolves once', () => {
+    const now = '2026-09-19T10:00:00.000Z';
+    store.events.insert({
+      id: 'evt_1',
+      type: 'x',
+      source: 't',
+      ts: now,
+      correlation_id: 'cor_1',
+      parent_id: null,
+      dedup_key: null,
+      depth: 0,
+      payload: null,
+    });
+    store.runs.insertQueued({
+      id: 'run_1',
+      task: 'a',
+      event_id: 'evt_1',
+      correlation_id: 'cor_1',
+      created_at: now,
+    });
+    const base = {
+      run_id: 'run_1',
+      task: 'a',
+      type: 'chat.reply',
+      filter: 'payload.ok',
+      expires_at: '2026-09-19T11:00:00.000Z',
+      on_timeout: 'fail' as const,
+      resume: { step: 1, steps: [null] },
+      created_at: now,
+    };
+    store.waits.insert({ ...base, type: 'old.type' });
+    store.waits.insert(base);
+    expect(store.waits.get('run_1')).toEqual({ ...base, outcome: null, event_id: null });
+    expect(store.waits.listPending().map((w) => w.run_id)).toEqual(['run_1']);
+    expect(store.waits.listExpired('2026-09-19T10:59:59.000Z')).toEqual([]);
+    expect(store.waits.listExpired('2026-09-19T11:00:00.000Z').map((w) => w.run_id)).toEqual([
+      'run_1',
+    ]);
+    expect(store.waits.resolve('run_1', 'matched', 'evt_1')).toBe(true);
+    expect(store.waits.resolve('run_1', 'timeout', null)).toBe(false);
+    expect(store.waits.listPending()).toEqual([]);
+    expect(store.waits.listResolved()).toMatchObject([
+      { run_id: 'run_1', outcome: 'matched', event_id: 'evt_1' },
+    ]);
+    expect(store.waits.delete('run_1')).toBe(true);
   });
 });

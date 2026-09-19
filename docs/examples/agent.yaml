@@ -3,7 +3,8 @@
 
 db: /var/lib/online-agent/state.db
 socket: /run/online-agent/core.sock
-tasks: orchestra-website.yaml     # one tasks file for now; tasks.d/ comes later
+tasks: orchestra-website.yaml     # a file, a directory (tasks.d), or a list of both
+connectors: connectors.d          # manifest files, directories, or inline manifests
 workers: 4
 log: { level: info }
 limits: { max_event_depth: 32 }
@@ -12,6 +13,6 @@ defaults:
   llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
   retry: { attempts: 3, backoff: exponential, base: 30s }
-secrets: { backend: systemd-credentials }
+secrets: { backend: systemd-credentials }   # or { backend: env, prefix: OA_SECRET_ } or { backend: file, path: secrets.yaml }
 budgets: { daily_usd: 10 }
 retention: { events: 90d, runs: 90d, workspaces: 7d }

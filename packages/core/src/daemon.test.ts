@@ -275,3 +275,48 @@ describe('POST /v1/runs and GET /v1/runs', () => {
     expect(res.status).toBe(413);
   });
 });
+
+describe('/v1/state', () => {
+  it('puts, gets, lists and deletes state through the client and the raw API', async () => {
+    expect(await api.getState('email', 'last_uid')).toBeUndefined();
+    expect(await api.putState('email', 'last_uid', 42)).toMatchObject({
+      namespace: 'email',
+      key: 'last_uid',
+      value: 42,
+    });
+    await api.putState('email', 'folder', { name: 'INBOX' });
+    expect((await api.getState('email', 'last_uid'))?.value).toBe(42);
+    expect((await api.listState('email')).map((e) => [e.key, e.value])).toEqual([
+      ['folder', { name: 'INBOX' }],
+      ['last_uid', 42],
+    ]);
+    expect(await api.deleteState('email', 'folder')).toBe(true);
+    expect(await api.deleteState('email', 'folder')).toBe(false);
+    expect(await api.listState('email')).toHaveLength(1);
+
+    expect(await raw('GET', '/v1/state/email/nope')).toMatchObject({ status: 404 });
+    expect(await raw('PUT', '/v1/state/email/x', '{"nope":1}')).toMatchObject({ status: 400 });
+    expect(await raw('POST', '/v1/state/email/x', '{"value":1}')).toMatchObject({ status: 405 });
+    expect(await raw('PUT', '/v1/state/a%2Fb/c%20d', '{"value":null}')).toMatchObject({
+      status: 200,
+      body: { namespace: 'a/b', key: 'c d', value: null },
+    });
+  });
+
+  it('feeds ${state...} templates and state_updates', async () => {
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      TASKS +
+        `  - name: cursor
+    trigger: { kind: manual }
+    action: { kind: shell, cmd: ["echo", "since=\${state.email.last_uid}"] }
+    state_updates: { email.last_uid: "\${event.payload.uid}" }
+`,
+    );
+    daemon.reload();
+    await api.putState('email', 'last_uid', 1);
+    const { run } = await api.run('cursor', { payload: { uid: 9 } });
+    expect(await settled(run.id)).toMatchObject({ status: 'succeeded', result: 'since=1' });
+    expect((await api.getState('email', 'last_uid'))?.value).toBe(9);
+  });
+});

@@ -44,6 +44,30 @@ export const MIGRATIONS: readonly string[] = [
   );
   INSERT INTO cursors (name, seq) VALUES ('dispatch', 0);
   `,
+  `
+  CREATE TABLE state (
+    namespace  TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (namespace, key)
+  );
+
+  CREATE TABLE waits (
+    run_id     TEXT PRIMARY KEY REFERENCES runs(id),
+    task       TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    filter     TEXT,
+    expires_at TEXT,
+    on_timeout TEXT NOT NULL CHECK (on_timeout IN ('fail','succeed')),
+    resume     TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    outcome    TEXT,
+    event_id   TEXT
+  );
+  CREATE INDEX waits_type ON waits(type);
+  CREATE INDEX waits_expires ON waits(expires_at);
+  `,
 ];
 
 export function migrate(db: Database): void {

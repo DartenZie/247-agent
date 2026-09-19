@@ -5,6 +5,7 @@ import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
 import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import type { Core } from '../core.js';
+import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 
 /**
@@ -96,6 +97,9 @@ export const RunBody = z.strictObject({
   correlation_id: z.string().min(1).optional(),
 });
 
+/** `PUT /v1/state/{ns}/{key}`. */
+export const PutStateBody = z.strictObject({ value: z.json() });
+
 const ListRunsQuery = z.strictObject({
   status: z.enum(RUN_STATUSES).optional(),
   task: z.string().min(1).optional(),
@@ -181,8 +185,34 @@ function getEvent(ctx: RouteContext, id: string): ApiResponse {
   return { status: 200, body: event as unknown as JsonValue };
 }
 
+function getState(ctx: RouteContext, ns: string, key: string): ApiResponse {
+  const entry: StateEntry | undefined = ctx.core.store.state.get(ns, key);
+  if (entry === undefined) {
+    throw new ApiError(404, `no state for ${ns}/${key}`);
+  }
+  return { status: 200, body: entry as unknown as JsonValue };
+}
+
+function putState(ctx: RouteContext, ns: string, key: string, body: unknown): ApiResponse {
+  const input = parse(PutStateBody, body, 'state value');
+  const now = ctx.clock.now().toISOString();
+  ctx.core.store.state.put(ns, key, input.value, now);
+  return { status: 200, body: { namespace: ns, key, value: input.value, updated_at: now } };
+}
+
+function deleteState(ctx: RouteContext, ns: string, key: string): ApiResponse {
+  return { status: 200, body: { deleted: ctx.core.store.state.delete(ns, key) } };
+}
+
+function listState(ctx: RouteContext, ns: string): ApiResponse {
+  const entries: StateEntry[] = ctx.core.store.state.list(ns);
+  return { status: 200, body: { entries: entries as unknown as JsonValue } };
+}
+
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
 const EVENT_PATH = /^\/v1\/events\/([^/]+)$/;
+const STATE_NS_PATH = /^\/v1\/state\/([^/]+)$/;
+const STATE_KEY_PATH = /^\/v1\/state\/([^/]+)\/([^/]+)$/;
 
 /** Throws `ApiError` for client errors; anything else is a 500 for the server to map. */
 export function route(ctx: RouteContext, req: ApiRequest): ApiResponse {
@@ -208,6 +238,26 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse {
   if (event?.[1] !== undefined) {
     const id = event[1];
     return only(method, 'GET', () => getEvent(ctx, id));
+  }
+  const stateKey = STATE_KEY_PATH.exec(path);
+  if (stateKey?.[1] !== undefined && stateKey[2] !== undefined) {
+    const ns = decodeURIComponent(stateKey[1]);
+    const key = decodeURIComponent(stateKey[2]);
+    switch (method) {
+      case 'GET':
+        return getState(ctx, ns, key);
+      case 'PUT':
+        return putState(ctx, ns, key, req.body);
+      case 'DELETE':
+        return deleteState(ctx, ns, key);
+      default:
+        throw new ApiError(405, `method ${method} not allowed; use GET, PUT or DELETE`);
+    }
+  }
+  const stateNs = STATE_NS_PATH.exec(path);
+  if (stateNs?.[1] !== undefined) {
+    const ns = decodeURIComponent(stateNs[1]);
+    return only(method, 'GET', () => listState(ctx, ns));
   }
   throw new ApiError(404, `no route for ${method} ${path}`);
 }

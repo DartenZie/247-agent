@@ -8,6 +8,7 @@ import type { ActionRunner, ActionRunners } from './actions/types.js';
 import { taskSource } from './bus/matcher.js';
 import { ConfigLoadError, createCore, type Core } from './core.js';
 import { createLogger } from './log.js';
+import { staticSecrets } from './secrets/secrets.js';
 
 /** Runs stay `running` until the core stops, so these tests see what was dispatched. */
 const hang: ActionRunner = (_a, ctx) =>
@@ -31,20 +32,21 @@ let dir: string;
 let core: Core;
 let lines: Record<string, unknown>[];
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'oa-core-'));
   writeFileSync(join(dir, 'tasks.yaml'), readFileSync(EXAMPLE));
   lines = [];
   core = createCore({
-    tasksFile: join(dir, 'tasks.yaml'),
+    tasksFiles: [join(dir, 'tasks.yaml')],
     dbPath: join(dir, 'state.db'),
     log: createLogger({
       level: 'debug',
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
     }),
     runners: hangAll,
+    secrets: staticSecrets({ ftp_pass: 'x' }),
   });
-  core.start();
+  await core.start();
 });
 
 afterEach(async () => {
@@ -158,12 +160,13 @@ describe('createCore with the reference workflow', () => {
     });
     await core.stop(); // before the wake ran
     core = createCore({
-      tasksFile: join(dir, 'tasks.yaml'),
+      tasksFiles: [join(dir, 'tasks.yaml')],
       dbPath: join(dir, 'state.db'),
       log: createLogger({ sink: () => undefined }),
       runners: hangAll,
+      secrets: staticSecrets({ ftp_pass: 'x' }),
     });
-    core.start();
+    await core.start();
     expect(started()).toEqual(['publish_site']);
   });
 
@@ -173,13 +176,11 @@ describe('createCore with the reference workflow', () => {
       'tasks:\n  - name: a\n    trigger: { kind: cron, schedule: nope }\n    action: { kind: shell, cmd: ["true"] }\n',
     );
     const broken = createCore({
-      tasksFile: join(dir, 'bad.yaml'),
+      tasksFiles: [join(dir, 'bad.yaml')],
       dbPath: join(dir, 'other.db'),
       log: createLogger({ sink: () => undefined }),
     });
-    expect(() => {
-      broken.start();
-    }).toThrow(ConfigLoadError);
+    await expect(broken.start()).rejects.toThrow(ConfigLoadError);
     await broken.stop();
   });
 });

@@ -4,7 +4,10 @@ import { z } from 'zod';
 import type { JsonValue } from '../store/types.js';
 import type { ActionContext } from './types.js';
 
-/** ARCHITECTURE §5.1. `${…}` templating and `user:` are not applied yet: values run as written. */
+/**
+ * ARCHITECTURE §5.1. `cmd`, `cwd`, `env` and `stdin` take `${…}` templates; `cmd`, `cwd`
+ * and `env` values render to strings, `stdin` to its raw value. `user:` is not supported.
+ */
 export const ShellAction = z.strictObject({
   kind: z.literal('shell'),
   /** argv; no shell unless you spell it out (`["bash", "-c", "…"]`). */
@@ -60,24 +63,26 @@ function abortReason(signal: AbortSignal): Error {
  */
 export async function runShell(action: unknown, ctx: ActionContext): Promise<JsonValue> {
   const cfg = ShellAction.parse(action);
-  const [file, ...args] = cfg.cmd;
+  const [file, ...args] = cfg.cmd.map((s) => ctx.renderText(s));
   if (file === undefined) {
     throw new ShellError('cmd is empty', undefined, ''); // unreachable: schema requires one
   }
   if (ctx.signal.aborted) {
     throw abortReason(ctx.signal);
   }
-  const input =
-    cfg.stdin === undefined
+  const cwd = cfg.cwd === undefined ? undefined : ctx.renderText(cfg.cwd);
+  const env =
+    cfg.env === undefined
       ? undefined
-      : typeof cfg.stdin === 'string'
-        ? cfg.stdin
-        : JSON.stringify(cfg.stdin);
+      : Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, ctx.renderText(v)]));
+  const stdin = ctx.render(cfg.stdin);
+  const input =
+    stdin === undefined ? undefined : typeof stdin === 'string' ? stdin : JSON.stringify(stdin);
 
   const startedAt = Date.now();
   const subprocess = execa(file, args, {
-    ...(cfg.cwd === undefined ? {} : { cwd: cfg.cwd }),
-    ...(cfg.env === undefined ? {} : { env: cfg.env }),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(env === undefined ? {} : { env }),
     ...(input === undefined ? {} : { input }),
     maxBuffer: MAX_BUFFER,
     reject: false,

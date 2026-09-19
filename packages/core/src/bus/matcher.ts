@@ -1,6 +1,7 @@
 import type { TaskConfig, TasksFileConfig } from '../config/schema.js';
 import { compileTypePattern, type TypeMatcher } from '../expr/glob.js';
 import { compileFilter, type Filter } from '../expr/jmespath.js';
+import { collectTemplateRefs } from '../expr/template.js';
 import type { Logger } from '../log.js';
 import type { EventRecord } from '../store/types.js';
 
@@ -18,6 +19,8 @@ export interface CompiledTask {
   readonly kind: 'cron' | 'event' | 'manual';
   /** Cron only: skip a tick while a run for this task is queued, running or waiting. */
   readonly overlapSkip: boolean;
+  /** Secrets the action's templates name (`${secrets.<name>}`), resolved per run. */
+  readonly secretNames: readonly string[];
   /** Pure except for a warn log when a filter throws at evaluation time. */
   matches(event: EventRecord, log?: Logger): boolean;
 }
@@ -78,6 +81,7 @@ export function compileTask(task: TaskConfig): CompiledTask {
     config: task,
     kind: trigger.kind,
     overlapSkip: trigger.kind === 'cron' && trigger.overlap === 'skip',
+    secretNames: collectTemplateRefs(task.action).secrets,
     matches: (event, log) => {
       // A task never triggers on events its own runs produced.
       if (event.source === own) {

@@ -246,7 +246,7 @@ describe('Executor', () => {
     env.store.runs.setStatus(runB?.id ?? '', 'running', { started_at: 'earlier', attempt: 1 });
 
     const ex = make();
-    expect(ex.start()).toEqual({ interrupted: 1, resumed: 1 });
+    expect(ex.start()).toEqual({ interrupted: 1, resumed: 1, waiting: 0 });
     await ex.idle();
 
     expect(env.store.runs.getByTaskAndEvent('echo', a.id)).toMatchObject({
@@ -295,7 +295,7 @@ describe('Executor', () => {
     expect(env.lines.some((l) => l.msg === 'run.abandoned')).toBe(true);
 
     // The next start recovers both, as after a crash.
-    expect(ex.start()).toEqual({ interrupted: 1, resumed: 1 });
+    expect(ex.start()).toEqual({ interrupted: 1, resumed: 1, waiting: 0 });
     await tick();
     d.finish('ok');
     await ex.idle();

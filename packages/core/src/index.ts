@@ -5,17 +5,60 @@ export { createLogger, nullLogger, type Logger, type LogFields, type LogLevel } 
 
 export {
   Action,
+  EmitRule,
+  Retry,
   Task,
   TasksFile,
   Trigger,
   type CronTriggerConfig,
+  type EmitRuleConfig,
   type EventTriggerConfig,
   type ManualTriggerConfig,
+  type RetryConfig,
   type TaskConfig,
   type TasksFileConfig,
   type TriggerConfig,
 } from './config/schema.js';
-export { loadTasksFile, parseTasks, type ConfigIssue, type LoadResult } from './config/load.js';
+export {
+  expandConfigPaths,
+  loadConnectors,
+  loadTasks,
+  loadTasksFile,
+  parseTasks,
+  type ConfigIssue,
+  type ConnectorsLoadResult,
+  type LoadResult,
+  type TasksLoadResult,
+} from './config/load.js';
+export {
+  ConnectorManifest,
+  loadManifestFile,
+  parseManifest,
+  type ConnectorConfig,
+  type ConnectorLoadResult,
+  type ConnectorManifestConfig,
+} from './config/connector.js';
+export {
+  compileTemplate,
+  collectTemplateRefs,
+  evaluateExpr,
+  renderTemplate,
+  renderText,
+  renderValue,
+  validateTemplate,
+  TemplateRenderError,
+  TemplateSyntaxError,
+  type Template,
+  type TemplateRefs,
+  type TemplateScope,
+} from './expr/template.js';
+export {
+  createSecretsBackend,
+  staticSecrets,
+  SecretError,
+  SecretsConfig,
+  type SecretsBackend,
+} from './secrets/secrets.js';
 export { formatLoadResult } from './config/format.js';
 export { parseDuration, DURATION } from './config/duration.js';
 
@@ -43,16 +86,50 @@ export {
 export { Dispatcher, type DispatchResult, type QueuedListener } from './bus/dispatcher.js';
 export { runTaskManually, UnknownTaskError, type ManualInput } from './bus/manual.js';
 export { CronScheduler, makeTickEvent, type ScheduledJob } from './scheduler/cron.js';
-export type { ActionContext, ActionKind, ActionRunner, ActionRunners } from './actions/types.js';
+export {
+  isRetryable,
+  NonRetryableError,
+  withScope,
+  type ActionContext,
+  type ActionKind,
+  type ActionRunner,
+  type ActionRunners,
+  type ConnectorClients,
+  type ResumeInfo,
+  type WaitSpec,
+} from './actions/types.js';
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
+export { runConnector, ConnectorAction, type ConnectorActionConfig } from './actions/connector.js';
+export { runWait, WaitAction, WaitTimeoutError, type WaitActionConfig } from './actions/wait.js';
+export {
+  runSequence,
+  SequenceAction,
+  SequenceStep,
+  type SequenceActionConfig,
+  type SequenceStepConfig,
+} from './actions/sequence.js';
 export {
   Executor,
   RunStoppedError,
+  RunSuspendedError,
   RunTimeoutError,
+  backoffDelay,
   contextEvent,
+  renderEmits,
+  renderStateUpdates,
   type ExecutorOptions,
   type RecoveryResult,
 } from './executor/executor.js';
+export {
+  ConnectorSupervisor,
+  ConnectorDownError,
+  ConnectorOpError,
+  toolResultToJson,
+  type ConnectorStatus,
+  type SupervisorOptions,
+} from './connectors/supervisor.js';
+export type { StateEntry, StateSnapshot } from './store/state.js';
+export type { WaitRecord, WaitOutcome } from './store/waits.js';
 export {
   createCore,
   defaultRunners,
@@ -69,11 +146,12 @@ export {
   type AgentFileConfig,
   type AgentLoadResult,
 } from './config/agent.js';
-export { checkConfigFile, formatCheck, type FileCheck } from './config/check.js';
+export { checkConfigFile, formatCheck, type FileCheck, type FileKind } from './config/check.js';
 export type { RunFilter } from './store/runs.js';
 export {
   route,
   EmitBody,
+  PutStateBody,
   RunBody,
   ApiError as ApiRouteError,
   type ApiRequest,
@@ -90,4 +168,11 @@ export {
   DEFAULT_SOCKET,
   type ApiClientOptions,
 } from './api/client.js';
-export { startDaemon, AgentConfigError, type Daemon, type DaemonOptions } from './daemon.js';
+export {
+  startDaemon,
+  templateEnv,
+  AgentConfigError,
+  ConnectorConfigError,
+  type Daemon,
+  type DaemonOptions,
+} from './daemon.js';

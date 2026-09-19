@@ -22,6 +22,12 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Test fixtures are run by Node straight from source (`node fixture.ts`) and import the
+    // connector SDK by relative `.ts` path, so they sit outside every tsconfig project.
+    files: ['packages/*/test/fixtures/**/*.ts'],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
   // Must come last: eslint-config-prettier switches off formatting rules, and `quotes` and
   // `curly` are the two it lets us re-enable (Prettier is configured with singleQuote and
   // never removes braces, so they don't conflict).

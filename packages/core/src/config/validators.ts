@@ -2,6 +2,7 @@ import { Cron } from 'croner';
 
 import { validateTypePattern as validatePattern } from '../expr/glob.js';
 import { validateJmespath as validateJmes } from '../expr/jmespath.js';
+import { validateTemplate as validateTpl } from '../expr/template.js';
 
 /**
  * Pure semantic checks run from zod refinements. Each returns an error message or null.
@@ -47,4 +48,9 @@ export function validateEventType(type: string): string | null {
 
 export function validateJmespath(expr: string): string | null {
   return validateJmes(expr);
+}
+
+/** A `${…}` template string: every expression must parse. */
+export function validateTemplate(text: string): string | null {
+  return validateTpl(text);
 }

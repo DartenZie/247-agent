@@ -3,17 +3,21 @@ import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 
 import { parseAgent } from './agent.js';
-import { loadTasksFile, parseTasks, type ConfigIssue } from './load.js';
+import { loadManifestFile, looksLikeManifest } from './connector.js';
+import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
+
+export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
 
 /** One validated file, as `oa validate` reports it. */
 export type FileCheck =
-  | { ok: true; file: string; kind: 'tasks' | 'agent'; summary: string }
-  | { ok: false; file: string; kind: 'tasks' | 'agent' | 'unknown'; issues: ConfigIssue[] };
+  | { ok: true; file: string; kind: FileKind; summary: string }
+  | { ok: false; file: string; kind: FileKind; issues: ConfigIssue[] };
 
 /**
- * Validates one config file of either kind. A document whose top-level `tasks` is a list is
- * a tasks file; anything else is an `agent.yaml` (where `tasks` is a path), whose referenced tasks file is checked too,
- * so `oa validate agent.yaml` covers the whole config.
+ * Validates one config file of any kind. A document whose top-level `tasks` is a list is a
+ * tasks file; one with `name` and `exec` is a connector manifest; anything else is an
+ * `agent.yaml` (where `tasks` is a path), whose tasks files and connector manifests are
+ * checked too, so `oa validate agent.yaml` covers the whole config.
  */
 export function checkConfigFile(path: string): FileCheck[] {
   let text: string;
@@ -30,7 +34,13 @@ export function checkConfigFile(path: string): FileCheck[] {
     const message = err instanceof Error ? err.message : String(err);
     return [fail(path, 'unknown', [{ path: '', message: `YAML syntax error: ${message}` }])];
   }
-  if (doc !== null && typeof doc === 'object' && 'tasks' in doc && Array.isArray(doc.tasks)) {
+  if (
+    doc !== null &&
+    typeof doc === 'object' &&
+    'tasks' in doc &&
+    Array.isArray(doc.tasks) &&
+    doc.tasks.every((t: unknown) => typeof t !== 'string') // agent.yaml lists paths there
+  ) {
     const r = parseTasks(text, path);
     return [
       r.ok
@@ -38,25 +48,58 @@ export function checkConfigFile(path: string): FileCheck[] {
         : fail(path, 'tasks', r.issues),
     ];
   }
+  if (looksLikeManifest(doc)) {
+    const r = loadManifestFile(path);
+    return [
+      r.ok
+        ? { ok: true, file: path, kind: 'connector', summary: `connector ${r.config.name}` }
+        : fail(path, 'connector', r.issues),
+    ];
+  }
   const r = parseAgent(text, path);
   if (!r.ok) {
     return [fail(path, 'agent', r.issues)];
   }
-  const tasks = loadTasksFile(r.config.tasks);
-  return [
-    { ok: true, file: path, kind: 'agent', summary: `tasks ${r.config.tasks}` },
-    tasks.ok
-      ? {
-          ok: true,
-          file: tasks.file,
-          kind: 'tasks',
-          summary: `${String(tasks.config.tasks.length)} tasks`,
-        }
-      : fail(tasks.file, 'tasks', tasks.issues),
+  const out: FileCheck[] = [
+    {
+      ok: true,
+      file: path,
+      kind: 'agent',
+      summary: `tasks ${r.config.tasks.join(', ')}${
+        r.config.connectorPaths.length === 0
+          ? ''
+          : `; connectors ${r.config.connectorPaths.join(', ')}`
+      }`,
+    },
   ];
+  const tasks = loadTasks(r.config.tasks);
+  for (const f of tasks.files) {
+    out.push(
+      f.ok
+        ? {
+            ok: true,
+            file: f.file,
+            kind: 'tasks',
+            summary: `${String(f.config.tasks.length)} tasks`,
+          }
+        : fail(f.file, 'tasks', f.issues),
+    );
+  }
+  const connectors = loadConnectors(r.config.connectorPaths, r.config.connectors);
+  for (const f of connectors.files) {
+    if (f.file === r.config.file) {
+      continue; // inline manifests were validated with agent.yaml itself
+    }
+    out.push(
+      f.ok
+        ? { ok: true, file: f.file, kind: 'connector', summary: `connector ${f.name ?? ''}` }
+        : fail(f.file, 'connector', f.issues ?? []),
+    );
+  }
+  return out;
 }
 
-function fail(file: string, kind: FileCheck['kind'], issues: ConfigIssue[]): FileCheck {
+function fail(file: string, kind: FileKind, issues: ConfigIssue[]): FileCheck {
   return { ok: false, file, kind, issues };
 }
 
