@@ -1,0 +1,70 @@
+# online-agent
+
+A 24/7, config-driven automation daemon for a single Linux server. Tasks are declared in
+YAML: each has a trigger (cron, event, manual) and an action (`shell`, `connector`, `llm`,
+`agent`, `wait`, `sequence`). Deterministic work never touches a model; model calls are
+tiered and budgeted per task. Sub-programs ("connectors") emit events to the core and
+expose operations as MCP servers.
+
+Read `docs/ARCHITECTURE.md` before changing anything structural. It is the source of
+truth for concepts, action semantics, the connector protocol and the config format.
+`docs/examples/orchestra-website.yaml` is the reference workflow; keep it valid.
+
+## Stack (decided)
+
+- TypeScript, Node.js 22 LTS, npm workspaces. Strict TS, ESM.
+- SQLite via `better-sqlite3` (WAL). Config schemas with `zod`. Cron with `croner`.
+  Expressions with `jmespath`. Subprocesses with `execa`.
+- LLM: `@anthropic-ai/sdk` for `llm` actions (structured outputs via
+  `client.messages.parse()` / `output_config.format`), `@anthropic-ai/claude-agent-sdk`
+  for `agent` actions. MCP client from `@modelcontextprotocol/sdk`.
+- Target runtime: systemd service on Linux, HTTP API over a Unix socket.
+
+## Layout
+
+```
+src/packages/core/           daemon: config, store, bus, actions, connectors, api, expr
+src/packages/cli/            `oa` command, talks to the core socket
+src/packages/connector-sdk/  helpers for writing TS connectors
+src/connectors/<name>/       one package per connector (email, chat, ...)
+docs/                        ARCHITECTURE.md, examples/
+```
+
+## Rules
+
+- Everything goes through events. Tasks reference event types, never other tasks.
+  Do not add direct task-to-task calls.
+- No LLM in the core's control flow. Matching, dedup, routing, retries, publishing are
+  code. A model call happens only inside an `llm` or `agent` action.
+- Every model call records usage in the ledger and respects the task's `budget` and the
+  global daily cap. Never add an unbudgeted call.
+- Agents run in a fresh git worktree with an explicit tool/bash allowlist, produce a
+  `RESULT.json`, and pass deterministic `post` gates. Agents never hold deploy secrets
+  and never publish.
+- Secrets are resolved by name from the configured backend at run time. Never write them
+  to the DB, run logs, or event payloads.
+- Config changes must keep `oa validate` passing on `docs/examples/*.yaml`.
+- Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
+  and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
+  assistant prefill (rejected on current models). Don't append date suffixes to IDs.
+
+## Commands
+
+```
+npm install
+npm run build          # tsc -b across workspaces
+npm test               # vitest
+npm run lint           # eslint + prettier check
+node src/packages/cli/dist/main.js validate docs/examples/orchestra-website.yaml
+```
+
+(Scripts exist once the scaffold lands; keep this list in sync with `package.json`.)
+
+## Conventions
+
+- Small modules, one action runner per file under `src/packages/core/src/actions/`.
+- Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and fake
+  connectors, never the network or a real model.
+- Log lines are structured JSON with `run_id`, `task`, `correlation_id`.
+- When the architecture and the code disagree, fix one of them in the same change and say
+  which.

@@ -1,0 +1,494 @@
+# Online-Agent — Architecture
+
+A 24/7, config-driven automation daemon for a Linux server. Deterministic work runs as
+code; the LLM is called only where judgement is needed, at the cheapest tier that does
+the job.
+
+## 1. Goals and non-goals
+
+Goals
+
+- **Everything is a task in a config file.** A task = one trigger + one action + routing
+  of its result. No code changes to add a workflow.
+- **Three action tiers with very different cost:** `shell` (no LLM), `llm` (one model call,
+  no loop), `agent` (agentic loop with tools). Plus `connector` (call a sub-program op)
+  and `wait` (block until an event, e.g. human approval).
+- **Sub-programs ("connectors") plug into the core through one interface**, in any language.
+- **Cheap by construction:** filtering, deduplication, routing, publishing and retries never
+  touch a model. Every model call has a model, effort, turn and token budget in config.
+- **Durable and observable:** every event and run is persisted; a crash never loses an
+  email or re-runs a finished job.
+
+Non-goals
+
+- Not a general workflow engine with a UI (see §2 for why we don't adopt one).
+- Not multi-node. One server, one process, SQLite. Scale-out is out of scope.
+
+## 2. Reuse vs. build
+
+| Candidate | Verdict |
+|---|---|
+| n8n / Node-RED / Windmill / Huginn | Trigger→action model fits, but they are UI-first, workflows are opaque JSON, and "an agent that edits a checkout and runs a build" is awkward to express. Heavy runtime (Postgres, Node) for one server. |
+| Temporal / Airflow / Prefect | Durable orchestration, but workflows are code (Temporal) or batch DAGs (Airflow). Overkill and not config-driven. |
+| systemd timers + scripts | Fine for cron, no event chaining, no state, no LLM budgets. |
+| Anthropic Managed Agents (scheduled deployments) | Solid option for the `agent` tier if you prefer Anthropic to host the sandbox. Rejected as the *core* because the FTP target, credentials and site checkout live on your server, and cost control wants local gating. Kept as an alternative `agent.runtime` (§5.3). |
+
+**Decision:** build a small core (~2–3k lines) and reuse aggressively underneath it:
+
+- **systemd** for process supervision, timers are *not* used (the core owns cron so it can
+  emit events).
+- **SQLite (WAL)** as event log, run history, KV state and cost ledger.
+- **MCP (Model Context Protocol)** as the *operations* half of the connector interface.
+  Existing MCP servers (GitHub, Jira, IMAP, filesystem…) become connectors for free.
+- **Anthropic Messages API** with structured outputs for `llm` actions.
+- **Claude Agent SDK** (or `claude -p` headless) as the agent loop for `agent` actions:
+  file edit, bash, MCP, permissions, max-turns and prompt caching are already solved.
+- **croner** (cron parsing/scheduling), **zod** (config schema + validation, and the
+  same schemas feed `betaZodTool` / structured outputs), **jmespath** (expressions),
+  **better-sqlite3** (synchronous SQLite, WAL), **@modelcontextprotocol/sdk** (MCP client
+  for connector ops), **execa** (subprocesses).
+
+Language: **TypeScript on Node.js 22 LTS** (decided). Reasons: `@anthropic-ai/sdk` and
+`@anthropic-ai/claude-agent-sdk` are first-class here, the MCP reference SDK is TypeScript,
+and `claude` itself is a Node program, so one runtime serves core, agent runtime and most
+connectors. Connectors remain language-agnostic (§6).
+
+## 3. Core concepts
+
+```
+Connector ──emits──▶ Event ──matches──▶ Trigger ──starts──▶ Run(Task) ──result──▶ Event(s)
+   ▲                                                            │
+   └──────────────── ops (MCP tool calls) ◀──────────────────────┘
+```
+
+**Event** — the only thing that flows through the system.
+
+```json
+{ "id": "evt_01J…", "type": "email.received", "source": "email",
+  "ts": "2026-09-19T10:00:00Z", "correlation_id": "cor_…",
+  "parent_id": "evt_…", "dedup_key": "email:<msg-id>",
+  "payload": { "from": "…", "subject": "…", "body": "…" } }
+```
+
+- `correlation_id` threads one real-world happening (an email) through every task it
+  triggers, so runs, costs and logs can be traced end-to-end and approvals can resume.
+- `dedup_key` makes delivery idempotent: a second event with the same key is dropped.
+
+**Trigger** — what starts a task.
+
+| kind | config | produces |
+|---|---|---|
+| `cron` | `schedule: "*/5 * * * *"` | one run per tick (skipped if the previous is still running, unless `overlap: allow`) |
+| `event` | `type: email.received` (or `type_any: [...]`, globs allowed: `task.*.failed`), optional `filter: <JMESPath>` | one run per matching event |
+| `manual` | — | via CLI `oa run <task>` |
+
+"Output of another task" is just an `event` trigger on `task.<name>.succeeded` or on any
+event the task emitted. Tasks never reference each other directly; they are decoupled
+through event types. That is what makes the config composable.
+
+**Task** — `name`, `trigger`, `action`, `emit` (routing of the result), plus policy:
+`timeout`, `retry`, `concurrency`, `budget`, `on_failure`.
+
+**Run** — one execution of a task for one event. Persisted with status
+`queued | running | waiting | succeeded | failed | cancelled`, input event, result,
+usage/cost, logs, and the agent transcript if any.
+
+**Connector** — a separate process that can (a) emit events into the core and/or
+(b) expose operations as MCP tools. §6.
+
+## 4. Runtime components
+
+One daemon, `online-agent-core`, with these internal modules:
+
+| Module | Responsibility |
+|---|---|
+| **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP (running runs finish under the old config). |
+| **Scheduler** | Cron → `cron.tick` events (with task name in payload). Also fires `wait` timeouts. |
+| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs. At-least-once + `dedup_key` = effectively once. |
+| **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). |
+| **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Delegates to an *action runner* per kind. |
+| **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). |
+| **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
+| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`): `POST /v1/events`, `GET/PUT /v1/state/…`, `GET /v1/runs`, `POST /v1/runs` (manual), `GET /v1/health`. Also what the CLI talks to. |
+| **Connector supervisor** | Spawns configured connectors as child processes (or defers to systemd units), restarts with backoff, passes the socket path + secrets via env. |
+
+Everything is in-process and single-node on purpose. If a queue is ever needed, the event
+store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams).
+
+## 5. Action types
+
+All actions receive a **context**: `event` (the triggering event), `task` (config), `state`
+(KV), `secrets` (named refs resolved at run time), and return a JSON **result** which the
+core turns into `task.<name>.succeeded` + any `emit` events. Templates use `${ <JMESPath> }`
+against `{event, result, state, env}`.
+
+### 5.1 `shell` — deterministic step, zero LLM
+
+```yaml
+action:
+  kind: shell
+  cmd: ["lftp", "-e", "mirror -R --delete site/ /public_html; quit", "sftp://${secrets.ftp_user}@ftp.example.cz"]
+  cwd: ${state.site_worktree}
+  env: { LFTP_PASSWORD: ${secrets.ftp_pass} }
+  stdin: ${event.payload}          # optional, JSON on stdin
+  result: json_stdout | text_stdout | exit_code
+```
+
+Runs as the service user (or `user:` override), with `timeout`, stdout/stderr captured
+into the run log. Result is parsed JSON from stdout when `result: json_stdout`.
+
+### 5.2 `llm` — single model call, structured output, no loop
+
+```yaml
+action:
+  kind: llm
+  model: claude-haiku-4-5          # cheapest tier that passes the eval for this task
+  effort: low                      # Opus/Sonnet 5 only; ignored on Haiku 4.5
+  max_tokens: 512
+  system_file: prompts/classify_orchestra_email.md   # stable → prompt-cached
+  input: |
+    From: ${event.payload.from}
+    Subject: ${event.payload.subject}
+
+    ${event.payload.body}
+  output_schema:                   # → output_config.format (structured outputs)
+    type: object
+    required: [kind, summary]
+    additionalProperties: false
+    properties:
+      kind: { enum: [event_list_update, general_change, ignore] }
+      summary: { type: string }
+      confidence: { type: number }
+```
+
+Implementation: `client.messages.parse()` / `output_config.format` with the schema; the
+result is guaranteed to validate. System prompt first with a cache breakpoint, volatile
+input last. Usage from `response.usage` goes to the ledger. Optional `batch: true` routes
+non-urgent tasks through the Message Batches API at half price (results arrive async as
+events, which the model of this system handles naturally).
+
+### 5.3 `agent` — agentic loop with tools, sandboxed
+
+```yaml
+action:
+  kind: agent
+  runtime: claude-agent-sdk        # | claude-cli | managed-agents
+  model: claude-sonnet-5
+  effort: medium
+  max_turns: 40
+  budget: { max_usd: 1.50 }        # hard stop; run → failed, on_failure fires
+  workspace:
+    kind: git-worktree             # fresh worktree per run; discarded on failure
+    repo: /var/lib/online-agent/repos/orchestra-site
+    branch: main
+  tools: [Read, Edit, Write, Glob, Grep, Bash]
+  bash_allow: ["npm run build", "npm test", "git status", "git diff"]
+  mcp_servers: [email]             # connectors exposed as tools (§6)
+  system_file: prompts/agent_event_list.md
+  prompt: |
+    Add/modify the concert events described in the email below in data/events.yaml
+    and nothing else. Run `npm run build` before finishing.
+
+    ${event.payload.body}
+  result:
+    from: file                     # agent writes RESULT.json in the workspace
+    path: RESULT.json
+    schema: schemas/site_change.json
+  post:                            # deterministic gates, no LLM
+    - shell: ["npm", "run", "build"]
+    - shell: ["git", "commit", "-am", "agent: ${result.summary}"]
+```
+
+Notes
+
+- The **agent never publishes**. It edits a worktree, a build gate proves it didn't break
+  anything, a commit records it, and a separate `shell` task ships it. Rollback is
+  `git revert` + republish.
+- The **agent never sees deploy credentials**. Secrets are injected only into the actions
+  that need them.
+- `tools` + `bash_allow` + `mcp_servers` is the entire capability surface. Two tasks
+  with different intelligence needs are the same action kind with a different
+  `model`/`effort`/`max_turns`/`system_file`.
+- `runtime: claude-cli` runs `claude -p … --output-format json --max-turns N --allowedTools …`
+  as a subprocess; `claude-agent-sdk` does the same in-process with hooks for per-tool
+  approval/logging; `managed-agents` submits a session to Anthropic's hosted sandbox with
+  the repo mounted and gets the diff back. Same config, swappable runtime.
+
+### 5.4 `connector` — call one operation on a sub-program
+
+```yaml
+action:
+  kind: connector
+  connector: email
+  op: fetch_new                    # an MCP tool name
+  args: { folder: INBOX, since_cursor: ${state.email_cursor} }
+```
+
+This is how "cron → fetch emails" works without any LLM: the core is an MCP client.
+
+### 5.5 `wait` — suspend the run until an event arrives (human in the loop)
+
+```yaml
+action:
+  kind: wait
+  for: { type: chat.reply, filter: "payload.correlation_id == `${event.correlation_id}` && payload.approved == `true`" }
+  timeout: 24h
+  on_timeout: fail
+```
+
+Combined with a `connector` action that calls `chat.ask("Apply this change? …")`, this is
+an approval gate. The run sits in `waiting` in SQLite, survives restarts, and resumes when
+the chat connector emits the reply.
+
+### 5.6 `sequence` — a few steps in one run, without inventing events for each
+
+```yaml
+action:
+  kind: sequence
+  steps:
+    - { kind: connector, connector: chat, op: ask, args: { text: "Approve?" } }
+    - { kind: wait, for: { type: chat.reply, filter: "…" }, timeout: 24h }
+    - { kind: shell, when: "steps[1].payload.approved == `true`", cmd: [git, push] }
+```
+
+Steps share one run and one workspace; `steps[i]` exposes earlier results. Use it for
+tightly coupled steps (ask → wait → act). Use separate tasks and events for anything that
+another workflow might want to reuse or observe.
+
+### 5.7 Routing: `emit`
+
+Every task emits `task.<name>.succeeded|failed` automatically. `emit` adds domain events,
+including fan-out:
+
+```yaml
+emit:
+  - type: email.received
+    each: ${result.emails}         # one event per item
+    dedup_key: "email:${item.message_id}"
+    payload: ${item}
+  - type: orchestra.classified
+    when: "result.kind != 'ignore'"
+    payload: { kind: ${result.kind}, summary: ${result.summary}, email: ${event.payload} }
+```
+
+## 6. Connector interface (sub-programs)
+
+A connector is any executable with a manifest. It may implement one or both halves.
+
+```yaml
+# connectors.d/email.yaml
+name: email
+exec: ["node", "src/connectors/email/dist/main.js"]  # or any executable, any language
+transport: stdio                                     # MCP transport for ops: stdio | http
+emits: [email.received]                              # documented, schema-checked
+ops: [fetch_new, mark_read, send]                    # MCP tools it serves
+config: { host: imap.example.cz, user: ${secrets.imap_user}, folder: INBOX }
+health: { interval: 60s }
+```
+
+**Events out (connector → core):** `POST http://unix:/run/online-agent/core.sock/v1/events`
+with the Event JSON (core assigns `id`/`ts`, honours `dedup_key`). A one-line curl in
+any language. Push-style connectors (chat bots, webhooks) use this; poll-style ones don't
+need it at all (next point).
+
+**Ops in (core → connector):** the connector is an **MCP server**. The core holds one
+client connection; agent runs get the same server passed in their MCP config. So one
+implementation of `email.send` serves both a deterministic task and an agent.
+
+**Turning any MCP tool into an event source:** the built-in `poller` connector runs on a
+cron, calls `connector.op`, diffs the result against KV by `item_key`, and emits one event
+per new item. This is exactly the "cron → fetch emails → filter" flow, with the LLM
+nowhere near it, and it makes off-the-shelf MCP servers (GitHub, Jira) usable as triggers
+without writing a poller for each.
+
+**State:** `GET/PUT /v1/state/{connector}/{key}` so connectors stay stateless processes
+(IMAP UID cursor, last seen PR).
+
+**Lifecycle:** spawned by the core supervisor (default) or as a `online-agent-connector@name`
+systemd unit for connectors that need their own privileges. Env provided:
+`OA_CORE_SOCKET`, `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON`, plus resolved secrets.
+
+Planned connectors: `email` (IMAP/SMTP), `chat` (Telegram or Matrix; emits `chat.message`,
+`chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
+their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (built-in).
+
+## 7. Configuration layout
+
+```
+/etc/online-agent/
+  agent.yaml            # global: db path, workers, default model policy, budgets, secrets backend
+  tasks.d/*.yaml        # one file per workflow (a list of tasks)
+  connectors.d/*.yaml   # connector manifests
+  prompts/*.md          # system prompts referenced by tasks (cached, versioned in git)
+  schemas/*.json        # output schemas
+/var/lib/online-agent/
+  state.db              # SQLite: events, runs, state, ledger
+  repos/                # bare/base checkouts used for agent worktrees
+  work/<run_id>/        # per-run worktrees and artifacts (GC'd by retention policy)
+/run/online-agent/core.sock
+```
+
+`agent.yaml` essentials:
+
+```yaml
+db: /var/lib/online-agent/state.db
+workers: 4
+secrets: { backend: systemd-credentials }   # or env, or file
+defaults:
+  llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
+  agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
+  retry: { attempts: 3, backoff: exponential, base: 30s }
+budgets:
+  daily_usd: 10          # global circuit breaker → all llm/agent tasks pause, alert emitted
+retention: { events: 90d, runs: 90d, workspaces: 7d }
+```
+
+The whole `/etc/online-agent` tree is meant to live in a git repo; `oa validate` checks
+it in CI.
+
+## 8. Worked example: orchestra website
+
+See `docs/examples/orchestra-website.yaml`. The flow and what each step costs:
+
+| # | Task | Trigger | Action | LLM? |
+|---|---|---|---|---|
+| 1 | `fetch_email` | cron `*/2 * * * *` | `connector` email.fetch_new → emit `email.received` per mail | no |
+| 2 | `classify_orchestra_email` | `email.received` with filter `payload.from == 'orchestrator@…'` | `llm` Haiku 4.5, schema `{kind, summary}` → emit `orchestra.classified` | 1 call |
+| 3 | `update_event_list` | `orchestra.classified` where `kind == 'event_list_update'` | `agent` Sonnet 5, low turns, only `data/events.yaml` in scope, build gate | small loop |
+| 4 | `update_site_general` | `orchestra.classified` where `kind == 'general_change'` | `agent` Opus 5, higher turns, full repo, build gate, then `wait` for chat approval | bigger loop |
+| 5 | `publish_site` | `task.update_event_list.succeeded` or `task.update_site_general.succeeded` | `shell` lftp mirror | no |
+| 6 | `notify` | `task.*.failed`, `task.publish_site.succeeded` | `connector` chat.send | no |
+
+Everything that can be a filter is a filter (step 2's sender check). Steps 3 and 4 are the
+same action kind; only the config differs.
+
+## 9. Cost control
+
+- **Tiering is config, not code.** `model`, `effort`, `max_turns`, `max_tokens`,
+  `budget.max_usd` per task; defaults in `agent.yaml`.
+- **Before building a model cascade, measure the top model at low effort** on the same
+  task set. On the current generation, lower effort on a stronger model often beats a
+  weaker model at high effort, and one model means one prompt-cache namespace.
+- **Prompt caching by construction:** `system_file` is static and rendered first; the
+  event payload is last. The ledger reports `cache_read_input_tokens` per task so a
+  silently-invalidated cache is visible.
+- **Dedup and filters** guarantee a model call is made at most once per real-world event.
+- **Batch API** for anything that can wait (`batch: true`).
+- **Circuit breakers:** per-task and global daily USD caps; exceeding one pauses the
+  model-backed tasks and emits `budget.exceeded` (which `notify` picks up).
+- **Ledger** table: `run_id, task, model, in_tok, out_tok, cache_read, cache_write, usd`.
+  `oa cost --by task --since 7d`.
+
+## 10. Reliability
+
+- **Durability:** events and runs are committed to SQLite before anything acts on them.
+  On startup, runs left in `running` are retried or failed per `retry`; `waiting` runs are
+  restored.
+- **Delivery:** at-least-once dispatch + `dedup_key` on events + idempotent actions
+  (agent worktree per run, `publish` is a mirror, not an incremental push).
+- **Retries:** per-task policy with backoff; `agent` actions retry with a fresh worktree
+  and the previous failure appended to the prompt (once).
+- **Timeouts:** every action has one; agent timeouts are wall-clock plus `max_turns`.
+- **Concurrency:** `concurrency: 1` default for agent tasks touching the same repo; global
+  worker cap.
+- **Poison events:** after `retry.attempts`, the run is `failed`, `task.<name>.failed`
+  fires, and the event is not redelivered.
+
+## 11. Security
+
+- Core and connectors run as an unprivileged `online-agent` user; systemd hardening
+  (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`).
+- Secrets via `LoadCredential=` (systemd) resolved by name in config; never written to
+  the DB or run logs; injected only into the actions that declare them.
+- **Agent sandbox:** dedicated worktree, explicit tool allowlist, bash allowlist, no deploy
+  credentials, optional `bwrap`/`firejail` wrapper, network restricted to allowed hosts.
+  Build gate + commit before anything leaves the worktree.
+- **Approval gate** (`wait` + chat) is config, so it can be required for high-impact tasks
+  and skipped for routine ones.
+- Inbound content (emails, chat, PR text) is untrusted: it enters prompts as data in a
+  delimited block, and the agent's capability surface, not its prompt, is what limits
+  damage.
+
+## 12. Deployment on Linux
+
+```ini
+# /etc/systemd/system/online-agent.service
+[Service]
+User=online-agent
+ExecStart=/opt/online-agent/bin/online-agent-core --config /etc/online-agent/agent.yaml
+Restart=always
+RestartSec=5
+LoadCredential=anthropic_api_key:/etc/credstore/anthropic_api_key
+LoadCredential=imap_pass:/etc/credstore/imap_pass
+LoadCredential=ftp_pass:/etc/credstore/ftp_pass
+RuntimeDirectory=online-agent
+StateDirectory=online-agent
+ProtectSystem=strict
+NoNewPrivileges=yes
+```
+
+Logs go to journald as structured JSON (`run_id`, `task`, `correlation_id` on every line).
+Optional Prometheus `/metrics` on the socket. CLI:
+
+```
+oa validate                     # config + schema check
+oa run <task> [--event f.json]  # manual trigger
+oa emit <type> <payload.json>   # inject an event
+oa events tail [--type …]
+oa runs ls|show <id>|logs <id>
+oa cost --by task --since 7d
+oa connectors status
+```
+
+## 13. Repository layout
+
+```
+package.json                 # workspaces: src/packages/*, src/connectors/*
+src/packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
+  src/config/                # zod schemas for agent.yaml, tasks, connectors; loader + hot reload
+  src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
+  src/bus/                   # dispatch loop, dedup, cursor
+  src/actions/               # shell.ts, llm.ts, agent.ts, connector.ts, wait.ts, sequence.ts
+  src/connectors/            # supervisor, MCP client pool, built-in poller
+  src/api/                   # HTTP over unix socket (fastify or node:http)
+  src/expr/                  # jmespath + ${…} templating
+src/packages/cli/            # `oa` (commander); talks to the socket
+src/packages/connector-sdk/  # tiny helper for TS connectors: emitEvent(), state get/put, MCP server boilerplate
+src/connectors/email/        # imapflow + nodemailer
+src/connectors/chat/         # grammy (Telegram) or matrix-js-sdk
+docs/                        # ARCHITECTURE.md, examples/
+```
+
+Runtime notes
+
+- One Node process for the core; `worker_threads` are unnecessary because actions are
+  I/O-bound (subprocesses, HTTP). Concurrency limits are enforced with a small semaphore
+  per task and globally.
+- `better-sqlite3` is synchronous by design; all DB work is short transactions on the
+  main thread, which is fine at this scale and removes a class of async bugs.
+- `agent` runtime uses `query()` from `@anthropic-ai/claude-agent-sdk` with `cwd` set to
+  the worktree, `allowedTools`, `maxTurns`, `mcpServers`, `permissionMode`, and a
+  `PreToolUse` hook that enforces `bash_allow` and logs every tool call to the run.
+- `llm` runtime uses `client.messages.parse()` with a zod schema derived from
+  `output_schema`; usage from the response goes straight to the ledger.
+- Distributed as a single tarball plus `node_modules` (or bundled with `tsup`) under
+  `/opt/online-agent`; systemd unit unchanged (§12).
+
+## 14. Implementation order
+
+1. Core skeleton: config loader, SQLite schema, event store, matcher, executor, `shell`
+   action, `cron` + `event` triggers, CLI. (Everything already works for non-LLM automation.)
+2. `connector` action + supervisor + `poller` built-in + `email` connector.
+3. `llm` action with structured outputs, cost ledger, budgets, caching.
+4. `agent` action on `claude-agent-sdk` with worktree workspace, post gates.
+5. `wait` action + `chat` connector (approval loop).
+6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
+
+## 15. Open decisions
+
+- Expression language: JMESPath (simple, ubiquitous) vs CEL (richer, typed). Start with
+  JMESPath; the matcher is one function to swap.
+- Chat backend: Telegram is the least friction for a single user; Matrix if self-hosting
+  matters.
+- Whether `general_change` needs approval by default. The config supports both; start
+  with approval on.

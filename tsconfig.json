@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "src/packages/core" },
+    { "path": "src/packages/cli" },
+    { "path": "src/packages/connector-sdk" }
+  ]
+}

@@ -1,0 +1,168 @@
+# Orchestra website maintenance — full flow as tasks.
+# Only two tasks call a model; the rest is deterministic.
+
+tasks:
+
+  # 1. Poll the mailbox. No LLM.
+  - name: fetch_email
+    trigger: { kind: cron, schedule: "*/2 * * * *", overlap: skip }
+    action:
+      kind: connector
+      connector: email
+      op: fetch_new
+      args: { folder: INBOX, since_uid: ${state.email.last_uid} }
+    state_updates:
+      email.last_uid: ${result.last_uid}
+    emit:
+      - type: email.received
+        each: ${result.emails}
+        dedup_key: "email:${item.message_id}"
+        payload: ${item}
+
+  # 2. Only the orchestrator's mail reaches a model. Cheapest tier, one call, JSON out.
+  - name: classify_orchestra_email
+    trigger:
+      kind: event
+      type: email.received
+      filter: "payload.from == 'orchestrator@example.cz'"
+    action:
+      kind: llm
+      model: claude-haiku-4-5
+      max_tokens: 512
+      system_file: prompts/classify_orchestra_email.md
+      input: |
+        Subject: ${event.payload.subject}
+
+        <email>
+        ${event.payload.body}
+        </email>
+      output_schema:
+        type: object
+        additionalProperties: false
+        required: [kind, summary]
+        properties:
+          kind: { enum: [event_list_update, general_change, ignore] }
+          summary: { type: string, description: "One sentence, what the orchestrator wants changed" }
+    emit:
+      - type: orchestra.classified
+        when: "result.kind != 'ignore'"
+        payload:
+          kind: ${result.kind}
+          summary: ${result.summary}
+          email: ${event.payload}
+
+  # 3. Routine change: small model, narrow scope, few turns.
+  - name: update_event_list
+    trigger:
+      kind: event
+      type: orchestra.classified
+      filter: "payload.kind == 'event_list_update'"
+    concurrency: 1
+    timeout: 15m
+    action:
+      kind: agent
+      runtime: claude-agent-sdk
+      model: claude-sonnet-5
+      effort: low
+      max_turns: 20
+      budget: { max_usd: 0.50 }
+      workspace: { kind: git-worktree, repo: /var/lib/online-agent/repos/orchestra-site, branch: main }
+      tools: [Read, Edit, Glob, Grep, Bash]
+      bash_allow: ["npm run build"]
+      system_file: prompts/agent_event_list.md
+      prompt: |
+        Update data/events.yaml according to the request below. Touch no other file.
+        Run `npm run build` when done and write RESULT.json with {summary, files_changed}.
+
+        Request summary: ${event.payload.summary}
+        <email>
+        ${event.payload.email.body}
+        </email>
+      result: { from: file, path: RESULT.json, schema: schemas/site_change.json }
+      post:
+        - shell: ["npm", "run", "build"]
+        - shell: ["git", "commit", "-am", "events: ${result.summary}"]
+        - shell: ["git", "push", "origin", "HEAD:main"]
+
+  # 4. Anything else: stronger model, whole repo, then a human approves before publishing.
+  - name: update_site_general
+    trigger:
+      kind: event
+      type: orchestra.classified
+      filter: "payload.kind == 'general_change'"
+    concurrency: 1
+    timeout: 45m
+    action:
+      kind: agent
+      runtime: claude-agent-sdk
+      model: claude-opus-5
+      effort: high
+      max_turns: 60
+      budget: { max_usd: 3.00 }
+      workspace: { kind: git-worktree, repo: /var/lib/online-agent/repos/orchestra-site, branch: main }
+      tools: [Read, Edit, Write, Glob, Grep, Bash]
+      bash_allow: ["npm run build", "npm test", "git diff", "git status"]
+      mcp_servers: [email]              # may read the thread for context; cannot send (op allowlist in connector config)
+      system_file: prompts/agent_site_general.md
+      prompt: |
+        ${event.payload.summary}
+
+        <email>
+        ${event.payload.email.body}
+        </email>
+      result: { from: file, path: RESULT.json, schema: schemas/site_change.json }
+      post:
+        - shell: ["npm", "run", "build"]
+        - shell: ["git", "commit", "-am", "site: ${result.summary}"]
+    emit:
+      - type: orchestra.change_ready
+        payload: { summary: ${result.summary}, diff: ${result.diff_stat}, worktree: ${run.workspace} }
+
+  # 4b. Approval gate via chat. No LLM.
+  - name: approve_general_change
+    trigger: { kind: event, type: orchestra.change_ready }
+    action:
+      kind: sequence
+      steps:
+        - kind: connector
+          connector: chat
+          op: ask
+          args:
+            text: "Site change ready: ${event.payload.summary}\n${event.payload.diff}\nApprove?"
+            correlation_id: ${event.correlation_id}
+        - kind: wait
+          for: { type: chat.reply, filter: "payload.correlation_id == `${event.correlation_id}`" }
+          timeout: 24h
+          on_timeout: fail
+        - kind: shell
+          when: "steps[1].payload.approved == `true`"
+          cwd: ${event.payload.worktree}
+          cmd: ["git", "push", "origin", "HEAD:main"]
+
+  # 5. Publish. Deterministic, holds the FTP secret, nothing else does.
+  - name: publish_site
+    trigger:
+      kind: event
+      type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
+    concurrency: 1
+    action:
+      kind: shell
+      cwd: /var/lib/online-agent/repos/orchestra-site
+      env: { LFTP_PASSWORD: ${secrets.ftp_pass} }
+      cmd:
+        - bash
+        - -c
+        - |
+          git pull --ff-only origin main && npm run build &&
+          lftp -u "$FTP_USER",env:LFTP_PASSWORD -e "mirror -R --delete dist/ /public_html; quit" sftp://ftp.example.cz
+
+  # 6. Tell the human what happened. No LLM.
+  - name: notify
+    trigger:
+      kind: event
+      type_any: [task.publish_site.succeeded, "task.*.failed", budget.exceeded]
+    action:
+      kind: connector
+      connector: chat
+      op: send
+      args: { text: "[online-agent] ${event.type}: ${event.payload.summary || event.payload.error}" }
