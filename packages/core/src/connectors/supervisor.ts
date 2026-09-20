@@ -204,9 +204,9 @@ export class ConnectorSupervisor implements ConnectorClients {
       this.failed(m, `cannot prepare environment: ${errorMessage(err)}`, log);
       return;
     }
-    const [command, ...args] = m.manifest.exec;
+    const [command, ...args] = m.manifest.exec ?? [];
     if (command === undefined) {
-      this.failed(m, 'exec is empty', log);
+      this.failed(m, 'exec is empty (a built-in connector is not spawned)', log);
       return;
     }
     const cwd = m.manifest.cwd;

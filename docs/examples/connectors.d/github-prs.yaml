@@ -1,0 +1,15 @@
+# The built-in poller (ARCHITECTURE §6): no process. Every 5 minutes it calls
+# github.list_pull_requests, keys the result by PR number and emits `github.pr_opened`
+# once per PR it has not seen before. Seen keys: GET /v1/state/github_prs/seen.
+name: github_prs
+builtin: poller
+config:
+  schedule: "*/5 * * * *"
+  connector: github
+  op: list_pull_requests
+  args: { owner: acme, repo: orchestra-site, state: open }
+  items: "pull_requests"
+  item_key: "number"
+  event: github.pr_opened
+  first_run: skip          # PRs open at install time are not news
+  keep: 1000

@@ -342,7 +342,31 @@ implementation of `email.send` serves both a deterministic task and an agent.
 cron, calls `connector.op`, diffs the result against KV by `item_key`, and emits one event
 per new item. This is exactly the "cron → fetch emails → filter" flow, with the LLM
 nowhere near it, and it makes off-the-shelf MCP servers (GitHub, Jira) usable as triggers
-without writing a poller for each.
+without writing a poller for each. A built-in is a manifest with `builtin` instead of
+`exec`; it runs inside the core, has no process, and its `config` is the built-in's own:
+
+```yaml
+# connectors.d/github-prs.yaml
+name: github_prs
+builtin: poller
+config:
+  schedule: "*/5 * * * *"          # cron (5 or 6 fields), optional tz
+  connector: github                # a process connector that serves the op
+  op: list_pull_requests
+  args: { owner: acme, repo: site, state: open }   # ${secrets.<name>} / ${env.<VAR>} allowed
+  items: "pull_requests"           # JMESPath over the op result → array (default: the result)
+  item_key: "number"               # JMESPath over one item → string or number
+  event: github.pr_opened          # emitted once per new key, the item as payload
+  first_run: emit                  # or skip: mark what exists as seen, emit nothing
+  keep: 1000                       # seen keys remembered
+```
+
+Seen keys live in the KV as `state(<poller name>, seen)`, newest last; the events carry
+`source: <poller name>` and `dedup_key: <poller name>:<key>`, so replaying by deleting
+the state still cannot emit an item twice. A tick while a poll is in flight is skipped;
+a failed poll (target down, op error, wrong result shape) is logged as `poller.failed`
+and retried at the next tick. `oa validate` checks the target exists, is a process
+connector and lists the op.
 
 **State:** `GET/PUT /v1/state/{connector}/{key}` so connectors stay stateless processes
 (IMAP UID cursor, last seen PR).
@@ -524,7 +548,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/scheduler/             # croner jobs → cron.tick events
   src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts (llm.ts, agent.ts to come); types.ts = ActionContext
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
-  src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff (built-in poller to come)
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff; poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
@@ -563,15 +587,15 @@ Runtime notes
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
-Status: steps 1, 2 (minus the `poller` built-in and a real `email` connector) and 5 (minus
-a real `chat` connector) are done: `shell`, `connector`, `wait` and `sequence` actions,
-`${…}` templating, `emit` routing, the state KV with `/v1/state`, secrets backends, `retry`
-with recovery by policy, the connector supervisor, `tasks.d`/`connectors.d` merging, the
+Status: steps 1, 2 (minus a real `email` connector) and 5 (minus a real `chat` connector)
+are done: `shell`, `connector`, `wait` and `sequence` actions, `${…}` templating, `emit`
+routing, the state KV with `/v1/state`, secrets backends, `retry` with recovery by policy,
+the connector supervisor, the built-in `poller`, `tasks.d`/`connectors.d` merging, the
 connector SDK, and an integration test that runs the non-LLM path of the orchestra workflow
 on a real daemon with fake connectors. Where the code is behind this document: `llm` and
 `agent` actions validate `kind` only and have no runner (a run of one fails with "no
 runner"); `budgets`, `retention` and `defaults.llm|agent` validate but are not applied;
-there is no cost ledger, no `poller`, no retention GC, no metrics, no sandbox wrapper;
+there is no cost ledger, no retention GC, no metrics, no sandbox wrapper;
 `SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is
 rejected; `health.interval` in manifests is accepted but unused.
 

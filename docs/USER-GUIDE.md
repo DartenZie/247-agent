@@ -353,7 +353,8 @@ SDK loop in a fresh git worktree with `tools`, `bash_allow`, `max_turns`, a `bud
 ## 6. Connectors
 
 A connector is a separate process the daemon spawns. It can emit events into the core,
-expose operations as an MCP server on stdio, or both.
+expose operations as an MCP server on stdio, or both. One connector, the `poller`, is
+built into the daemon and needs no process (§6.5).
 
 ### 6.1 Manifest
 
@@ -440,6 +441,47 @@ curl --unix-socket /run/247-agent/core.sock -X POST http://unix/v1/events \
   -H 'content-type: application/json' \
   -d '{"type":"webhook.received","source":"webhook","payload":{"repo":"x"}}'
 ```
+
+### 6.5 The built-in `poller`
+
+Any op that lists things can become an event source without writing code: a manifest
+with `builtin: poller` instead of `exec` runs inside the daemon, calls the op on a cron,
+and emits one event per item it has not seen before.
+
+```yaml
+# connectors.d/github-prs.yaml
+name: github_prs
+builtin: poller
+config:
+  schedule: "*/5 * * * *"          # cron, 5 or 6 fields; tz: Europe/Prague optional
+  connector: github                # a process connector that serves the op
+  op: list_pull_requests
+  args: { owner: acme, repo: site, state: open }   # ${secrets.<name>} and ${env.<VAR>} allowed
+  items: "pull_requests"           # JMESPath over the result → the array (default: the result)
+  item_key: "number"               # JMESPath over one item → its identity (string or number)
+  event: github.pr_opened          # emitted once per new item, the item as payload
+  first_run: emit                  # or skip: on the first poll, only remember what exists
+  keep: 1000                       # how many seen keys to remember
+  timeout: 30s                     # per op call (optional)
+```
+
+How it behaves:
+
+- Events carry `source: github_prs` and `dedup_key: github_prs:<key>`, so an item can
+  never fire twice even if you reset the poller.
+- Seen keys are in the state KV: `GET /v1/state/github_prs/seen`. Delete that key to
+  treat everything as new again (the event `dedup_key` still blocks true repeats).
+- A key that drops out of the result stays seen until `keep` newer keys have pushed it out.
+- A tick while the previous poll is still running is skipped. A failed poll (target
+  connector down, op error, result not an array, item without a key) is logged as
+  `poller.failed` with the reason and tried again at the next tick; nothing is emitted
+  and the seen list is untouched.
+- `oa validate` checks that `connector` names a process connector that lists `op` in its
+  `ops` (or has `ops: []`). `emits` may be omitted; it defaults to `[event]`.
+
+Use the poller when the op returns "what exists now" (open PRs, unread messages, files in
+a folder). When the op takes a cursor and returns only what is new, a cron task with
+`state_updates` and `emit … each` (§4.5) is the better fit.
 
 ## 7. The `oa` command
 
@@ -589,8 +631,7 @@ Not implemented yet, in the planned order:
 1. Cost ledger and budgets (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`).
 2. The `llm` action.
 3. The `agent` action.
-4. The built-in `poller` connector and real `email` and `chat` connectors under
-   `connectors/`.
+4. Real `email` and `chat` connectors under `connectors/`.
 5. Retention GC, `/metrics`, `oa cost|runs|events|connectors`, SIGHUP reload of
    connectors, `health.interval` in manifests.
 

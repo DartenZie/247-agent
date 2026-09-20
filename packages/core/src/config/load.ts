@@ -159,34 +159,38 @@ export interface ConnectorsLoadResult {
   connectors?: ConnectorConfig[];
 }
 
-/** Loads manifest files/directories and merges them with inline manifests; names must be unique. */
+/**
+ * Loads manifest files/directories and merges them with inline manifests. Names must be
+ * unique, and a `poller` must name a process connector that serves its op.
+ */
 export function loadConnectors(
   paths: readonly string[],
   inline: readonly ConnectorConfig[] = [],
 ): ConnectorsLoadResult {
   const seen = new Map<string, string>();
-  const all: ConnectorConfig[] = [];
-  const files: ConnectorsLoadResult['files'] = [];
-  let ok = true;
+  const all: { config: ConnectorConfig; file: string }[] = [];
+  /** Every file in load order, with the issues found in it so far. */
+  const entries: { file: string; name?: string; issues: ConfigIssue[] }[] = [];
+  const entry = (file: string): { file: string; name?: string; issues: ConfigIssue[] } => {
+    let e = entries.find((x) => x.file === file);
+    if (e === undefined) {
+      e = { file, issues: [] };
+      entries.push(e);
+    }
+    return e;
+  };
   const add = (c: ConnectorConfig, file: string): void => {
     const first = seen.get(c.name);
     if (first !== undefined) {
-      ok = false;
-      files.push({
-        ok: false,
-        file,
-        issues: [
-          {
-            path: 'name',
-            message: `duplicate connector name "${c.name}" (also defined in ${first})`,
-          },
-        ],
+      entry(file).issues.push({
+        path: 'name',
+        message: `duplicate connector name "${c.name}" (also defined in ${first})`,
       });
       return;
     }
     seen.set(c.name, file);
-    all.push(c);
-    files.push({ ok: true, file, name: c.name });
+    all.push({ config: c, file });
+    entry(file).name = c.name;
   };
   for (const c of inline) {
     add(c, c.file);
@@ -196,9 +200,45 @@ export function loadConnectors(
     if (r.ok) {
       add(r.config, file);
     } else {
-      ok = false;
-      files.push({ ok: false, file, issues: r.issues });
+      entry(file).issues.push(...r.issues);
     }
   }
-  return ok ? { ok, files, connectors: all } : { ok, files };
+  for (const { config, file } of all) {
+    const issue = checkPollerTarget(config, all);
+    if (issue !== null) {
+      entry(file).issues.push(issue);
+    }
+  }
+  const files: ConnectorsLoadResult['files'] = entries.map((e) =>
+    e.issues.length === 0
+      ? { ok: true, file: e.file, ...(e.name === undefined ? {} : { name: e.name }) }
+      : { ok: false, file: e.file, issues: e.issues },
+  );
+  const ok = files.every((f) => f.ok);
+  return ok ? { ok, files, connectors: all.map((c) => c.config) } : { ok, files };
+}
+
+/** A poller's `config.connector`/`op` must resolve to a process connector that serves the op. */
+function checkPollerTarget(
+  c: ConnectorConfig,
+  all: readonly { config: ConnectorConfig }[],
+): ConfigIssue | null {
+  if (c.builtin !== 'poller') {
+    return null;
+  }
+  const { connector, op } = c.config as { connector: string; op: string };
+  const target = all.find((x) => x.config.name === connector)?.config;
+  if (target === undefined) {
+    return { path: 'config.connector', message: `unknown connector "${connector}"` };
+  }
+  if (target.builtin !== undefined || target.transport === 'none') {
+    return { path: 'config.connector', message: `connector "${connector}" serves no ops` };
+  }
+  if (target.ops.length > 0 && !target.ops.includes(op)) {
+    return {
+      path: 'config.op',
+      message: `op "${op}" is not in the ops of connector "${connector}"`,
+    };
+  }
+  return null;
 }

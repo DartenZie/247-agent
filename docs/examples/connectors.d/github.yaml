@@ -1,0 +1,7 @@
+# GitHub as a connector: the official MCP server, used as is. Only the listed ops are
+# reachable from tasks and agents; the poller in github-prs.yaml turns one into events.
+name: github
+exec: ["npx", "-y", "@modelcontextprotocol/server-github"]
+transport: stdio
+ops: [list_pull_requests, get_pull_request]
+env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secrets.github_token}" }

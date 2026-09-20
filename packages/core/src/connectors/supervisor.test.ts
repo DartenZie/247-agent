@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ConnectorConfig } from '../config/connector.js';
-import { ConnectorManifest } from '../config/connector.js';
+import { parseManifest } from '../config/connector.js';
 import { createLogger } from '../log.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import {
@@ -14,15 +14,19 @@ import {
 const FIXTURES = new URL('../../test/fixtures/', import.meta.url).pathname;
 
 function manifest(over: Record<string, unknown> = {}): ConnectorConfig {
-  return {
-    ...ConnectorManifest.parse({
+  const r = parseManifest(
+    {
       name: 'fake',
       exec: ['node', `${FIXTURES}fake-mcp.ts`],
       restart: { base: '20ms', max: '100ms' },
       ...over,
-    }),
-    file: '/x/connectors.d/fake.yaml',
-  };
+    },
+    '/x/connectors.d/fake.yaml',
+  );
+  if (!r.ok) {
+    throw new Error(JSON.stringify(r.issues));
+  }
+  return r.config;
 }
 
 let sup: ConnectorSupervisor | undefined;

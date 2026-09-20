@@ -23,6 +23,10 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
      returns `{items, cursor}`. Let a cron task call it and fan out with `emit … each`
      and a `dedup_key`. The connector itself emits nothing. This keeps polling,
      dedup and routing in the core, which is where they are observable.
+   - List-style (an op that returns what exists now: open PRs, unread messages): no
+     code at all. Add a `builtin: poller` manifest that calls the op on a cron, keys
+     items with `item_key` and emits one event per new key (`references/manifest.md`).
+     This is how an off-the-shelf MCP server becomes a trigger.
    - Push-style (chat bot, webhook): emit events from the process as they arrive, with a
      `dedup_key` (message id) and, for replies to a question, the `correlation_id` the
      asking task passed in.

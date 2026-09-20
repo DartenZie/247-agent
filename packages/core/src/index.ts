@@ -31,6 +31,7 @@ export {
   type TasksLoadResult,
 } from './config/load.js';
 export {
+  BUILTINS,
   ConnectorManifest,
   loadManifestFile,
   parseManifest,
@@ -128,6 +129,15 @@ export {
   type ConnectorStatus,
   type SupervisorOptions,
 } from './connectors/supervisor.js';
+export {
+  Poller,
+  PollerConfig,
+  SEEN_KEY,
+  type PollerConfigValues,
+  type PollerOptions,
+  type PollerStatus,
+  type PollResult,
+} from './connectors/poller.js';
 export type { StateEntry, StateSnapshot } from './store/state.js';
 export type { WaitRecord, WaitOutcome } from './store/waits.js';
 export {

@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { SecretsConfig } from '../secrets/secrets.js';
-import { ConnectorManifest, parseManifest, type ConnectorConfig } from './connector.js';
+import { parseManifest, type ConnectorConfig } from './connector.js';
 import { DURATION } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
 import { Retry } from './schema.js';
@@ -24,9 +24,9 @@ export const AgentFile = z.strictObject({
   socket: z.string().min(1).default('/run/247-agent/core.sock'),
   /** Tasks files and/or directories of `*.yaml` (`tasks.d`), merged; task names must be unique across them. */
   tasks: pathList.default('tasks.yaml'),
-  /** Manifest files, directories of manifests (`connectors.d`), or inline manifests. */
+  /** Manifest files, directories of manifests (`connectors.d`), or inline manifests (validated by `parseManifest`). */
   connectors: z
-    .union([z.string().min(1), z.array(z.union([z.string().min(1), ConnectorManifest]))])
+    .union([z.string().min(1), z.array(z.union([z.string().min(1), z.looseObject({})]))])
     .default([]),
   workers: z.number().int().positive().default(4),
   log: z.strictObject({ level: z.enum(LOG_LEVELS).default('info') }).prefault({}),

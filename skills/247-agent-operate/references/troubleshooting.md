@@ -12,6 +12,7 @@
 | `no runner` | The task is `llm` or `agent` | Not runnable yet; use a `shell` stand-in for testing |
 | `op … not allowed` | Op missing from the manifest's `ops` | Add it or use `ops: []` |
 | connector … is down (retried) | Process crashed or never started | Read `connector.output` lines; run the connector by hand with the `OA_*` env |
+| a `builtin: poller` never emits | Target down, op error, or result shape | Look for `poller.failed` lines (the `error` field says which); `poller.polled` with `new: 0` means nothing changed; `first_run: skip` seeds silently. Seen keys: `GET /v1/state/<poller>/seen` |
 | `wait` resumed with the wrong event | `for.filter` too loose | Match on `payload.correlation_id == '${event.correlation_id}'` |
 | `wait` timed out immediately after restart | The timeout passed while the daemon was down | Expected; the run failed without retry, `task.<name>.failed` fired |
 | templates appear as literal `${…}` | Unquoted template inside a YAML flow mapping, or `${…}` used in `filter`/`when` | Quote inside `{ … }`; `filter`/`when` take bare JMESPath |

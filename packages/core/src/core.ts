@@ -10,6 +10,7 @@ import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
 import { loadTasks, type TasksLoadResult } from './config/load.js';
 import type { RetryConfig } from './config/schema.js';
+import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
 import { createLogger, type Logger } from './log.js';
@@ -41,8 +42,9 @@ export interface CoreOptions {
   /** The `env` template scope; defaults to none. */
   env?: Record<string, string>;
   /**
-   * Connector manifests to supervise (needs `socketPath` for the children), or a
-   * ready-made `ConnectorClients` (tests). Without either, `connector` actions fail.
+   * Connector manifests to supervise (needs `socketPath` for the children; built-in
+   * pollers among them run in-process), or a ready-made `ConnectorClients` (tests).
+   * Without either, `connector` actions fail.
    */
   connectors?: readonly ConnectorConfig[] | ConnectorClients;
   /** Passed to supervised connectors as `OA_CORE_SOCKET`. */
@@ -56,6 +58,8 @@ export interface Core {
   readonly executor: Executor;
   /** The supervisor when the core spawns connectors itself. */
   readonly supervisor: ConnectorSupervisor | undefined;
+  /** The built-in `poller` connectors, from manifests with `builtin: poller`. */
+  readonly pollers: readonly Poller[];
   config(): CompiledConfig;
   /**
    * Loads config, opens the store, recovers runs, dispatches any backlog, arms cron jobs
@@ -99,6 +103,12 @@ function isClients(v: readonly ConnectorConfig[] | ConnectorClients): v is Conne
   return !Array.isArray(v);
 }
 
+/** For a poller whose target has no supervisor (only reachable with a hand-built config). */
+const noConnectors: ConnectorClients = {
+  names: () => [],
+  call: (connector) => Promise.reject(new Error(`unknown connector "${connector}"`)),
+};
+
 export function createCore(opts: CoreOptions): Core {
   const clock = opts.clock ?? systemClock;
   const log = opts.log ?? createLogger();
@@ -115,22 +125,40 @@ export function createCore(opts: CoreOptions): Core {
 
   let supervisor: ConnectorSupervisor | undefined;
   let connectors: ConnectorClients | undefined;
+  let builtins: readonly ConnectorConfig[] = [];
   if (opts.connectors !== undefined) {
     if (isClients(opts.connectors)) {
       connectors = opts.connectors;
-    } else if (opts.connectors.length > 0) {
-      if (opts.socketPath === undefined) {
-        throw new Error('socketPath is required to supervise connectors');
+    } else {
+      const processes = opts.connectors.filter((m) => m.builtin === undefined);
+      builtins = opts.connectors.filter((m) => m.builtin !== undefined);
+      if (processes.length > 0) {
+        if (opts.socketPath === undefined) {
+          throw new Error('socketPath is required to supervise connectors');
+        }
+        supervisor = new ConnectorSupervisor({
+          manifests: processes,
+          socketPath: opts.socketPath,
+          secrets,
+          log,
+        });
+        connectors = supervisor;
       }
-      supervisor = new ConnectorSupervisor({
-        manifests: opts.connectors,
-        socketPath: opts.socketPath,
-        secrets,
-        log,
-      });
-      connectors = supervisor;
     }
   }
+  const pollers = builtins.map(
+    (manifest) =>
+      new Poller({
+        manifest,
+        clients: connectors ?? noConnectors,
+        store,
+        bus,
+        clock,
+        log,
+        secrets,
+        ...(opts.env === undefined ? {} : { env: opts.env }),
+      }),
+  );
 
   const executor = new Executor({
     store,
@@ -170,6 +198,7 @@ export function createCore(opts: CoreOptions): Core {
     scheduler,
     executor,
     supervisor,
+    pollers,
     config: () => compiled,
     start: async () => {
       const result = load();
@@ -192,6 +221,9 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.start(compiled);
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
       await supervisor?.start();
+      for (const poller of pollers) {
+        poller.start();
+      }
     },
     reload: () => {
       const result = load();
@@ -213,6 +245,7 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.stop();
       bus.dispatcher.stop();
       await executor.stop();
+      await Promise.all(pollers.map((p) => p.stop()));
       await supervisor?.stop();
       store.close();
     },

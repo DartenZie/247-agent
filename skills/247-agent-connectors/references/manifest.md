@@ -49,9 +49,34 @@ ops: [list_pull_requests, get_pull_request]
 env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secrets.github_token}" }
 ```
 
-Turn its ops into events with a cron task that calls the op and fans out with
-`emit … each` and a `dedup_key` (the built-in `poller` that does this generically is
-planned, not implemented).
+Turn its ops into events with the built-in poller below, or with a cron task that calls
+the op and fans out with `emit … each` and a `dedup_key` when the op takes a cursor.
+
+## Built-in poller (no process)
+
+```yaml
+name: github_prs
+builtin: poller                               # instead of exec; transport is none, no ops
+config:
+  schedule: "*/5 * * * *"                     # cron, 5 or 6 fields; optional tz
+  connector: github                           # a process connector that serves the op
+  op: list_pull_requests
+  args: { owner: acme, repo: site, state: open }   # ${secrets.<name>} / ${env.<VAR>} allowed
+  items: "pull_requests"                      # JMESPath over the result → array (default: the result)
+  item_key: "number"                          # JMESPath over one item → string or number
+  event: github.pr_opened                     # one event per new key, the item as payload
+  first_run: emit                             # or skip: remember what exists, emit nothing
+  keep: 1000                                  # seen keys remembered
+  timeout: 30s                                # per op call (optional)
+```
+
+- Seen keys: `GET|DELETE /v1/state/<name>/seen`. Events carry `source: <name>` and
+  `dedup_key: <name>:<key>`, so a reset never re-emits an item the store already has.
+- A tick during a running poll is skipped; a failed poll logs `poller.failed` and waits
+  for the next tick. Nothing is emitted and the seen list is untouched on failure.
+- `cwd`, `env`, `health`, `ops` and `transport: stdio` are errors on a built-in.
+  `emits` defaults to `[event]`. `oa validate` checks the target connector exists, is a
+  process and allows the op.
 
 ## Fake connector for tests
 
