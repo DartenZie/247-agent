@@ -1,5 +1,5 @@
 /**
- * The non-LLM path of `docs/examples/orchestra-website.yaml` end to end on a real daemon:
+ * The non-LLM path of `docs/examples/website-updates.yaml` end to end on a real daemon:
  * fake email and chat connectors (real child processes speaking MCP over stdio and
  * emitting events over the socket), the two model-backed tasks replaced by
  * shell stand-ins that produce the same events, `publish_site` replaced by an echo that
@@ -19,7 +19,7 @@ import { createLogger } from './log.js';
 
 const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
 
-const SECRETS = { ftp_pass: 'hunter2-ftp', imap_user: 'bob@example.cz', chat_token: 'tok-123' };
+const SECRETS = { ftp_pass: 'hunter2-ftp', imap_user: 'bob@example.com', chat_token: 'tok-123' };
 
 const AGENT = `
 db: state.db
@@ -36,7 +36,7 @@ connectors:
     config:
       user: "\${secrets.imap_user}"
       mails:
-        - { uid: 1, message_id: "<m1@x>", from: orchestrator@example.cz, subject: Spring concert, body: Please add the spring concert on May 3. }
+        - { uid: 1, message_id: "<m1@x>", from: editor@example.com, subject: Spring event, body: Please add the spring event on May 3. }
         - { uid: 2, message_id: "<m2@x>", from: spam@example.com, subject: Buy now, body: no }
   - name: chat
     exec: [node, ${FIXTURES}fake-chat.ts]
@@ -64,28 +64,28 @@ tasks:
         payload: \${item}
 
   # 2. Stand-in for the llm classifier: same trigger, filter and emit.
-  - name: classify_orchestra_email
+  - name: classify_email
     trigger:
       kind: event
       type: email.received
-      filter: "payload.from == 'orchestrator@example.cz'"
+      filter: "payload.from == 'editor@example.com'"
     action:
       kind: shell
       cmd: [echo, '{"kind":"general_change","summary":"\${event.payload.subject}"}']
       result: json_stdout
     emit:
-      - type: orchestra.classified
+      - type: email.classified
         when: "result.kind != 'ignore'"
         payload:
           kind: \${result.kind}
           summary: \${result.summary}
           email: \${event.payload}
 
-  # 4. Stand-in for the agent: emits the same orchestra.change_ready.
+  # 4. Stand-in for the agent: emits the same site.change_ready.
   - name: update_site_general
     trigger:
       kind: event
-      type: orchestra.classified
+      type: email.classified
       filter: "payload.kind == 'general_change'"
     concurrency: 1
     action:
@@ -93,12 +93,12 @@ tasks:
       cmd: [echo, '{"summary":"\${event.payload.summary}","diff_stat":"1 file changed"}']
       result: json_stdout
     emit:
-      - type: orchestra.change_ready
+      - type: site.change_ready
         payload: { summary: "\${result.summary}", diff: "\${result.diff_stat}", worktree: "/tmp" }
 
   # 4b. Approval gate via chat (as in the example, push replaced by an echo).
   - name: approve_general_change
-    trigger: { kind: event, type: orchestra.change_ready }
+    trigger: { kind: event, type: site.change_ready }
     action:
       kind: sequence
       steps:
@@ -182,7 +182,7 @@ async function until(pred: () => Promise<boolean> | boolean, ms = 15_000): Promi
   }
 }
 
-describe('orchestra workflow without a model', () => {
+describe('website workflow without a model', () => {
   it('runs fetch_email → … → publish_site → notify on one correlation id, secrets contained', async () => {
     await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
 
@@ -196,7 +196,7 @@ describe('orchestra workflow without a model', () => {
     const byTask = new Map(runs.map((r) => [r.task, r]));
     expect([...byTask.keys()].sort()).toEqual([
       'approve_general_change',
-      'classify_orchestra_email',
+      'classify_email',
       'fetch_email',
       'notify',
       'publish_site',
@@ -213,7 +213,7 @@ describe('orchestra workflow without a model', () => {
     expect(byTask.get('publish_site')?.result).toBe('published');
     expect(byTask.get('approve_general_change')?.result).toMatchObject({
       steps: [
-        { asked: true, question: expect.stringContaining('Spring concert') as string },
+        { asked: true, question: expect.stringContaining('Spring event') as string },
         { type: 'chat.reply', payload: { approved: true, correlation_id: first.correlation_id } },
         'git push origin HEAD:main',
       ],
@@ -234,10 +234,10 @@ describe('orchestra workflow without a model', () => {
       'task.fetch_email.succeeded',
       'email.received',
       'email.received',
-      'task.classify_orchestra_email.succeeded',
-      'orchestra.classified',
+      'task.classify_email.succeeded',
+      'email.classified',
       'task.update_site_general.succeeded',
-      'orchestra.change_ready',
+      'site.change_ready',
       'chat.reply',
       'task.approve_general_change.succeeded',
       'task.publish_site.succeeded',

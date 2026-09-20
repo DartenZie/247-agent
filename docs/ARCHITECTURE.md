@@ -142,7 +142,7 @@ every template's syntax. Inside YAML flow mappings `{ … }` a template must be 
 ```yaml
 action:
   kind: shell
-  cmd: ["lftp", "-e", "mirror -R --delete site/ /public_html; quit", "sftp://${secrets.ftp_user}@ftp.example.cz"]
+  cmd: ["lftp", "-e", "mirror -R --delete site/ /public_html; quit", "sftp://${secrets.ftp_user}@ftp.example.com"]
   cwd: ${state.site_worktree}
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}          # optional, JSON on stdin
@@ -174,7 +174,7 @@ action:
   model: claude-haiku-4-5          # cheapest tier that passes the eval for this task
   effort: low                      # Opus/Sonnet 5 only; ignored on Haiku 4.5
   max_tokens: 512
-  system_file: prompts/classify_orchestra_email.md   # stable → prompt-cached
+  system_file: prompts/classify_email.md   # stable → prompt-cached
   input: |
     From: ${event.payload.from}
     Subject: ${event.payload.subject}
@@ -208,14 +208,14 @@ action:
   budget: { max_usd: 1.50 }        # hard stop; run → failed, on_failure fires
   workspace:
     kind: git-worktree             # fresh worktree per run; discarded on failure
-    repo: /var/lib/247-agent/repos/orchestra-site
+    repo: /var/lib/247-agent/repos/website
     branch: main
   tools: [Read, Edit, Write, Glob, Grep, Bash]
   bash_allow: ["npm run build", "npm test", "git status", "git diff"]
   mcp_servers: [email]             # connectors exposed as tools (§6)
   system_file: prompts/agent_event_list.md
   prompt: |
-    Add/modify the concert events described in the email below in data/events.yaml
+    Add/modify the events described in the email below in data/events.yaml
     and nothing else. Run `npm run build` before finishing.
 
     ${event.payload.body}
@@ -314,7 +314,7 @@ emit:
     each: ${result.emails}         # one event per item
     dedup_key: "email:${item.message_id}"
     payload: ${item}
-  - type: orchestra.classified
+  - type: email.classified
     when: "result.kind != 'ignore'"
     payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
@@ -337,7 +337,11 @@ exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any langua
 transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only
 emits: [email.received]                              # documented, shape-checked
 ops: [fetch_new, mark_read, send]                    # allowlist of MCP tools the core may call; [] = any
-config: { host: imap.example.cz, user: "${secrets.imap_user}", folder: INBOX }
+config:                                              # free-form, the connector's own schema
+  user: "${secrets.email_user}"
+  password: "${secrets.email_pass}"
+  incoming: { protocol: imap, host: imap.example.com, folder: INBOX }
+  outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nExample Team office" }
 restart: { base: 1s, max: 60s }                      # crash backoff
 health: { interval: 60s }                            # accepted, not used yet
 ```
@@ -406,7 +410,9 @@ is not implemented yet.
 `createConnectorServer` + `serveStdio`, or `runConnector({tools, setup})` for all of it. The
 module has no local imports so Node can run a connector straight from TypeScript source.
 
-Planned connectors: `email` (IMAP/SMTP), `chat` (Telegram or Matrix; emits `chat.message`,
+Connectors: `email` (`connectors/email`, done: IMAP or POP3 in, SMTP out, ops `fetch_new`,
+`mark_read`, `send`; the footer is appended to every outgoing mail; `README.md` there is
+the config reference). Planned: `chat` (Telegram or Matrix; emits `chat.message`,
 `chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
 their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (built-in).
 
@@ -453,16 +459,16 @@ manifest) and follows `agent.yaml` to every tasks file and manifest it names, ch
 task and connector names are unique across files. `docs/examples/agent.yaml` is the
 reference.
 
-## 8. Worked example: orchestra website
+## 8. Worked example: website updates from email
 
-See `docs/examples/orchestra-website.yaml`. The flow and what each step costs:
+See `docs/examples/website-updates.yaml`. The flow and what each step costs:
 
 | # | Task | Trigger | Action | LLM? |
 |---|---|---|---|---|
 | 1 | `fetch_email` | cron `*/2 * * * *` | `connector` email.fetch_new → emit `email.received` per mail | no |
-| 2 | `classify_orchestra_email` | `email.received` with filter `payload.from == 'orchestrator@…'` | `llm` Haiku 4.5, schema `{kind, summary}` → emit `orchestra.classified` | 1 call |
-| 3 | `update_event_list` | `orchestra.classified` where `kind == 'event_list_update'` | `agent` Sonnet 5, low turns, only `data/events.yaml` in scope, build gate | small loop |
-| 4 | `update_site_general` | `orchestra.classified` where `kind == 'general_change'` | `agent` Opus 5, higher turns, full repo, build gate, then `wait` for chat approval | bigger loop |
+| 2 | `classify_email` | `email.received` with filter `payload.from == 'editor@…'` | `llm` Haiku 4.5, schema `{kind, summary}` → emit `email.classified` | 1 call |
+| 3 | `update_event_list` | `email.classified` where `kind == 'event_list_update'` | `agent` Sonnet 5, low turns, only `data/events.yaml` in scope, build gate | small loop |
+| 4 | `update_site_general` | `email.classified` where `kind == 'general_change'` | `agent` Opus 5, higher turns, full repo, build gate, then `wait` for chat approval | bigger loop |
 | 5 | `publish_site` | `task.update_event_list.succeeded` or `task.update_site_general.succeeded` | `shell` lftp mirror | no |
 | 6 | `notify` | `task.*.failed`, `task.publish_site.succeeded` | `connector` chat.send | no |
 
@@ -599,7 +605,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   test/fixtures/             # fake connectors (email, chat, generic MCP, plain) run by Node from source
 packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
-connectors/email/        # imapflow + nodemailer
+connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
 connectors/chat/         # grammy (Telegram) or matrix-js-sdk
 docs/                        # ARCHITECTURE.md, examples/
 ```
@@ -629,12 +635,12 @@ Runtime notes
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
-Status: steps 1, 2 (minus a real `email` connector) and 5 (minus a real `chat` connector)
-are done: `shell`, `connector`, `wait` and `sequence` actions, `${…}` templating, `emit`
-routing, the state KV with `/v1/state`, secrets backends, `retry` with recovery by policy,
-the connector supervisor, the built-in `poller`, `tasks.d`/`connectors.d` merging, the
-connector SDK, and an integration test that runs the non-LLM path of the orchestra workflow
-on a real daemon with fake connectors. Where the code is behind this document: `llm` and
+Status: steps 1, 2 and 5 (minus a real `chat` connector) are done: `shell`, `connector`,
+`wait` and `sequence` actions, `${…}` templating, `emit` routing, the state KV with
+`/v1/state`, secrets backends, `retry` with recovery by policy, the connector supervisor,
+the built-in `poller`, `tasks.d`/`connectors.d` merging, the connector SDK, the `email`
+connector, and an integration test that runs the non-LLM path of the website workflow on a
+real daemon with fake connectors. Where the code is behind this document: `llm` and
 `agent` actions validate `kind` only and have no runner (a run of one fails with "no
 runner"); `budgets`, `retention` and `defaults.llm|agent` validate but are not applied;
 there is no cost ledger, no retention GC, no metrics, no sandbox wrapper;

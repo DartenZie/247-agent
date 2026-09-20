@@ -44,7 +44,10 @@ connectors:
     exec: [node, connectors/email/dist/main.js]
     emits: [email.received]
     ops: [fetch_new, mark_read]
-    config: { host: imap.example.cz, user: "${secrets.imap_user}", password: "${secrets.imap_pass}" }
+    config:
+      user: "${secrets.email_user}"
+      password: "${secrets.email_pass}"
+      incoming: { protocol: imap, host: imap.example.com }
   - connectors.d          # a directory can be mixed in
 ```
 

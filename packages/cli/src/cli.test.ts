@@ -52,8 +52,8 @@ afterEach(async () => {
 
 describe('oa validate', () => {
   it('validates tasks files and agent files, checking the referenced tasks file', async () => {
-    expect(await main(['validate', join(EXAMPLES, 'orchestra-website.yaml')], io)).toBe(0);
-    expect(out).toEqual([`ok ${join(EXAMPLES, 'orchestra-website.yaml')} (7 tasks)`]);
+    expect(await main(['validate', join(EXAMPLES, 'website-updates.yaml')], io)).toBe(0);
+    expect(out).toEqual([`ok ${join(EXAMPLES, 'website-updates.yaml')} (7 tasks)`]);
     out = [];
     expect(await main(['validate', join(EXAMPLES, 'agent.yaml')], io)).toBe(0);
     expect(out).toHaveLength(6); // agent.yaml, its tasks file, four connector manifests

@@ -105,7 +105,7 @@ describe('parseAgent', () => {
   it('accepts the documented example', () => {
     const r = loadAgentFile(join(EXAMPLES, 'agent.yaml'));
     expect(r.ok).toBe(true);
-    expect(r.ok && r.config.tasks).toEqual([join(EXAMPLES, 'orchestra-website.yaml')]);
+    expect(r.ok && r.config.tasks).toEqual([join(EXAMPLES, 'website-updates.yaml')]);
     expect(r.ok && r.config.connectorPaths).toEqual([join(EXAMPLES, 'connectors.d')]);
   });
 
@@ -116,10 +116,10 @@ describe('parseAgent', () => {
 
 describe('checkConfigFile', () => {
   it('validates a tasks file by its top-level key', () => {
-    expect(checkConfigFile(join(EXAMPLES, 'orchestra-website.yaml'))).toEqual([
+    expect(checkConfigFile(join(EXAMPLES, 'website-updates.yaml'))).toEqual([
       {
         ok: true,
-        file: join(EXAMPLES, 'orchestra-website.yaml'),
+        file: join(EXAMPLES, 'website-updates.yaml'),
         kind: 'tasks',
         summary: '7 tasks',
       },

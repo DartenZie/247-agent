@@ -48,8 +48,8 @@ scope above. `emit.when` sees `{event, result, state, env, run}`.
 ## Examples
 
 ```yaml
-# Trigger filter: only the conductor's mail
-trigger: { kind: event, type: email.received, filter: "payload.from == 'orchestrator@example.cz'" }
+# Trigger filter: only the trusted sender's mail
+trigger: { kind: event, type: email.received, filter: "payload.from == 'editor@example.com'" }
 
 # Emit with fallback text (notify task)
 args: { text: "[247-agent] ${event.type}: ${event.payload.summary || event.payload.error}" }

@@ -23,7 +23,7 @@ Ask, in order:
 
 Two tasks with different intelligence needs are the **same action kind with different
 `model`/`effort`/`max_turns`/`system_file`**, not different code. See
-`docs/examples/orchestra-website.yaml` tasks 2–4 for the reference shapes.
+`docs/examples/website-updates.yaml` tasks 2–4 for the reference shapes.
 
 ## Model ids and parameters
 
@@ -47,7 +47,7 @@ action:
   kind: llm
   model: claude-haiku-4-5
   max_tokens: 512
-  system_file: prompts/classify_orchestra_email.md   # static → prompt-cached
+  system_file: prompts/classify_email.md   # static → prompt-cached
   input: |
     Subject: ${event.payload.subject}
 

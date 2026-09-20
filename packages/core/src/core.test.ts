@@ -26,7 +26,7 @@ const hangAll: ActionRunners = {
   sequence: hang,
 };
 
-const EXAMPLE = new URL('../../../docs/examples/orchestra-website.yaml', import.meta.url).pathname;
+const EXAMPLE = new URL('../../../docs/examples/website-updates.yaml', import.meta.url).pathname;
 
 let dir: string;
 let core: Core;
@@ -60,7 +60,7 @@ describe('createCore with the reference workflow', () => {
   it('arms the cron task and loads all seven tasks', () => {
     expect(core.config().tasks.map((t) => t.name)).toEqual([
       'fetch_email',
-      'classify_orchestra_email',
+      'classify_email',
       'update_event_list',
       'update_site_general',
       'approve_general_change',
@@ -71,12 +71,12 @@ describe('createCore with the reference workflow', () => {
     expect(lines.find((l) => l.msg === 'core.started')).toMatchObject({ backlog_runs: 0 });
   });
 
-  it("queues exactly one classification run for the orchestrator's mail and none for others", () => {
+  it("queues exactly one classification run for the trusted sender's mail and none for others", () => {
     core.bus.publish({
       type: 'email.received',
       source: 'email',
       dedup_key: 'email:1',
-      payload: { from: 'orchestrator@example.cz', subject: 'Concert', body: '…' },
+      payload: { from: 'editor@example.com', subject: 'Event', body: '…' },
     });
     core.bus.publish({
       type: 'email.received',
@@ -88,10 +88,10 @@ describe('createCore with the reference workflow', () => {
       type: 'email.received',
       source: 'email',
       dedup_key: 'email:1',
-      payload: { from: 'orchestrator@example.cz', subject: 'dup', body: '…' },
+      payload: { from: 'editor@example.com', subject: 'dup', body: '…' },
     });
     core.bus.dispatcher.drain();
-    expect(started()).toEqual(['classify_orchestra_email']);
+    expect(started()).toEqual(['classify_email']);
   });
 
   it('routes failures to notify except failures of notify itself, keeping the correlation id', () => {

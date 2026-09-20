@@ -34,22 +34,23 @@ systemd; a CLI (`oa`) validates config, triggers tasks by hand and tails events.
 
 ## Example
 
-Maintaining an orchestra's website from the conductor's emails:
+Maintaining a website from a trusted sender's emails:
 
 1. Every two minutes, fetch new mail (no model).
-2. Mail from the conductor's address triggers a one-shot Haiku classification:
+2. Mail from the trusted sender's address triggers a one-shot Haiku classification:
    event-list update, general change, or ignore.
 3. An event-list update runs a small, tightly scoped agent on Sonnet.
 4. A general change runs a larger agent on Opus, then asks you on chat before pushing.
 5. A successful update triggers an FTP mirror (no model), and a chat notification.
 
-The full config is in [`docs/examples/orchestra-website.yaml`](docs/examples/orchestra-website.yaml).
+The full config is in [`docs/examples/website-updates.yaml`](docs/examples/website-updates.yaml).
 
 ## Status
 
 The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
-actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI. The
-`llm` and `agent` actions, the cost ledger and the real email/chat connectors are next.
+actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
+The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` and `agent` actions, the
+cost ledger and the chat connector are next.
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
 [`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.

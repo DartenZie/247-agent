@@ -1,12 +1,22 @@
 # Email connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
+# IMAP or POP3 in, SMTP out. Full config reference: connectors/email/README.md.
 name: email
 exec: ["node", "connectors/email/dist/main.js"]
 transport: stdio
 emits: [email.received]
 ops: [fetch_new, mark_read, send]
 config:
-  host: imap.example.cz
-  user: "${secrets.imap_user}"
-  password: "${secrets.imap_pass}"
-  folder: INBOX
+  user: "${secrets.email_user}"          # inherited by both sides unless overridden
+  password: "${secrets.email_pass}"      # resolved from the secrets backend at start
+  incoming:
+    protocol: imap                       # imap | pop3
+    host: imap.example.com                # port 993 + TLS by default
+    folder: INBOX
+    initial: none                        # first run: skip what is already there (or `all`)
+  outgoing:
+    host: smtp.example.com                # port 465 + TLS by default
+    from: "Example Team <info@example.com>"
+    footer: |
+      --
+      Example Team office · sent by 247-agent
 restart: { base: 1s, max: 60s }

@@ -1,0 +1,56 @@
+# Example 1 — acknowledge every incoming mail. Deterministic: no model call.
+#
+# A cron task polls the mailbox and fans each message out as `email.received`; a second
+# task replies to it and marks it read. Drop this file next to an `agent.yaml` whose
+# `connectors:` includes the email manifest (connectors/email/examples/connectors.d/).
+#
+#   node packages/cli/dist/main.js validate connectors/email/examples/auto-reply.yaml
+
+tasks:
+
+  # 1. Poll. `since_uid` is the cursor the previous run stored; on the very first run it
+  #    is null and `initial` in the connector config decides what happens.
+  - name: fetch_email
+    trigger: { kind: cron, schedule: "*/2 * * * *", overlap: skip }
+    action:
+      kind: connector
+      connector: email
+      op: fetch_new
+      args: { folder: INBOX, since_uid: "${state.email.last_uid}" }
+    state_updates:
+      email.last_uid: ${result.last_uid}
+    emit:
+      - type: email.received
+        each: ${result.emails}
+        dedup_key: "email:${item.message_id}"      # a redelivered UID never replies twice
+        payload: ${item}
+
+  # 2. Reply to the sender, then mark the original read so a human inbox stays clean.
+  #    `in_reply_to` makes the answer thread; the connector adds it to `References` too.
+  - name: acknowledge
+    trigger:
+      kind: event
+      type: email.received
+      filter: "payload.from != 'noreply@example.com'"
+    action:
+      kind: sequence
+      steps:
+        - kind: connector
+          connector: email
+          op: send
+          args:
+            to: "${event.payload.from}"
+            subject: "Re: ${event.payload.subject}"
+            in_reply_to: "${event.payload.message_id}"
+            references: ${event.payload.references}
+            text: |
+              Hello,
+
+              we received your message "${event.payload.subject}" and will get back
+              to you shortly.
+        - kind: connector
+          connector: email
+          op: mark_read
+          args:
+            folder: INBOX
+            uid: ${event.payload.uid}

@@ -3,8 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { formatLoadResult } from './format.js';
 import { loadTasksFile, parseTasks } from './load.js';
 
-const EXAMPLE = new URL('../../../../docs/examples/orchestra-website.yaml', import.meta.url)
-  .pathname;
+const EXAMPLE = new URL('../../../../docs/examples/website-updates.yaml', import.meta.url).pathname;
 
 describe('loadTasksFile', () => {
   it('loads the reference workflow', () => {

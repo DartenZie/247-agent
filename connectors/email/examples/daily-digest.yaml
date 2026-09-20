@@ -1,0 +1,65 @@
+# Example 2 — one digest mail per day instead of a message per event.
+#
+# Two independent cursors on the same mailbox are fine: each task keeps its own
+# `since_uid` in state, so the digest does not consume what another workflow polls.
+# The whole flow is deterministic; the optional third task shows where a single cheap
+# model call would go if you want prose instead of a subject list.
+#
+#   node packages/cli/dist/main.js validate connectors/email/examples/daily-digest.yaml
+
+tasks:
+
+  # Every weekday at 08:00: fetch everything since yesterday's cursor and, if there is
+  # anything, mail a list of senders and subjects to the team.
+  - name: email_digest
+    trigger: { kind: cron, schedule: "0 8 * * 1-5", overlap: skip }
+    timeout: 5m
+    action:
+      kind: sequence
+      steps:
+        - kind: connector
+          connector: email
+          op: fetch_new
+          args: { folder: INBOX, since_uid: "${state.digest.last_uid}", limit: 200 }
+
+        # `when` skips the send on an empty mailbox; JMESPath backticks are numbers.
+        - kind: connector
+          connector: email
+          op: send
+          when: "length(steps[0].emails) > `0`"
+          args:
+            to: ["team@example.com"]
+            subject: "Inbox digest — ${length(steps[0].emails)} new"
+            text: |
+              ${join('
+              ', steps[0].emails[*].subject)}
+    state_updates:
+      digest.last_uid: ${steps[0].last_uid}
+    emit:
+      - type: email.digest_sent
+        when: "length(steps[0].emails) > `0`"
+        payload:
+          count: ${length(steps[0].emails)}
+          last_uid: ${steps[0].last_uid}
+
+  # Optional: turn the same batch into a written summary. One Haiku call, JSON out,
+  # capped by the task budget — the only place in this file a model is involved.
+  - name: summarize_digest
+    trigger: { kind: event, type: email.digest_sent }
+    action:
+      kind: llm
+      model: claude-haiku-4-5
+      max_tokens: 512
+      budget: { max_usd: 0.05 }
+      input: |
+        Summarise this inbox digest in two sentences for a team chat.
+        ${event.payload.count} new messages arrived.
+      output_schema:
+        type: object
+        additionalProperties: false
+        required: [summary]
+        properties:
+          summary: { type: string }
+    emit:
+      - type: email.digest_summarized
+        payload: { summary: "${result.summary}" }

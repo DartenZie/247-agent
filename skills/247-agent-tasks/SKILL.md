@@ -18,7 +18,7 @@ never invent a way for one task to reference another by name.
 
 1. **Locate the tasks file.** `agent.yaml` names it under `tasks:` (a file, a directory
    of `*.yaml`, or a list). Task names must be unique across all of them. In this repo
-   the reference workflow is `docs/examples/orchestra-website.yaml`; the smallest
+   the reference workflow is `docs/examples/website-updates.yaml`; the smallest
    runnable example is `docs/examples/hello-world/hello-world.yaml`.
 2. **Decide the tier before writing anything.** If the step can be done by a command or a
    connector operation, it is `shell` or `connector`. A model is called only inside an
@@ -34,7 +34,7 @@ never invent a way for one task to reference another by name.
    notify on failure, stand-in for a model step).
 5. **Route the result with `emit`.** Every task already emits
    `task.<name>.succeeded|failed`; add domain events (`email.received`,
-   `orchestra.classified`) so that other tasks can react without knowing who produced
+   `email.classified`) so that other tasks can react without knowing who produced
    them. Put `dedup_key` on anything that can be fetched twice.
 6. **Validate, then exercise it.**
 
