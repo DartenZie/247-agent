@@ -21,9 +21,9 @@ describe('compileFilter', () => {
   });
 
   it('evaluates against the whole document', () => {
-    const f = compileFilter("payload.from == 'orchestrator@example.cz'");
-    expect(f.evaluate({ payload: { from: 'orchestrator@example.cz' } })).toBe(true);
-    expect(f.evaluate({ payload: { from: 'other@example.cz' } })).toBe(false);
+    const f = compileFilter("payload.from == 'editor@example.com'");
+    expect(f.evaluate({ payload: { from: 'editor@example.com' } })).toBe(true);
+    expect(f.evaluate({ payload: { from: 'other@example.com' } })).toBe(false);
     expect(f.evaluate({})).toBe(false);
   });
 

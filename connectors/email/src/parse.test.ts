@@ -8,15 +8,15 @@ describe('parseMessage', () => {
   it('maps headers and the text body', async () => {
     const m = await parseMessage(
       raw([
-        'From: Conductor <Orchestrator@Example.cz>',
-        'To: info@example.cz, Second <b@example.cz>',
-        'Cc: c@example.cz',
-        'Reply-To: replies@example.cz',
-        'Subject: Spring concert',
+        'From: Editor <Editor@Example.com>',
+        'To: info@example.com, Second <b@example.com>',
+        'Cc: c@example.com',
+        'Reply-To: replies@example.com',
+        'Subject: Spring event',
         'Date: Mon, 01 Jun 2026 10:00:00 +0200',
-        'Message-ID: <m1@example.cz>',
-        'In-Reply-To: <m0@example.cz>',
-        'References: <m-1@example.cz> <m0@example.cz>',
+        'Message-ID: <m1@example.com>',
+        'In-Reply-To: <m0@example.com>',
+        'References: <m-1@example.com> <m0@example.com>',
         'Content-Type: text/plain; charset=utf-8',
         '',
         'Please add it.',
@@ -25,18 +25,18 @@ describe('parseMessage', () => {
     );
     expect(m).toMatchObject({
       uid: 7,
-      message_id: '<m1@example.cz>',
-      from: 'orchestrator@example.cz',
-      from_name: 'Conductor',
-      to: ['info@example.cz', 'b@example.cz'],
-      cc: ['c@example.cz'],
-      reply_to: 'replies@example.cz',
-      subject: 'Spring concert',
+      message_id: '<m1@example.com>',
+      from: 'editor@example.com',
+      from_name: 'Editor',
+      to: ['info@example.com', 'b@example.com'],
+      cc: ['c@example.com'],
+      reply_to: 'replies@example.com',
+      subject: 'Spring event',
       date: '2026-06-01T08:00:00.000Z',
       body: 'Please add it.',
       truncated: false,
-      in_reply_to: '<m0@example.cz>',
-      references: ['<m-1@example.cz>', '<m0@example.cz>'],
+      in_reply_to: '<m0@example.com>',
+      references: ['<m-1@example.com>', '<m0@example.com>'],
       attachments: [],
     });
   });
@@ -44,9 +44,9 @@ describe('parseMessage', () => {
   it('renders HTML-only mail as text and lists attachments without content', async () => {
     const m = await parseMessage(
       raw([
-        'From: a@example.cz',
+        'From: a@example.com',
         'Subject: html',
-        'Message-ID: <h@example.cz>',
+        'Message-ID: <h@example.com>',
         'Content-Type: multipart/mixed; boundary=B',
         '',
         '--B',
@@ -72,7 +72,7 @@ describe('parseMessage', () => {
   });
 
   it('truncates long bodies and synthesises a Message-ID when missing', async () => {
-    const source = raw(['From: a@example.cz', 'Subject: long', '', 'x'.repeat(50)]);
+    const source = raw(['From: a@example.com', 'Subject: long', '', 'x'.repeat(50)]);
     const m = await parseMessage(source, { uid: 1, maxBodyChars: 10 });
     expect(m.body).toBe('x'.repeat(10));
     expect(m.truncated).toBe(true);

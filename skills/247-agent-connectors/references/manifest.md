@@ -13,8 +13,8 @@ ops: [fetch_new, mark_read, send]             # MCP tools the core may call; [] 
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
   user: "${secrets.email_user}"               # free-form: each connector defines its own
   password: "${secrets.email_pass}"           # (email: connectors/email/README.md)
-  incoming: { protocol: imap, host: imap.example.cz, folder: INBOX }
-  outgoing: { host: smtp.example.cz, from: info@example.cz, footer: "-- \nOffice" }
+  incoming: { protocol: imap, host: imap.example.com, folder: INBOX }
+  outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment for the process
 restart: { base: 1s, max: 60s }               # crash backoff, doubling; reset after 30s up
 health: { interval: 60s }                     # accepted, not used yet
@@ -74,5 +74,5 @@ connectors:
     ops: [fetch_new, mark_read]
     config:
       mails:
-        - { uid: 1, message_id: "<m1@x>", from: orchestrator@example.cz, subject: Spring concert, body: Please add it. }
+        - { uid: 1, message_id: "<m1@x>", from: editor@example.com, subject: Spring event, body: Please add it. }
 ```

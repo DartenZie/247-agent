@@ -46,7 +46,7 @@ connectors:
     config:
       user: "${secrets.email_user}"
       password: "${secrets.email_pass}"
-      incoming: { protocol: imap, host: imap.example.cz }
+      incoming: { protocol: imap, host: imap.example.com }
   - connectors.d          # a directory can be mixed in
 ```
 

@@ -10,14 +10,14 @@ import { runWait, WaitAction, WaitTimeoutError } from './wait.js';
 const event: EventRecord = {
   seq: 1,
   id: 'evt_1',
-  type: 'orchestra.change_ready',
+  type: 'site.change_ready',
   source: 'task:update',
   ts: 'now',
   correlation_id: 'cor_1',
   parent_id: null,
   dedup_key: null,
   depth: 1,
-  payload: { summary: 'new concert', diff: '+1' },
+  payload: { summary: 'new event', diff: '+1' },
 };
 
 function fakeConnectors(): ConnectorClients & { calls: unknown[] } {
@@ -59,7 +59,7 @@ describe('runConnector', () => {
       {
         connector: 'chat',
         op: 'ask',
-        args: { text: 'Ready: new concert', cid: 'cor_1', raw: event.payload },
+        args: { text: 'Ready: new event', cid: 'cor_1', raw: event.payload },
       },
     ]);
   });
@@ -190,7 +190,7 @@ describe('runSequence', () => {
       testContext({ resume: { resume: { step: 1, steps: ['asked'] }, outcome: 'matched', event } }),
     );
     expect(resumed).toEqual({
-      steps: ['asked', expect.objectContaining({ id: 'evt_1' }), 'got new concert'],
+      steps: ['asked', expect.objectContaining({ id: 'evt_1' }), 'got new event'],
     });
 
     await expect(

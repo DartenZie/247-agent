@@ -5,8 +5,8 @@ import { parseConfig } from './config.js';
 describe('parseConfig', () => {
   it('fills ports and TLS from the protocol', () => {
     const c = parseConfig({
-      incoming: { host: 'imap.example.cz' },
-      outgoing: { host: 'smtp.example.cz', from: 'a@example.cz' },
+      incoming: { host: 'imap.example.com' },
+      outgoing: { host: 'smtp.example.com', from: 'a@example.com' },
     });
     expect(c.incoming).toMatchObject({
       protocol: 'imap',

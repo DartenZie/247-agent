@@ -5,7 +5,7 @@ import { incomingConfig, MemoryState } from './test-helpers.js';
 
 const rfc822 = (id: string, subject: string): Buffer =>
   Buffer.from(
-    `From: a@example.cz\r\nSubject: ${subject}\r\nMessage-ID: <${id}@x>\r\n\r\n${subject} body\r\n`,
+    `From: a@example.com\r\nSubject: ${subject}\r\nMessage-ID: <${id}@x>\r\n\r\n${subject} body\r\n`,
   );
 
 interface FakeServer {

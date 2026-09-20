@@ -26,14 +26,14 @@ Copy the shape that fits; all of these validate and run today unless marked.
 ## React to an event, filter first
 
 ```yaml
-- name: classify_orchestra_email
+- name: classify_email
   trigger:
     kind: event
     type: email.received
-    filter: "payload.from == 'orchestrator@example.cz'"
+    filter: "payload.from == 'editor@example.com'"
   action: { ... }
   emit:
-    - type: orchestra.classified
+    - type: email.classified
       when: "result.kind != 'ignore'"
       payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
@@ -50,7 +50,7 @@ Copy the shape that fits; all of these validate and run today unless marked.
     kind: shell
     cwd: /var/lib/247-agent/repos/site
     env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
-    cmd: ["bash", "-c", "git pull --ff-only origin main && npm run build && lftp -u \"$FTP_USER\",env:LFTP_PASSWORD -e 'mirror -R --delete dist/ /public_html; quit' sftp://ftp.example.cz"]
+    cmd: ["bash", "-c", "git pull --ff-only origin main && npm run build && lftp -u \"$FTP_USER\",env:LFTP_PASSWORD -e 'mirror -R --delete dist/ /public_html; quit' sftp://ftp.example.com"]
 ```
 
 The publisher is the only task holding the deploy secret. A mirror is idempotent, so a
@@ -76,7 +76,7 @@ Safe by construction: a task never triggers on its own `task.notify.failed`.
 
 ```yaml
 - name: approve_general_change
-  trigger: { kind: event, type: orchestra.change_ready }
+  trigger: { kind: event, type: site.change_ready }
   action:
     kind: sequence
     steps:
@@ -125,17 +125,17 @@ Run with `oa run rebuild_site --wait`.
 
 Keep the same name, trigger, filter and `emit` so downstream tasks are exercised
 unchanged; replace only the action. This is how the integration test drives the
-orchestra workflow without a model.
+website workflow without a model.
 
 ```yaml
-- name: classify_orchestra_email
-  trigger: { kind: event, type: email.received, filter: "payload.from == 'orchestrator@example.cz'" }
+- name: classify_email
+  trigger: { kind: event, type: email.received, filter: "payload.from == 'editor@example.com'" }
   action:
     kind: shell
     cmd: [echo, '{"kind":"general_change","summary":"${event.payload.subject}"}']
     result: json_stdout
   emit:
-    - type: orchestra.classified
+    - type: email.classified
       when: "result.kind != 'ignore'"
       payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
@@ -143,6 +143,6 @@ orchestra workflow without a model.
 ## Replay a real event through a task
 
 Save the event as `{"type": "email.received", "payload": {...}}` and run
-`oa run classify_orchestra_email --event mail.json --wait`. The action sees it as
+`oa run classify_email --event mail.json --wait`. The action sees it as
 `event` (under the manual run's ids); filters are bypassed, so this tests the action
 and `emit`, while `oa emit email.received mail.json` tests the trigger and filter too.

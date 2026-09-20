@@ -34,16 +34,16 @@ systemd; a CLI (`oa`) validates config, triggers tasks by hand and tails events.
 
 ## Example
 
-Maintaining an orchestra's website from the conductor's emails:
+Maintaining a website from a trusted sender's emails:
 
 1. Every two minutes, fetch new mail (no model).
-2. Mail from the conductor's address triggers a one-shot Haiku classification:
+2. Mail from the trusted sender's address triggers a one-shot Haiku classification:
    event-list update, general change, or ignore.
 3. An event-list update runs a small, tightly scoped agent on Sonnet.
 4. A general change runs a larger agent on Opus, then asks you on chat before pushing.
 5. A successful update triggers an FTP mirror (no model), and a chat notification.
 
-The full config is in [`docs/examples/orchestra-website.yaml`](docs/examples/orchestra-website.yaml).
+The full config is in [`docs/examples/website-updates.yaml`](docs/examples/website-updates.yaml).
 
 ## Status
 

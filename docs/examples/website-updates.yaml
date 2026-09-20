@@ -1,4 +1,4 @@
-# Orchestra website maintenance — full flow as tasks.
+# Website maintenance driven by a trusted sender's emails — full flow as tasks.
 # Only two tasks call a model; the rest is deterministic.
 
 tasks:
@@ -19,17 +19,17 @@ tasks:
         dedup_key: "email:${item.message_id}"
         payload: ${item}
 
-  # 2. Only the orchestrator's mail reaches a model. Cheapest tier, one call, JSON out.
-  - name: classify_orchestra_email
+  # 2. Only the trusted sender's mail reaches a model. Cheapest tier, one call, JSON out.
+  - name: classify_email
     trigger:
       kind: event
       type: email.received
-      filter: "payload.from == 'orchestrator@example.cz'"
+      filter: "payload.from == 'editor@example.com'"
     action:
       kind: llm
       model: claude-haiku-4-5
       max_tokens: 512
-      system_file: prompts/classify_orchestra_email.md
+      system_file: prompts/classify_email.md
       input: |
         Subject: ${event.payload.subject}
 
@@ -42,9 +42,9 @@ tasks:
         required: [kind, summary]
         properties:
           kind: { enum: [event_list_update, general_change, ignore] }
-          summary: { type: string, description: "One sentence, what the orchestrator wants changed" }
+          summary: { type: string, description: "One sentence, what the sender wants changed" }
     emit:
-      - type: orchestra.classified
+      - type: email.classified
         when: "result.kind != 'ignore'"
         payload:
           kind: ${result.kind}
@@ -55,7 +55,7 @@ tasks:
   - name: update_event_list
     trigger:
       kind: event
-      type: orchestra.classified
+      type: email.classified
       filter: "payload.kind == 'event_list_update'"
     concurrency: 1
     timeout: 15m
@@ -66,7 +66,7 @@ tasks:
       effort: low
       max_turns: 20
       budget: { max_usd: 0.50 }
-      workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/orchestra-site, branch: main }
+      workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
       tools: [Read, Edit, Glob, Grep, Bash]
       bash_allow: ["npm run build"]
       system_file: prompts/agent_event_list.md
@@ -88,7 +88,7 @@ tasks:
   - name: update_site_general
     trigger:
       kind: event
-      type: orchestra.classified
+      type: email.classified
       filter: "payload.kind == 'general_change'"
     concurrency: 1
     timeout: 45m
@@ -99,7 +99,7 @@ tasks:
       effort: high
       max_turns: 60
       budget: { max_usd: 3.00 }
-      workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/orchestra-site, branch: main }
+      workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
       tools: [Read, Edit, Write, Glob, Grep, Bash]
       bash_allow: ["npm run build", "npm test", "git diff", "git status"]
       mcp_servers: [email]              # may read the thread for context; cannot send (op allowlist in connector config)
@@ -115,12 +115,12 @@ tasks:
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "site: ${result.summary}"]
     emit:
-      - type: orchestra.change_ready
+      - type: site.change_ready
         payload: { summary: "${result.summary}", diff: "${result.diff_stat}", worktree: "${run.workspace}" }
 
   # 4b. Approval gate via chat. No LLM.
   - name: approve_general_change
-    trigger: { kind: event, type: orchestra.change_ready }
+    trigger: { kind: event, type: site.change_ready }
     action:
       kind: sequence
       steps:
@@ -147,14 +147,14 @@ tasks:
     concurrency: 1
     action:
       kind: shell
-      cwd: /var/lib/247-agent/repos/orchestra-site
+      cwd: /var/lib/247-agent/repos/website
       env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
       cmd:
         - bash
         - -c
         - |
           git pull --ff-only origin main && npm run build &&
-          lftp -u "$FTP_USER",env:LFTP_PASSWORD -e "mirror -R --delete dist/ /public_html; quit" sftp://ftp.example.cz
+          lftp -u "$FTP_USER",env:LFTP_PASSWORD -e "mirror -R --delete dist/ /public_html; quit" sftp://ftp.example.com
 
   # 6. Tell the human what happened. No LLM.
   - name: notify

@@ -8,7 +8,7 @@ expose operations as MCP servers.
 
 Read `docs/ARCHITECTURE.md` before changing anything structural. It is the source of
 truth for concepts, action semantics, the connector protocol and the config format.
-`docs/examples/orchestra-website.yaml` is the reference workflow; keep it valid.
+`docs/examples/website-updates.yaml` is the reference workflow; keep it valid.
 
 ## Stack (decided)
 
@@ -28,7 +28,7 @@ packages/core/test/fixtures/  fake connectors for tests (Node runs them from .ts
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, chat, ...)
-docs/                        ARCHITECTURE.md, examples/ (agent.yaml, orchestra-website.yaml, connectors.d/)
+docs/                        ARCHITECTURE.md, examples/ (agent.yaml, website-updates.yaml, connectors.d/)
 skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
 ```
 

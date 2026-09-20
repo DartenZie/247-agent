@@ -52,7 +52,7 @@ than `limits.max_event_depth` (default 32) in a causal chain are dropped.
 ```yaml
 action:
   kind: shell
-  cmd: ["lftp", "-e", "mirror -R --delete dist/ /public_html; quit", "sftp://ftp.example.cz"]
+  cmd: ["lftp", "-e", "mirror -R --delete dist/ /public_html; quit", "sftp://ftp.example.com"]
   cwd: /var/lib/247-agent/repos/site      # optional, templated
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }   # values must render to strings
   stdin: ${event.payload}                 # optional; non-strings sent as JSON
@@ -129,7 +129,7 @@ emit:
     each: ${result.emails}              # single ${…} rendering to an array; one event per `item`
     dedup_key: "email:${item.message_id}"
     payload: ${item}
-  - type: orchestra.classified
+  - type: email.classified
     when: "result.kind != 'ignore'"     # JMESPath over {event, result, state, env, run}
     payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```

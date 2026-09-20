@@ -122,7 +122,7 @@ class FakePop3Server {
 }
 
 const mail = (id: string, body: string): string =>
-  `From: a@example.cz\r\nSubject: ${id}\r\nMessage-ID: <${id}@x>\r\n\r\n${body}`;
+  `From: a@example.com\r\nSubject: ${id}\r\nMessage-ID: <${id}@x>\r\n\r\n${body}`;
 
 let server: FakePop3Server;
 afterEach(async () => {

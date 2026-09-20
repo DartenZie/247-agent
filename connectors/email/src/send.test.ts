@@ -12,7 +12,9 @@ import { outgoingConfig as outgoing } from './test-helpers.js';
 
 describe('footer', () => {
   it('appends the text footer after one blank line', () => {
-    expect(appendTextFooter('Hello\n\n', '-- \nOrchestra\n')).toBe('Hello\n\n-- \nOrchestra\n');
+    expect(appendTextFooter('Hello\n\n', '-- \nExample Team\n')).toBe(
+      'Hello\n\n-- \nExample Team\n',
+    );
     expect(appendTextFooter('Hello', undefined)).toBe('Hello');
     expect(appendTextFooter('Hello', '  \n')).toBe('Hello');
   });
@@ -26,8 +28,8 @@ describe('footer', () => {
   });
 
   it('derives an escaped HTML footer from the text one', () => {
-    expect(textFooterAsHtml('Orchestra <info@example.cz>\n"Music & more"\n')).toBe(
-      '<p class="footer">Orchestra &lt;info@example.cz&gt;<br>\n&quot;Music &amp; more&quot;</p>',
+    expect(textFooterAsHtml('Example Team <info@example.com>\n"Tips & more"\n')).toBe(
+      '<p class="footer">Example Team &lt;info@example.com&gt;<br>\n&quot;Tips &amp; more&quot;</p>',
     );
   });
 });
@@ -35,23 +37,23 @@ describe('footer', () => {
 describe('buildMessage', () => {
   it('adds the footer to text and html and threads replies', () => {
     const msg = buildMessage(outgoing({ footer: 'Sent by 247-agent' }), {
-      to: 'a@example.cz',
-      cc: ['b@example.cz'],
-      subject: 'Re: Spring concert',
+      to: 'a@example.com',
+      cc: ['b@example.com'],
+      subject: 'Re: Spring event',
       text: 'Done.',
       html: '<p>Done.</p>',
-      in_reply_to: '<m1@example.cz>',
-      references: ['<m0@example.cz>'],
+      in_reply_to: '<m1@example.com>',
+      references: ['<m0@example.com>'],
     });
     expect(msg).toMatchObject({
-      from: 'Orchestra <info@example.cz>',
-      to: 'a@example.cz',
-      cc: ['b@example.cz'],
-      subject: 'Re: Spring concert',
+      from: 'Example Team <info@example.com>',
+      to: 'a@example.com',
+      cc: ['b@example.com'],
+      subject: 'Re: Spring event',
       text: 'Done.\n\nSent by 247-agent\n',
       html: '<p>Done.</p><p class="footer">Sent by 247-agent</p>',
-      inReplyTo: '<m1@example.cz>',
-      references: ['<m0@example.cz>', '<m1@example.cz>'],
+      inReplyTo: '<m1@example.com>',
+      references: ['<m0@example.com>', '<m1@example.com>'],
     });
   });
 
@@ -99,32 +101,32 @@ describe('sendMail', () => {
       buffer: true,
       newline: 'unix',
     });
-    const msg = buildMessage(outgoing({ footer: '-- \nOrchestra office' }), {
-      to: 'a@example.cz',
+    const msg = buildMessage(outgoing({ footer: '-- \nExample Team office' }), {
+      to: 'a@example.com',
       subject: 'Hello',
       text: 'Body',
     });
     const result = await sendMail(transport, msg);
-    expect(result.message_id).toMatch(/^<.+@example\.cz>$/);
+    expect(result.message_id).toMatch(/^<.+@example\.com>$/);
     const info = (await transport.sendMail(msg)) as unknown as { message: Buffer };
     const text = info.message.toString('utf8');
-    expect(text).toContain('From: Orchestra <info@example.cz>');
-    expect(text).toContain('Body\n\n-- \nOrchestra office\n');
+    expect(text).toContain('From: Example Team <info@example.com>');
+    expect(text).toContain('Body\n\n-- \nExample Team office\n');
   });
 
   it('maps the SMTP accepted/rejected lists to bare addresses', async () => {
     const transport = {
       sendMail: () =>
         Promise.resolve({
-          messageId: '<x@example.cz>',
-          accepted: ['a@example.cz', { address: 'b@example.cz' }],
-          rejected: [{ address: 'c@example.cz' }],
+          messageId: '<x@example.com>',
+          accepted: ['a@example.com', { address: 'b@example.com' }],
+          rejected: [{ address: 'c@example.com' }],
         }),
     } as unknown as Parameters<typeof sendMail>[0];
-    expect(await sendMail(transport, { to: 'a@example.cz' })).toEqual({
-      message_id: '<x@example.cz>',
-      accepted: ['a@example.cz', 'b@example.cz'],
-      rejected: ['c@example.cz'],
+    expect(await sendMail(transport, { to: 'a@example.com' })).toEqual({
+      message_id: '<x@example.com>',
+      accepted: ['a@example.com', 'b@example.com'],
+      rejected: ['c@example.com'],
     });
   });
 });

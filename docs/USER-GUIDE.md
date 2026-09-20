@@ -158,7 +158,7 @@ cheap relevance check here (sender, label, repo), not in a model prompt.
 trigger:
   kind: event
   type: email.received
-  filter: "payload.from == 'orchestrator@example.cz'"
+  filter: "payload.from == 'editor@example.com'"
 ```
 
 ```yaml
@@ -200,7 +200,7 @@ emit:
     each: ${result.emails}              # one event per array item, available as `item`
     dedup_key: "email:${item.message_id}"
     payload: ${item}
-  - type: orchestra.classified
+  - type: email.classified
     when: "result.kind != 'ignore'"     # JMESPath over {event, result, state, env, run}
     payload: { kind: "${result.kind}", email: "${event.payload}" }
 ```
@@ -265,8 +265,8 @@ One `action` per task. `kind` selects the runner.
 ```yaml
 action:
   kind: shell
-  cmd: ["lftp", "-e", "mirror -R --delete dist/ /public_html; quit", "sftp://ftp.example.cz"]
-  cwd: /var/lib/247-agent/repos/orchestra-site
+  cmd: ["lftp", "-e", "mirror -R --delete dist/ /public_html; quit", "sftp://ftp.example.com"]
+  cwd: /var/lib/247-agent/repos/website
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}              # optional; non-strings are sent as JSON
   result: text_stdout                  # | json_stdout | exit_code
@@ -344,7 +344,7 @@ should be its own task and event.
 ### 5.5 `llm` and `agent` (not runnable yet)
 
 Both kinds are accepted by `oa validate` so a complete workflow can be written now, and
-[`examples/orchestra-website.yaml`](examples/orchestra-website.yaml) shows the intended
+[`examples/website-updates.yaml`](examples/website-updates.yaml) shows the intended
 shape: `llm` is one model call with a JSON `output_schema`; `agent` is a Claude Agent
 SDK loop in a fresh git worktree with `tools`, `bash_allow`, `max_turns`, a `budget`, a
 `RESULT.json` contract and deterministic `post` gates. A run of either fails today with
@@ -370,8 +370,8 @@ ops: [fetch_new, mark_read, send]             # tools the core may call; [] = an
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
   user: "${secrets.email_user}"               # (the email connector's own schema:
   password: "${secrets.email_pass}"           #  connectors/email/README.md)
-  incoming: { protocol: imap, host: imap.example.cz }
-  outgoing: { host: smtp.example.cz, from: info@example.cz, footer: "-- \nOffice" }
+  incoming: { protocol: imap, host: imap.example.com }
+  outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment
 restart: { base: 1s, max: 60s }               # crash backoff, doubling
 ```
@@ -579,8 +579,8 @@ stale socket file left by a dead daemon is replaced; a live one refuses the star
 
 ## 10. Reference workflow and current gaps
 
-[`examples/orchestra-website.yaml`](examples/orchestra-website.yaml) is the complete
-worked example: poll a mailbox on cron, classify the conductor's emails with one Haiku
+[`examples/website-updates.yaml`](examples/website-updates.yaml) is the complete
+worked example: poll a mailbox on cron, classify the trusted sender's emails with one Haiku
 call, edit the site with a scoped agent, gate on a build, ask for approval on chat, mirror
 over FTP, notify. Its non-model path runs today against fake connectors in
 `packages/core/src/integration.test.ts`.

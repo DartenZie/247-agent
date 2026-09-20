@@ -38,7 +38,7 @@ const classify = config([
     trigger: {
       kind: 'event',
       type: 'email.received',
-      filter: "payload.from == 'orchestrator@example.cz'",
+      filter: "payload.from == 'editor@example.com'",
     },
     action: shell,
   },
@@ -58,8 +58,8 @@ describe('compileTask', () => {
     expect(notify?.matches(ev({ type: 'task.publish.succeeded' }))).toBe(false);
     expect(notify?.matches(ev({ type: 'task.a.b.failed' }))).toBe(false);
     const from = (f: string) => ev({ type: 'email.received', payload: { from: f } });
-    expect(classify?.matches(from('orchestrator@example.cz'))).toBe(true);
-    expect(classify?.matches(from('spam@example.cz'))).toBe(false);
+    expect(classify?.matches(from('editor@example.com'))).toBe(true);
+    expect(classify?.matches(from('spam@example.com'))).toBe(false);
     expect(classify?.matches(ev({ type: 'email.received' }))).toBe(false);
   });
 

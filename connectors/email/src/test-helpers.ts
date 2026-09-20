@@ -14,7 +14,7 @@ export function incomingConfig(extra: Record<string, unknown> = {}): IncomingCon
 
 export function outgoingConfig(extra: Record<string, unknown> = {}): OutgoingConfig {
   const c = parseConfig({
-    outgoing: { host: 'smtp.example.cz', from: 'Orchestra <info@example.cz>', ...extra },
+    outgoing: { host: 'smtp.example.com', from: 'Example Team <info@example.com>', ...extra },
   }).outgoing;
   if (c === undefined) {
     throw new Error('unreachable');

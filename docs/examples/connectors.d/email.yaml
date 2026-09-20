@@ -10,13 +10,13 @@ config:
   password: "${secrets.email_pass}"      # resolved from the secrets backend at start
   incoming:
     protocol: imap                       # imap | pop3
-    host: imap.example.cz                # port 993 + TLS by default
+    host: imap.example.com                # port 993 + TLS by default
     folder: INBOX
     initial: none                        # first run: skip what is already there (or `all`)
   outgoing:
-    host: smtp.example.cz                # port 465 + TLS by default
-    from: "Orchestra <info@example.cz>"
+    host: smtp.example.com                # port 465 + TLS by default
+    from: "Example Team <info@example.com>"
     footer: |
       --
-      Orchestra office · sent by 247-agent
+      Example Team office · sent by 247-agent
 restart: { base: 1s, max: 60s }

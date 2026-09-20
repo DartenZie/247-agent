@@ -2,7 +2,7 @@
 
 IMAP or POP3 in, SMTP out. A poll-style connector: it emits nothing by itself; a cron
 task calls `fetch_new` and fans the result out as `email.received` events (see
-`docs/examples/orchestra-website.yaml`). `send` appends the configured footer to every
+`docs/examples/website-updates.yaml`). `send` appends the configured footer to every
 outgoing mail.
 
 ```
@@ -23,7 +23,7 @@ config:
   password: "${secrets.email_pass}"
   incoming:
     protocol: imap                      # imap (default) | pop3
-    host: imap.example.cz
+    host: imap.example.com
     port: 993                           # default: 993/995 with TLS, 143/110 without
     secure: true                        # implicit TLS; default true unless port is a plain one
     starttls: true                      # on a plain port, require STARTTLS/STLS before login
@@ -36,12 +36,12 @@ config:
     user: ...                           # optional per-side override
     password: ...
   outgoing:
-    host: smtp.example.cz
+    host: smtp.example.com
     port: 465                           # default: 465 with TLS, 587 without (STARTTLS)
-    from: "Orchestra <info@example.cz>"
+    from: "Example Team <info@example.com>"
     footer: |                           # appended to the text body after a blank line
       --
-      Orchestra office
+      Example Team office
     footer_html: "<p>…</p>"             # appended to the html body; derived from `footer` when unset
 ```
 
@@ -66,16 +66,16 @@ connector never logs them.
 Each item of `emails`:
 
 ```json
-{ "uid": 42, "message_id": "<m1@example.cz>", "from": "orchestrator@example.cz",
-  "from_name": "Conductor", "to": ["info@example.cz"], "cc": [], "reply_to": null,
-  "subject": "Spring concert", "date": "2026-06-01T08:00:00.000Z",
+{ "uid": 42, "message_id": "<m1@example.com>", "from": "editor@example.com",
+  "from_name": "Editor", "to": ["info@example.com"], "cc": [], "reply_to": null,
+  "subject": "Spring event", "date": "2026-06-01T08:00:00.000Z",
   "body": "Please add it.", "truncated": false,
   "in_reply_to": null, "references": [],
   "attachments": [{ "filename": "programme.pdf", "content_type": "application/pdf", "size": 12345 }] }
 ```
 
 `from` is the bare lower-cased address, so a trigger filter like
-`payload.from == 'orchestrator@example.cz'` works. `body` is the text part, or a plain-text
+`payload.from == 'editor@example.com'` works. `body` is the text part, or a plain-text
 rendering of an HTML-only mail. Attachment contents are not fetched. A missing
 `Message-ID` is replaced by a hash of the raw message so `dedup_key` stays usable.
 
@@ -108,7 +108,7 @@ added to `References` so replies thread. `attachments` are
       payload: ${item}
 
 - name: reply
-  trigger: { kind: event, type: orchestra.answer_ready }
+  trigger: { kind: event, type: request.answer_ready }
   action:
     kind: connector
     connector: email
