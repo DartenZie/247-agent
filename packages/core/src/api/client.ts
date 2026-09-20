@@ -3,10 +3,11 @@ import { request as httpRequest } from 'node:http';
 import type { ManualInput } from '../bus/manual.js';
 import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
+import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { RunFilter } from '../store/runs.js';
 import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
-import type { HealthBody, RunResponse } from './routes.js';
+import type { ConnectorEntry, HealthBody, RunResponse } from './routes.js';
 
 export const DEFAULT_SOCKET = '/run/247-agent/core.sock';
 
@@ -135,6 +136,19 @@ export class ApiClient {
       `/v1/state/${encodeURIComponent(namespace)}`,
     );
     return r.entries;
+  }
+
+  async listConnectors(): Promise<ConnectorEntry[]> {
+    const r = await this.request<{ connectors: ConnectorEntry[] }>('GET', '/v1/connectors');
+    return r.connectors;
+  }
+
+  /** Kills and respawns one connector, re-resolving its secrets. */
+  restartConnector(name: string): Promise<ConnectorStatus> {
+    return this.request<ConnectorStatus>(
+      'POST',
+      `/v1/connectors/${encodeURIComponent(name)}/restart`,
+    );
   }
 
   private request<T>(

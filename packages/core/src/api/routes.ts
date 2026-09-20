@@ -4,6 +4,8 @@ import { UnknownTaskError } from '../bus/manual.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
 import { issuesFromZod, type ConfigIssue } from '../config/load.js';
+import { NonRetryableError } from '../actions/types.js';
+import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
 import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
@@ -71,6 +73,11 @@ export interface RunResponse {
   event_id: string;
   run: RunRecord;
 }
+
+/** `GET /v1/connectors`: a supervised process, or a built-in run in the core. */
+export type ConnectorEntry =
+  | (ConnectorStatus & { builtin: null })
+  | { name: string; builtin: 'poller'; state: 'up'; pid: null; restarts: 0; error: string | null };
 
 const RUN_STATUSES = ['queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 
@@ -209,16 +216,67 @@ function listState(ctx: RouteContext, ns: string): ApiResponse {
   return { status: 200, body: { entries: entries as unknown as JsonValue } };
 }
 
+function listConnectors(ctx: RouteContext): ApiResponse {
+  const processes: ConnectorEntry[] = (ctx.core.supervisor?.status() ?? []).map((c) => ({
+    ...c,
+    builtin: null,
+  }));
+  const builtins: ConnectorEntry[] = ctx.core.pollers.map((p) => ({
+    name: p.status().name,
+    builtin: 'poller',
+    state: 'up',
+    pid: null,
+    restarts: 0,
+    error: p.status().last_error,
+  }));
+  const connectors = [...processes, ...builtins];
+  return { status: 200, body: { connectors: connectors as unknown as JsonValue } };
+}
+
+async function restartConnector(ctx: RouteContext, name: string): Promise<ApiResponse> {
+  if (ctx.core.pollers.some((p) => p.status().name === name)) {
+    throw new ApiError(
+      409,
+      `connector "${name}" is built in: it re-reads its secrets on every poll, nothing to restart`,
+    );
+  }
+  const supervisor = ctx.core.supervisor;
+  if (!supervisor?.names().includes(name)) {
+    throw new ApiError(404, `unknown connector "${name}"`);
+  }
+  try {
+    const status = await supervisor.restart(name);
+    return { status: 200, body: status as unknown as JsonValue };
+  } catch (err) {
+    if (err instanceof NonRetryableError) {
+      throw new ApiError(404, err.message);
+    }
+    throw err;
+  }
+}
+
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
+const CONNECTOR_RESTART_PATH = /^\/v1\/connectors\/([^/]+)\/restart$/;
 const EVENT_PATH = /^\/v1\/events\/([^/]+)$/;
 const STATE_NS_PATH = /^\/v1\/state\/([^/]+)$/;
 const STATE_KEY_PATH = /^\/v1\/state\/([^/]+)\/([^/]+)$/;
 
 /** Throws `ApiError` for client errors; anything else is a 500 for the server to map. */
-export function route(ctx: RouteContext, req: ApiRequest): ApiResponse {
+export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise<ApiResponse> {
   const { method, path } = req;
   if (path === '/v1/health') {
     return only(method, 'GET', () => ({ status: 200, body: health(ctx) }));
+  }
+  if (path === '/v1/connectors') {
+    return only(method, 'GET', () => listConnectors(ctx));
+  }
+  const restart = CONNECTOR_RESTART_PATH.exec(path);
+  if (restart?.[1] !== undefined) {
+    const name = decodeURIComponent(restart[1]);
+    if (method !== 'POST') {
+      throw new ApiError(405, `method ${method} not allowed; use POST`);
+    }
+    return restartConnector(ctx, name);
   }
   if (path === '/v1/events') {
     return only(method, 'POST', () => emit(ctx, req.body));

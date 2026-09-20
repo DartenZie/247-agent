@@ -163,6 +163,50 @@ describe('ConnectorSupervisor', () => {
     await bad.stop();
   });
 
+  it('restart() respawns one connector with freshly resolved secrets and resets backoff', async () => {
+    const secrets = { tok: 'v1' };
+    const s = make([manifest({ config: { token: '${secrets.tok}' } })], secrets);
+    await s.start();
+    await expect(s.call('fake', 'env', {}, { signal: signal() })).resolves.toMatchObject({
+      config: { token: 'v1' },
+    });
+    const before = s.status()[0]?.pid;
+    await expect(s.call('fake', 'crash', {}, { signal: signal() })).resolves.toEqual({
+      crashing: true,
+    });
+    await until(() => s.status()[0]?.state === 'up' && (s.status()[0]?.restarts ?? 0) > 0);
+
+    secrets.tok = 'v2'; // rotated at the backend
+    const status = await s.restart('fake');
+    expect(status).toMatchObject({ name: 'fake', state: 'up', restarts: 0, error: null });
+    expect(status.pid).not.toBe(before);
+    await expect(s.call('fake', 'env', {}, { signal: signal() })).resolves.toMatchObject({
+      config: { token: 'v2' },
+    });
+    await expect(s.restart('nope')).rejects.toThrow('unknown connector');
+    expect(JSON.stringify(lines)).not.toMatch(/v1|v2/);
+    expect(lines.map((l) => l.msg)).toContain('connector.restart_requested');
+  });
+
+  it('restart() of a plain process does not double-spawn it', async () => {
+    // fake-plain.ts exits once its emit to the test socket fails; an idle process is needed here.
+    const s = make([
+      manifest({
+        name: 'plain',
+        transport: 'none',
+        exec: ['node', '-e', 'setInterval(() => undefined, 60000)'],
+      }),
+    ]);
+    await s.start();
+    const first = s.status()[0]?.pid;
+    const status = await s.restart('plain');
+    expect(status).toMatchObject({ name: 'plain', state: 'up', restarts: 0 });
+    expect(status.pid).not.toBe(first);
+    await new Promise((r) => setTimeout(r, 200)); // long enough for a stray restart timer
+    expect(lines.filter((l) => l.msg === 'connector.exited')).toEqual([]);
+    expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
+  });
+
   it('runs a transport: none connector as a plain process and refuses ops on it', async () => {
     const s = make([
       manifest({ name: 'plain', transport: 'none', exec: ['node', `${FIXTURES}fake-plain.ts`] }),

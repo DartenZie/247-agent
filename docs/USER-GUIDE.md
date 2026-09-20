@@ -222,11 +222,15 @@ backend:
 | `secrets:` in agent.yaml | Where the value comes from |
 |---|---|
 | `{ backend: env, prefix: OA_SECRET_ }` | `OA_SECRET_FTP_PASS` in the daemon's environment (name upper-cased) |
-| `{ backend: file, path: secrets.yaml }` | A YAML or JSON map `name: value`, re-read on every resolve |
+| `{ backend: file, path: secrets.yaml }` | A YAML or JSON map `name: value`, re-read on every resolve; must be mode 0600 or the resolve fails |
 | `{ backend: systemd-credentials }` | One file per secret under `$CREDENTIALS_DIRECTORY` (systemd `LoadCredential=`) |
 
 Secret values never reach the database, the logs or an event payload. `secrets` may
 only be used inside `action`, only as `secrets.<name>`, never as a whole.
+
+A connector receives its secrets once, when it is spawned. After rotating a value, run
+`oa connector restart <name>` so the process is respawned with the new one; the built-in
+poller re-reads on every poll and needs nothing.
 
 ### 4.7 Templates and expressions
 
@@ -390,8 +394,11 @@ top of a minimal one (`PATH`, `HOME`, …):
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
 | `OA_CONFIG_JSON` | The manifest's `config` as JSON, secrets rendered |
 
-Anything the connector writes to stderr is logged by the daemon as `connector.output`.
-Changing a manifest needs a daemon restart; SIGHUP reloads tasks files only.
+`connectorEnv()` deletes `OA_CONFIG_JSON` from the environment after reading it, so
+subprocesses the connector starts do not inherit the rendered secrets. Anything the
+connector writes to stderr is logged by the daemon as `connector.output`. Changing a
+manifest needs a daemon restart; SIGHUP reloads tasks files only. `oa connector restart
+<name>` respawns one connector with freshly resolved secrets (section 7).
 
 ### 6.3 Writing one in TypeScript
 
@@ -516,11 +523,22 @@ Every task whose trigger matches runs. The output tells you whether the event wa
 inserted or dropped as a duplicate of its `dedup_key`.
 
 ```
+oa connector list [--json]
+oa connector restart <name> [--json]
+```
+
+`list` shows every connector with its state, pid and restart count; built-in pollers
+appear with `builtin`. `restart` kills one supervised connector, resolves its secrets
+again and respawns it, so it is the step after rotating a secret. It exits 1 when the
+connector is not up afterwards. A built-in poller is refused, since it re-reads its
+secrets on every poll.
+
+```
 oa help [command]
 ```
 
-`oa events`, `oa runs`, `oa cost` and `oa connectors` from the architecture document do
-not exist yet; use the API (section 8) for the same information.
+`oa events`, `oa runs` and `oa cost` from the architecture document do not exist yet;
+use the API (section 8) for the same information.
 
 ## 8. The API
 
@@ -537,8 +555,10 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
+| `GET /v1/connectors` | `{connectors: [{name, state, pid, restarts, error, builtin}]}` |
+| `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
 
-Errors are `{error, issues?}` with status 400, 404, 405 or 413.
+Errors are `{error, issues?}` with status 400, 404, 405, 409 or 413.
 
 ```
 curl --unix-socket $OA_CORE_SOCKET 'http://unix/v1/runs?status=failed&limit=10'
@@ -602,6 +622,7 @@ secret of the same name. Logs are JSON lines on stdout, so `journalctl -u 247-ag
 | Signal | Effect |
 |---|---|
 | `SIGHUP` | Re-reads the tasks files. Running runs finish under the old config. An invalid file is logged and the previous config stays active. Connector changes need a restart |
+| `oa connector restart <name>` | Not a signal, but the way to make one connector pick up a rotated secret without restarting the daemon |
 | `SIGTERM`, `SIGINT` | Stops the daemon. Runs in flight are aborted |
 
 On the next start, a run that was `running` is re-queued when its retry policy allows

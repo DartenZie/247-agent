@@ -166,6 +166,7 @@ export {
   ApiError as ApiRouteError,
   type ApiRequest,
   type ApiResponse,
+  type ConnectorEntry,
   type HealthBody,
   type RouteContext,
   type RunResponse,

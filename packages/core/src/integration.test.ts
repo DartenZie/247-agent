@@ -154,6 +154,7 @@ beforeEach(async () => {
     Object.entries(SECRETS)
       .map(([k, v]) => `${k}: "${v}"`)
       .join('\n') + '\n',
+    { mode: 0o600 },
   );
   lines = [];
   daemon = await startDaemon({

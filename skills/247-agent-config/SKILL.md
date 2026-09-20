@@ -64,7 +64,7 @@ names across all manifests. `docs/examples/agent.yaml` is the annotated referenc
 |---|---|
 | tasks files | `systemctl reload 247-agent` (SIGHUP); running runs finish under the old config; an invalid file is logged and ignored |
 | connector manifests, `agent.yaml` | restart the service |
-| secrets (`file` backend) | re-read on every resolve, no restart |
+| secrets (`file` backend) | re-read on every resolve for actions and pollers; `oa connector restart <name>` for a connector that holds the old value |
 | secrets (`env`, `systemd-credentials`) | restart the service (systemd re-loads credentials at start) |
 
 Run `oa validate agent.yaml` before any reload or restart; CI should run it on the

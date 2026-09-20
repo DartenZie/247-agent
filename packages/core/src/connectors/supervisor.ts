@@ -149,6 +149,30 @@ export class ConnectorSupervisor implements ConnectorClients {
     await Promise.all([...this.managed.values()].map((m) => this.kill(m)));
   }
 
+  /**
+   * Kills one connector and spawns it again, re-resolving its secrets: how a rotated
+   * secret reaches a running connector (ARCHITECTURE §6). Deliberate, so the backoff
+   * counter resets. Throws for an unknown name.
+   */
+  async restart(name: string): Promise<ConnectorStatus> {
+    const m = this.managed.get(name);
+    if (m === undefined) {
+      throw new NonRetryableError(`unknown connector "${name}"`);
+    }
+    const log = this.log.child({ connector: name });
+    log.info('connector.restart_requested', {});
+    await this.kill(m);
+    m.restarts = 0;
+    if (!this.stopping) {
+      await this.spawn(m);
+    }
+    const status = this.status().find((s) => s.name === name);
+    if (status === undefined) {
+      throw new Error(`connector "${name}" vanished`); // unreachable: managed never shrinks
+    }
+    return status;
+  }
+
   async call(
     connector: string,
     op: string,
@@ -220,27 +244,33 @@ export class ConnectorSupervisor implements ConnectorClients {
         stderr: 'pipe',
         reject: false,
       });
-      const exited = child.then(
-        (r) => {
-          m.process = undefined;
-          const why =
-            r.exitCode === undefined
-              ? `killed by ${r.signal ?? '?'}`
-              : `exit code ${String(r.exitCode)}`;
-          this.exited(m, why, log);
-        },
-        (err: unknown) => {
-          m.process = undefined;
-          this.exited(m, errorMessage(err), log);
-        },
-      );
-      m.process = {
+      const proc: PlainProcess = {
         pid: child.pid,
         kill: (signal) => {
           child.kill(signal);
         },
-        exited,
+        exited: child.then(
+          (r) => {
+            if (m.process !== proc) {
+              return; // killed on purpose (stop/restart); not a crash
+            }
+            m.process = undefined;
+            const why =
+              r.exitCode === undefined
+                ? `killed by ${r.signal ?? '?'}`
+                : `exit code ${String(r.exitCode)}`;
+            this.exited(m, why, log);
+          },
+          (err: unknown) => {
+            if (m.process !== proc) {
+              return;
+            }
+            m.process = undefined;
+            this.exited(m, errorMessage(err), log);
+          },
+        ),
       };
+      m.process = proc;
       this.pipeLines(child.stdout, 'stdout', log);
       this.pipeLines(child.stderr, 'stderr', log);
       this.up(m, log);

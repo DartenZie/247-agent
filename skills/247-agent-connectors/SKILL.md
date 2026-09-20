@@ -57,7 +57,8 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
    oa run <task that calls the op> --wait
    ```
 
-   Manifest changes need a daemon restart (SIGHUP reloads tasks files only).
+   Manifest changes need a daemon restart (SIGHUP reloads tasks files only); a rotated
+   secret needs only `oa connector restart <name>`.
 
 ## Debugging
 

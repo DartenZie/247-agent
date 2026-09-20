@@ -98,7 +98,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
           });
         }
       }
-      response = route(opts, { method, path: url.pathname, query: url.searchParams, body });
+      response = await route(opts, { method, path: url.pathname, query: url.searchParams, body });
     } catch (err) {
       if (err instanceof ApiError) {
         response = err.toResponse();

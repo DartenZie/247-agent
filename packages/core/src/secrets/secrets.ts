@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
@@ -65,6 +65,11 @@ function envBackend(prefix: string, env: NodeJS.ProcessEnv): SecretsBackend {
   };
 }
 
+/** Group or world can read the file: a secret would be one `cat` away for any local user. */
+function isWideOpen(mode: number): boolean {
+  return process.platform !== 'win32' && (mode & 0o077) !== 0;
+}
+
 function fileBackend(path: string): SecretsBackend {
   return {
     kind: 'file',
@@ -75,6 +80,9 @@ function fileBackend(path: string): SecretsBackend {
       }
       let doc: unknown;
       try {
+        if (isWideOpen(statSync(path).mode)) {
+          throw new Error('mode must be 0600 (readable by the service user only)');
+        }
         doc = parseYaml(readFileSync(path, 'utf8'));
       } catch (err) {
         throw new SecretError(

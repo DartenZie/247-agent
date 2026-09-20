@@ -34,7 +34,7 @@ health: { interval: 60s }                     # accepted, not used yet
 |---|---|
 | `OA_CORE_SOCKET` | The core's Unix socket path |
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
-| `OA_CONFIG_JSON` | `config` as JSON, secrets rendered |
+| `OA_CONFIG_JSON` | `config` as JSON, secrets rendered; read it once at start and delete it from the environment (`connectorEnv()` does) so child processes do not inherit it |
 
 Plus the manifest's `env`, on top of a minimal environment (`PATH`, `HOME`, …). Stderr
 lines are logged by the daemon as `connector.output`.

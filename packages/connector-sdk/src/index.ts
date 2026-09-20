@@ -24,7 +24,12 @@ export interface ConnectorEnv {
   config: Record<string, JsonValue>;
 }
 
-/** Reads the environment the core provides; throws when not started by the core. */
+/**
+ * Reads the environment the core provides; throws when not started by the core.
+ *
+ * `OA_CONFIG_JSON` carries the rendered secrets, so it is removed from `env` once read:
+ * a subprocess the connector spawns later must not inherit it. Call this once, at start.
+ */
 export function connectorEnv(env: NodeJS.ProcessEnv = process.env): ConnectorEnv {
   const socket = env.OA_CORE_SOCKET;
   const name = env.OA_CONNECTOR_NAME;
@@ -32,6 +37,7 @@ export function connectorEnv(env: NodeJS.ProcessEnv = process.env): ConnectorEnv
     throw new Error('OA_CORE_SOCKET and OA_CONNECTOR_NAME are not set (not started by the core?)');
   }
   const raw = env.OA_CONFIG_JSON;
+  delete env.OA_CONFIG_JSON;
   const config =
     raw === undefined || raw === '' ? {} : (JSON.parse(raw) as Record<string, JsonValue>);
   return { socket, name, config };

@@ -24,6 +24,17 @@ describe('connectorEnv', () => {
     expect(connectorEnv({ OA_CORE_SOCKET: '/s', OA_CONNECTOR_NAME: 'email' }).config).toEqual({});
     expect(() => connectorEnv({})).toThrow(/OA_CORE_SOCKET/);
   });
+
+  it('removes the rendered config from the environment so subprocesses do not inherit it', () => {
+    const env: NodeJS.ProcessEnv = {
+      OA_CORE_SOCKET: '/s',
+      OA_CONNECTOR_NAME: 'email',
+      OA_CONFIG_JSON: '{"password":"sekrit"}',
+    };
+    expect(connectorEnv(env).config).toEqual({ password: 'sekrit' });
+    expect(env).toEqual({ OA_CORE_SOCKET: '/s', OA_CONNECTOR_NAME: 'email' });
+    expect(connectorEnv(env).config).toEqual({});
+  });
 });
 
 describe('createConnectorServer', () => {

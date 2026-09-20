@@ -114,7 +114,7 @@ One daemon, `247-agent-core`, with these internal modules:
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
-| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. Deferring to systemd units is not implemented. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
@@ -374,8 +374,15 @@ connector and lists the op.
 **Lifecycle:** spawned by the core supervisor. Env provided: `OA_CORE_SOCKET`,
 `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON` (the manifest's `config` with secrets rendered) and
 the manifest's `env`, on top of a minimal inherited environment (`PATH`, `HOME`, …).
-Stderr lines are logged as `connector.output`. A `247-agent-connector@name` systemd unit
-for connectors that need their own privileges is not implemented yet.
+`connectorEnv()` removes `OA_CONFIG_JSON` from the process environment once read, so a
+subprocess the connector spawns does not inherit the rendered secrets; connectors in
+other languages should do the same. Stderr lines are logged as `connector.output`.
+Secrets are resolved at spawn, so a rotated value reaches a running connector through
+`oa connector restart <name>` (`POST /v1/connectors/{name}/restart`): the process is
+killed, its secrets re-resolved, and it is respawned with the backoff counter reset. The
+built-in poller re-resolves on every poll and needs no restart. A
+`247-agent-connector@name` systemd unit for connectors that need their own privileges
+is not implemented yet.
 
 **SDK (`@247-agent/connector-sdk`):** `connectorEnv()`, `CoreClient` (`emitEvent`,
 `getState`/`putState` in the connector's own namespace), `defineTool` +
@@ -490,10 +497,22 @@ same action kind; only the config differs.
 
 ## 11. Security
 
+**Trust model.** The daemon's uid is the trust boundary. Core and connectors share it, so
+they can read each other's environment (`/proc/<pid>/environ`) and the socket API has no
+authentication of its own: a process running as `247-agent` is trusted by definition.
+Everything that executes content the daemon did not write, an `agent` action or a `shell`
+action marked untrusted, therefore must not run as that uid: it runs under a separate
+user or in a sandbox that unshares the pid namespace and does not mount the socket
+directory. Moving secrets from the environment to a file or a pipe would not change
+this; only the uid split does. Connector secrets stay in the connector's environment,
+scoped to the names its manifest uses, and never in a pull endpoint that any local
+process could call.
+
 - Core and connectors run as an unprivileged `247-agent` user; systemd hardening
   (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`).
 - Secrets via `LoadCredential=` (systemd) resolved by name in config; never written to
-  the DB or run logs; injected only into the actions that declare them.
+  the DB or run logs; injected only into the actions that declare them. The `file`
+  backend refuses a secrets file readable by group or others.
 - **Agent sandbox:** dedicated worktree, explicit tool allowlist, bash allowlist, no deploy
   credentials, optional `bwrap`/`firejail` wrapper, network restricted to allowed hosts.
   Build gate + commit before anything leaves the worktree.

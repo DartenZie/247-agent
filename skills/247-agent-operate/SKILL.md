@@ -28,6 +28,8 @@ failure, 2 usage.
 oa validate <file>...                          # tasks files, manifests, agent.yaml (follows references)
 oa run <task> [--event f.json] [--type t] [--correlation id] [--wait] [--json]
 oa emit <type> [payload.json|-] [--source s] [--dedup-key k] [--parent evt] [--correlation id] [--json]
+oa connector list [--json]                     # state, pid, restarts per connector
+oa connector restart <name> [--json]           # kill, re-resolve secrets, respawn; exit 1 if not up after
 ```
 
 `oa run` bypasses filters and cron overlap and gives the action `--event` as its
@@ -83,6 +85,7 @@ example of both and is the pattern for a new integration test.
 | Signal | Effect |
 |---|---|
 | `SIGHUP` (`systemctl reload 247-agent`) | Re-reads tasks files; running runs finish under the old config; an invalid file keeps the previous config. Connector manifest changes need a restart. |
+| `oa connector restart <name>` | Respawns one connector with freshly resolved secrets; the daemon and the other connectors keep running. Refused (409) for a built-in poller. |
 | `SIGTERM`/`SIGINT` | Stops the daemon; runs in flight are aborted. |
 
 On the next start a `running` run is re-queued if `retry.attempts` allows, else failed

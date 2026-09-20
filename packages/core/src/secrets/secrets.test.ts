@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +27,7 @@ describe('secrets backends', () => {
   });
 
   it('file: reads a YAML mapping relative to the config dir on every call', () => {
-    writeFileSync(join(dir, 'secrets.yaml'), 'ftp_pass: one\nn: 5\n');
+    writeFileSync(join(dir, 'secrets.yaml'), 'ftp_pass: one\nn: 5\n', { mode: 0o600 });
     const b = createSecretsBackend(
       SecretsConfig.parse({ backend: 'file', path: 'secrets.yaml' }),
       dir,
@@ -42,6 +42,19 @@ describe('secrets backends', () => {
       dir,
     );
     expect(() => gone.resolve(['x'])).toThrow(/cannot read secrets file/);
+  });
+
+  it.skipIf(process.platform === 'win32')('file: refuses a file readable by others', () => {
+    writeFileSync(join(dir, 'secrets.yaml'), 'ftp_pass: one\n');
+    const b = createSecretsBackend(
+      SecretsConfig.parse({ backend: 'file', path: 'secrets.yaml' }),
+      dir,
+    );
+    chmodSync(join(dir, 'secrets.yaml'), 0o640);
+    expect(() => b.resolve(['ftp_pass'])).toThrow(/mode must be 0600/);
+    expect(() => b.resolve(['ftp_pass'])).not.toThrow(/one/);
+    chmodSync(join(dir, 'secrets.yaml'), 0o600);
+    expect(b.resolve(['ftp_pass'])).toEqual({ ftp_pass: 'one' });
   });
 
   it('systemd-credentials: one file per secret, trailing newline stripped', () => {

@@ -62,6 +62,7 @@ node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/conne
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
+node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
 ```
 
 (Keep this list in sync with `package.json`.)

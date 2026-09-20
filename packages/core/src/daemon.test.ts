@@ -276,6 +276,62 @@ describe('POST /v1/runs and GET /v1/runs', () => {
   });
 });
 
+describe('/v1/connectors', () => {
+  const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
+
+  it('lists nothing and answers 404 for a restart when no connector is configured', async () => {
+    await expect(api.listConnectors()).resolves.toEqual([]);
+    await expect(api.restartConnector('fake')).rejects.toMatchObject({ status: 404 });
+    expect((await raw('GET', '/v1/connectors/fake/restart')).status).toBe(405);
+  });
+
+  it('lists supervised and built-in connectors and restarts a supervised one', async () => {
+    await daemon.stop();
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      [
+        'db: state.db',
+        'socket: core.sock',
+        'secrets: { backend: env, prefix: T_ }',
+        'connectors:',
+        `  - { name: fake, exec: [node, "${FIXTURES}fake-mcp.ts"], config: { token: "\${secrets.tok}" }, restart: { base: 20ms, max: 100ms } }`,
+        '  - { name: watch, builtin: poller, config: { connector: fake, op: echo, schedule: "0 0 1 1 *", item_key: id, event: fake.seen } }',
+        '',
+      ].join('\n'),
+    );
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, T_TOK: 'v1' };
+    {
+      daemon = await startDaemon({ configFile: join(dir, 'agent.yaml'), log: log(), env });
+      api = new ApiClient({ socketPath: daemon.config.socket });
+      const sup = daemon.core.supervisor;
+      if (sup === undefined) {
+        throw new Error('no supervisor');
+      }
+      const s = () => sup.status()[0];
+      while (s()?.state !== 'up') {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const list = await api.listConnectors();
+      expect(list).toMatchObject([
+        { name: 'fake', builtin: null, state: 'up', restarts: 0 },
+        { name: 'watch', builtin: 'poller', state: 'up', pid: null },
+      ]);
+      const before = list[0]?.pid;
+
+      env.T_TOK = 'v2'; // rotated at the backend
+      const restarted = await api.restartConnector('fake');
+      expect(restarted).toMatchObject({ name: 'fake', state: 'up', restarts: 0 });
+      expect(restarted.pid).not.toBe(before);
+      const signal = new AbortController().signal;
+      await expect(sup.call('fake', 'env', {}, { signal })).resolves.toMatchObject({
+        config: { token: 'v2' },
+      });
+      await expect(api.restartConnector('watch')).rejects.toMatchObject({ status: 409 });
+      expect(JSON.stringify(lines)).not.toMatch(/"v1"|"v2"/);
+    }
+  });
+});
+
 describe('/v1/state', () => {
   it('puts, gets, lists and deletes state through the client and the raw API', async () => {
     expect(await api.getState('email', 'last_uid')).toBeUndefined();

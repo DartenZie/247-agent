@@ -146,6 +146,19 @@ describe('oa emit', () => {
   });
 });
 
+describe('oa connector', () => {
+  it('lists connectors and reports an unknown one on restart', async () => {
+    expect(await oa('connector', 'list')).toBe(0);
+    expect(out[0]).toBe('no connectors');
+    expect(await oa('connector', 'list', '--json')).toBe(0);
+    expect(JSON.parse(out[1] ?? '')).toEqual({ connectors: [] });
+    expect(await oa('connector', 'restart', 'nope')).toBe(1);
+    expect(err[0]).toMatch(/unknown connector "nope"/);
+    expect(await oa('connector', 'restart')).toBe(2);
+    expect(await oa('connector', 'frob')).toBe(2);
+  });
+});
+
 describe('oa help', () => {
   it('prints usage', async () => {
     expect(await main([], io)).toBe(2);
