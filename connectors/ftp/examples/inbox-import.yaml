@@ -1,0 +1,53 @@
+# Example — import files a partner drops into `incoming/` on an (S)FTP account.
+# Deterministic: no model call. Drop this file next to an `agent.yaml` whose `connectors:`
+# includes the ftp manifest (docs/examples/connectors.d/ftp.yaml).
+#
+#   node packages/cli/dist/main.js validate connectors/ftp/examples/inbox-import.yaml
+#
+# The connector emits nothing by itself: task 1 lists the directory and fans each file out
+# as an `ftp.file_seen` event, deduplicated on path, size and mtime so an unchanged file
+# is never imported twice. Task 2 reads one file and moves it to `processed/`.
+
+tasks:
+  # 1. Poll. `each` is a JMESPath filter, so directories are skipped; `when` on an emit
+  #    rule runs once per rule, not per item, which is why the filter lives in `each`.
+  - name: scan_incoming
+    trigger: { kind: cron, schedule: '*/5 * * * *', overlap: skip }
+    action:
+      kind: connector
+      connector: ftp
+      op: list
+      args: { path: incoming }
+    emit:
+      - type: ftp.file_seen
+        each: "${result.entries[?type == 'file']}"
+        dedup_key: 'ftp:${item.path}:${item.size}:${item.mtime}'
+        payload: ${item}
+
+  # 2. Import one file: read it (utf8; use `encoding: base64` for binary data), hand the
+  #    content on as an event for whatever consumes it, then move the file out of the way.
+  #    `read` fails without retry when the file is larger than the connector's `max_bytes`.
+  #    Inside the sequence later steps see `steps[i]`; after it the run result is
+  #    `{steps: [...]}`, hence `result.steps[0]` in `emit`.
+  - name: import_file
+    trigger: { kind: event, type: ftp.file_seen }
+    action:
+      kind: sequence
+      steps:
+        - kind: connector
+          connector: ftp
+          op: read
+          args: { path: '${event.payload.path}' }
+        - kind: connector
+          connector: ftp
+          op: rename
+          args:
+            from: '${event.payload.path}'
+            to: 'processed/${event.payload.name}'
+            parents: true
+    emit:
+      - type: ftp.file_imported
+        payload:
+          name: ${event.payload.name}
+          content: ${result.steps[0].content}
+          moved_to: ${result.steps[1].to}

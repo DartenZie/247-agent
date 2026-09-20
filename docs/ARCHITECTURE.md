@@ -412,7 +412,9 @@ module has no local imports so Node can run a connector straight from TypeScript
 
 Connectors: `email` (`connectors/email`, done: IMAP or POP3 in, SMTP out, ops `fetch_new`,
 `mark_read`, `send`; the footer is appended to every outgoing mail; `README.md` there is
-the config reference). Planned: `chat` (Telegram or Matrix; emits `chat.message`,
+the config reference); `ftp` (`connectors/ftp`, done: SFTP, FTP or FTPS; ops `list`,
+`stat`, `read`, `write`, `delete`, `rename`, `mkdir`, every path confined to a configured
+`root`; no events, a task fans `list` out). Planned: `chat` (Telegram or Matrix; emits `chat.message`,
 `chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
 their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (built-in).
 
@@ -602,10 +604,11 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
   src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
-  test/fixtures/             # fake connectors (email, chat, generic MCP, plain) run by Node from source
+  test/fixtures/             # fake connectors (email, ftp, chat, generic MCP, plain) run by Node from source
 packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
 connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
+connectors/ftp/          # ssh2-sftp-client (SFTP) + basic-ftp (FTP/FTPS), paths confined to a root
 connectors/chat/         # grammy (Telegram) or matrix-js-sdk
 docs/                        # ARCHITECTURE.md, examples/
 ```

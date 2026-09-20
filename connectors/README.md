@@ -13,6 +13,7 @@ manifest `config` block and the shape of its ops and events.
 | Package | Status | Events | Ops |
 |---|---|---|---|
 | [`email`](email/README.md) | done | `email.received` (fanned out by a cron task) | `fetch_new`, `mark_read`, `send` |
+| [`ftp`](ftp/README.md) | done | none (a task fans `list` out, see its example) | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir` over SFTP, FTP or FTPS, confined to a `root` |
 | `chat` (Telegram or Matrix) | planned | `chat.message`, `chat.reply` | `send`, `ask` |
 | `github`, `jira` | planned | via `poller` | their official MCP servers |
 | `webhook` | planned | generic HTTP in | none |

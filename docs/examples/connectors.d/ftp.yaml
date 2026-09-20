@@ -1,0 +1,15 @@
+# (S)FTP connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
+# Files inside one remote directory over SFTP, FTP or FTPS. Full config reference:
+# connectors/ftp/README.md. It emits nothing itself; a task fans `list` results out.
+name: ftp
+exec: ["node", "connectors/ftp/dist/main.js"]
+transport: stdio
+ops: [list, stat, read, write, delete, rename, mkdir]   # give agents a copy with [list, stat, read]
+config:
+  protocol: sftp                         # sftp | ftp | ftps
+  host: sftp.example.com                 # port 22 by default (21 for ftp/ftps, 990 for implicit ftps)
+  user: "${secrets.ftp_user}"
+  password: "${secrets.ftp_pass}"        # or private_key: "${secrets.ftp_key}" for sftp
+  root: /srv/exchange                    # every path is relative to this and confined to it
+  max_bytes: 1000000                     # cap for read results and write payloads
+restart: { base: 1s, max: 60s }
