@@ -29,6 +29,7 @@ packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, chat, ...)
 docs/                        ARCHITECTURE.md, examples/ (agent.yaml, orchestra-website.yaml, connectors.d/)
+skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
 ```
 
 ## Rules

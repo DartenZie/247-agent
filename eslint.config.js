@@ -3,7 +3,9 @@ import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/', '**/node_modules/', 'coverage/'] },
+  // `skills/` ships with the agent skills (a dependency-free script and a connector template
+  // outside every tsconfig project); it is not part of the workspace build.
+  { ignores: ['**/dist/', '**/node_modules/', 'coverage/', 'skills/'] },
   js.configs.recommended,
   {
     files: ['**/*.ts'],
