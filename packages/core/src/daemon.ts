@@ -6,6 +6,8 @@ import { systemClock, type Clock } from './clock.js';
 import { loadAgentFile, type AgentConfig, type AgentLoadResult } from './config/agent.js';
 import { loadConnectors, type TasksLoadResult } from './config/load.js';
 import { createCore, type Core } from './core.js';
+import { PricingError, resolvePricing } from './llm/pricing.js';
+import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
 import { createSecretsBackend } from './secrets/secrets.js';
 
@@ -22,6 +24,8 @@ export interface DaemonOptions {
   connectors?: ConnectorClients;
   /** The daemon's environment; defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Replaces the built-in provider adapters (tests). */
+  llmFactories?: ProviderFactories;
 }
 
 export interface Daemon {
@@ -85,6 +89,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     throw new AgentConfigError(loaded);
   }
   const config = loaded.config;
+  let pricing;
+  try {
+    pricing = resolvePricing(config.pricing);
+  } catch (err) {
+    if (err instanceof PricingError) {
+      throw new AgentConfigError({
+        ok: false,
+        file: config.file,
+        issues: [{ path: `pricing.${err.model}`, message: err.message }],
+      });
+    }
+    throw err;
+  }
   const clock = opts.clock ?? systemClock;
   const log =
     opts.log ??
@@ -112,6 +129,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     socketPath: config.socket,
     connectors: opts.connectors ?? manifests.connectors ?? [],
     ...(opts.runners === undefined ? {} : { runners: opts.runners }),
+    llm: {
+      providers: config.providers,
+      pricing,
+      defaults: config.defaults.llm,
+      budgets: config.budgets,
+      configDir: dirname(config.file),
+      ...(opts.llmFactories === undefined ? {} : { factories: opts.llmFactories }),
+    },
   });
   const api = createApiServer({
     core,

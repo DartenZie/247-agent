@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
 import { ConnectorAction } from '../actions/connector.js';
+import { LlmAction } from '../actions/llm.js';
 import { SequenceAction } from '../actions/sequence.js';
 import { ShellAction } from '../actions/shell.js';
 import { WaitAction } from '../actions/wait.js';
 import { collectTemplateRefs } from '../expr/template.js';
+import { Budget } from '../llm/config.js';
 import { DURATION } from './duration.js';
 import {
   validateCron,
@@ -81,15 +83,16 @@ export const ManualTrigger = z.strictObject({ kind: z.literal('manual') });
 export const Trigger = z.discriminatedUnion('kind', [CronTrigger, EventTrigger, ManualTrigger]);
 
 /**
- * Each action kind is validated by the schema its runner exports; kinds without a runner
- * yet (`llm`, `agent`) are checked for `kind` only.
+ * Each action kind is validated by the schema its runner exports; `agent` has no runner
+ * yet and is checked for `kind` only.
  */
 export const Action = z.discriminatedUnion('kind', [
   ShellAction,
   ConnectorAction,
   WaitAction,
   SequenceAction,
-  z.looseObject({ kind: z.enum(['llm', 'agent']) }),
+  LlmAction,
+  z.looseObject({ kind: z.literal('agent') }),
 ]);
 
 /** ARCHITECTURE §5.7: one domain event (or one per `each` item) after a successful run. */
@@ -175,7 +178,8 @@ export const Task = z
     timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').optional(),
     /** Overrides `defaults.retry` from agent.yaml. */
     retry: Retry.optional(),
-    budget: z.unknown().optional(),
+    /** Per run, for model-backed actions; the smaller of this and the action's own applies. */
+    budget: Budget.optional(),
     on_failure: z.unknown().optional(),
     emit: z.array(EmitRule).optional(),
     /** `<namespace>.<key>: <value or template>`, applied after a successful run. */

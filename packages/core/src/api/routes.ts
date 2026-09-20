@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { UnknownTaskError } from '../bus/manual.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
+import { DURATION, parseDuration } from '../config/duration.js';
 import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import { NonRetryableError } from '../actions/types.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
+import type { CostGroup, CostRow } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 
@@ -107,6 +109,19 @@ export const RunBody = z.strictObject({
 /** `PUT /v1/state/{ns}/{key}`. */
 export const PutStateBody = z.strictObject({ value: z.json() });
 
+/** `GET /v1/cost?since=&by=`: `since` is a duration back from now (`7d`) or an ISO timestamp. */
+const CostQuery = z.strictObject({
+  since: z.string().min(1).default('24h'),
+  by: z.enum(['task', 'model', 'provider', 'day']).default('task'),
+});
+
+export interface CostBody {
+  since: string;
+  by: CostGroup;
+  rows: CostRow[];
+  total_usd: number;
+}
+
 const ListRunsQuery = z.strictObject({
   status: z.enum(RUN_STATUSES).optional(),
   task: z.string().min(1).optional(),
@@ -174,6 +189,30 @@ function listRuns(ctx: RouteContext, query: URLSearchParams): ApiResponse {
     limit: q.limit,
   });
   return { status: 200, body: { runs: runs as unknown as JsonValue } };
+}
+
+function costSummary(ctx: RouteContext, query: URLSearchParams): ApiResponse {
+  const q = parse(CostQuery, Object.fromEntries(query), 'query');
+  let since: string;
+  if (DURATION.test(q.since)) {
+    since = new Date(ctx.clock.now().getTime() - parseDuration(q.since)).toISOString();
+  } else {
+    const t = new Date(q.since);
+    if (Number.isNaN(t.getTime())) {
+      throw new ApiError(400, 'invalid query', [
+        { path: 'since', message: 'a duration like 7d or an ISO timestamp' },
+      ]);
+    }
+    since = t.toISOString();
+  }
+  const rows = ctx.core.store.ledger.summary({ since, by: q.by });
+  const body: CostBody = {
+    since,
+    by: q.by,
+    rows,
+    total_usd: rows.reduce((sum, r) => sum + r.usd, 0),
+  };
+  return { status: 200, body: body as unknown as JsonValue };
 }
 
 function getRun(ctx: RouteContext, id: string): ApiResponse {
@@ -280,6 +319,9 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   }
   if (path === '/v1/events') {
     return only(method, 'POST', () => emit(ctx, req.body));
+  }
+  if (path === '/v1/cost') {
+    return only(method, 'GET', () => costSummary(ctx, req.query));
   }
   if (path === '/v1/runs') {
     if (method === 'GET') {

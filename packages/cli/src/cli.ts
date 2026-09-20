@@ -1,4 +1,5 @@
 import { connector, CONNECTOR_USAGE } from './commands/connector.js';
+import { cost, COST_USAGE } from './commands/cost.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
 import { run, RUN_USAGE } from './commands/run.js';
 import { validate, VALIDATE_USAGE } from './commands/validate.js';
@@ -11,6 +12,7 @@ commands:
   run <task> [--event f.json]        queue a run of a task by hand (--wait to block)
   emit <type> [payload.json|-]       inject an event
   connector list|restart <name>      show connectors / respawn one (re-reads its secrets)
+  cost [--by task|model|provider|day] [--since 7d]   sum the model-call ledger
   help [command]
 
 The daemon socket is --socket, else $OA_CORE_SOCKET, else /run/247-agent/core.sock.
@@ -21,6 +23,7 @@ const COMMAND_USAGE: Record<string, string> = {
   run: RUN_USAGE,
   emit: EMIT_USAGE,
   connector: CONNECTOR_USAGE,
+  cost: COST_USAGE,
 };
 
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
@@ -35,6 +38,8 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return await emit(rest, io);
       case 'connector':
         return await connector(rest, io);
+      case 'cost':
+        return await cost(rest, io);
       case undefined:
       case 'help':
       case '--help':

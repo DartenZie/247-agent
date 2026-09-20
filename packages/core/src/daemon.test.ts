@@ -151,6 +151,17 @@ describe('startDaemon', () => {
   });
 });
 
+describe('GET /v1/cost', () => {
+  it('sums the ledger since a duration or a timestamp and rejects bad queries', async () => {
+    await expect(api.cost()).resolves.toMatchObject({ by: 'task', rows: [], total_usd: 0 });
+    const r = await api.cost({ since: '2026-09-01', by: 'day' });
+    expect(r).toMatchObject({ since: '2026-09-01T00:00:00.000Z', by: 'day', rows: [] });
+    await expect(raw('GET', '/v1/cost?since=yesterday')).resolves.toMatchObject({ status: 400 });
+    await expect(raw('GET', '/v1/cost?by=hour')).resolves.toMatchObject({ status: 400 });
+    await expect(raw('POST', '/v1/cost')).resolves.toMatchObject({ status: 405 });
+  });
+});
+
 describe('POST /v1/events', () => {
   it('publishes, deduplicates and dispatches to matching tasks', async () => {
     const first = await api.emit({

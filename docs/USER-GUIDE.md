@@ -119,7 +119,11 @@ The global file. Every key has a default; the full reference is
 | `defaults.retry` | Retry policy for tasks without their own (see 4.4) | 1 attempt |
 | `defaults.sandbox` | `none` or `bwrap` for `shell` actions without their own (see 5.1) | `none` |
 | `secrets` | Where secret values come from (see 4.6) | `{ backend: env }` |
-| `defaults.llm`, `defaults.agent`, `budgets`, `retention` | Accepted, not applied yet | |
+| `providers` | Model providers for `llm` actions: `name: { type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers? }` (see 5.5) | none |
+| `pricing` | USD per million tokens per model, merged over the built-in Claude table (see 5.5) | `{}` |
+| `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
+| `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
+| `defaults.agent`, `retention` | Accepted, not applied yet | |
 
 Relative `db`, `socket`, `tasks` and `connectors` paths resolve against the directory of
 `agent.yaml`. On macOS keep the socket path short: Unix socket paths are limited to 104
@@ -356,14 +360,54 @@ sequence; after a restart or a retry it continues from that step. Use a sequence
 tightly coupled steps only. Anything another workflow might want to observe or reuse
 should be its own task and event.
 
-### 5.5 `llm` and `agent` (not runnable yet)
+### 5.5 `llm`
 
-Both kinds are accepted by `oa validate` so a complete workflow can be written now, and
+One model call, optionally with a JSON schema for the answer, no tools, no loop. For
+classification, extraction, summaries.
+
+```yaml
+action:
+  kind: llm
+  provider: anthropic            # from providers: in agent.yaml; default defaults.llm.provider
+  model: claude-haiku-4-5        # default defaults.llm.model
+  max_tokens: 512
+  system_file: prompts/classify_email.md   # static, relative to agent.yaml; or system: "..."
+  input: |
+    Subject: ${event.payload.subject}
+    <email>${event.payload.body}</email>
+  output_schema: { type: object, required: [kind], properties: { kind: { enum: [a, b] } } }
+  budget: { max_usd: 0.05 }      # per run
+```
+
+The result is the parsed object (`${result.kind}` in `emit`), or `{ text }` without a
+schema. Providers live in `agent.yaml`:
+
+```yaml
+providers:
+  anthropic:  { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
+  openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}" }
+pricing: { gpt-5-mini: { input: 0.25, output: 2 } }   # USD per Mtok for models the built-in table lacks
+budgets: { daily_usd: 10 }
+```
+
+Every call is written to the cost ledger (`oa cost`). The run's `budget.max_usd` is
+checked before the call against a worst case and after it against the actual cost; an
+overrun fails the run. `budgets.daily_usd` is a global cap per UTC day: once crossed,
+every model call fails fast until midnight and one `budget.exceeded` event is emitted
+(route it to your `notify` task). A model with no known price is refused by
+`oa validate` unless its provider reports cost itself (OpenRouter does).
+
+Status: no provider adapter ships yet, so a run fails with `provider type "anthropic"
+has no adapter in this build`; the Anthropic adapter is next, then OpenAI and
+OpenRouter.
+
+### 5.6 `agent` (not runnable yet)
+
+Accepted by `oa validate` so a complete workflow can be written now;
 [`examples/website-updates.yaml`](examples/website-updates.yaml) shows the intended
-shape: `llm` is one model call with a JSON `output_schema`; `agent` is a Claude Agent
-SDK loop in a fresh git worktree with `tools`, `bash_allow`, `max_turns`, a `budget`, a
-`RESULT.json` contract and deterministic `post` gates. A run of either fails today with
-"no runner". See ARCHITECTURE §5.2 and §5.3 for the full field list.
+shape: a Claude Agent SDK loop in a fresh git worktree with `tools`, `bash_allow`,
+`max_turns`, a `budget`, a `RESULT.json` contract and deterministic `post` gates. A run
+fails today with "no runner". See ARCHITECTURE §5.3 for the full field list.
 
 ## 6. Connectors
 
@@ -546,11 +590,18 @@ connector is not up afterwards. A built-in poller is refused, since it re-reads 
 secrets on every poll.
 
 ```
+oa cost [--by task|model|provider|day] [--since 7d|2026-09-01] [--json]
+```
+
+Sums the model-call ledger since a duration back (default `24h`) or a timestamp, one
+line per task (or model, provider, UTC day) with calls, tokens and USD.
+
+```
 oa help [command]
 ```
 
-`oa events`, `oa runs` and `oa cost` from the architecture document do not exist yet;
-use the API (section 8) for the same information.
+`oa events` and `oa runs` from the architecture document do not exist yet; use the API
+(section 8) for the same information.
 
 ## 8. The API
 
@@ -567,6 +618,7 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
+| `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
 | `GET /v1/connectors` | `{connectors: [{name, state, pid, restarts, error, builtin}]}` |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
 
@@ -659,19 +711,22 @@ call, edit the site with a scoped agent, gate on a build, ask for approval on ch
 over FTP, notify. Its non-model path runs today against fake connectors in
 `packages/core/src/integration.test.ts`.
 
+Done since: the `llm` action, the cost ledger, budgets (`budget.max_usd`,
+`budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and `oa cost`.
+
 Not implemented yet, in the planned order:
 
-1. Cost ledger and budgets (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`).
-2. The `llm` action.
-3. The `agent` action.
-4. A real `chat` connector under `connectors/` (the `email` connector is there:
+1. Provider adapters: Anthropic, then OpenAI and OpenRouter. Until the first lands an
+   `llm` run fails with "no adapter in this build".
+2. The `agent` action.
+3. A real `chat` connector under `connectors/` (the `email` connector is there:
    IMAP/POP3 in, SMTP out, see
    [`connectors/email/README.md`](../connectors/email/README.md)).
-5. Retention GC, `/metrics`, `oa cost|runs|events|connectors`, SIGHUP reload of
-   connectors, `health.interval` in manifests.
+4. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
+   `health.interval` in manifests, `batch: true` for `llm`.
 
-Until then, every `llm` or `agent` task in a config validates but fails at run time, and
-model-backed steps have to be replaced by `shell` or `connector` tasks.
+Until then, model-backed steps have to be replaced by `shell` or `connector` tasks to
+run a workflow end to end.
 
 ## 11. Troubleshooting
 

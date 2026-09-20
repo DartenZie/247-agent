@@ -28,7 +28,7 @@ const tasks = config([
     action: { kind: 'shell', cmd: ['sleep', '30'] },
     timeout: '200ms',
   },
-  { name: 'model', trigger: { kind: 'event', type: 'x.model' }, action: { kind: 'llm' } },
+  { name: 'model', trigger: { kind: 'event', type: 'x.model' }, action: { kind: 'agent' } },
 ]);
 
 let env: TestEnv;
@@ -175,7 +175,7 @@ describe('Executor', () => {
     bus.dispatcher.drain();
     await ex.idle();
     expect(env.store.runs.getByTaskAndEvent('model', m.id)?.error).toBe(
-      'action kind "llm" has no runner',
+      'action kind "agent" has no runner',
     );
     expect(env.store.runs.getByTaskAndEvent('echo', gone.id)?.error).toBe(
       'task "echo" is no longer configured',

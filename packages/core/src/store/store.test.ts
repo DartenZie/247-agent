@@ -40,12 +40,12 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(2);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(3);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(2);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(3);
   });
 });
 
@@ -210,5 +210,85 @@ describe('WaitStore', () => {
       { run_id: 'run_1', outcome: 'matched', event_id: 'evt_1' },
     ]);
     expect(store.waits.delete('run_1')).toBe(true);
+  });
+});
+
+describe('LedgerStore', () => {
+  const row = (over: Partial<Parameters<typeof store.ledger.insert>[0]> = {}) => ({
+    run_id: 'run_1',
+    task: 'classify',
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    in_tok: 1000,
+    out_tok: 100,
+    cache_read: 0,
+    cache_write: 0,
+    usd: 0.0015,
+    priced_by: 'table' as const,
+    ts: '2026-09-19T10:00:00.000Z',
+    ...over,
+  });
+
+  beforeEach(() => {
+    for (const id of ['run_1', 'run_2']) {
+      store.events.insert(event({ id: `evt_${id}` }));
+      store.runs.insertQueued({
+        id,
+        task: 'classify',
+        event_id: `evt_${id}`,
+        correlation_id: 'cor_l',
+        created_at: '2026-09-19T10:00:00.000Z',
+      });
+    }
+  });
+
+  it('inserts rows, sums by run and since a timestamp, and lists by run', () => {
+    expect(store.ledger.insert(row())).toBe(1);
+    store.ledger.insert(row({ run_id: 'run_2', usd: 0.5, ts: '2026-09-20T01:00:00.000Z' }));
+    store.ledger.insert(row({ usd: 0.25, ts: '2026-09-18T23:59:59.000Z', priced_by: 'provider' }));
+    expect(store.ledger.sumForRun('run_1')).toBeCloseTo(0.2515);
+    expect(store.ledger.sumForRun('run_x')).toBe(0);
+    expect(store.ledger.sumSince('2026-09-19T00:00:00.000Z')).toBeCloseTo(0.5015);
+    expect(store.ledger.listByRun('run_1').map((r) => r.priced_by)).toEqual(['table', 'provider']);
+    expect(() => store.ledger.insert(row({ run_id: 'run_missing' }))).toThrow(/FOREIGN KEY/);
+  });
+
+  it('summarises by task, model, provider and day', () => {
+    store.ledger.insert(row());
+    store.ledger.insert(
+      row({ run_id: 'run_2', task: 'other', model: 'claude-sonnet-5', usd: 0.5 }),
+    );
+    store.ledger.insert(row({ usd: 0.25, ts: '2026-09-20T01:00:00.000Z' }));
+    const since = '2026-09-01T00:00:00.000Z';
+    expect(store.ledger.summary({ since, by: 'task' })).toEqual([
+      {
+        key: 'other',
+        calls: 1,
+        in_tok: 1000,
+        out_tok: 100,
+        cache_read: 0,
+        cache_write: 0,
+        usd: 0.5,
+      },
+      {
+        key: 'classify',
+        calls: 2,
+        in_tok: 2000,
+        out_tok: 200,
+        cache_read: 0,
+        cache_write: 0,
+        usd: expect.closeTo(0.2515, 6) as number,
+      },
+    ]);
+    expect(store.ledger.summary({ since, by: 'model' }).map((r) => r.key)).toEqual([
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+    ]);
+    expect(store.ledger.summary({ since, by: 'provider' })).toHaveLength(1);
+    expect(store.ledger.summary({ since, by: 'day' }).map((r) => [r.key, r.calls])).toEqual([
+      ['2026-09-19', 2],
+      ['2026-09-20', 1],
+    ]);
+    expect(store.ledger.summary({ since: '2026-09-20T00:00:00.000Z', by: 'day' })).toHaveLength(1);
   });
 });

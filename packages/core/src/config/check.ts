@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 
+import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
+import { checkLlmTasks } from './crosscheck.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
@@ -60,6 +63,15 @@ export function checkConfigFile(path: string): FileCheck[] {
   if (!r.ok) {
     return [fail(path, 'agent', r.issues)];
   }
+  let pricing;
+  try {
+    pricing = resolvePricing(r.config.pricing);
+  } catch (err) {
+    if (err instanceof PricingError) {
+      return [fail(path, 'agent', [{ path: `pricing.${err.model}`, message: err.message }])];
+    }
+    throw err;
+  }
   const out: FileCheck[] = [
     {
       ok: true,
@@ -74,15 +86,26 @@ export function checkConfigFile(path: string): FileCheck[] {
   ];
   const tasks = loadTasks(r.config.tasks);
   for (const f of tasks.files) {
+    if (!f.ok) {
+      out.push(fail(f.file, 'tasks', f.issues));
+      continue;
+    }
+    // What the tasks file cannot know on its own: providers, prices and prompt files.
+    const issues = checkLlmTasks(f.config.tasks, {
+      providers: r.config.providers,
+      pricing,
+      defaults: r.config.defaults.llm,
+      configDir: dirname(r.config.file),
+    });
     out.push(
-      f.ok
+      issues.length === 0
         ? {
             ok: true,
             file: f.file,
             kind: 'tasks',
             summary: `${String(f.config.tasks.length)} tasks`,
           }
-        : fail(f.file, 'tasks', f.issues),
+        : fail(f.file, 'tasks', issues),
     );
   }
   const connectors = loadConnectors(r.config.connectorPaths, r.config.connectors);

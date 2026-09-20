@@ -11,9 +11,17 @@ limits: { max_event_depth: 32 }
 defaults:
   timeout: 15m
   sandbox: none                   # bwrap: run shell actions in bubblewrap (ARCHITECTURE §5.1)
-  llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
+  llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
   retry: { attempts: 3, backoff: exponential, base: 30s }
 secrets: { backend: systemd-credentials }   # or { backend: env, prefix: OA_SECRET_ } or { backend: file, path: secrets.yaml }
-budgets: { daily_usd: 10 }
+# Model providers (ARCHITECTURE §5.2). Keys are secret references, resolved per call.
+providers:
+  anthropic: { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
+  # openai:     { type: openai, api_key: "${secrets.openai_api_key}" }
+  # openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}", headers: { X-Title: 247-agent } }
+# USD per million tokens, merged over the built-in table (Claude models); a model the table
+# does not know needs input and output. OpenRouter reports cost itself, so its models need none.
+pricing: {}                       # e.g. { claude-sonnet-5: { output: 12 }, gpt-5-mini: { input: 0.25, output: 2 } }
+budgets: { daily_usd: 10 }        # global circuit breaker: over it, llm tasks fail fast until 00:00 UTC
 retention: { events: 90d, runs: 90d, workspaces: 7d }

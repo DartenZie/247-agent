@@ -21,12 +21,15 @@ task cannot read `${env.OA_SECRET_X}` around the rule.
 grep -rhoE 'secrets\.[a-z0-9_]+' agent.yaml tasks*.yaml tasks.d connectors.d 2>/dev/null | sort -u
 ```
 
-Typical names: `anthropic_api_key` (for `llm`/`agent` runners), `imap_user`,
+Typical names: `anthropic_api_key`, `openai_api_key`, `openrouter_api_key` (referenced
+from `providers.<name>.api_key`, resolved per model call), `imap_user`,
 `imap_pass`, `chat_token`, `chat_id`, `ftp_pass`, `github_token`.
 
 ## Where secrets are allowed to flow
 
 - Into a `shell` action's `env` or `cmd` (prefer `env`; argv is visible in `ps`).
+- Into `providers.<name>.api_key` (required to be a secret reference) and `headers`,
+  resolved per model call inside the core and handed to the provider adapter only.
 - Into a `connector` manifest's `config`/`env`, rendered into `OA_CONFIG_JSON` for that
   process only. The SDK's `connectorEnv()` removes it from the environment after reading
   it, so subprocesses of the connector do not inherit it.

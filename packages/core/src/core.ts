@@ -1,4 +1,5 @@
 import { runConnector } from './actions/connector.js';
+import { runLlm } from './actions/llm.js';
 import { runSequence } from './actions/sequence.js';
 import type { SandboxConfig } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
@@ -9,11 +10,16 @@ import { runTaskManually, type ManualInput } from './bus/manual.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
+import { checkLlmTasks } from './config/crosscheck.js';
 import { loadTasks, type TasksLoadResult } from './config/load.js';
 import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
+import type { BudgetsConfig, LlmDefaultsConfig, ProviderConfigParsed } from './llm/config.js';
+import type { PricingTable } from './llm/pricing.js';
+import { LlmService } from './llm/service.js';
+import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger } from './log.js';
 import { CronScheduler } from './scheduler/cron.js';
 import { staticSecrets, type SecretsBackend } from './secrets/secrets.js';
@@ -52,6 +58,22 @@ export interface CoreOptions {
   connectors?: readonly ConnectorConfig[] | ConnectorClients;
   /** Passed to supervised connectors as `OA_CORE_SOCKET`. */
   socketPath?: string;
+  /**
+   * Model providers, prices and budgets from agent.yaml. Without it `llm` actions fail
+   * with "no llm service is configured" and the tasks are not cross-checked against it.
+   */
+  llm?: CoreLlmOptions;
+}
+
+export interface CoreLlmOptions {
+  providers: Readonly<Record<string, ProviderConfigParsed>>;
+  pricing: PricingTable;
+  defaults: LlmDefaultsConfig;
+  budgets: BudgetsConfig;
+  /** The agent.yaml directory (`system_file` paths). */
+  configDir: string;
+  /** Adapters by provider type; defaults to the built-in ones. */
+  factories?: ProviderFactories;
 }
 
 export interface Core {
@@ -98,9 +120,13 @@ export class ConfigLoadError extends Error {
 export const defaultRunners: ActionRunners = {
   shell: runShell,
   connector: runConnector,
+  llm: runLlm,
   wait: runWait,
   sequence: runSequence,
 };
+
+/** Provider adapters by type. Stage 2/3 add `anthropic`, `openai` and `openrouter`. */
+export const defaultProviderFactories: ProviderFactories = {};
 
 function isClients(v: readonly ConnectorConfig[] | ConnectorClients): v is ConnectorClients {
   return !Array.isArray(v);
@@ -163,6 +189,24 @@ export function createCore(opts: CoreOptions): Core {
       }),
   );
 
+  const llm =
+    opts.llm === undefined
+      ? undefined
+      : new LlmService({
+          store,
+          bus,
+          clock,
+          log,
+          secrets,
+          env: opts.env,
+          configDir: opts.llm.configDir,
+          providers: opts.llm.providers,
+          pricing: opts.llm.pricing,
+          defaults: opts.llm.defaults,
+          budgets: opts.llm.budgets,
+          factories: opts.llm.factories ?? defaultProviderFactories,
+        });
+
   const executor = new Executor({
     store,
     bus,
@@ -171,6 +215,7 @@ export function createCore(opts: CoreOptions): Core {
     config: () => compiled,
     runners: opts.runners ?? defaultRunners,
     secrets,
+    ...(llm === undefined ? {} : { llm }),
     ...(connectors === undefined ? {} : { connectors }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
     ...(opts.workers === undefined ? {} : { workers: opts.workers }),
@@ -180,7 +225,10 @@ export function createCore(opts: CoreOptions): Core {
   });
 
   const load = (): TasksLoadResult => {
-    const result = loadTasks(opts.tasksFiles);
+    let result = loadTasks(opts.tasksFiles);
+    if (result.ok && result.config !== undefined && opts.llm !== undefined) {
+      result = crossCheck(result, result.config.tasks, opts.llm);
+    }
     if (result.ok && result.config !== undefined) {
       compiled = compileConfig(result.config);
       bus.dispatcher.setConfig(compiled);
@@ -254,6 +302,34 @@ export function createCore(opts: CoreOptions): Core {
       store.close();
     },
   };
+}
+
+/** Applies `checkLlmTasks` to a merged load; an issue fails the file its task came from. */
+function crossCheck(
+  result: TasksLoadResult,
+  tasks: readonly CompiledConfig['tasks'][number]['config'][],
+  llm: CoreLlmOptions,
+): TasksLoadResult {
+  const issues = checkLlmTasks(tasks, llm);
+  if (issues.length === 0) {
+    return result;
+  }
+  // Issue paths index the merged list; map each back to its file's own index.
+  const files = result.files.map((f) => {
+    if (!f.ok) {
+      return f;
+    }
+    const own = issues.flatMap((i) => {
+      const m = /^tasks\[(\d+)\]/.exec(i.path);
+      const task = m === null ? undefined : tasks[Number(m[1])];
+      const local = task === undefined ? -1 : f.config.tasks.indexOf(task);
+      return local === -1
+        ? []
+        : [{ ...i, path: i.path.replace(/^tasks\[\d+\]/, `tasks[${String(local)}]`) }];
+    });
+    return own.length === 0 ? f : { ok: false as const, file: f.file, issues: own };
+  });
+  return { ok: false, files };
 }
 
 /** Connector names an action (or its sequence steps) calls. */

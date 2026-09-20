@@ -49,23 +49,26 @@ The full config is in [`docs/examples/website-updates.yaml`](docs/examples/websi
 
 The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
 actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
-The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` and `agent` actions, the
-cost ledger and the chat connector are next.
+The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action, cost ledger and
+budgets are in; the provider adapters (Anthropic first, then OpenAI and OpenRouter), the
+`agent` action and the chat connector are next.
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
 [`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.
 
 ## Planned stack
 
-TypeScript on Node.js 22, SQLite, MCP for connector operations, the Anthropic SDK for
-single model calls and the Claude Agent SDK for agent loops. See the architecture doc
+TypeScript on Node.js 22, SQLite, MCP for connector operations, the Anthropic and OpenAI
+SDKs behind one provider interface for single model calls (Anthropic, OpenAI,
+OpenRouter) and the Claude Agent SDK for agent loops. See the architecture doc
 for why these and not an off-the-shelf workflow engine.
 
 ## Roadmap
 
 1. Core: config, event store, scheduler, matcher, executor, `shell` action, CLI.
 2. Connector supervisor, built-in poller, email connector.
-3. `llm` action with structured outputs, cost ledger and budgets.
+3. `llm` action with structured outputs, cost ledger and budgets (done), then the
+   Anthropic, OpenAI and OpenRouter adapters.
 4. `agent` action on the Claude Agent SDK with worktrees and post-run gates.
 5. `wait` action and chat connector for approvals.
 6. Hardening: retention, metrics, sandboxing, hot reload.

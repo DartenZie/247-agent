@@ -101,6 +101,61 @@ export {
 } from './actions/types.js';
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
 export { runConnector, ConnectorAction, type ConnectorActionConfig } from './actions/connector.js';
+export { runLlm, LlmAction, type LlmActionConfig } from './actions/llm.js';
+export {
+  Budget,
+  Budgets,
+  EFFORTS,
+  LlmDefaults,
+  ModelPrice,
+  Pricing,
+  PROVIDER_TYPES,
+  ProviderConfig,
+  Providers,
+  type BudgetConfig,
+  type BudgetsConfig,
+  type Effort,
+  type LlmDefaultsConfig,
+  type ModelPriceConfig,
+  type PricingConfig,
+  type ProviderConfigParsed,
+  type ProviderType,
+  type ProvidersConfig,
+} from './llm/config.js';
+export {
+  BUILTIN_PRICES,
+  PricingError,
+  costUsd,
+  estimateInputTokens,
+  resolvePricing,
+  startOfUtcDay,
+  utcDay,
+  type ModelPrice as ResolvedModelPrice,
+  type PricingTable,
+} from './llm/pricing.js';
+export { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './llm/errors.js';
+export { LlmService, BUDGET_EXCEEDED, type LlmServiceOptions } from './llm/service.js';
+export type {
+  LlmCall,
+  LlmCallContext,
+  LlmCallResult,
+  LlmPort,
+  LlmProvider,
+  LlmRequest,
+  LlmResponse,
+  LlmUsage,
+  ProviderFactories,
+  ProviderFactory,
+  ResolvedProvider,
+  StopReason,
+} from './llm/types.js';
+export {
+  fakeLlmPort,
+  fakeProviderFactory,
+  type FakePort,
+  type FakeProvider,
+} from './llm/testing.js';
+export { checkLlmTasks, type LlmCheckContext } from './config/crosscheck.js';
 export { runWait, WaitAction, WaitTimeoutError, type WaitActionConfig } from './actions/wait.js';
 export {
   runSequence,
@@ -139,12 +194,15 @@ export {
   type PollResult,
 } from './connectors/poller.js';
 export type { StateEntry, StateSnapshot } from './store/state.js';
+export type { CostGroup, CostRow, LedgerEntry, NewLedgerEntry, PricedBy } from './store/ledger.js';
 export type { WaitRecord, WaitOutcome } from './store/waits.js';
 export {
   createCore,
   defaultRunners,
+  defaultProviderFactories,
   ConfigLoadError,
   type Core,
+  type CoreLlmOptions,
   type CoreOptions,
 } from './core.js';
 export {
@@ -167,6 +225,7 @@ export {
   type ApiRequest,
   type ApiResponse,
   type ConnectorEntry,
+  type CostBody,
   type HealthBody,
   type RouteContext,
   type RunResponse,

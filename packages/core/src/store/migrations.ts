@@ -68,6 +68,25 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX waits_type ON waits(type);
   CREATE INDEX waits_expires ON waits(expires_at);
   `,
+  `
+  CREATE TABLE ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT    NOT NULL REFERENCES runs(id),
+    task        TEXT    NOT NULL,
+    provider    TEXT    NOT NULL,
+    model       TEXT    NOT NULL,
+    in_tok      INTEGER NOT NULL,
+    out_tok     INTEGER NOT NULL,
+    cache_read  INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    usd         REAL    NOT NULL,
+    priced_by   TEXT    NOT NULL CHECK (priced_by IN ('table','provider','unpriced')),
+    ts          TEXT    NOT NULL
+  );
+  CREATE INDEX ledger_ts ON ledger(ts);
+  CREATE INDEX ledger_run ON ledger(run_id);
+  CREATE INDEX ledger_task_ts ON ledger(task, ts);
+  `,
 ];
 
 export function migrate(db: Database): void {

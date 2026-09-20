@@ -25,6 +25,7 @@ import {
   renderValue,
   type TemplateScope,
 } from '../expr/template.js';
+import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
@@ -52,6 +53,8 @@ export interface ExecutorOptions {
   connectors?: ConnectorClients;
   /** The `env` template scope. */
   env?: Record<string, string>;
+  /** Model calls for `llm` actions. */
+  llm?: LlmPort;
 }
 
 export interface RecoveryResult {
@@ -228,6 +231,7 @@ export class Executor {
   private readonly defaultRetry: RetryConfig;
   private readonly secrets: SecretsBackend;
   private readonly connectors: ConnectorClients | undefined;
+  private readonly llm: LlmPort | undefined;
   private readonly env: Record<string, string>;
 
   private readonly pending: RunRecord[] = [];
@@ -251,6 +255,7 @@ export class Executor {
     this.defaultRetry = opts.defaultRetry ?? Retry.parse({});
     this.secrets = opts.secrets ?? NO_SECRETS;
     this.connectors = opts.connectors;
+    this.llm = opts.llm;
     this.env = opts.env ?? {};
     parseDuration(this.defaultTimeout); // fail fast on a bad default
   }
@@ -517,6 +522,7 @@ export class Executor {
       renderText: () => '',
       connectors: this.connectors,
       sandbox: this.defaultSandbox,
+      llm: this.llm,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
     };

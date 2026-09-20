@@ -1,5 +1,6 @@
 import type { TaskConfig } from '../config/schema.js';
 import { renderText, renderValue, type TemplateScope } from '../expr/template.js';
+import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import type { StateSnapshot } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
@@ -63,6 +64,8 @@ export interface ActionContext {
   readonly connectors?: ConnectorClients | undefined;
   /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */
   readonly sandbox?: SandboxConfig | undefined;
+  /** Model calls for `llm` actions; absent when the core runs without `providers`. */
+  readonly llm?: LlmPort | undefined;
   /**
    * Parks the run in `waiting` until an event matches `spec` or it times out; the executor
    * then starts the runner again with `resume` set. The returned promise never resolves:

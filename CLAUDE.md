@@ -15,9 +15,12 @@ truth for concepts, action semantics, the connector protocol and the config form
 - TypeScript, Node.js 22 LTS, npm workspaces. Strict TS, ESM.
 - SQLite via `better-sqlite3` (WAL). Config schemas with `zod`. Cron with `croner`.
   Expressions with `jmespath`. YAML with `yaml`. Subprocesses with `execa`.
-- LLM: `@anthropic-ai/sdk` for `llm` actions (structured outputs via
-  `client.messages.parse()` / `output_config.format`), `@anthropic-ai/claude-agent-sdk`
-  for `agent` actions. MCP client from `@modelcontextprotocol/sdk`.
+- LLM: `llm` actions go through the `ctx.llm` port (`packages/core/src/llm/`), which
+  budgets and ledgers every call and dispatches to one adapter per provider type:
+  `@anthropic-ai/sdk` (structured outputs via `client.messages.parse()` /
+  `output_config.format`), `openai` for OpenAI and OpenRouter. Providers are named in
+  `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `agent` actions use
+  `@anthropic-ai/claude-agent-sdk`. MCP client from `@modelcontextprotocol/sdk`.
 - Target runtime: systemd service on Linux, HTTP API over a Unix socket.
 
 ## Layout
@@ -50,6 +53,8 @@ skills/                      agent skills for working with 247-agent (linked fro
 - Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
+  Other providers' ids are used verbatim and need a `pricing:` entry unless the provider
+  reports cost (OpenRouter); a model without a price fails `oa validate`.
 
 ## Commands
 
@@ -63,6 +68,7 @@ node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
 node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
+node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
 ```
 
 (Keep this list in sync with `package.json`.)

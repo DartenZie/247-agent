@@ -7,7 +7,8 @@ import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { RunFilter } from '../store/runs.js';
 import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
-import type { ConnectorEntry, HealthBody, RunResponse } from './routes.js';
+import type { CostGroup } from '../store/ledger.js';
+import type { ConnectorEntry, CostBody, HealthBody, RunResponse } from './routes.js';
 
 export const DEFAULT_SOCKET = '/run/247-agent/core.sock';
 
@@ -136,6 +137,19 @@ export class ApiClient {
       `/v1/state/${encodeURIComponent(namespace)}`,
     );
     return r.entries;
+  }
+
+  /** The ledger summed since a duration back (`7d`) or an ISO timestamp, grouped by `by`. */
+  cost(opts: { since?: string | undefined; by?: CostGroup | undefined } = {}): Promise<CostBody> {
+    const q = new URLSearchParams();
+    if (opts.since !== undefined) {
+      q.set('since', opts.since);
+    }
+    if (opts.by !== undefined) {
+      q.set('by', opts.by);
+    }
+    const qs = q.size === 0 ? '' : `?${q.toString()}`;
+    return this.request<CostBody>('GET', `/v1/cost${qs}`);
   }
 
   async listConnectors(): Promise<ConnectorEntry[]> {

@@ -40,7 +40,10 @@ Non-goals
 - **SQLite (WAL)** as event log, run history, KV state and cost ledger.
 - **MCP (Model Context Protocol)** as the *operations* half of the connector interface.
   Existing MCP servers (GitHub, Jira, IMAP, filesystem…) become connectors for free.
-- **Anthropic Messages API** with structured outputs for `llm` actions.
+- **Anthropic Messages API** with structured outputs for `llm` actions, behind one small
+  provider interface (`packages/core/src/llm/`) that OpenAI and OpenRouter adapters share;
+  the core prices, budgets and ledgers every call itself, so adding a provider is one
+  adapter file.
 - **Claude Agent SDK** (or `claude -p` headless) as the agent loop for `agent` actions:
   file edit, bash, MCP, permissions, max-turns and prompt caching are already solved.
 - **croner** (cron parsing/scheduling), **zod** (config schema + validation, and the
@@ -113,7 +116,7 @@ One daemon, `247-agent-core`, with these internal modules:
 | **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). A filter that throws at run time counts as no match and is logged. |
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
-| **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
+| **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
 | **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. Deferring to systemd units is not implemented. |
 
@@ -171,10 +174,12 @@ deploy secrets and need the network (publishing) run unsandboxed and keep the se
 ```yaml
 action:
   kind: llm
+  provider: anthropic              # a name from providers: in agent.yaml; default: defaults.llm.provider
   model: claude-haiku-4-5          # cheapest tier that passes the eval for this task
   effort: low                      # Opus/Sonnet 5 only; ignored on Haiku 4.5
   max_tokens: 512
-  system_file: prompts/classify_email.md   # stable → prompt-cached
+  system_file: prompts/classify_email.md   # stable → prompt-cached; or `system:` inline
+  budget: { max_usd: 0.05 }        # per run; the smaller of this and the task's budget applies
   input: |
     From: ${event.payload.from}
     Subject: ${event.payload.subject}
@@ -190,11 +195,22 @@ action:
       confidence: { type: number }
 ```
 
-Implementation: `client.messages.parse()` / `output_config.format` with the schema; the
-result is guaranteed to validate. System prompt first with a cache breakpoint, volatile
-input last. Usage from `response.usage` goes to the ledger. Optional `batch: true` routes
-non-urgent tasks through the Message Batches API at half price (results arrive async as
-events, which the model of this system handles naturally).
+The result is the parsed object when `output_schema` is given, otherwise `{ text }`. A
+call that stops at `max_tokens` or is refused fails the run (non-retryable).
+
+Providers are declared once in `agent.yaml` (§7) by name with a type (`anthropic`,
+`openai`, `openrouter`), an API key that must be a `${secrets.<name>}` reference, and an
+optional `base_url`/`headers`. Several providers of one type (two accounts, a proxy) are
+fine. The runner never talks to an SDK: it hands the rendered request to the `ctx.llm`
+port (`packages/core/src/llm/service.ts`), which resolves the key for that call, checks
+the budgets, calls the adapter for the provider's type, writes the ledger row and returns
+the result. Adapters (`llm/anthropic.ts` etc.) map one request/response shape onto the
+vendor SDK: system block first with a cache breakpoint, the input as the user turn, the
+schema as the structured-output format, no prefill; `effort` (and adaptive thinking on
+Anthropic) only on models that take it; usage normalised so `input` is what the vendor
+bills at the full input price and cache reads/writes are separate. A `batch: true` mode
+(Message Batches at half price, results arriving async as events) is planned, not
+implemented.
 
 ### 5.3 `agent` — agentic loop with tools, sandboxed
 
@@ -444,12 +460,16 @@ connectors: connectors.d       # manifest files/directories, or inline manifests
 workers: 4
 log: { level: info }
 secrets: { backend: systemd-credentials }   # $CREDENTIALS_DIRECTORY/<name>; or { backend: env, prefix: OA_SECRET_ } (OA_SECRET_<NAME>); or { backend: file, path: secrets.yaml }
+providers:                   # model providers by name; api_key is always a secret reference
+  anthropic:  { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
+  openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}", headers: { X-Title: 247-agent } }
+pricing: {}                  # USD per Mtok per model, merged over the built-in table: { gpt-5-mini: { input: 0.25, output: 2 } }
 defaults:
-  llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
+  llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
   retry: { attempts: 3, backoff: exponential, base: 30s }
 budgets:
-  daily_usd: 10          # global circuit breaker → all llm/agent tasks pause, alert emitted
+  daily_usd: 10          # global circuit breaker → all llm/agent tasks fail fast until 00:00 UTC, alert emitted
 retention: { events: 90d, runs: 90d, workspaces: 7d }
 limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
@@ -458,8 +478,11 @@ The whole `/etc/247-agent` tree is meant to live in a git repo; `oa validate` ch
 it in CI. `oa validate` takes tasks files, connector manifests and `agent.yaml` files alike
 (a file whose `tasks` is a list of tasks is a tasks file; one with `name` and `exec` is a
 manifest) and follows `agent.yaml` to every tasks file and manifest it names, checking
-task and connector names are unique across files. `docs/examples/agent.yaml` is the
-reference.
+task and connector names are unique across files. Given an `agent.yaml` it also
+cross-checks every `llm` task against it: the provider exists, the model has a price
+(unless the provider reports cost itself), `system_file` exists under the config
+directory. The daemon runs the same check at start and on reload. `docs/examples/agent.yaml`
+is the reference.
 
 ## 8. Worked example: website updates from email
 
@@ -488,11 +511,26 @@ same action kind; only the config differs.
   event payload is last. The ledger reports `cache_read_input_tokens` per task so a
   silently-invalidated cache is visible.
 - **Dedup and filters** guarantee a model call is made at most once per real-world event.
-- **Batch API** for anything that can wait (`batch: true`).
-- **Circuit breakers:** per-task and global daily USD caps; exceeding one pauses the
-  model-backed tasks and emits `budget.exceeded` (which `notify` picks up).
-- **Ledger** table: `run_id, task, model, in_tok, out_tok, cache_read, cache_write, usd`.
-  `oa cost --by task --since 7d`.
+- **Batch API** for anything that can wait (`batch: true`) — planned.
+- **Prices are config, never guessed.** A built-in USD-per-Mtok table covers the Claude
+  models; `pricing:` in `agent.yaml` overrides or extends it. A task whose model has no
+  price fails validation unless its provider reports the cost per response (OpenRouter).
+  A response that arrives unpriced anyway is recorded at $0 with `priced_by: unpriced`
+  and fails the run, so it is noticed.
+- **Circuit breakers.** Per run: `budget.max_usd` (the smaller of the task's and the
+  action's). Before the call the worst case (input at 3 chars/token plus `max_tokens` of
+  output, at table prices) must fit; after it the actual cost must, else the run fails
+  non-retryably with the row kept. Globally: `budgets.daily_usd` per UTC day, derived
+  from the ledger so a restart changes nothing. The call that crosses the cap still
+  returns its result; from then until 00:00 UTC every model call fails fast without
+  contacting a provider (`task.<name>.failed` fires as usual, the trigger event stays
+  replayable with `oa run --event`). Crossing it emits `budget.exceeded` once per day
+  (`dedup_key: budget:daily:<YYYY-MM-DD>`, payload `{scope, day, limit_usd, spent_usd,
+  task, run_id}`), which `notify` picks up. A per-run overrun is an ordinary run
+  failure.
+- **Ledger** table: `run_id, task, provider, model, in_tok, out_tok, cache_read,
+  cache_write, usd, priced_by, ts`. `oa cost --by task|model|provider|day --since 7d`,
+  `GET /v1/cost`.
 
 ## 10. Reliability
 
@@ -596,7 +634,8 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
-  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts (llm.ts, agent.ts to come); types.ts = ActionContext
+  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts (agent.ts to come); types.ts = ActionContext
+  src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger), types.ts (provider interface), adapters per provider type
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
   src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff; poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
@@ -623,8 +662,10 @@ Runtime notes
 - `agent` runtime uses `query()` from `@anthropic-ai/claude-agent-sdk` with `cwd` set to
   the worktree, `allowedTools`, `maxTurns`, `mcpServers`, `permissionMode`, and a
   `PreToolUse` hook that enforces `bash_allow` and logs every tool call to the run.
-- `llm` runtime uses `client.messages.parse()` with a zod schema derived from
-  `output_schema`; usage from the response goes straight to the ledger.
+- `llm` runtime: the runner resolves defaults, reads `system_file`, renders `input` and
+  calls `ctx.llm`; the service (`src/llm/service.ts`) does budgets, secret resolution,
+  the adapter call and the ledger row. Adapters receive the JSON Schema as is
+  (`output_config.format` on Anthropic, `json_schema` formats elsewhere).
 - Distributed as a single tarball plus `node_modules` (or bundled with `tsup`) under
   `/opt/247-agent`; systemd unit unchanged (§12).
 
@@ -633,7 +674,9 @@ Runtime notes
 1. Core skeleton: config loader, SQLite schema, event store, matcher, executor, `shell`
    action, `cron` + `event` triggers, CLI. (Everything already works for non-LLM automation.)
 2. `connector` action + supervisor + `poller` built-in + `email` connector.
-3. `llm` action with structured outputs, cost ledger, budgets, caching.
+3. `llm` action with structured outputs, cost ledger, budgets, caching — in three
+   stages: (a) ledger, budgets, provider config and the runner behind the `ctx.llm` port;
+   (b) the Anthropic adapter; (c) OpenAI and OpenRouter adapters.
 4. `agent` action on `claude-agent-sdk` with worktree workspace, post gates.
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
@@ -643,10 +686,15 @@ Status: steps 1, 2 and 5 (minus a real `chat` connector) are done: `shell`, `con
 `/v1/state`, secrets backends, `retry` with recovery by policy, the connector supervisor,
 the built-in `poller`, `tasks.d`/`connectors.d` merging, the connector SDK, the `email`
 connector, and an integration test that runs the non-LLM path of the website workflow on a
-real daemon with fake connectors. Where the code is behind this document: `llm` and
-`agent` actions validate `kind` only and have no runner (a run of one fails with "no
-runner"); `budgets`, `retention` and `defaults.llm|agent` validate but are not applied;
-there is no cost ledger, no retention GC, no metrics, no sandbox wrapper;
+real daemon with fake connectors. Step 3(a) is done: the `llm` action is fully
+validated and runnable through `ctx.llm`, the cost ledger, `budget.max_usd`,
+`budgets.daily_usd` and `budget.exceeded` work, `providers:`/`pricing:` are
+cross-checked, `oa cost` and `GET /v1/cost` exist. Where the code is behind this
+document: no provider adapter ships yet, so an `llm` run fails with `provider type
+"anthropic" has no adapter in this build` until stage 3(b) lands; `batch: true` is
+rejected; the `agent` action validates `kind` only and has no runner; `retention` and
+`defaults.agent` validate but are not applied; there is no retention GC, no metrics, no
+sandbox wrapper;
 `SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is
 rejected; `health.interval` in manifests is accepted but unused.
 

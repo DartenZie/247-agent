@@ -14,6 +14,30 @@ function issues(task: unknown): string[] {
   return r.success ? [] : issuesFromZod(r.error).map((i) => `${i.path}: ${i.message}`);
 }
 
+describe('Task schema: budget and llm actions', () => {
+  it('validates budget and the llm action through the task', () => {
+    expect(
+      issues({
+        ...base,
+        action: {
+          kind: 'llm',
+          input: 'Classify: ${event.payload.body}',
+          output_schema: { type: 'object' },
+        },
+        budget: { max_usd: 0.5 },
+      }),
+    ).toEqual([]);
+    expect(issues({ ...base, budget: { max_usd: 0 } })).toEqual([
+      'budget.max_usd: Too small: expected number to be >0',
+    ]);
+    expect(issues({ ...base, action: { kind: 'llm', input: 'x', batch: true } })).toEqual([
+      'action: Unrecognized key: "batch"',
+    ]);
+    expect(issues({ ...base, action: { kind: 'llm', input: '${secrets.x}' } })).toEqual([]);
+    expect(issues({ ...base, action: { kind: 'agent', anything: 1 } })).toEqual([]);
+  });
+});
+
 describe('Task schema: emit, retry, state_updates and templates', () => {
   it('accepts the documented routing shapes', () => {
     expect(

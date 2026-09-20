@@ -15,10 +15,12 @@ strict; unknown keys are rejected.
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without `timeout` | `15m` |
 | `defaults.retry` | `{attempts, backoff, base, max}` for tasks without `retry` | 1 attempt, exponential, 30s, 1h |
 | `defaults.sandbox` | `none`, `bwrap`, or `{backend: bwrap, ro_binds, rw_binds, extra_args}` for `shell` actions without `sandbox` | `none` |
-| `defaults.llm` | `{model, max_tokens, effort?}` | accepted, not applied yet |
+| `defaults.llm` | `{provider?, model?, max_tokens, effort?}` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.agent` | `{model, effort, max_turns, budget}` | accepted, not applied yet |
 | `secrets` | `{backend: env, prefix?}`, `{backend: file, path}`, `{backend: systemd-credentials}` | `{backend: env}` |
-| `budgets.daily_usd` | Global daily cap; exceeding pauses model tasks and emits `budget.exceeded` | accepted, not applied yet |
+| `providers` | `name: {type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers?}`; `llm` actions pick one with `provider:` | none |
+| `pricing` | `model: {input, output, cache_read?, cache_write?}` USD per Mtok, merged over the built-in Claude table; a model without a price fails validation unless its provider reports cost | `{}` |
+| `budgets.daily_usd` | Global cap per UTC day; once crossed, model calls fail fast until midnight and `budget.exceeded` is emitted once | none |
 | `retention` | `{events, runs, workspaces}` durations for GC | accepted, no GC yet |
 
 Durations: `500ms`, `30s`, `15m`, `24h`, `7d`.
@@ -35,6 +37,21 @@ log: { level: debug }
 
 Start with `node packages/core/dist/main.js --config ./agent.yaml`; on macOS keep the
 directory path short (socket paths are capped at 104 bytes).
+
+## Providers for `llm` actions
+
+```yaml
+providers:
+  anthropic:  { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
+  openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}", headers: { X-Title: 247-agent } }
+pricing: { gpt-5-mini: { input: 0.25, output: 2 } }
+defaults: { llm: { provider: anthropic, model: claude-haiku-4-5 } }
+budgets: { daily_usd: 10 }
+```
+
+`api_key` must be exactly one `${secrets.<name>}`; `headers` values may use secrets and
+`${env.X}`. `oa validate agent.yaml` cross-checks every `llm` task: the provider exists,
+the model has a price (OpenRouter excepted), `system_file` exists under the config dir.
 
 ## Inline connectors
 

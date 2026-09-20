@@ -33,6 +33,10 @@ Two tasks with different intelligence needs are the **same action kind with diff
 | `claude-sonnet-5` | scoped agents, harder extraction | supports `effort` and adaptive thinking |
 | `claude-opus-5` | wide-scope agents, hard judgement | supports `effort` and adaptive thinking |
 
+Models are reached through a named provider (`providers:` in agent.yaml, `provider:` on
+the action; `anthropic`, `openai` or `openrouter`). Other providers' ids are used
+verbatim and need a `pricing:` entry unless the provider reports cost (OpenRouter).
+
 No date suffixes on ids. No assistant prefill. Before building a cascade of models,
 measure the stronger model at `effort: low` on the same inputs: on the current
 generation that often beats a weaker model at high effort, and one model means one
@@ -120,18 +124,23 @@ Non-negotiables, because they are what make an agent safe to run unattended:
 
 ## Budgets and the ledger
 
-Every model call must record usage (model, input/output/cache tokens, USD) in the
-ledger and respect the task `budget.max_usd` and the global `budgets.daily_usd`.
-Exceeding one stops the run (`failed`, `on_failure` fires) or pauses all model-backed
-tasks and emits `budget.exceeded`, which the `notify` task should listen to. Never add
-an unbudgeted call, including "helper" calls inside a runner.
+Every model call goes through the `ctx.llm` port, which records usage (provider, model,
+input/output/cache tokens, USD) in the ledger and enforces the run's `budget.max_usd`
+(worst case before the call, actual after: an overrun fails the run) and the global
+`budgets.daily_usd` per UTC day (once crossed, every model call that day fails fast and
+`budget.exceeded` is emitted once, which the `notify` task should listen to). A model
+without a price fails validation. Never add an unbudgeted call, including "helper" calls
+inside a runner: use `ctx.llm`, never an SDK directly. `oa cost --by task --since 7d`
+shows the ledger.
 
 ## Status today
 
-The `llm` and `agent` actions validate `kind` only and have **no runner**: a run fails
-with "no runner". The cost ledger and budgets are accepted in config but not applied.
-Write the real task anyway so the workflow is complete, and test the surrounding
-workflow with a `shell` stand-in that emits the same event (pattern in the
-`247-agent-tasks` skill). When implementing the runners, follow
-`references/llm-action.md` and `references/agent-action.md` and keep
-`docs/ARCHITECTURE.md` §5.2, §5.3, §9 and §14 in sync with the code.
+The `llm` action is validated, cross-checked against `providers:`/`pricing:` and
+runnable through `ctx.llm`, with the ledger and budgets applied. No provider adapter
+ships yet: a run fails with `provider type "anthropic" has no adapter in this build`
+until the Anthropic adapter lands (then OpenAI and OpenRouter). The `agent` action
+validates `kind` only and has no runner. Until then test the surrounding workflow with a
+`shell` stand-in that emits the same event (pattern in the `247-agent-tasks` skill).
+When adding an adapter or the `agent` runner, follow `references/llm-action.md` and
+`references/agent-action.md` and keep `docs/ARCHITECTURE.md` §5.2, §5.3, §9 and §14 in
+sync with the code.

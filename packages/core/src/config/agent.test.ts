@@ -40,7 +40,79 @@ describe('parseAgent', () => {
         sandbox: { backend: 'none', extra_args: [], ro_binds: [], rw_binds: [] },
       },
       secrets: { backend: 'env', prefix: 'OA_SECRET_' },
+      providers: {},
+      pricing: {},
+      budgets: {},
     });
+    expect(r.config.defaults.llm).toEqual({ max_tokens: 1024 });
+  });
+
+  it('parses providers, pricing, defaults.llm and budgets, and rejects literal API keys', () => {
+    const r = parseAgent(
+      [
+        'providers:',
+        '  anthropic: { type: anthropic, api_key: "${secrets.anthropic_api_key}" }',
+        '  router: { type: openrouter, api_key: "${secrets.or_key}", base_url: "https://openrouter.ai/api/v1", headers: { X-Title: "${env.APP}" } }',
+        'pricing: { claude-sonnet-5: { output: 12 }, gpt-5-mini: { input: 0.25, output: 2 } }',
+        'defaults: { llm: { provider: anthropic, model: claude-haiku-4-5, effort: low } }',
+        'budgets: { daily_usd: 10 }',
+      ].join('\n'),
+      '/srv/oa/agent.yaml',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.config.providers.anthropic).toEqual({
+      type: 'anthropic',
+      api_key: '${secrets.anthropic_api_key}',
+      headers: {},
+    });
+    expect(r.config.providers.router).toMatchObject({
+      type: 'openrouter',
+      headers: { 'X-Title': '${env.APP}' },
+    });
+    expect(r.config.pricing).toEqual({
+      'claude-sonnet-5': { output: 12 },
+      'gpt-5-mini': { input: 0.25, output: 2 },
+    });
+    expect(r.config.defaults.llm).toEqual({
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      max_tokens: 1024,
+      effort: 'low',
+    });
+    expect(r.config.budgets).toEqual({ daily_usd: 10 });
+
+    const bad = parseAgent(
+      [
+        'providers:',
+        '  a: { type: anthropic, api_key: sk-ant-literal }',
+        '  b: { type: openai, api_key: "${secrets.a}${secrets.b}" }',
+        '  c: { type: openai, api_key: "${secrets.k}", headers: { X: "${event.x}" } }',
+        '  Bad: { type: openai, api_key: "${secrets.k}" }',
+        '  d: { type: gemini, api_key: "${secrets.k}" }',
+        'budgets: { daily_usd: 0 }',
+        'pricing: { m: { input: -1 } }',
+      ].join('\n'),
+      '/srv/oa/agent.yaml',
+    );
+    expect(bad.ok).toBe(false);
+    if (bad.ok) {
+      return;
+    }
+    expect(bad.issues.map((i) => i.path).sort()).toEqual([
+      'budgets.daily_usd',
+      'pricing.m.input',
+      'providers.Bad',
+      'providers.a.api_key',
+      'providers.b.api_key',
+      'providers.c.headers',
+      'providers.d.type',
+    ]);
+    expect(bad.issues.find((i) => i.path === 'providers.a.api_key')?.message).toMatch(
+      /single secret reference/,
+    );
   });
 
   it('keeps relative paths relative to the agent file, not the cwd', () => {
@@ -124,6 +196,54 @@ describe('checkConfigFile', () => {
         summary: '7 tasks',
       },
     ]);
+  });
+
+  it('cross-checks llm tasks against providers, prices and prompt files', () => {
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(join(dir, 'prompt.md'), 'x');
+    writeFileSync(
+      join(dir, 't.yaml'),
+      [
+        'tasks:',
+        '  - name: a',
+        '    trigger: { kind: manual }',
+        '    action: { kind: llm, model: claude-9, input: x, system_file: nope.md }',
+      ].join('\n'),
+    );
+    writeFileSync(
+      agent,
+      'tasks: t.yaml\nproviders: { p: { type: anthropic, api_key: "${secrets.k}" } }\n',
+    );
+    expect(checkConfigFile(agent)[1]).toMatchObject({
+      ok: false,
+      kind: 'tasks',
+      issues: [
+        expect.objectContaining({ path: 'tasks[0].action.provider' }),
+        expect.objectContaining({ path: 'tasks[0].action.system_file' }),
+      ],
+    });
+    writeFileSync(
+      agent,
+      [
+        'tasks: t.yaml',
+        'providers: { p: { type: anthropic, api_key: "${secrets.k}" } }',
+        'defaults: { llm: { provider: p } }',
+        'pricing: { claude-9: { input: 1, output: 2 } }',
+      ].join('\n'),
+    );
+    expect(checkConfigFile(agent)[1]).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ path: 'tasks[0].action.system_file' })],
+    });
+    writeFileSync(agent, 'tasks: t.yaml\npricing: { claude-9: { output: 2 } }\n');
+    expect(checkConfigFile(agent)).toEqual([
+      expect.objectContaining({
+        ok: false,
+        kind: 'agent',
+        issues: [expect.objectContaining({ path: 'pricing.claude-9' })],
+      }),
+    ]);
+    expect(checkConfigFile(join(EXAMPLES, 'agent.yaml')).every((c) => c.ok)).toBe(true);
   });
 
   it('validates an agent file together with the tasks file it points at', () => {

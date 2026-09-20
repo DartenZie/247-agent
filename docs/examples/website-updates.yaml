@@ -27,6 +27,7 @@ tasks:
       filter: "payload.from == 'editor@example.com'"
     action:
       kind: llm
+      provider: anthropic           # from providers: in agent.yaml; default: defaults.llm.provider
       model: claude-haiku-4-5
       max_tokens: 512
       system_file: prompts/classify_email.md
