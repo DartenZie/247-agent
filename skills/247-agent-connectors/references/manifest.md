@@ -47,6 +47,16 @@ state instead of a cursor), `mark_read` (IMAP only) and `send` (the configured `
 appended to every mail; `in_reply_to` threads replies). `initial: none` (default) makes
 the first fetch skip mail already in the box. Full reference: `connectors/email/README.md`.
 
+## The ftp connector (`connectors/ftp`)
+
+Files inside one remote directory over `sftp` (password or `private_key`, optional
+`host_key_fingerprint`), `ftp` or `ftps` (`tls: explicit|implicit`). Ops `list`, `stat`,
+`read`, `write`, `delete`, `rename`, `mkdir`; every path is relative to `root` and confined
+to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans `list` out with
+`each: "${result.entries[?type == 'file']}"` and a `dedup_key` on path, size and mtime
+(`connectors/ftp/examples/inbox-import.yaml`). Give agents a manifest copy with
+`ops: [list, stat, read]`. Full reference: `connectors/ftp/README.md`.
+
 ## Using an existing MCP server
 
 ```yaml
@@ -100,4 +110,9 @@ connectors:
     config:
       mails:
         - { uid: 1, message_id: "<m1@x>", from: editor@example.com, subject: Spring event, body: Please add it. }
+  - name: ftp
+    exec: [node, packages/core/test/fixtures/fake-ftp.ts]
+    ops: [list, stat, read, write, delete, rename, mkdir]
+    config:
+      files: { "incoming/orders.csv": "id;qty\n1;2" }     # the in-memory tree it serves
 ```

@@ -43,6 +43,11 @@ connectors:
     emits: [chat.reply]
     ops: [send, ask]
     config: { token: "\${secrets.chat_token}", delay_ms: 30 }
+  - name: ftp
+    exec: [node, ${FIXTURES}fake-ftp.ts]
+    ops: [list, stat, read, write, delete, rename, mkdir]
+    config:
+      files: { "incoming/orders.csv": "id;qty|1;2", "incoming/notes/readme.txt": "skip me" }
 `;
 
 const TASKS = `
@@ -127,6 +132,33 @@ tasks:
       kind: shell
       env: { LFTP_PASSWORD: "\${secrets.ftp_pass}" }
       cmd: [sh, -c, 'test -n "$LFTP_PASSWORD" && echo published']
+
+  # 7. The ftp example (connectors/ftp/examples/inbox-import.yaml) on the fake connector:
+  #    manual instead of cron so it never fires into the workflow above.
+  - name: scan_incoming
+    trigger: { kind: manual }
+    action: { kind: connector, connector: ftp, op: list, args: { path: incoming } }
+    emit:
+      - type: ftp.file_seen
+        each: "\${result.entries[?type == 'file']}"
+        dedup_key: "ftp:\${item.path}:\${item.size}:\${item.mtime}"
+        payload: \${item}
+  - name: import_file
+    trigger: { kind: event, type: ftp.file_seen }
+    action:
+      kind: sequence
+      steps:
+        - { kind: connector, connector: ftp, op: read, args: { path: "\${event.payload.path}" } }
+        - kind: connector
+          connector: ftp
+          op: rename
+          args: { from: "\${event.payload.path}", to: "processed/\${event.payload.name}", parents: true }
+    emit:
+      - type: ftp.file_imported
+        payload:
+          name: \${event.payload.name}
+          content: \${result.steps[0].content}
+          moved_to: \${result.steps[1].to}
 
   # 6. Tell the human (as in the example).
   - name: notify
@@ -263,5 +295,43 @@ describe('website workflow without a model', () => {
     expect(
       daemon.core.store.events.listAfter(0, 1000).filter((e) => e.type === 'email.received'),
     ).toHaveLength(2);
+  }, 30_000);
+});
+
+describe('ftp inbox import on the fake connector', () => {
+  it('lists, fans files out, reads and moves each one exactly once', async () => {
+    await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
+
+    const first = await api.run('scan_incoming');
+    await until(
+      async () => (await api.listRuns({ task: 'import_file', status: 'succeeded' })).length === 1,
+    );
+    await daemon.core.executor.idle();
+    expect((await api.getRun(first.run.id)).result).toMatchObject({
+      path: 'incoming',
+      truncated: false,
+      entries: [
+        { name: 'notes', path: 'incoming/notes', type: 'dir' },
+        { name: 'orders.csv', path: 'incoming/orders.csv', type: 'file', size: 10 },
+      ],
+    });
+    const imported = daemon.core.store.events
+      .listAfter(0, 1000)
+      .filter((e) => e.type === 'ftp.file_imported');
+    expect(imported).toHaveLength(1);
+    expect(imported[0]?.payload).toEqual({
+      name: 'orders.csv',
+      content: 'id;qty|1;2',
+      moved_to: 'processed/orders.csv',
+    });
+
+    // The file moved, so a second scan sees nothing to import; the directory is skipped.
+    const again = await api.run('scan_incoming');
+    await until(async () => (await api.getRun(again.run.id)).status === 'succeeded');
+    await daemon.core.executor.idle();
+    expect((await api.getRun(again.run.id)).result).toMatchObject({
+      entries: [{ name: 'notes', type: 'dir' }],
+    });
+    expect(await api.listRuns({ task: 'import_file' })).toHaveLength(1);
   }, 30_000);
 });
