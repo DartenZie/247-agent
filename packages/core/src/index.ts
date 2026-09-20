@@ -140,7 +140,10 @@ export {
   createAnthropicProvider,
   type AnthropicAdapterOptions,
 } from './llm/anthropic.js';
-export { supportsEffort } from './llm/models.js';
+export { createOpenAiProvider, openaiProvider } from './llm/openai.js';
+export { createOpenRouterProvider, openrouterProvider } from './llm/openrouter.js';
+export { normaliseUsage, type OpenAiCompatOptions, type RawUsage } from './llm/openai-compat.js';
+export { isReasoningModel, supportsEffort } from './llm/models.js';
 export type {
   LlmCall,
   LlmCallContext,
@@ -158,8 +161,11 @@ export type {
 export {
   fakeLlmPort,
   fakeProviderFactory,
+  recordingFetch,
+  type CapturedRequest,
   type FakePort,
   type FakeProvider,
+  type RecordingFetch,
 } from './llm/testing.js';
 export { checkLlmTasks, type LlmCheckContext } from './config/crosscheck.js';
 export { runWait, WaitAction, WaitTimeoutError, type WaitActionConfig } from './actions/wait.js';

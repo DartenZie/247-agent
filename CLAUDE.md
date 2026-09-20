@@ -53,8 +53,9 @@ skills/                      agent skills for working with 247-agent (linked fro
 - Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
-  Other providers' ids are used verbatim and need a `pricing:` entry unless the provider
-  reports cost (OpenRouter); a model without a price fails `oa validate`.
+  Other providers' ids are used verbatim and need a `pricing:` entry unless the built-in
+  table knows them (current OpenAI models) or the provider reports cost (OpenRouter); a
+  model without a price fails `oa validate`.
 
 ## Commands
 

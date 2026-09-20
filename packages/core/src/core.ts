@@ -19,6 +19,8 @@ import { Executor } from './executor/executor.js';
 import type { BudgetsConfig, LlmDefaultsConfig, ProviderConfigParsed } from './llm/config.js';
 import type { PricingTable } from './llm/pricing.js';
 import { anthropicProvider } from './llm/anthropic.js';
+import { openaiProvider } from './llm/openai.js';
+import { openrouterProvider } from './llm/openrouter.js';
 import { LlmService } from './llm/service.js';
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger } from './log.js';
@@ -127,7 +129,11 @@ export const defaultRunners: ActionRunners = {
 };
 
 /** Provider adapters by type. `openai` and `openrouter` come with stage 3. */
-export const defaultProviderFactories: ProviderFactories = { anthropic: anthropicProvider };
+export const defaultProviderFactories: ProviderFactories = {
+  anthropic: anthropicProvider,
+  openai: openaiProvider,
+  openrouter: openrouterProvider,
+};
 
 function isClients(v: readonly ConnectorConfig[] | ConnectorClients): v is ConnectorClients {
   return !Array.isArray(v);

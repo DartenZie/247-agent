@@ -35,7 +35,8 @@ Two tasks with different intelligence needs are the **same action kind with diff
 
 Models are reached through a named provider (`providers:` in agent.yaml, `provider:` on
 the action; `anthropic`, `openai` or `openrouter`). Other providers' ids are used
-verbatim and need a `pricing:` entry unless the provider reports cost (OpenRouter).
+verbatim and need a `pricing:` entry unless the built-in table knows them (current
+OpenAI models) or the provider reports cost (OpenRouter).
 
 No date suffixes on ids. No assistant prefill. Before building a cascade of models,
 measure the stronger model at `effort: low` on the same inputs: on the current
@@ -136,9 +137,8 @@ shows the ledger.
 ## Status today
 
 The `llm` action is validated, cross-checked against `providers:`/`pricing:` and
-runnable through `ctx.llm`, with the ledger and budgets applied. The Anthropic adapter
-(`type: anthropic`) ships; a provider of type `openai` or `openrouter` fails with
-`provider type "openai" has no adapter in this build` until those adapters land. The
+runnable through `ctx.llm`, with the ledger and budgets applied, and all three provider
+types (`anthropic`, `openai`, `openrouter`) have adapters. The
 `agent` action validates `kind` only and has no runner. Until then test the surrounding
 workflow with a `shell` stand-in that emits the same event (pattern in the
 `247-agent-tasks` skill).

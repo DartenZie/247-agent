@@ -386,7 +386,7 @@ schema. Providers live in `agent.yaml`:
 providers:
   anthropic:  { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
   openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}" }
-pricing: { gpt-5-mini: { input: 0.25, output: 2 } }   # USD per Mtok for models the built-in table lacks
+pricing: { gpt-4.1-mini: { input: 0.4, output: 1.6 } }   # USD per Mtok for models the built-in table lacks
 budgets: { daily_usd: 10 }
 ```
 
@@ -397,9 +397,14 @@ every model call fails fast until midnight and one `budget.exceeded` event is em
 (route it to your `notify` task). A model with no known price is refused by
 `oa validate` unless its provider reports cost itself (OpenRouter does).
 
-Status: the Anthropic adapter ships (`type: anthropic`, the Claude models above).
-OpenAI and OpenRouter are next; until then a provider of either type fails with
-`provider type "openai" has no adapter in this build`.
+All three provider types ship. `anthropic` calls the Messages API; `openai` the
+Responses API (the built-in price table knows the current gpt-5.x/gpt-6 models, others
+need a `pricing:` entry); `openrouter` the Chat Completions endpoint at
+`https://openrouter.ai/api/v1` (or `base_url`), where each response reports its own cost,
+so OpenRouter models need no price. Put `HTTP-Referer`/`X-Title` in the provider's
+`headers` for OpenRouter's attribution. On `openai` and `openrouter` the schema is sent
+in strict mode: list every property in `required` and set `additionalProperties: false`
+on every object, or the call fails with the vendor's 400.
 
 ### 5.6 `agent` (not runnable yet)
 
@@ -711,19 +716,17 @@ call, edit the site with a scoped agent, gate on a build, ask for approval on ch
 over FTP, notify. Its non-model path runs today against fake connectors in
 `packages/core/src/integration.test.ts`.
 
-Done since: the `llm` action with the Anthropic adapter, the cost ledger, budgets
+Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters, the cost ledger, budgets
 (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and
 `oa cost`.
 
 Not implemented yet, in the planned order:
 
-1. The OpenAI and OpenRouter provider adapters. Until they land a provider of either
-   type fails with "no adapter in this build".
-2. The `agent` action.
-3. A real `chat` connector under `connectors/` (the `email` connector is there:
+1. The `agent` action.
+2. A real `chat` connector under `connectors/` (the `email` connector is there:
    IMAP/POP3 in, SMTP out, see
    [`connectors/email/README.md`](../connectors/email/README.md)).
-4. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
+3. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
    `health.interval` in manifests, `batch: true` for `llm`.
 
 Until then, model-backed steps have to be replaced by `shell` or `connector` tasks to

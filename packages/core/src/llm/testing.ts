@@ -81,3 +81,49 @@ export function fakeLlmPort(
     },
   };
 }
+
+/** One request as a `recordingFetch` transport saw it. */
+export interface CapturedRequest {
+  url: string;
+  headers: Headers;
+  /** The JSON body, parsed. */
+  body: Record<string, unknown>;
+  /** The body as sent, for "the key is not in here" assertions. */
+  raw: string;
+}
+
+/** Structurally the `fetch` option of both vendor SDKs. */
+export type RecordingFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
+/**
+ * A transport for adapter tests: records every request and answers each with `reply` as a
+ * JSON body under `status`, or rejects with it when `reply` is an `Error`.
+ */
+export function recordingFetch(
+  reply: unknown,
+  status = 200,
+): { calls: CapturedRequest[]; fetch: RecordingFetch } {
+  const calls: CapturedRequest[] = [];
+  const fetch: RecordingFetch = (input, init) => {
+    const raw = typeof init?.body === 'string' ? init.body : '';
+    calls.push({
+      url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      headers: new Headers(init?.headers),
+      body: JSON.parse(raw) as Record<string, unknown>,
+      raw,
+    });
+    if (reply instanceof Error) {
+      return Promise.reject(reply);
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify(reply), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+  };
+  return { calls, fetch };
+}

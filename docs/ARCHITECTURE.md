@@ -208,9 +208,14 @@ the result. Adapters (`llm/anthropic.ts` etc.) map one request/response shape on
 vendor SDK: system block first with a cache breakpoint, the input as the user turn, the
 schema as the structured-output format, no prefill; `effort` (and adaptive thinking on
 Anthropic) only on models that take it; usage normalised so `input` is what the vendor
-bills at the full input price and cache reads/writes are separate. A `batch: true` mode
-(Message Batches at half price, results arriving async as events) is planned, not
-implemented.
+bills at the full input price and cache reads/writes are separate. `anthropic` uses the
+Messages API, `openai` the Responses API (`instructions` + `text.format`, `store: false`),
+`openrouter` the `openai` SDK against OpenRouter's Chat Completions endpoint, where the
+per-response `usage.cost` is what the ledger records. The two OpenAI-style adapters send
+the schema in strict mode, which the vendor only accepts when every property is listed in
+`required` and every object has `additionalProperties: false`; a schema that does not
+fails the call non-retryably with the vendor's message. A `batch: true` mode (Message
+Batches at half price, results arriving async as events) is planned, not implemented.
 
 ### 5.3 `agent` — agentic loop with tools, sandboxed
 
@@ -513,7 +518,7 @@ same action kind; only the config differs.
 - **Dedup and filters** guarantee a model call is made at most once per real-world event.
 - **Batch API** for anything that can wait (`batch: true`) — planned.
 - **Prices are config, never guessed.** A built-in USD-per-Mtok table covers the Claude
-  models; `pricing:` in `agent.yaml` overrides or extends it. A task whose model has no
+  and the current OpenAI models; `pricing:` in `agent.yaml` overrides or extends it. A task whose model has no
   price fails validation unless its provider reports the cost per response (OpenRouter).
   A response that arrives unpriced anyway is recorded at $0 with `priced_by: unpriced`
   and fails the run, so it is noticed.
@@ -689,10 +694,9 @@ connector, and an integration test that runs the non-LLM path of the website wor
 real daemon with fake connectors. Step 3(a) is done: the `llm` action is fully
 validated and runnable through `ctx.llm`, the cost ledger, `budget.max_usd`,
 `budgets.daily_usd` and `budget.exceeded` work, `providers:`/`pricing:` are
-cross-checked, `oa cost` and `GET /v1/cost` exist. Of step 3(b) the `anthropic`
-adapter is done (`packages/core/src/llm/anthropic.ts`). Where the code is behind this
-document: the `openai` and `openrouter` adapters are not written, so a provider of
-either type fails with `provider type "openai" has no adapter in this build`;
+cross-checked, `oa cost` and `GET /v1/cost` exist. Steps 3(b) and 3(c) are done: the
+`anthropic`, `openai` and `openrouter` adapters (`packages/core/src/llm/anthropic.ts`,
+`openai.ts`, `openrouter.ts`). Where the code is behind this document:
 `batch: true` is rejected; the `agent` action validates `kind` only and has no runner; `retention` and
 `defaults.agent` validate but are not applied; there is no retention GC, no metrics, no
 sandbox wrapper;

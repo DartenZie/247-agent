@@ -25,15 +25,17 @@ providers:
   openai:     { type: openai, api_key: "${secrets.openai_api_key}" }
   openrouter: { type: openrouter, api_key: "${secrets.openrouter_api_key}", headers: { X-Title: 247-agent } }
 pricing:
-  gpt-5-mini: { input: 0.25, output: 2 }      # USD per Mtok; cache_read/cache_write default to input
+  gpt-4.1-mini: { input: 0.4, output: 1.6 }   # USD per Mtok; cache_read/cache_write default to input
 defaults:
   llm: { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
 budgets: { daily_usd: 10 }
 ```
 
 - `api_key` must be a single `${secrets.<name>}` reference; a literal is rejected.
-- Built-in prices cover the Claude models. Any other model needs a `pricing:` entry,
-  except on an `openrouter` provider, which reports the cost per response.
+- Built-in prices cover the Claude models and the current OpenAI ones (`BUILTIN_PRICES`
+  in `src/llm/pricing.ts`, with the date they were checked). Any other model needs a
+  `pricing:` entry, except on an `openrouter` provider, which reports the cost per
+  response.
   `oa validate agent.yaml` fails on an unpriced model, an unknown provider or a missing
   `system_file`.
 
@@ -74,10 +76,33 @@ budgets: { daily_usd: 10 }
   (retries are the task's `retry` policy) and an explicit HTTP timeout, so the run's
   `timeout` is what bounds the call. A structured output that is not JSON, or a
   completed response with no output, fails retryably.
-- OpenAI: Responses API, `text.format` json_schema strict, `reasoning.effort` on
-  reasoning models; `input` = `input_tokens - cached_tokens`.
-- OpenRouter: the `openai` SDK against `https://openrouter.ai/api/v1`, Chat Completions
-  with `response_format` json_schema; `usage.cost` → `reportedUsd`.
+- OpenAI (`openai.ts`, shipped): one non-streaming Responses API call; `instructions`
+  for the system prompt (caching is automatic for prefixes of 1024+ tokens), the input
+  as `input`, `text.format` json_schema with `strict: true`, `reasoning.effort` only on
+  reasoning models (`isReasoningModel` in `models.ts`: gpt-5/gpt-6 families and the
+  o-series, not `*-chat-*`), `store: false`. Usage: `input` =
+  `input_tokens - cached_tokens - cache_write_tokens`, the two cache counters separate.
+  Stop: `completed` → end, `incomplete` with `max_output_tokens`/`content_filter` →
+  max_tokens/refusal, a `refusal` content part → refusal. Same client rules as
+  Anthropic (per-call client, `maxRetries: 0`, explicit timeout, base URL always
+  explicit so `OPENAI_BASE_URL` in the environment is ignored); a non-JSON structured
+  output or a completed response with no output fails retryably.
+- OpenRouter (`openrouter.ts`, shipped): the `openai` SDK against
+  `https://openrouter.ai/api/v1` (or `base_url`), Chat Completions with a `system` and a
+  `user` message, `max_tokens`, `response_format` json_schema `strict: true`, and
+  OpenRouter's own `reasoning: { effort }` whenever `effort` is set (models without
+  reasoning ignore it). `usage.cost` (USD) → `reportedUsd`, so the ledger records
+  `priced_by: provider` and no `pricing:` entry is needed; `usage.include` is a
+  deprecated no-op and is not sent. Stop: `finish_reason` stop/length/content_filter →
+  end/max_tokens/refusal, a non-empty `message.refusal` → refusal. Same client, retry
+  and parse-failure rules as above. Attribution headers (`HTTP-Referer`, `X-Title`) come
+  from the provider's `headers:`.
+- Strict schemas: OpenAI and OpenRouter accept `strict: true` only when every property is
+  in `required` and every object has `additionalProperties: false` (and only a subset of
+  JSON Schema keywords). The adapters send the user's schema unchanged; one that breaks
+  these rules fails the call with the vendor's 400 (non-retryable). Anthropic has no
+  such rule, so a schema meant to run on any provider should follow it.
 - Auth/bad-request errors → `NonRetryableError`; rate limits and 5xx → plain `Error`
   (retried by the task's policy). Never log or embed the key.
-- Tests use `fakeProviderFactory()` from `src/llm/testing.ts`, never the network.
+- Tests use `fakeProviderFactory()` from `src/llm/testing.ts`, never the network; adapter
+  tests drive the real SDK through `recordingFetch()` from the same file.
