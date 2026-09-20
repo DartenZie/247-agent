@@ -1,4 +1,4 @@
-# online-agent
+# 247-agent
 
 A 24/7, config-driven automation daemon for a single Linux server. Tasks are declared in
 YAML: each has a trigger (cron, event, manual) and an action (`shell`, `connector`, `llm`,

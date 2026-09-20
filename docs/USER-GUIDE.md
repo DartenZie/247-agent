@@ -1,4 +1,4 @@
-# online-agent — User Guide
+# 247-agent — User Guide
 
 How to install, configure and operate the daemon. For the design and the reasoning behind
 it, read [`ARCHITECTURE.md`](ARCHITECTURE.md); this guide only tells you what to write in
@@ -31,7 +31,7 @@ Requirements: Node.js 22 or newer, npm, git. Linux is the target; macOS works fo
 development.
 
 ```
-git clone <repo> online-agent && cd online-agent
+git clone <repo> 247-agent && cd 247-agent
 npm install
 npm run build
 npm test            # optional, no network needed
@@ -41,19 +41,19 @@ This produces two entry points:
 
 | Program | Path after build | Purpose |
 |---|---|---|
-| daemon | `packages/core/dist/main.js` | `online-agent-core`, the always-on process |
+| daemon | `packages/core/dist/main.js` | `247-agent-core`, the always-on process |
 | CLI | `packages/cli/dist/main.js` | `oa`: validate config, run tasks by hand, inject events |
 
 For convenience in a shell:
 
 ```
-alias online-agent-core='node /opt/online-agent/packages/core/dist/main.js'
-alias oa='node /opt/online-agent/packages/cli/dist/main.js'
+alias 247-agent-core='node /opt/247-agent/packages/core/dist/main.js'
+alias oa='node /opt/247-agent/packages/cli/dist/main.js'
 ```
 
 ## 3. Five-minute start
 
-1. Create a config directory (anywhere; `/etc/online-agent` in production).
+1. Create a config directory (anywhere; `/etc/247-agent` in production).
 
    ```
    mkdir -p ~/oa && cd ~/oa
@@ -85,7 +85,7 @@ alias oa='node /opt/online-agent/packages/cli/dist/main.js'
 
    ```
    oa validate agent.yaml
-   online-agent-core --config agent.yaml
+   247-agent-core --config agent.yaml
    ```
 
    Logs are JSON lines on stdout. Stop it with Ctrl-C.
@@ -108,8 +108,8 @@ The global file. Every key has a default; the full reference is
 
 | Key | Meaning | Default |
 |---|---|---|
-| `db` | SQLite file (events, runs, state) | `/var/lib/online-agent/state.db` |
-| `socket` | Unix socket for the API and the CLI | `/run/online-agent/core.sock` |
+| `db` | SQLite file (events, runs, state) | `/var/lib/247-agent/state.db` |
+| `socket` | Unix socket for the API and the CLI | `/run/247-agent/core.sock` |
 | `tasks` | A tasks file, a directory of `*.yaml`, or a list of both. Merged; task names must be unique across files | `tasks.yaml` |
 | `connectors` | Manifest file(s), directories, or inline manifests | none |
 | `workers` | Runs executing at the same time, globally | 4 |
@@ -266,7 +266,7 @@ One `action` per task. `kind` selects the runner.
 action:
   kind: shell
   cmd: ["lftp", "-e", "mirror -R --delete dist/ /public_html; quit", "sftp://ftp.example.cz"]
-  cwd: /var/lib/online-agent/repos/orchestra-site
+  cwd: /var/lib/247-agent/repos/orchestra-site
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}              # optional; non-strings are sent as JSON
   result: text_stdout                  # | json_stdout | exit_code
@@ -394,13 +394,13 @@ Changing a manifest needs a daemon restart; SIGHUP reloads tasks files only.
 
 ### 6.3 Writing one in TypeScript
 
-The `@online-agent/connector-sdk` package does the boilerplate. This is the shape of the
+The `@247-agent/connector-sdk` package does the boilerplate. This is the shape of the
 fake email connector the tests use
 ([`packages/core/test/fixtures/fake-email.ts`](../packages/core/test/fixtures/fake-email.ts)):
 
 ```ts
 import { z } from 'zod';
-import { defineTool, runConnector } from '@online-agent/connector-sdk';
+import { defineTool, runConnector } from '@247-agent/connector-sdk';
 
 await runConnector({
   setup: async (rt) => {
@@ -436,7 +436,7 @@ Two HTTP calls and one protocol are all the core needs:
   with `transport: stdio`.
 
 ```
-curl --unix-socket /run/online-agent/core.sock -X POST http://unix/v1/events \
+curl --unix-socket /run/247-agent/core.sock -X POST http://unix/v1/events \
   -H 'content-type: application/json' \
   -d '{"type":"webhook.received","source":"webhook","payload":{"repo":"x"}}'
 ```
@@ -444,7 +444,7 @@ curl --unix-socket /run/online-agent/core.sock -X POST http://unix/v1/events \
 ## 7. The `oa` command
 
 `oa` talks to the daemon over the socket: `--socket <path>`, else `$OA_CORE_SOCKET`, else
-`/run/online-agent/core.sock`. Exit codes: 0 ok, 1 the daemon or the run reported a
+`/run/247-agent/core.sock`. Exit codes: 0 ok, 1 the daemon or the run reported a
 failure, 2 usage.
 
 ```
@@ -510,39 +510,39 @@ Run statuses: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`
 ### 9.1 Layout
 
 ```
-/etc/online-agent/
+/etc/247-agent/
   agent.yaml
   tasks.d/*.yaml
   connectors.d/*.yaml
   prompts/*.md          # for llm/agent tasks, once they run
   schemas/*.json
-/var/lib/online-agent/
+/var/lib/247-agent/
   state.db
   repos/                # base checkouts for agent worktrees
   work/<run_id>/
-/run/online-agent/core.sock
+/run/247-agent/core.sock
 ```
 
-Keep `/etc/online-agent` in git and run `oa validate` on it before every deploy.
+Keep `/etc/247-agent` in git and run `oa validate` on it before every deploy.
 
 ### 9.2 systemd unit
 
 ```ini
-# /etc/systemd/system/online-agent.service
+# /etc/systemd/system/247-agent.service
 [Unit]
-Description=online-agent core
+Description=247-agent core
 After=network-online.target
 
 [Service]
-User=online-agent
-ExecStart=/usr/bin/node /opt/online-agent/packages/core/dist/main.js --config /etc/online-agent/agent.yaml
+User=247-agent
+ExecStart=/usr/bin/node /opt/247-agent/packages/core/dist/main.js --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
 LoadCredential=imap_pass:/etc/credstore/imap_pass
 LoadCredential=ftp_pass:/etc/credstore/ftp_pass
-RuntimeDirectory=online-agent
-StateDirectory=online-agent
+RuntimeDirectory=247-agent
+StateDirectory=247-agent
 ProtectSystem=strict
 NoNewPrivileges=yes
 
@@ -551,7 +551,7 @@ WantedBy=multi-user.target
 ```
 
 With `secrets: { backend: systemd-credentials }` each `LoadCredential=` name becomes a
-secret of the same name. Logs are JSON lines on stdout, so `journalctl -u online-agent
+secret of the same name. Logs are JSON lines on stdout, so `journalctl -u 247-agent
 -o cat | jq` works. Every line about a run carries `run_id`, `task` and
 `correlation_id`.
 
@@ -570,10 +570,10 @@ stale socket file left by a dead daemon is replaced; a live one refuses the star
 ### 9.4 Daemon flags
 
 ```
-online-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error]
+247-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error]
 ```
 
-`--config` defaults to `/etc/online-agent/agent.yaml`; `--log-level` overrides
+`--config` defaults to `/etc/247-agent/agent.yaml`; `--log-level` overrides
 `log.level` from the config.
 
 ## 10. Reference workflow and current gaps

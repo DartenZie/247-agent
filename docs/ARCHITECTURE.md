@@ -103,7 +103,7 @@ usage/cost, logs, and the agent transcript if any.
 
 ## 4. Runtime components
 
-One daemon, `online-agent-core`, with these internal modules:
+One daemon, `247-agent-core`, with these internal modules:
 
 | Module | Responsibility |
 |---|---|
@@ -114,7 +114,7 @@ One daemon, `online-agent-core`, with these internal modules:
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | Per run: model, input/output/cache tokens, USD. Per task and global daily caps → circuit breaker. |
-| **API** | HTTP over a Unix socket (`/run/online-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. Deferring to systemd units is not implemented. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
@@ -195,7 +195,7 @@ action:
   budget: { max_usd: 1.50 }        # hard stop; run → failed, on_failure fires
   workspace:
     kind: git-worktree             # fresh worktree per run; discarded on failure
-    repo: /var/lib/online-agent/repos/orchestra-site
+    repo: /var/lib/247-agent/repos/orchestra-site
     branch: main
   tools: [Read, Edit, Write, Glob, Grep, Bash]
   bash_allow: ["npm run build", "npm test", "git status", "git diff"]
@@ -329,7 +329,7 @@ health: { interval: 60s }                            # accepted, not used yet
 relative to the manifest. Manifests live in `connectors.d/*.yaml` or inline in the
 `connectors:` list of `agent.yaml`; names must be unique.
 
-**Events out (connector → core):** `POST http://unix:/run/online-agent/core.sock/v1/events`
+**Events out (connector → core):** `POST http://unix:/run/247-agent/core.sock/v1/events`
 with the Event JSON (core assigns `id`/`ts`, honours `dedup_key`). A one-line curl in
 any language. Push-style connectors (chat bots, webhooks) use this; poll-style ones don't
 need it at all (next point).
@@ -350,10 +350,10 @@ without writing a poller for each.
 **Lifecycle:** spawned by the core supervisor. Env provided: `OA_CORE_SOCKET`,
 `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON` (the manifest's `config` with secrets rendered) and
 the manifest's `env`, on top of a minimal inherited environment (`PATH`, `HOME`, …).
-Stderr lines are logged as `connector.output`. A `online-agent-connector@name` systemd unit
+Stderr lines are logged as `connector.output`. A `247-agent-connector@name` systemd unit
 for connectors that need their own privileges is not implemented yet.
 
-**SDK (`@online-agent/connector-sdk`):** `connectorEnv()`, `CoreClient` (`emitEvent`,
+**SDK (`@247-agent/connector-sdk`):** `connectorEnv()`, `CoreClient` (`emitEvent`,
 `getState`/`putState` in the connector's own namespace), `defineTool` +
 `createConnectorServer` + `serveStdio`, or `runConnector({tools, setup})` for all of it. The
 module has no local imports so Node can run a connector straight from TypeScript source.
@@ -365,24 +365,24 @@ their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (b
 ## 7. Configuration layout
 
 ```
-/etc/online-agent/
+/etc/247-agent/
   agent.yaml            # global: db path, workers, default model policy, budgets, secrets backend
   tasks.d/*.yaml        # one file per workflow (a list of tasks)
   connectors.d/*.yaml   # connector manifests
   prompts/*.md          # system prompts referenced by tasks (cached, versioned in git)
   schemas/*.json        # output schemas
-/var/lib/online-agent/
+/var/lib/247-agent/
   state.db              # SQLite: events, runs, state, ledger
   repos/                # bare/base checkouts used for agent worktrees
   work/<run_id>/        # per-run worktrees and artifacts (GC'd by retention policy)
-/run/online-agent/core.sock
+/run/247-agent/core.sock
 ```
 
 `agent.yaml` essentials:
 
 ```yaml
-db: /var/lib/online-agent/state.db
-socket: /run/online-agent/core.sock
+db: /var/lib/247-agent/state.db
+socket: /run/247-agent/core.sock
 tasks: [tasks.yaml, tasks.d]   # files and/or directories of *.yaml, merged; relative to agent.yaml
 connectors: connectors.d       # manifest files/directories, or inline manifests
 workers: 4
@@ -398,7 +398,7 @@ retention: { events: 90d, runs: 90d, workspaces: 7d }
 limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
 
-The whole `/etc/online-agent` tree is meant to live in a git repo; `oa validate` checks
+The whole `/etc/247-agent` tree is meant to live in a git repo; `oa validate` checks
 it in CI. `oa validate` takes tasks files, connector manifests and `agent.yaml` files alike
 (a file whose `tasks` is a list of tasks is a tasks file; one with `name` and `exec` is a
 manifest) and follows `agent.yaml` to every tasks file and manifest it names, checking
@@ -466,7 +466,7 @@ same action kind; only the config differs.
 
 ## 11. Security
 
-- Core and connectors run as an unprivileged `online-agent` user; systemd hardening
+- Core and connectors run as an unprivileged `247-agent` user; systemd hardening
   (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`).
 - Secrets via `LoadCredential=` (systemd) resolved by name in config; never written to
   the DB or run logs; injected only into the actions that declare them.
@@ -482,22 +482,22 @@ same action kind; only the config differs.
 ## 12. Deployment on Linux
 
 ```ini
-# /etc/systemd/system/online-agent.service
+# /etc/systemd/system/247-agent.service
 [Service]
-User=online-agent
-ExecStart=/opt/online-agent/bin/online-agent-core --config /etc/online-agent/agent.yaml
+User=247-agent
+ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 Restart=always
 RestartSec=5
 LoadCredential=anthropic_api_key:/etc/credstore/anthropic_api_key
 LoadCredential=imap_pass:/etc/credstore/imap_pass
 LoadCredential=ftp_pass:/etc/credstore/ftp_pass
-RuntimeDirectory=online-agent
-StateDirectory=online-agent
+RuntimeDirectory=247-agent
+StateDirectory=247-agent
 ProtectSystem=strict
 NoNewPrivileges=yes
 ```
 
-`online-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
+`247-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
 then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in
 flight are aborted and recovered as interrupted on the next start). Logs go to journald as
 structured JSON (`run_id`, `task`, `correlation_id` on every line). Optional Prometheus
@@ -527,7 +527,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff (built-in poller to come)
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
-  daemon.ts, main.ts         # agent.yaml → core → api; the `online-agent-core` binary with signal handling
+  daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
   src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
   test/fixtures/             # fake connectors (email, chat, generic MCP, plain) run by Node from source
@@ -551,7 +551,7 @@ Runtime notes
 - `llm` runtime uses `client.messages.parse()` with a zod schema derived from
   `output_schema`; usage from the response goes straight to the ledger.
 - Distributed as a single tarball plus `node_modules` (or bundled with `tsup`) under
-  `/opt/online-agent`; systemd unit unchanged (§12).
+  `/opt/247-agent`; systemd unit unchanged (§12).
 
 ## 14. Implementation order
 

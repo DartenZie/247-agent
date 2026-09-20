@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { ApiClient, ApiConnectionError, ApiError, DEFAULT_SOCKET } from '@online-agent/core';
+import { ApiClient, ApiConnectionError, ApiError, DEFAULT_SOCKET } from '@247-agent/core';
 
 /** Where a command writes and reads, so tests can capture it. */
 export interface Io {
@@ -62,7 +62,7 @@ export async function readJson(source: string, io: Io): Promise<unknown> {
 /** Turns a failed API call into stderr lines and an exit code. */
 export function reportApiError(err: unknown, io: Io): number {
   if (err instanceof ApiConnectionError) {
-    io.err(`${err.message}. Is online-agent-core running? Set --socket or OA_CORE_SOCKET.`);
+    io.err(`${err.message}. Is 247-agent-core running? Set --socket or OA_CORE_SOCKET.`);
     return EXIT.failed;
   }
   if (err instanceof ApiError) {

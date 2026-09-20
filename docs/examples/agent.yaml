@@ -1,8 +1,8 @@
 # Global daemon config (ARCHITECTURE §7). Paths are relative to this file.
-# Start with: online-agent-core --config docs/examples/agent.yaml
+# Start with: 247-agent-core --config docs/examples/agent.yaml
 
-db: /var/lib/online-agent/state.db
-socket: /run/online-agent/core.sock
+db: /var/lib/247-agent/state.db
+socket: /run/247-agent/core.sock
 tasks: orchestra-website.yaml     # a file, a directory (tasks.d), or a list of both
 connectors: connectors.d          # manifest files, directories, or inline manifests
 workers: 4

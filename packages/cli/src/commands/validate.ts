@@ -1,4 +1,4 @@
-import { checkConfigFile, formatCheck } from '@online-agent/core';
+import { checkConfigFile, formatCheck } from '@247-agent/core';
 
 import { EXIT, UsageError, type Io } from '../io.js';
 

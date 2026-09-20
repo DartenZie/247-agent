@@ -20,8 +20,8 @@ const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
  * validates, but nothing reads them until the `llm`/`agent` runners exist.
  */
 export const AgentFile = z.strictObject({
-  db: z.string().min(1).default('/var/lib/online-agent/state.db'),
-  socket: z.string().min(1).default('/run/online-agent/core.sock'),
+  db: z.string().min(1).default('/var/lib/247-agent/state.db'),
+  socket: z.string().min(1).default('/run/247-agent/core.sock'),
   /** Tasks files and/or directories of `*.yaml` (`tasks.d`), merged; task names must be unique across them. */
   tasks: pathList.default('tasks.yaml'),
   /** Manifest files, directories of manifests (`connectors.d`), or inline manifests. */

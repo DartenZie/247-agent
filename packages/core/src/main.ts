@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `online-agent-core --config /etc/online-agent/agent.yaml` (ARCHITECTURE §12).
+ * `247-agent-core --config /etc/247-agent/agent.yaml` (ARCHITECTURE §12).
  * SIGTERM/SIGINT stop the daemon; SIGHUP reloads the tasks file. Logs are JSON lines on
  * stdout for journald.
  */
@@ -10,10 +10,10 @@ import { LOG_LEVELS } from './config/agent.js';
 import { startDaemon, type Daemon } from './daemon.js';
 import { createLogger, type LogLevel } from './log.js';
 
-const USAGE = `usage: online-agent-core [--config <agent.yaml>] [--log-level <level>]
+const USAGE = `usage: 247-agent-core [--config <agent.yaml>] [--log-level <level>]
 
 options:
-  -c, --config <file>   agent config (default: /etc/online-agent/agent.yaml)
+  -c, --config <file>   agent config (default: /etc/247-agent/agent.yaml)
       --log-level <l>   debug | info | warn | error (default: log.level from the config)
   -h, --help
 `;
@@ -28,7 +28,7 @@ async function main(argv: string[]): Promise<number> {
     values = parseArgs({
       args: argv,
       options: {
-        config: { type: 'string', short: 'c', default: '/etc/online-agent/agent.yaml' },
+        config: { type: 'string', short: 'c', default: '/etc/247-agent/agent.yaml' },
         'log-level': { type: 'string' },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -55,7 +55,7 @@ async function main(argv: string[]): Promise<number> {
     });
   } catch (err) {
     process.stderr.write(
-      `online-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
+      `247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     return 1;
   }
@@ -110,7 +110,7 @@ main(process.argv.slice(2)).then(
   },
   (err: unknown) => {
     process.stderr.write(
-      `online-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
+      `247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     process.exitCode = 1;
   },

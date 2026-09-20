@@ -11,7 +11,7 @@ commands:
   emit <type> [payload.json|-]       inject an event
   help [command]
 
-The daemon socket is --socket, else $OA_CORE_SOCKET, else /run/online-agent/core.sock.
+The daemon socket is --socket, else $OA_CORE_SOCKET, else /run/247-agent/core.sock.
 `;
 
 const COMMAND_USAGE: Record<string, string> = {

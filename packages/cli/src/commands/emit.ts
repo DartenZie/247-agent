@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 
-import type { JsonValue } from '@online-agent/core';
+import type { JsonValue } from '@247-agent/core';
 
 import { client, EXIT, readJson, reportApiError, UsageError, type Io } from '../io.js';
 
@@ -14,7 +14,7 @@ options:
   --parent <event_id>   parent event; inherits its correlation id and depth + 1
   --correlation <id>    correlation id (ignored when --parent has one)
   --json                print the response as JSON
-  --socket <path>       daemon socket (default: $OA_CORE_SOCKET or /run/online-agent/core.sock)
+  --socket <path>       daemon socket (default: $OA_CORE_SOCKET or /run/247-agent/core.sock)
 `;
 
 export async function emit(args: string[], io: Io): Promise<number> {

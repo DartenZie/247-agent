@@ -19,16 +19,16 @@ afterEach(() => {
 
 describe('parseAgent', () => {
   it('fills the documented defaults and resolves paths against the file', () => {
-    const r = parseAgent('', '/etc/online-agent/agent.yaml');
+    const r = parseAgent('', '/etc/247-agent/agent.yaml');
     expect(r.ok).toBe(true);
     if (!r.ok) {
       return;
     }
     expect(r.config).toMatchObject({
-      file: '/etc/online-agent/agent.yaml',
-      db: '/var/lib/online-agent/state.db',
-      socket: '/run/online-agent/core.sock',
-      tasks: ['/etc/online-agent/tasks.yaml'],
+      file: '/etc/247-agent/agent.yaml',
+      db: '/var/lib/247-agent/state.db',
+      socket: '/run/247-agent/core.sock',
+      tasks: ['/etc/247-agent/tasks.yaml'],
       connectorPaths: [],
       connectors: [],
       workers: 4,

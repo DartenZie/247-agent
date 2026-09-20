@@ -6,7 +6,7 @@ export default defineConfig({
   resolve: {
     // Tests in other packages exercise the core's sources, not its `dist/`.
     alias: {
-      '@online-agent/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
+      '@247-agent/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
     },
   },
   test: {

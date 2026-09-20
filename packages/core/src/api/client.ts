@@ -8,7 +8,7 @@ import type { StateEntry } from '../store/state.js';
 import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
 import type { HealthBody, RunResponse } from './routes.js';
 
-export const DEFAULT_SOCKET = '/run/online-agent/core.sock';
+export const DEFAULT_SOCKET = '/run/247-agent/core.sock';
 
 export interface ApiClientOptions {
   socketPath: string;

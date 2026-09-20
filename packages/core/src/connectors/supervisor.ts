@@ -253,7 +253,7 @@ export class ConnectorSupervisor implements ConnectorClients {
       ...(cwd === undefined ? {} : { cwd }),
       stderr: 'pipe',
     });
-    const client = new Client({ name: 'online-agent-core', version: '0' });
+    const client = new Client({ name: '247-agent-core', version: '0' });
     transport.onerror = (err) => {
       log.warn('connector.transport_error', { error: err.message });
     };

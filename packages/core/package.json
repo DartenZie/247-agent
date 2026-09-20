@@ -1,11 +1,11 @@
 {
-  "name": "@online-agent/core",
+  "name": "@247-agent/core",
   "version": "0.0.0",
   "private": true,
   "description": "Daemon: config, store, bus, actions, connectors, api, expr.",
   "type": "module",
   "bin": {
-    "online-agent-core": "dist/main.js"
+    "247-agent-core": "dist/main.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

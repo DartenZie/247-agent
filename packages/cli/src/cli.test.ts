@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createLogger, startDaemon, type Daemon } from '@online-agent/core';
+import { createLogger, startDaemon, type Daemon } from '@247-agent/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { main } from './cli.js';
@@ -103,7 +103,7 @@ describe('oa run', () => {
 
   it('explains an unreachable daemon', async () => {
     expect(await main(['run', 'ok', '--socket', join(dir, 'none.sock')], io)).toBe(1);
-    expect(err[0]).toMatch(/cannot connect to the daemon .* Is online-agent-core running\?/);
+    expect(err[0]).toMatch(/cannot connect to the daemon .* Is 247-agent-core running\?/);
   });
 });
 

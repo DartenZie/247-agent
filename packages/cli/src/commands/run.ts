@@ -6,7 +6,7 @@ import {
   type JsonValue,
   type RunRecord,
   type RunStatus,
-} from '@online-agent/core';
+} from '@247-agent/core';
 
 import { client, EXIT, readJson, reportApiError, UsageError, type Io } from '../io.js';
 
@@ -21,7 +21,7 @@ options:
   --correlation <id>    correlation id to thread this run under
   --wait                block until the run finishes; exit 1 if it failed
   --json                print the response as JSON
-  --socket <path>       daemon socket (default: $OA_CORE_SOCKET or /run/online-agent/core.sock)
+  --socket <path>       daemon socket (default: $OA_CORE_SOCKET or /run/247-agent/core.sock)
 `;
 
 interface EventInput {

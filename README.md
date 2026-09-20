@@ -1,4 +1,4 @@
-# online-agent
+# 247-agent
 
 A small, always-on automation daemon for a Linux server. You describe *what should
 happen when* in a YAML file; the daemon runs it around the clock and calls an LLM only

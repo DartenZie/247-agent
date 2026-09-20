@@ -137,7 +137,7 @@ tasks:
       kind: connector
       connector: chat
       op: send
-      args: { text: "[online-agent] \${event.type}: \${event.payload.summary || event.payload.error}" }
+      args: { text: "[247-agent] \${event.type}: \${event.payload.summary || event.payload.error}" }
 `;
 
 let dir: string;
@@ -221,7 +221,7 @@ describe('orchestra workflow without a model', () => {
     // State: the email cursor advanced, the chat connector recorded the notification.
     expect((await api.getState('email', 'last_uid'))?.value).toBe(2);
     expect((await api.getState('chat', 'sent'))?.value).toEqual([
-      '[online-agent] task.publish_site.succeeded: ',
+      '[247-agent] task.publish_site.succeeded: ',
     ]);
 
     // One correlation id from the manual run to the last lifecycle event, chat reply included.

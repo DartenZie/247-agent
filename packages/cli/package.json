@@ -1,5 +1,5 @@
 {
-  "name": "@online-agent/cli",
+  "name": "@247-agent/cli",
   "version": "0.0.0",
   "private": true,
   "description": "The oa command; talks to the core socket.",
@@ -16,6 +16,6 @@
     }
   },
   "dependencies": {
-    "@online-agent/core": "0.0.0"
+    "@247-agent/core": "0.0.0"
   }
 }
