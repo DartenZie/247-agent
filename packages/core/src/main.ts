@@ -54,9 +54,7 @@ async function main(argv: string[]): Promise<number> {
       ...(level === undefined ? {} : { logLevel: level }),
     });
   } catch (err) {
-    process.stderr.write(
-      `247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
   const log = createLogger({ level: level ?? daemon.config.log.level });
@@ -109,9 +107,7 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (err: unknown) => {
-    process.stderr.write(
-      `247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
   },
 );

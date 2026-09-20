@@ -8,11 +8,10 @@
 #   node packages/cli/dist/main.js validate connectors/email/examples/daily-digest.yaml
 
 tasks:
-
   # Every weekday at 08:00: fetch everything since yesterday's cursor and, if there is
   # anything, mail a list of senders and subjects to the team.
   - name: email_digest
-    trigger: { kind: cron, schedule: "0 8 * * 1-5", overlap: skip }
+    trigger: { kind: cron, schedule: '0 8 * * 1-5', overlap: skip }
     timeout: 5m
     action:
       kind: sequence
@@ -20,16 +19,16 @@ tasks:
         - kind: connector
           connector: email
           op: fetch_new
-          args: { folder: INBOX, since_uid: "${state.digest.last_uid}", limit: 200 }
+          args: { folder: INBOX, since_uid: '${state.digest.last_uid}', limit: 200 }
 
         # `when` skips the send on an empty mailbox; JMESPath backticks are numbers.
         - kind: connector
           connector: email
           op: send
-          when: "length(steps[0].emails) > `0`"
+          when: 'length(steps[0].emails) > `0`'
           args:
-            to: ["team@example.com"]
-            subject: "Inbox digest — ${length(steps[0].emails)} new"
+            to: ['team@example.com']
+            subject: 'Inbox digest — ${length(steps[0].emails)} new'
             text: |
               ${join('
               ', steps[0].emails[*].subject)}
@@ -37,7 +36,7 @@ tasks:
       digest.last_uid: ${steps[0].last_uid}
     emit:
       - type: email.digest_sent
-        when: "length(steps[0].emails) > `0`"
+        when: 'length(steps[0].emails) > `0`'
         payload:
           count: ${length(steps[0].emails)}
           last_uid: ${steps[0].last_uid}
@@ -62,4 +61,4 @@ tasks:
           summary: { type: string }
     emit:
       - type: email.digest_summarized
-        payload: { summary: "${result.summary}" }
+        payload: { summary: '${result.summary}' }

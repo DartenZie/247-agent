@@ -7,22 +7,21 @@
 #   node packages/cli/dist/main.js validate connectors/email/examples/auto-reply.yaml
 
 tasks:
-
   # 1. Poll. `since_uid` is the cursor the previous run stored; on the very first run it
   #    is null and `initial` in the connector config decides what happens.
   - name: fetch_email
-    trigger: { kind: cron, schedule: "*/2 * * * *", overlap: skip }
+    trigger: { kind: cron, schedule: '*/2 * * * *', overlap: skip }
     action:
       kind: connector
       connector: email
       op: fetch_new
-      args: { folder: INBOX, since_uid: "${state.email.last_uid}" }
+      args: { folder: INBOX, since_uid: '${state.email.last_uid}' }
     state_updates:
       email.last_uid: ${result.last_uid}
     emit:
       - type: email.received
         each: ${result.emails}
-        dedup_key: "email:${item.message_id}"      # a redelivered UID never replies twice
+        dedup_key: 'email:${item.message_id}' # a redelivered UID never replies twice
         payload: ${item}
 
   # 2. Reply to the sender, then mark the original read so a human inbox stays clean.
@@ -39,9 +38,9 @@ tasks:
           connector: email
           op: send
           args:
-            to: "${event.payload.from}"
-            subject: "Re: ${event.payload.subject}"
-            in_reply_to: "${event.payload.message_id}"
+            to: '${event.payload.from}'
+            subject: 'Re: ${event.payload.subject}'
+            in_reply_to: '${event.payload.message_id}'
             references: ${event.payload.references}
             text: |
               Hello,

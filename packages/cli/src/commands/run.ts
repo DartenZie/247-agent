@@ -1,12 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 
-import {
-  ACTIVE_STATUSES,
-  type JsonValue,
-  type RunRecord,
-  type RunStatus,
-} from '@247-agent/core';
+import { ACTIVE_STATUSES, type JsonValue, type RunRecord, type RunStatus } from '@247-agent/core';
 
 import { client, EXIT, readJson, reportApiError, UsageError, type Io } from '../io.js';
 
