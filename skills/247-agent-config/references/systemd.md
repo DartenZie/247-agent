@@ -61,6 +61,7 @@ directory a `shell` task writes to (a site checkout, for example).
 ```
 useradd --system --home /var/lib/247-agent --shell /usr/sbin/nologin 247-agent
 git clone <repo> /opt/247-agent && cd /opt/247-agent && npm ci && npm run build
+apt install bubblewrap          # for sandbox: bwrap on shell actions (optional)
 install -d -m 750 -o 247-agent /etc/247-agent
 # write agent.yaml, tasks.d/, connectors.d/ ; put secrets under /etc/credstore
 node /opt/247-agent/packages/cli/dist/main.js validate /etc/247-agent/agent.yaml
@@ -88,7 +89,15 @@ interrupted runs are retried per policy or failed as interrupted.
 
 - Core and connectors run unprivileged. Connectors needing their own privileges as
   separate units (`247-agent-connector@name`) are planned, not implemented.
-- Agent runs get a fresh worktree, a tool allowlist and a bash allowlist; an optional
-  `bwrap`/`firejail` wrapper and a network allowlist are planned.
+- Trust model: anything running as the `247-agent` uid can reach the socket and every
+  process's environment, so it is trusted. Untrusted work (agent runs, `shell` steps that
+  build or test what an agent produced) runs under `sandbox: bwrap`: own pid namespace,
+  OS read-only, `cwd` the only writable path, env cleared, no socket. Needs the
+  `bubblewrap` package and unprivileged user namespaces
+  (`sysctl kernel.unprivileged_userns_clone=1` on Debian); a setuid `bwrap` fails under
+  `NoNewPrivileges=yes`, and the unit must not set `RestrictNamespaces=`. Writable paths
+  still need `ReadWritePaths=` in the unit.
+- Agent runs get a fresh worktree, a tool allowlist and a bash allowlist inside that
+  sandbox; a network allowlist is planned.
 - Inbound content is untrusted data; the capability surface, not the prompt, limits
   damage.

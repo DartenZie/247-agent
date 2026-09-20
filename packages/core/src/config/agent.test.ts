@@ -37,6 +37,7 @@ describe('parseAgent', () => {
       defaults: {
         timeout: '15m',
         retry: { attempts: 1, backoff: 'exponential', base: '30s', max: '1h' },
+        sandbox: { backend: 'none', extra_args: [], ro_binds: [], rw_binds: [] },
       },
       secrets: { backend: 'env', prefix: 'OA_SECRET_' },
     });
@@ -69,6 +70,9 @@ describe('parseAgent', () => {
     expect(r.config.connectors).toMatchObject([{ name: 'chat', file: '/srv/oa/agent.yaml' }]);
     expect(r.config.secrets).toEqual({ backend: 'file', path: 'secrets.yaml' });
     expect(r.config.defaults.retry).toMatchObject({ attempts: 3, backoff: 'exponential' });
+
+    const sandboxed = parseAgent('defaults: { sandbox: bwrap }\n', '/srv/oa/agent.yaml');
+    expect(sandboxed.ok && sandboxed.config.defaults.sandbox).toMatchObject({ backend: 'bwrap' });
 
     const bad = parseAgent(
       'connectors:\n  - { name: Bad, exec: [], config: { t: "${event.x}" } }\n',

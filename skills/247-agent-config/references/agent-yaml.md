@@ -14,6 +14,7 @@ strict; unknown keys are rejected.
 | `limits.max_event_depth` | Events deeper than this in a causal chain are dropped | `32` |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without `timeout` | `15m` |
 | `defaults.retry` | `{attempts, backoff, base, max}` for tasks without `retry` | 1 attempt, exponential, 30s, 1h |
+| `defaults.sandbox` | `none`, `bwrap`, or `{backend: bwrap, ro_binds, rw_binds, extra_args}` for `shell` actions without `sandbox` | `none` |
 | `defaults.llm` | `{model, max_tokens, effort?}` | accepted, not applied yet |
 | `defaults.agent` | `{model, effort, max_turns, budget}` | accepted, not applied yet |
 | `secrets` | `{backend: env, prefix?}`, `{backend: file, path}`, `{backend: systemd-credentials}` | `{backend: env}` |

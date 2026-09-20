@@ -10,6 +10,7 @@ import {
   type ResumeInfo,
   type WaitSpec,
 } from '../actions/types.js';
+import type { SandboxConfig } from '../actions/sandbox.js';
 import { eventView } from '../actions/wait.js';
 import type { EventBus } from '../bus/bus.js';
 import { MANUAL_RUN, taskSource, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
@@ -43,6 +44,8 @@ export interface ExecutorOptions {
   defaultTimeout?: string;
   /** For tasks without `retry`. */
   defaultRetry?: RetryConfig;
+  /** For `shell` actions without `sandbox`. */
+  defaultSandbox?: SandboxConfig;
   /** Resolves `${secrets.<name>}`; defaults to a backend with no secrets. */
   secrets?: SecretsBackend;
   /** Connector ops for `connector` actions and sequence steps. */
@@ -221,6 +224,7 @@ export class Executor {
   private readonly runners: ActionRunners;
   private readonly workers: number;
   private readonly defaultTimeout: string;
+  private readonly defaultSandbox: SandboxConfig | undefined;
   private readonly defaultRetry: RetryConfig;
   private readonly secrets: SecretsBackend;
   private readonly connectors: ConnectorClients | undefined;
@@ -243,6 +247,7 @@ export class Executor {
     this.runners = opts.runners;
     this.workers = opts.workers ?? 4;
     this.defaultTimeout = opts.defaultTimeout ?? '15m';
+    this.defaultSandbox = opts.defaultSandbox;
     this.defaultRetry = opts.defaultRetry ?? Retry.parse({});
     this.secrets = opts.secrets ?? NO_SECRETS;
     this.connectors = opts.connectors;
@@ -511,6 +516,7 @@ export class Executor {
       render: () => null,
       renderText: () => '',
       connectors: this.connectors,
+      sandbox: this.defaultSandbox,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
     };

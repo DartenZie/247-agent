@@ -2,11 +2,13 @@ import { execa } from 'execa';
 import { z } from 'zod';
 
 import type { JsonValue } from '../store/types.js';
+import { buildSandboxArgv, Sandbox } from './sandbox.js';
 import type { ActionContext } from './types.js';
 
 /**
  * ARCHITECTURE §5.1. `cmd`, `cwd`, `env` and `stdin` take `${…}` templates; `cmd`, `cwd`
  * and `env` values render to strings, `stdin` to its raw value. `user:` is not supported.
+ * `sandbox` (default from `defaults.sandbox` in agent.yaml) wraps the command in bwrap.
  */
 export const ShellAction = z.strictObject({
   kind: z.literal('shell'),
@@ -18,6 +20,8 @@ export const ShellAction = z.strictObject({
   /** Written to stdin: strings verbatim, anything else as JSON. */
   stdin: z.unknown().optional(),
   result: z.enum(['json_stdout', 'text_stdout', 'exit_code']).default('text_stdout'),
+  /** `none` | `bwrap` | `{backend, extra_args?, ro_binds?, rw_binds?}`; see `sandbox.ts`. */
+  sandbox: Sandbox.optional(),
 });
 
 export type ShellActionConfig = z.infer<typeof ShellAction>;
@@ -78,11 +82,23 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
   const stdin = ctx.render(cfg.stdin);
   const input =
     stdin === undefined ? undefined : typeof stdin === 'string' ? stdin : JSON.stringify(stdin);
+  const sandbox = cfg.sandbox ?? ctx.sandbox;
+  const sandboxed = sandbox !== undefined && sandbox.backend !== 'none';
 
   const startedAt = Date.now();
-  const subprocess = execa(file, args, {
-    ...(cwd === undefined ? {} : { cwd }),
-    ...(env === undefined ? {} : { env }),
+  const spawn = sandboxed
+    ? // bwrap gets the daemon's env (to be found on PATH) and clears it for the child;
+      // cwd, env and the command travel as bwrap arguments.
+      { argv: buildSandboxArgv({ sandbox, cmd: [file, ...args], cwd, env: env ?? {} }) }
+    : {
+        argv: [file, ...args],
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(env === undefined ? {} : { env }),
+      };
+  const [spawnFile, ...spawnArgs] = spawn.argv as [string, ...string[]];
+  const subprocess = execa(spawnFile, spawnArgs, {
+    ...('cwd' in spawn ? { cwd: spawn.cwd } : {}),
+    ...('env' in spawn ? { env: spawn.env } : {}),
     ...(input === undefined ? {} : { input }),
     maxBuffer: MAX_BUFFER,
     reject: false,
@@ -113,6 +129,7 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
   }
 
   ctx.log.info('shell.exited', {
+    sandbox: sandboxed ? sandbox.backend : 'none',
     exit_code: proc.exitCode ?? null,
     signal: proc.signal ?? null,
     duration_ms: Date.now() - startedAt,

@@ -57,6 +57,7 @@ action:
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }   # values must render to strings
   stdin: ${event.payload}                 # optional; non-strings sent as JSON
   result: text_stdout                     # default | json_stdout | exit_code
+  sandbox: bwrap                          # none (default) | bwrap | { backend: bwrap, ro_binds, rw_binds, extra_args }
 ```
 
 - `cmd` is argv. No shell unless you spell out `["bash", "-c", "…"]`.
@@ -64,6 +65,13 @@ action:
 - `json_stdout`: stdout parsed as JSON (invalid JSON fails the run).
 - `exit_code`: the exit code as a number; a non-zero exit is a result, not a failure.
 - Runs as the service user; `user:` is not supported.
+- `sandbox: bwrap` runs the command in bubblewrap: own pid namespace, OS read-only,
+  private `/tmp`, `cwd` the only writable path (none: runs in `/tmp`), env cleared to the
+  action's `env` + `PATH`/`HOME`/`LANG`, no core socket, no other process's environment.
+  `ro_binds`/`rw_binds` add host paths at the same location, `extra_args` raw bwrap flags
+  (`--unshare-net`). Default from `defaults.sandbox` in `agent.yaml`; `none` opts out.
+  Use it for steps that run untrusted code (builds, tests, anything an agent produced);
+  leave publishing steps that hold secrets and need the network unsandboxed.
 
 ### `connector`
 

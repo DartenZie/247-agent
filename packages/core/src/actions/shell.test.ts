@@ -1,6 +1,8 @@
+import { execaSync } from 'execa';
 import { describe, expect, it } from 'vitest';
 
 import type { JsonValue } from '../store/types.js';
+import type { SandboxConfig } from './sandbox.js';
 import { runShell, ShellAction, ShellError } from './shell.js';
 import { testContext } from './testing.js';
 import type { ActionContext } from './types.js';
@@ -18,6 +20,48 @@ describe('ShellAction schema', () => {
     expect(ShellAction.safeParse({ kind: 'shell', cmd: [] }).success).toBe(false);
     expect(ShellAction.safeParse({ kind: 'shell' }).success).toBe(false);
     expect(ShellAction.safeParse({ kind: 'shell', cmd: ['x'], user: 'root' }).success).toBe(false);
+  });
+
+  it('accepts sandbox as a name or an object', () => {
+    const short = ShellAction.parse({ kind: 'shell', cmd: ['x'], sandbox: 'bwrap' });
+    expect(short.sandbox).toMatchObject({ backend: 'bwrap', ro_binds: [] });
+    const long = { kind: 'shell', cmd: ['x'], sandbox: { backend: 'bwrap', ro_binds: ['/opt'] } };
+    expect(ShellAction.safeParse(long).success).toBe(true);
+    expect(ShellAction.safeParse({ kind: 'shell', cmd: ['x'], sandbox: 'chroot' }).success).toBe(
+      false,
+    );
+  });
+});
+
+const hasBwrap = execaSync('bwrap', ['--version'], { reject: false }).exitCode === 0;
+const bwrapDefault: SandboxConfig = {
+  backend: 'bwrap',
+  extra_args: [],
+  ro_binds: [],
+  rw_binds: [],
+};
+
+describe('runShell with sandbox: bwrap', () => {
+  it.skipIf(!hasBwrap)('hides the daemon env and pids and keeps cwd writable', async () => {
+    const dir = process.cwd();
+    const out = await run({
+      cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$PWD|$FOO|$(ls /proc | grep -c "^[0-9]")"'],
+      cwd: dir,
+      env: { FOO: 'bar' },
+      sandbox: 'bwrap',
+    });
+    // No inherited secret, cwd bound at the same path, action env present, only own pids.
+    expect(out).toMatch(new RegExp(`^\\|${dir}\\|bar\\|[12]$`));
+  });
+
+  it.skipIf(!hasBwrap)('applies the context default when the action has none', async () => {
+    const c = testContext({ signal: new AbortController().signal, sandbox: bwrapDefault });
+    await expect(run({ cmd: ['sh', '-c', 'echo $HOME'] }, c)).resolves.toBe('/tmp');
+  });
+
+  it('runs unsandboxed with sandbox: none even when the context has a default', async () => {
+    const c = testContext({ signal: new AbortController().signal, sandbox: bwrapDefault });
+    await expect(run({ cmd: ['sh', '-c', 'echo ok'], sandbox: 'none' }, c)).resolves.toBe('ok');
   });
 });
 
