@@ -135,6 +135,12 @@ export {
 } from './llm/pricing.js';
 export { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './llm/errors.js';
 export { LlmService, BUDGET_EXCEEDED, type LlmServiceOptions } from './llm/service.js';
+export {
+  anthropicProvider,
+  createAnthropicProvider,
+  type AnthropicAdapterOptions,
+} from './llm/anthropic.js';
+export { supportsEffort } from './llm/models.js';
 export type {
   LlmCall,
   LlmCallContext,

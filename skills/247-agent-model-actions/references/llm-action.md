@@ -65,10 +65,15 @@ budgets: { daily_usd: 10 }
 
 ## Adapter notes (`src/llm/<type>.ts`, one per provider type)
 
-- Anthropic: `client.messages.parse()`, system block first with `cache_control`, the
-  input as the user turn, `output_config.format` with the JSON Schema; adaptive thinking
-  and `output_config.effort` on Sonnet/Opus 5 only; no prefill. Usage: `input_tokens`,
-  `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`.
+- Anthropic (`anthropic.ts`, shipped): `client.messages.parse()` with a schema,
+  `messages.create()` without; system block first with `cache_control`, the input as
+  the user turn, `output_config.format` with the raw JSON Schema; adaptive thinking and
+  `output_config.effort` on Sonnet/Opus 5 only (`models.ts`); no prefill. Usage:
+  `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+  `cache_creation_input_tokens`. The SDK client is built per call with `maxRetries: 0`
+  (retries are the task's `retry` policy) and an explicit HTTP timeout, so the run's
+  `timeout` is what bounds the call. A structured output that is not JSON, or a
+  completed response with no output, fails retryably.
 - OpenAI: Responses API, `text.format` json_schema strict, `reasoning.effort` on
   reasoning models; `input` = `input_tokens - cached_tokens`.
 - OpenRouter: the `openai` SDK against `https://openrouter.ai/api/v1`, Chat Completions

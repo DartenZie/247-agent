@@ -1,13 +1,14 @@
 /**
- * The non-LLM path of `docs/examples/website-updates.yaml` end to end on a real daemon:
+ * `docs/examples/website-updates.yaml` end to end on a real daemon without a model:
  * fake email and chat connectors (real child processes speaking MCP over stdio and
- * emitting events over the socket), the two model-backed tasks replaced by
- * shell stand-ins that produce the same events, `publish_site` replaced by an echo that
- * still holds the FTP secret. A manual run of `fetch_email` must end with `publish_site`
+ * emitting events over the socket), the `llm` classifier run through the real service
+ * against a fake Anthropic adapter (ledger, budgets and secret resolution are real),
+ * the `agent` task replaced by a shell stand-in that produces the same event,
+ * `publish_site` replaced by an echo that still holds the FTP secret. A manual run of `fetch_email` must end with `publish_site`
  * succeeded and `notify` called, one correlation id throughout, and no secret anywhere it
  * should not be.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,11 +16,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ApiClient } from './api/client.js';
 import { startDaemon, type Daemon } from './daemon.js';
+import { fakeProviderFactory, type FakeProvider } from './llm/testing.js';
 import { createLogger } from './log.js';
 
 const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
+const PROMPT = new URL('../../../docs/examples/prompts/classify_email.md', import.meta.url)
+  .pathname;
 
-const SECRETS = { ftp_pass: 'hunter2-ftp', imap_user: 'bob@example.com', chat_token: 'tok-123' };
+const SECRETS = {
+  ftp_pass: 'hunter2-ftp',
+  imap_user: 'bob@example.com',
+  chat_token: 'tok-123',
+  anthropic_api_key: 'sk-ant-api03-not-real',
+};
 
 const AGENT = `
 db: state.db
@@ -27,7 +36,12 @@ socket: core.sock
 tasks: tasks.yaml
 log: { level: debug }
 secrets: { backend: file, path: secrets.yaml }
-defaults: { retry: { attempts: 2, backoff: fixed, base: 50ms } }
+defaults:
+  retry: { attempts: 2, backoff: fixed, base: 50ms }
+  llm: { provider: anthropic, model: claude-haiku-4-5 }
+providers:
+  anthropic: { type: anthropic, api_key: "\${secrets.anthropic_api_key}" }
+budgets: { daily_usd: 1 }
 connectors:
   - name: email
     exec: [node, ${FIXTURES}fake-email.ts]
@@ -68,16 +82,30 @@ tasks:
         dedup_key: "email:\${item.message_id}"
         payload: \${item}
 
-  # 2. Stand-in for the llm classifier: same trigger, filter and emit.
+  # 2. The llm classifier as in the example; the adapter is faked, the service is real.
   - name: classify_email
     trigger:
       kind: event
       type: email.received
       filter: "payload.from == 'editor@example.com'"
     action:
-      kind: shell
-      cmd: [echo, '{"kind":"general_change","summary":"\${event.payload.subject}"}']
-      result: json_stdout
+      kind: llm
+      max_tokens: 512
+      system_file: prompts/classify_email.md
+      input: |
+        Subject: \${event.payload.subject}
+
+        <email>
+        \${event.payload.body}
+        </email>
+      output_schema:
+        type: object
+        additionalProperties: false
+        required: [kind, summary]
+        properties:
+          kind: { enum: [event_list_update, general_change, ignore] }
+          summary: { type: string }
+      budget: { max_usd: 0.05 }
     emit:
       - type: email.classified
         when: "result.kind != 'ignore'"
@@ -176,11 +204,19 @@ let dir: string;
 let daemon: Daemon;
 let api: ApiClient;
 let lines: Record<string, unknown>[];
+let model: FakeProvider;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'oa-i-'));
   writeFileSync(join(dir, 'agent.yaml'), AGENT);
   writeFileSync(join(dir, 'tasks.yaml'), TASKS);
+  mkdirSync(join(dir, 'prompts'));
+  copyFileSync(PROMPT, join(dir, 'prompts', 'classify_email.md'));
+  model = fakeProviderFactory((req) => ({
+    output: { kind: 'general_change', summary: /^Subject: (.*)$/m.exec(req.input)?.[1] ?? '' },
+    usage: { input: 900, output: 40, cacheRead: 0, cacheWrite: 600 },
+    stopReason: 'end',
+  }));
   writeFileSync(
     join(dir, 'secrets.yaml'),
     Object.entries(SECRETS)
@@ -191,6 +227,7 @@ beforeEach(async () => {
   lines = [];
   daemon = await startDaemon({
     configFile: join(dir, 'agent.yaml'),
+    llmFactories: { anthropic: model.factory },
     log: createLogger({
       level: 'debug',
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
@@ -250,6 +287,30 @@ describe('website workflow without a model', () => {
         'git push origin HEAD:main',
       ],
     });
+
+    // The classifier: one real call through the service, prompt file and event rendered in,
+    // the key resolved for the adapter only, and one priced ledger row behind `oa cost`.
+    expect(model.requests).toHaveLength(1);
+    expect(model.requests[0]?.provider).toMatchObject({
+      name: 'anthropic',
+      apiKey: SECRETS.anthropic_api_key,
+    });
+    expect(model.requests[0]?.req).toMatchObject({
+      model: 'claude-haiku-4-5',
+      maxTokens: 512,
+      system: expect.stringContaining('You triage emails') as string,
+      input: expect.stringContaining('Spring event') as string,
+    });
+    expect(byTask.get('classify_email')?.result).toEqual({
+      kind: 'general_change',
+      summary: 'Spring event',
+    });
+    const cost = await api.cost({ by: 'task' });
+    expect(cost.rows).toEqual([
+      expect.objectContaining({ key: 'classify_email', calls: 1, in_tok: 900, cache_write: 600 }),
+    ]);
+    expect(cost.total_usd).toBeGreaterThan(0);
+    expect(cost.total_usd).toBeLessThan(0.05);
 
     // State: the email cursor advanced, the chat connector recorded the notification.
     expect((await api.getState('email', 'last_uid'))?.value).toBe(2);

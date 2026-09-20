@@ -689,10 +689,11 @@ connector, and an integration test that runs the non-LLM path of the website wor
 real daemon with fake connectors. Step 3(a) is done: the `llm` action is fully
 validated and runnable through `ctx.llm`, the cost ledger, `budget.max_usd`,
 `budgets.daily_usd` and `budget.exceeded` work, `providers:`/`pricing:` are
-cross-checked, `oa cost` and `GET /v1/cost` exist. Where the code is behind this
-document: no provider adapter ships yet, so an `llm` run fails with `provider type
-"anthropic" has no adapter in this build` until stage 3(b) lands; `batch: true` is
-rejected; the `agent` action validates `kind` only and has no runner; `retention` and
+cross-checked, `oa cost` and `GET /v1/cost` exist. Of step 3(b) the `anthropic`
+adapter is done (`packages/core/src/llm/anthropic.ts`). Where the code is behind this
+document: the `openai` and `openrouter` adapters are not written, so a provider of
+either type fails with `provider type "openai" has no adapter in this build`;
+`batch: true` is rejected; the `agent` action validates `kind` only and has no runner; `retention` and
 `defaults.agent` validate but are not applied; there is no retention GC, no metrics, no
 sandbox wrapper;
 `SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is

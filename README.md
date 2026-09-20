@@ -49,8 +49,8 @@ The full config is in [`docs/examples/website-updates.yaml`](docs/examples/websi
 
 The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
 actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
-The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action, cost ledger and
-budgets are in; the provider adapters (Anthropic first, then OpenAI and OpenRouter), the
+The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action with the Anthropic
+adapter, the cost ledger and budgets are in; the OpenAI and OpenRouter adapters, the
 `agent` action and the chat connector are next.
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and

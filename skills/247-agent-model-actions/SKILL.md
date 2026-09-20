@@ -136,11 +136,12 @@ shows the ledger.
 ## Status today
 
 The `llm` action is validated, cross-checked against `providers:`/`pricing:` and
-runnable through `ctx.llm`, with the ledger and budgets applied. No provider adapter
-ships yet: a run fails with `provider type "anthropic" has no adapter in this build`
-until the Anthropic adapter lands (then OpenAI and OpenRouter). The `agent` action
-validates `kind` only and has no runner. Until then test the surrounding workflow with a
-`shell` stand-in that emits the same event (pattern in the `247-agent-tasks` skill).
+runnable through `ctx.llm`, with the ledger and budgets applied. The Anthropic adapter
+(`type: anthropic`) ships; a provider of type `openai` or `openrouter` fails with
+`provider type "openai" has no adapter in this build` until those adapters land. The
+`agent` action validates `kind` only and has no runner. Until then test the surrounding
+workflow with a `shell` stand-in that emits the same event (pattern in the
+`247-agent-tasks` skill).
 When adding an adapter or the `agent` runner, follow `references/llm-action.md` and
 `references/agent-action.md` and keep `docs/ARCHITECTURE.md` §5.2, §5.3, §9 and §14 in
 sync with the code.

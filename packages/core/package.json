@@ -16,6 +16,7 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",
     "croner": "^10.0.1",

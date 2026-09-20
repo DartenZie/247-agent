@@ -397,9 +397,9 @@ every model call fails fast until midnight and one `budget.exceeded` event is em
 (route it to your `notify` task). A model with no known price is refused by
 `oa validate` unless its provider reports cost itself (OpenRouter does).
 
-Status: no provider adapter ships yet, so a run fails with `provider type "anthropic"
-has no adapter in this build`; the Anthropic adapter is next, then OpenAI and
-OpenRouter.
+Status: the Anthropic adapter ships (`type: anthropic`, the Claude models above).
+OpenAI and OpenRouter are next; until then a provider of either type fails with
+`provider type "openai" has no adapter in this build`.
 
 ### 5.6 `agent` (not runnable yet)
 
@@ -711,13 +711,14 @@ call, edit the site with a scoped agent, gate on a build, ask for approval on ch
 over FTP, notify. Its non-model path runs today against fake connectors in
 `packages/core/src/integration.test.ts`.
 
-Done since: the `llm` action, the cost ledger, budgets (`budget.max_usd`,
-`budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and `oa cost`.
+Done since: the `llm` action with the Anthropic adapter, the cost ledger, budgets
+(`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and
+`oa cost`.
 
 Not implemented yet, in the planned order:
 
-1. Provider adapters: Anthropic, then OpenAI and OpenRouter. Until the first lands an
-   `llm` run fails with "no adapter in this build".
+1. The OpenAI and OpenRouter provider adapters. Until they land a provider of either
+   type fails with "no adapter in this build".
 2. The `agent` action.
 3. A real `chat` connector under `connectors/` (the `email` connector is there:
    IMAP/POP3 in, SMTP out, see
