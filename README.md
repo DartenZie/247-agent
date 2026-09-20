@@ -68,3 +68,7 @@ for why these and not an off-the-shelf workflow engine.
 4. `agent` action on the Claude Agent SDK with worktrees and post-run gates.
 5. `wait` action and chat connector for approvals.
 6. Hardening: retention, metrics, sandboxing, hot reload.
+
+## License
+
+[WTFPL](LICENSE)
