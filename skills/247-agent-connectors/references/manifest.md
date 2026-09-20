@@ -11,10 +11,10 @@ transport: stdio                              # stdio = MCP server on stdin/stdo
 emits: [email.received]                       # documentation of the event types it publishes
 ops: [fetch_new, mark_read, send]             # MCP tools the core may call; [] = any
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
-  host: imap.example.cz
-  user: "${secrets.imap_user}"
-  password: "${secrets.imap_pass}"
-  folder: INBOX
+  user: "${secrets.email_user}"               # free-form: each connector defines its own
+  password: "${secrets.email_pass}"           # (email: connectors/email/README.md)
+  incoming: { protocol: imap, host: imap.example.cz, folder: INBOX }
+  outgoing: { host: smtp.example.cz, from: info@example.cz, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment for the process
 restart: { base: 1s, max: 60s }               # crash backoff, doubling; reset after 30s up
 health: { interval: 60s }                     # accepted, not used yet
@@ -38,6 +38,14 @@ health: { interval: 60s }                     # accepted, not used yet
 
 Plus the manifest's `env`, on top of a minimal environment (`PATH`, `HOME`, …). Stderr
 lines are logged by the daemon as `connector.output`.
+
+## The email connector (`connectors/email`)
+
+IMAP or POP3 in (`incoming`), SMTP out (`outgoing`), each side optional. Ops `fetch_new`
+(`{since_uid?, folder?, limit?}` → `{emails, last_uid}`; POP3 tracks delivered UIDLs in
+state instead of a cursor), `mark_read` (IMAP only) and `send` (the configured `footer` is
+appended to every mail; `in_reply_to` threads replies). `initial: none` (default) makes
+the first fetch skip mail already in the box. Full reference: `connectors/email/README.md`.
 
 ## Using an existing MCP server
 

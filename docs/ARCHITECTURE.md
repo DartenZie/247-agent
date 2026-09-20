@@ -320,7 +320,11 @@ exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any langua
 transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only
 emits: [email.received]                              # documented, shape-checked
 ops: [fetch_new, mark_read, send]                    # allowlist of MCP tools the core may call; [] = any
-config: { host: imap.example.cz, user: "${secrets.imap_user}", folder: INBOX }
+config:                                              # free-form, the connector's own schema
+  user: "${secrets.email_user}"
+  password: "${secrets.email_pass}"
+  incoming: { protocol: imap, host: imap.example.cz, folder: INBOX }
+  outgoing: { host: smtp.example.cz, from: info@example.cz, footer: "-- \nOrchestra office" }
 restart: { base: 1s, max: 60s }                      # crash backoff
 health: { interval: 60s }                            # accepted, not used yet
 ```
@@ -358,7 +362,9 @@ for connectors that need their own privileges is not implemented yet.
 `createConnectorServer` + `serveStdio`, or `runConnector({tools, setup})` for all of it. The
 module has no local imports so Node can run a connector straight from TypeScript source.
 
-Planned connectors: `email` (IMAP/SMTP), `chat` (Telegram or Matrix; emits `chat.message`,
+Connectors: `email` (`connectors/email`, done: IMAP or POP3 in, SMTP out, ops `fetch_new`,
+`mark_read`, `send`; the footer is appended to every outgoing mail; `README.md` there is
+the config reference). Planned: `chat` (Telegram or Matrix; emits `chat.message`,
 `chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
 their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (built-in).
 
@@ -533,7 +539,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   test/fixtures/             # fake connectors (email, chat, generic MCP, plain) run by Node from source
 packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
-connectors/email/        # imapflow + nodemailer
+connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
 connectors/chat/         # grammy (Telegram) or matrix-js-sdk
 docs/                        # ARCHITECTURE.md, examples/
 ```
@@ -563,12 +569,12 @@ Runtime notes
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
-Status: steps 1, 2 (minus the `poller` built-in and a real `email` connector) and 5 (minus
-a real `chat` connector) are done: `shell`, `connector`, `wait` and `sequence` actions,
+Status: steps 1, 2 (minus the `poller` built-in) and 5 (minus a real `chat` connector) are
+done: `shell`, `connector`, `wait` and `sequence` actions,
 `${…}` templating, `emit` routing, the state KV with `/v1/state`, secrets backends, `retry`
 with recovery by policy, the connector supervisor, `tasks.d`/`connectors.d` merging, the
-connector SDK, and an integration test that runs the non-LLM path of the orchestra workflow
-on a real daemon with fake connectors. Where the code is behind this document: `llm` and
+connector SDK, the `email` connector, and an integration test that runs the non-LLM path of
+the orchestra workflow on a real daemon with fake connectors. Where the code is behind this document: `llm` and
 `agent` actions validate `kind` only and have no runner (a run of one fails with "no
 runner"); `budgets`, `retention` and `defaults.llm|agent` validate but are not applied;
 there is no cost ledger, no `poller`, no retention GC, no metrics, no sandbox wrapper;

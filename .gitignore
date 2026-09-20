@@ -8,3 +8,6 @@ coverage/
 *.db-shm
 *.db-wal
 .DS_Store
+
+# local testing examples (not committed)
+/local/

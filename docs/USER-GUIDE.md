@@ -368,9 +368,10 @@ transport: stdio                              # stdio = MCP server; none = emits
 emits: [email.received]                       # documentation of what it publishes
 ops: [fetch_new, mark_read, send]             # tools the core may call; [] = any
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
-  host: imap.example.cz
-  user: "${secrets.imap_user}"
-  password: "${secrets.imap_pass}"
+  user: "${secrets.email_user}"               # (the email connector's own schema:
+  password: "${secrets.email_pass}"           #  connectors/email/README.md)
+  incoming: { protocol: imap, host: imap.example.cz }
+  outgoing: { host: smtp.example.cz, from: info@example.cz, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment
 restart: { base: 1s, max: 60s }               # crash backoff, doubling
 ```
@@ -589,8 +590,9 @@ Not implemented yet, in the planned order:
 1. Cost ledger and budgets (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`).
 2. The `llm` action.
 3. The `agent` action.
-4. The built-in `poller` connector and real `email` and `chat` connectors under
-   `connectors/`.
+4. The built-in `poller` connector and a real `chat` connector under `connectors/`
+   (the `email` connector is there: IMAP/POP3 in, SMTP out, see
+   [`connectors/email/README.md`](../connectors/email/README.md)).
 5. Retention GC, `/metrics`, `oa cost|runs|events|connectors`, SIGHUP reload of
    connectors, `health.interval` in manifests.
 

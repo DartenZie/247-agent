@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/cli" },
-    { "path": "packages/connector-sdk" }
+    { "path": "packages/connector-sdk" },
+    { "path": "connectors/email" }
   ]
 }
