@@ -90,6 +90,16 @@ gets `footer_html` (or the escaped text footer) before `</body>`. `in_reply_to` 
 added to `References` so replies thread. `attachments` are
 `{ filename, content, encoding?: utf8|base64, content_type? }`; content only, no paths.
 
+## Examples
+
+`examples/` holds two ready-to-validate task files, both using the manifest from
+`docs/examples/connectors.d/email.yaml`:
+
+- `auto-reply.yaml` — poll the mailbox, acknowledge each new message in-thread, mark it
+  read. Fully deterministic.
+- `daily-digest.yaml` — a second, independent cursor on the same mailbox; one digest mail
+  per weekday morning, plus an optional single Haiku call for prose.
+
 ## Tasks
 
 ```yaml
