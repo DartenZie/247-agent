@@ -23,6 +23,7 @@ limits: { max_event_depth: 32 }     # loop guard on causal chains
 defaults:
   timeout: 15m                      # per attempt, for tasks without their own
   retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }
+  sandbox: none                     # bwrap: shell actions run in bubblewrap unless they say otherwise
   llm:   { model: claude-haiku-4-5, max_tokens: 1024 }             # accepted, not applied yet
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
 secrets: { backend: systemd-credentials }

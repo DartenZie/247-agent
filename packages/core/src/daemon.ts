@@ -106,6 +106,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     maxEventDepth: config.limits.max_event_depth,
     defaultTimeout: config.defaults.timeout,
     defaultRetry: config.defaults.retry,
+    defaultSandbox: config.defaults.sandbox,
     secrets,
     env: templateEnv(env, config.secrets.backend === 'env' ? config.secrets.prefix : undefined),
     socketPath: config.socket,

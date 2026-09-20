@@ -147,11 +147,24 @@ action:
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}          # optional, JSON on stdin
   result: json_stdout | text_stdout | exit_code
+  sandbox: none | bwrap            # default from defaults.sandbox in agent.yaml
 ```
 
 Runs as the service user, with `timeout`, stdout/stderr captured into the run log.
 `cmd`, `cwd` and `env` values render to strings, `stdin` to its raw value. Result is
 parsed JSON from stdout when `result: json_stdout`. A `user:` override is not supported.
+
+`sandbox: bwrap` wraps the command in bubblewrap (`packages/core/src/actions/sandbox.ts`):
+own pid and ipc namespaces, `/usr`, `/lib`, `/lib64`, `/bin` and `/etc` read-only, a
+private `/tmp`, `cwd` as the only writable path (without `cwd` the command runs in that
+`/tmp`), and an environment cleared down to the action's `env` plus `PATH`, `HOME` and
+`LANG`. The runtime directory with the core socket, the state directory and other
+processes are not visible. The long form
+`sandbox: { backend: bwrap, ro_binds: [/opt/247-agent], rw_binds: [], extra_args: [] }`
+adds mounts and raw bwrap flags (`--unshare-net` for offline steps). Use it for every
+step that runs untrusted code or content, per the trust model in §11; steps that hold
+deploy secrets and need the network (publishing) run unsandboxed and keep the secret in
+`env`, not argv.
 
 ### 5.2 `llm` — single model call, structured output, no loop
 
@@ -222,6 +235,10 @@ Notes
   `git revert` + republish.
 - The **agent never sees deploy credentials**. Secrets are injected only into the actions
   that need them.
+- The agent's Bash tool and the `post` gates run in the same `bwrap` sandbox as
+  `sandbox: bwrap` on a `shell` action (§5.1), with the worktree as the writable path:
+  no core socket, no other process's environment, nothing of the daemon's state. §11
+  states the trust model this enforces.
 - `tools` + `bash_allow` + `mcp_servers` is the entire capability surface. Two tasks
   with different intelligence needs are the same action kind with a different
   `model`/`effort`/`max_turns`/`system_file`.
@@ -539,6 +556,12 @@ StateDirectory=247-agent
 ProtectSystem=strict
 NoNewPrivileges=yes
 ```
+
+`sandbox: bwrap` (§5.1) needs the `bubblewrap` package and unprivileged user namespaces
+(`sysctl kernel.unprivileged_userns_clone=1` on Debian, the default elsewhere); a setuid
+`bwrap` does not work under `NoNewPrivileges=yes`. Do not set `RestrictNamespaces=` on
+the unit. Paths a sandboxed step writes to still need `ReadWritePaths=` here, since the
+sandbox lives inside the unit's own mount namespace.
 
 `247-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
 then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in

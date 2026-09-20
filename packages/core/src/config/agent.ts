@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { Sandbox } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import { DURATION } from './duration.js';
@@ -35,6 +36,8 @@ export const AgentFile = z.strictObject({
     .strictObject({
       timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('15m'),
       retry: Retry.prefault({}),
+      /** For `shell` actions without `sandbox`: `none` (default) or `bwrap`. */
+      sandbox: Sandbox.prefault('none'),
       llm: z.unknown().optional(),
       agent: z.unknown().optional(),
     })

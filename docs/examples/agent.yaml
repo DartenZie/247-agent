@@ -10,6 +10,7 @@ log: { level: info }
 limits: { max_event_depth: 32 }
 defaults:
   timeout: 15m
+  sandbox: none                   # bwrap: run shell actions in bubblewrap (ARCHITECTURE §5.1)
   llm:   { model: claude-haiku-4-5, max_tokens: 1024 }
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
   retry: { attempts: 3, backoff: exponential, base: 30s }

@@ -1,5 +1,6 @@
 import { runConnector } from './actions/connector.js';
 import { runSequence } from './actions/sequence.js';
+import type { SandboxConfig } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
 import type { ActionRunners, ConnectorClients } from './actions/types.js';
 import { runWait } from './actions/wait.js';
@@ -35,6 +36,8 @@ export interface CoreOptions {
   defaultTimeout?: string;
   /** For tasks without `retry`. */
   defaultRetry?: RetryConfig;
+  /** For `shell` actions without `sandbox`. */
+  defaultSandbox?: SandboxConfig;
   /** Action runners by kind; defaults to the built-in ones. */
   runners?: ActionRunners;
   /** `${secrets.<name>}` backend; defaults to one with no secrets. */
@@ -173,6 +176,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.workers === undefined ? {} : { workers: opts.workers }),
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
     ...(opts.defaultRetry === undefined ? {} : { defaultRetry: opts.defaultRetry }),
+    ...(opts.defaultSandbox === undefined ? {} : { defaultSandbox: opts.defaultSandbox }),
   });
 
   const load = (): TasksLoadResult => {

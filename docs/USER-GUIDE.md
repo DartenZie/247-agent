@@ -117,6 +117,7 @@ The global file. Every key has a default; the full reference is
 | `limits.max_event_depth` | Events deeper than this in a causal chain are dropped (loop guard) | 32 |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without their own | `15m` |
 | `defaults.retry` | Retry policy for tasks without their own (see 4.4) | 1 attempt |
+| `defaults.sandbox` | `none` or `bwrap` for `shell` actions without their own (see 5.1) | `none` |
 | `secrets` | Where secret values come from (see 4.6) | `{ backend: env }` |
 | `defaults.llm`, `defaults.agent`, `budgets`, `retention` | Accepted, not applied yet | |
 
@@ -274,12 +275,22 @@ action:
   env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
   stdin: ${event.payload}              # optional; non-strings are sent as JSON
   result: text_stdout                  # | json_stdout | exit_code
+  sandbox: none                        # | bwrap | { backend: bwrap, ro_binds: [...], rw_binds: [...], extra_args: [...] }
 ```
 
 `cmd` is argv, no shell. Spell out `["bash", "-c", "…"]` when you need one. The result
 is stdout as text (default), stdout parsed as JSON (invalid JSON fails the run), or the
 exit code as a number (then a non-zero exit is a result, not a failure). A non-zero exit
 in the other two modes fails the run with the tail of stderr in the error.
+
+`sandbox: bwrap` runs the command in bubblewrap: its own pid namespace, the OS
+(`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) read-only, a private `/tmp`, `cwd` as the only
+writable path (no `cwd` means the command runs in that `/tmp`), and an environment of
+just the action's `env` plus `PATH`, `HOME` and `LANG`. The daemon's socket, database
+and other processes are out of reach. `ro_binds`/`rw_binds` mount more host paths at the
+same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an offline step).
+The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox: none` on an action
+opts out. Needs the `bubblewrap` package (§8).
 
 ### 5.2 `connector`
 

@@ -3,6 +3,7 @@ import { renderText, renderValue, type TemplateScope } from '../expr/template.js
 import type { Logger } from '../log.js';
 import type { StateSnapshot } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
+import type { SandboxConfig } from './sandbox.js';
 
 /** An operation on a connector, as the `connector` action and sequences call it. */
 export interface ConnectorClients {
@@ -60,6 +61,8 @@ export interface ActionContext {
   renderText(text: string): string;
   /** Connector ops; absent when the core runs without a connector supervisor. */
   readonly connectors?: ConnectorClients | undefined;
+  /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */
+  readonly sandbox?: SandboxConfig | undefined;
   /**
    * Parks the run in `waiting` until an event matches `spec` or it times out; the executor
    * then starts the runner again with `resume` set. The returned promise never resolves:
