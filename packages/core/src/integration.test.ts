@@ -1,7 +1,7 @@
 /**
- * The non-LLM path of `docs/examples/orchestra-website.yaml` end to end on a real daemon
- * (HANDOFF "done when"): fake email and chat connectors (real child processes speaking MCP
- * over stdio and emitting events over the socket), the two model-backed tasks replaced by
+ * The non-LLM path of `docs/examples/orchestra-website.yaml` end to end on a real daemon:
+ * fake email and chat connectors (real child processes speaking MCP over stdio and
+ * emitting events over the socket), the two model-backed tasks replaced by
  * shell stand-ins that produce the same events, `publish_site` replaced by an echo that
  * still holds the FTP secret. A manual run of `fetch_email` must end with `publish_site`
  * succeeded and `notify` called, one correlation id throughout, and no secret anywhere it

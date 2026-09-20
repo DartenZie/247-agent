@@ -47,9 +47,12 @@ The full config is in [`docs/examples/orchestra-website.yaml`](docs/examples/orc
 
 ## Status
 
-Design stage. The architecture is written; the code is not yet.
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
-[`CLAUDE.md`](CLAUDE.md) for the conventions the codebase will follow.
+The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
+actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI. The
+`llm` and `agent` actions, the cost ledger and the real email/chat connectors are next.
+Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
+[`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.
 
 ## Planned stack
 
