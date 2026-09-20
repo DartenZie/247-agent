@@ -16,7 +16,9 @@
     "clean": "tsc -b --clean",
     "test": "vitest run --passWithNoTests",
     "lint": "eslint . && prettier --check .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "start": "node packages/core/dist/main.js",
+    "oa": "node packages/cli/dist/main.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

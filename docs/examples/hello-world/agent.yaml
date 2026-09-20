@@ -1,0 +1,14 @@
+# Daemon config for the hello-world workflow. Everything lives under a scratch dir, so
+# this can be run as your own user without systemd:
+#
+#   mkdir -p /tmp/247-agent
+#   node packages/core/dist/main.js --config docs/examples/hello-agent.yaml
+
+db: /tmp/247-agent/state.db
+socket: /tmp/247-agent/core.sock
+tasks: hello-world.yaml
+workers: 2
+log: { level: info }
+defaults:
+  timeout: 1m
+  retry: { attempts: 1 }

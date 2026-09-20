@@ -1,0 +1,50 @@
+# The smallest useful 247-agent workflow: a greeting on a schedule, an event, and a
+# reaction to that event. Deterministic only — no model call, no connector, no secrets.
+#
+#   node packages/cli/dist/main.js validate docs/examples/hello-world.yaml
+#   node packages/core/dist/main.js --config docs/examples/hello-agent.yaml
+#   node packages/cli/dist/main.js run say_hello --wait
+
+tasks:
+
+  # 1. Every minute (and on `oa run say_hello`), print a greeting and publish an event.
+  #    Templates are rendered before the process starts; `run.id` is in scope.
+  - name: say_hello
+    trigger: { kind: cron, schedule: "* * * * *", overlap: skip }
+    action:
+      kind: shell
+      cmd: ["bash", "-c", 'printf "hello, world (run %s)\n" "$1"', "--", "${run.id}"]
+      result: text_stdout
+    state_updates:
+      hello.last_greeting: ${result}
+    emit:
+      - type: hello.greeted
+        payload:
+          greeting: ${result}
+          run: ${run.id}
+
+  # 2. Anything listening to the event runs on its own. Tasks never call each other.
+  - name: echo_greeting
+    trigger:
+      kind: event
+      type: hello.greeted
+      filter: "payload.greeting != ''"
+    action:
+      kind: shell
+      cmd: ["bash", "-c", 'echo "core said: $GREETING"']
+      env:
+        GREETING: ${event.payload.greeting}
+
+  # 3. A two-step sequence, to show `steps[i]` templating and `when`.
+  - name: hello_sequence
+    trigger: { kind: manual }
+    action:
+      kind: sequence
+      steps:
+        - kind: shell
+          cmd: ["bash", "-c", 'echo world']
+          result: text_stdout
+        - kind: shell
+          when: "steps[0] == 'world'"
+          cmd: ["bash", "-c", 'echo "hello, ${steps[0]}!"']
+          result: text_stdout
