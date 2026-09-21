@@ -4,8 +4,10 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   // `skills/` ships with the agent skills (a dependency-free script and a connector template
-  // outside every tsconfig project); it is not part of the workspace build.
-  { ignores: ['**/dist/', '**/node_modules/', 'coverage/', 'skills/'] },
+  // outside every tsconfig project); it is not part of the workspace build. `.claude/skills/`
+  // holds symlinks into it, and an editor that opens a template through one of those paths
+  // would otherwise lint a file `eslint .` never sees, so ignore both spellings.
+  { ignores: ['**/dist/', '**/node_modules/', 'coverage/', 'skills/', '.claude/'] },
   js.configs.recommended,
   {
     files: ['**/*.ts'],
