@@ -28,7 +28,7 @@ export const SequenceStep = z
   });
 
 /**
- * ARCHITECTURE §5.6: a few steps in one run. `steps[i]` in later steps' templates and
+ * ARCHITECTURE §5.7: a few steps in one run. `steps[i]` in later steps' templates and
  * `when` is the result of step i (`null` when skipped). The run result is `{steps: [...]}`.
  * A `wait` step suspends the whole run; on resume the sequence continues from that step
  * with the earlier results restored, and a retry starts again from that step too.

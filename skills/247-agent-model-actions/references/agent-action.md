@@ -1,6 +1,6 @@
 # `agent` action
 
-An agentic loop with tools in a sandboxed worktree. `docs/ARCHITECTURE.md` §5.3, §11, §13.
+An agentic loop with tools in a sandboxed worktree. `docs/ARCHITECTURE.md` §5.4, §11, §13.
 
 ## Fields
 

@@ -104,3 +104,52 @@ describe('checkLlmTasks', () => {
     expect(isInside('/srv/oa', '/srv/oa/../etc')).toBe(false);
   });
 });
+
+describe('checkLlmTasks: decide', () => {
+  const decide = (action: Record<string, unknown>) =>
+    Task.parse({
+      name: 'd',
+      trigger: { kind: 'manual' },
+      action: {
+        kind: 'decide',
+        state: '${event.payload}',
+        questions: { urgent: { type: 'noul', instructions: 'Urgent?' } },
+        ...action,
+      },
+    });
+
+  it('passes an openrouter provider, from the action or defaults.decide, with any model', () => {
+    expect(
+      checkLlmTasks(
+        [
+          decide({ provider: 'router' }),
+          decide({ provider: 'router', model: '~typesafe/jev-latest' }),
+        ],
+        ctx(),
+      ),
+    ).toEqual([]);
+    expect(
+      checkLlmTasks(
+        [decide({})],
+        ctx({ decideDefaults: { provider: 'router', model: 'typesafe/jev-1.13' } }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('reports a missing or unknown provider and a provider of the wrong type', () => {
+    expect(checkLlmTasks([decide({})], ctx())).toEqual([
+      {
+        path: 'tasks[0].action.provider',
+        message: 'no provider: set action.provider or defaults.decide.provider in agent.yaml',
+      },
+    ]);
+    expect(checkLlmTasks([decide({ provider: 'nope' })], ctx())[0]?.message).toMatch(
+      /unknown provider "nope"/,
+    );
+    const wrong = checkLlmTasks([decide({ provider: 'anthropic' })], ctx());
+    expect(wrong.map((i) => i.path)).toEqual(['tasks[0].action.provider']);
+    expect(wrong[0]?.message).toMatch(
+      /decide needs an openrouter provider.*"anthropic" is type anthropic/,
+    );
+  });
+});

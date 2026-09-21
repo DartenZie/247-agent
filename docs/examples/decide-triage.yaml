@@ -1,0 +1,58 @@
+# Email triage with a classification-only model (ARCHITECTURE §5.3): TypeSafe's Jev through
+# OpenRouter's Decisions API. No text is generated; each question gets a typed answer with a
+# probability, and the task routes on it. Needs an `openrouter` provider in agent.yaml and
+# `defaults: { decide: { provider: openrouter } }` (or `provider:` on the action).
+
+tasks:
+
+  # 1. Three judgements in one call, about $0.00002. Instructions and criteria are policy:
+  #    the model follows them literally, so version them like code and always give it a
+  #    fallback label.
+  - name: triage_email
+    trigger: { kind: event, type: email.received }
+    action:
+      kind: decide
+      provider: openrouter            # must be an openrouter provider; default: defaults.decide.provider
+      model: typesafe/jev-1.13        # default: defaults.decide.model
+      budget: { max_usd: 0.001 }      # per run; the smaller of this and the task's budget applies
+      state:                          # what the model judges; strings are templated, keys are not
+        from: ${event.payload.from}
+        subject: ${event.payload.subject}
+        body: ${event.payload.body}
+      questions:
+        kind:
+          type: choice
+          instructions: What does the sender want done with the website?
+          criteria:
+            event_list_update: Add, remove or change an entry in the events list
+            general_change: Any other change to pages, text, images or navigation
+            ignore: Not a change request (a question, a thank-you, spam, a newsletter)
+        urgent:
+          type: noul
+          instructions: Does the sender need this done today?
+          criteria:
+            "true": Names today, a deadline within 24 hours, or says urgent/ASAP
+            "false": No deadline, or one further away
+        anger:
+          type: score
+          instructions: How upset is the sender?
+          criteria: [Calm or neutral, Annoyed, Furious]
+    emit:
+      - type: email.classified
+        when: "result.kind.choice != 'ignore' && result.kind.confidence > `0.5`"
+        payload:
+          kind: ${result.kind.choice}
+          confidence: ${result.kind.confidence}
+          urgent: ${result.urgent.noul}
+          anger: ${result.anger.score}
+          email: ${event.payload}
+
+  # 2. A threshold is a task decision, not the model's: calibrate it on real mail.
+  - name: flag_urgent
+    trigger:
+      kind: event
+      type: email.classified
+      filter: "payload.urgent > `0.8`"
+    action:
+      kind: shell
+      cmd: ["logger", "-t", "247-agent", "urgent ${event.payload.kind} request: ${event.payload.email.subject}"]

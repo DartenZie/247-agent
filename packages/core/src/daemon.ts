@@ -133,6 +133,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       providers: config.providers,
       pricing,
       defaults: config.defaults.llm,
+      decideDefaults: config.defaults.decide,
       budgets: config.budgets,
       configDir: dirname(config.file),
       ...(opts.llmFactories === undefined ? {} : { factories: opts.llmFactories }),

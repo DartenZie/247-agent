@@ -104,7 +104,20 @@ export const LlmDefaults = z
   .prefault({});
 export type LlmDefaultsConfig = z.infer<typeof LlmDefaults>;
 
-/** Per run (`budget:` on a task or an `llm` action). The smaller of the two applies. */
+/** TypeSafe's Jev on OpenRouter: the classification model a `decide` action uses unless told otherwise. */
+export const DEFAULT_DECIDE_MODEL = 'typesafe/jev-1.13';
+
+/** `defaults.decide` in agent.yaml: what a `decide` action falls back to (ARCHITECTURE §5.3). */
+export const DecideDefaults = z
+  .strictObject({
+    /** Must name an `openrouter` provider: only OpenRouter serves the Decisions API. */
+    provider: z.string().regex(NAME, 'provider names are [a-z][a-z0-9_]*').optional(),
+    model: z.string().min(1).default(DEFAULT_DECIDE_MODEL),
+  })
+  .prefault({});
+export type DecideDefaultsConfig = z.infer<typeof DecideDefaults>;
+
+/** Per run (`budget:` on a task or an `llm`/`decide` action). The smaller of the two applies. */
 export const Budget = z.strictObject({ max_usd: z.number().positive() });
 export type BudgetConfig = z.infer<typeof Budget>;
 

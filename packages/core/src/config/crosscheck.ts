@@ -1,7 +1,12 @@
 import { existsSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-import type { LlmDefaultsConfig, ProviderConfigParsed } from '../llm/config.js';
+import {
+  DecideDefaults,
+  type DecideDefaultsConfig,
+  type LlmDefaultsConfig,
+  type ProviderConfigParsed,
+} from '../llm/config.js';
 import type { PricingTable } from '../llm/pricing.js';
 import type { ConfigIssue } from './load.js';
 import type { TaskConfig } from './schema.js';
@@ -10,6 +15,8 @@ export interface LlmCheckContext {
   providers: Readonly<Record<string, ProviderConfigParsed>>;
   pricing: PricingTable;
   defaults: LlmDefaultsConfig;
+  /** `defaults.decide`; the built-in defaults when omitted. */
+  decideDefaults?: DecideDefaultsConfig | undefined;
   /** The agent.yaml directory, which `system_file` is relative to. */
   configDir: string;
 }
@@ -23,31 +30,35 @@ export function isInside(dir: string, target: string): boolean {
 
 /**
  * What a tasks file cannot check on its own (it is validated without agent.yaml): every
- * `llm` task names a configured provider, a model with a known price (unless the provider
- * reports cost itself), and a `system_file` that exists under the config directory. Run at
- * daemon start, on reload and by `oa validate agent.yaml`, so no unpriced call can be
- * configured.
+ * `llm` and `decide` task names a configured provider and a model with a known price (unless
+ * the provider reports cost itself); an `llm` task's `system_file` exists under the config
+ * directory; a `decide` task's provider is of type `openrouter`, the only one that serves the
+ * Decisions API. Run at daemon start, on reload and by `oa validate agent.yaml`, so no
+ * unpriced call can be configured.
  */
 export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
+  const decideDefaults = ctx.decideDefaults ?? DecideDefaults.parse({});
   tasks.forEach((task, i) => {
     const a = task.action;
-    if (a.kind !== 'llm') {
+    if (a.kind !== 'llm' && a.kind !== 'decide') {
       return;
     }
     const at = (field: string): string => `tasks[${String(i)}].action.${field}`;
-    const providerName = a.provider ?? ctx.defaults.provider;
-    const model = a.model ?? ctx.defaults.model;
+    const section = a.kind === 'llm' ? 'defaults.llm' : 'defaults.decide';
+    const providerName =
+      a.provider ?? (a.kind === 'llm' ? ctx.defaults.provider : decideDefaults.provider);
+    const model = a.model ?? (a.kind === 'llm' ? ctx.defaults.model : decideDefaults.model);
     if (providerName === undefined) {
       issues.push({
         path: at('provider'),
-        message: 'no provider: set action.provider or defaults.llm.provider in agent.yaml',
+        message: `no provider: set action.provider or ${section}.provider in agent.yaml`,
       });
     }
     if (model === undefined) {
       issues.push({
         path: at('model'),
-        message: 'no model: set action.model or defaults.llm.model in agent.yaml',
+        message: `no model: set action.model or ${section}.model in agent.yaml`,
       });
     }
     const provider = providerName === undefined ? undefined : ctx.providers[providerName];
@@ -55,6 +66,12 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
       issues.push({
         path: at('provider'),
         message: `unknown provider "${providerName}" (not in providers: of agent.yaml)`,
+      });
+    }
+    if (a.kind === 'decide' && provider !== undefined && provider.type !== 'openrouter') {
+      issues.push({
+        path: at('provider'),
+        message: `decide needs an openrouter provider (the Decisions API); "${String(providerName)}" is type ${provider.type}`,
       });
     }
     if (
@@ -69,7 +86,7 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
         message: `no price for model "${model}" on provider "${providerName}" (type ${provider.type}): add a pricing entry in agent.yaml`,
       });
     }
-    if (a.system_file !== undefined) {
+    if (a.kind === 'llm' && a.system_file !== undefined) {
       const path = resolve(ctx.configDir, a.system_file);
       if (!isInside(ctx.configDir, path)) {
         issues.push({

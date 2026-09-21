@@ -18,10 +18,15 @@ function openai(input: number, cache_read: number, output: number): ModelPrice {
  * Published prices, USD per Mtok. Anthropic (platform.claude.com/docs/en/about-claude/
  * pricing): cache write 1.25x and cache read 0.1x the input price. OpenAI (developers.
  * openai.com/api/docs/pricing, checked 2026-09-20): the standard tier; the long-context
- * surcharge above 272K input tokens is not modelled. Extend or override with `pricing:` in
- * agent.yaml. OpenRouter models need no entry: the provider reports each call's cost.
+ * surcharge above 272K input tokens is not modelled. TypeSafe's Jev (openrouter.ai/typesafe,
+ * checked 2026-09-21): input only, output free; listed so the worst-case check before a
+ * `decide` call has a number, the reported cost still wins after it. Extend or override with
+ * `pricing:` in agent.yaml. Other OpenRouter models need no entry: the provider reports each
+ * call's cost.
  */
 export const BUILTIN_PRICES: Readonly<Record<string, ModelPrice>> = {
+  'typesafe/jev-1.13': { input: 0.042, output: 0, cache_read: 0.042, cache_write: 0.042 },
+  '~typesafe/jev-latest': { input: 0.042, output: 0, cache_read: 0.042, cache_write: 0.042 },
   'claude-haiku-4-5': { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
   'claude-sonnet-5': { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
   'claude-opus-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },

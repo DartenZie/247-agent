@@ -7,7 +7,7 @@ frontmatter, plus `references/`, `scripts/` and `assets/`).
 | Skill | Use it to |
 |---|---|
 | `247-agent-tasks` | Write and review task definitions: triggers, `shell`/`connector`/`wait`/`sequence` actions, `emit` routing, `state_updates`, templates and filters |
-| `247-agent-model-actions` | Design `llm` and `agent` tasks: tiering, prompts, output schemas, sandboxing, budgets, `RESULT.json`, `post` gates; implement their runners |
+| `247-agent-model-actions` | Design `llm`, `decide` and `agent` tasks: tiering, prompts, output schemas, decision questions and thresholds, sandboxing, budgets, `RESULT.json`, `post` gates; implement their runners |
 | `247-agent-connectors` | Write manifests and connectors (TypeScript SDK or any language), fakes for tests, debug op and connector failures |
 | `247-agent-operate` | Run the daemon, `oa run`/`oa emit`, inspect runs and state over the socket (`scripts/oa-api.mjs`), read logs, troubleshoot |
 | `247-agent-config` | `agent.yaml`, secrets backends, `/etc/247-agent` layout, systemd unit, install and upgrade, self-configuration rules |

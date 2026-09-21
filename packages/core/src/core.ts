@@ -1,4 +1,5 @@
 import { runConnector } from './actions/connector.js';
+import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
 import { runSequence } from './actions/sequence.js';
 import type { SandboxConfig } from './actions/sandbox.js';
@@ -16,7 +17,12 @@ import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
-import type { BudgetsConfig, LlmDefaultsConfig, ProviderConfigParsed } from './llm/config.js';
+import type {
+  BudgetsConfig,
+  DecideDefaultsConfig,
+  LlmDefaultsConfig,
+  ProviderConfigParsed,
+} from './llm/config.js';
 import type { PricingTable } from './llm/pricing.js';
 import { anthropicProvider } from './llm/anthropic.js';
 import { openaiProvider } from './llm/openai.js';
@@ -62,8 +68,9 @@ export interface CoreOptions {
   /** Passed to supervised connectors as `OA_CORE_SOCKET`. */
   socketPath?: string;
   /**
-   * Model providers, prices and budgets from agent.yaml. Without it `llm` actions fail
-   * with "no llm service is configured" and the tasks are not cross-checked against it.
+   * Model providers, prices and budgets from agent.yaml. Without it `llm` and `decide`
+   * actions fail with "no llm service is configured" and the tasks are not cross-checked
+   * against it.
    */
   llm?: CoreLlmOptions;
 }
@@ -72,6 +79,8 @@ export interface CoreLlmOptions {
   providers: Readonly<Record<string, ProviderConfigParsed>>;
   pricing: PricingTable;
   defaults: LlmDefaultsConfig;
+  /** `defaults.decide`; the built-in defaults when omitted. */
+  decideDefaults?: DecideDefaultsConfig | undefined;
   budgets: BudgetsConfig;
   /** The agent.yaml directory (`system_file` paths). */
   configDir: string;
@@ -124,6 +133,7 @@ export const defaultRunners: ActionRunners = {
   shell: runShell,
   connector: runConnector,
   llm: runLlm,
+  decide: runDecide,
   wait: runWait,
   sequence: runSequence,
 };
@@ -210,6 +220,7 @@ export function createCore(opts: CoreOptions): Core {
           providers: opts.llm.providers,
           pricing: opts.llm.pricing,
           defaults: opts.llm.defaults,
+          decideDefaults: opts.llm.decideDefaults,
           budgets: opts.llm.budgets,
           factories: opts.llm.factories ?? defaultProviderFactories,
         });

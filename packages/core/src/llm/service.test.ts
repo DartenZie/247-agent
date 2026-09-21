@@ -13,7 +13,7 @@ import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } fro
 import { resolvePricing } from './pricing.js';
 import { BUDGET_EXCEEDED, LlmService, type LlmServiceOptions } from './service.js';
 import { fakeProviderFactory, type FakeProvider } from './testing.js';
-import type { LlmCall, LlmResponse } from './types.js';
+import type { DecideCall, DecideResponse, LlmCall, LlmResponse } from './types.js';
 
 let env: TestEnv;
 let bus: EventBus;
@@ -225,6 +225,114 @@ describe('LlmService.call', () => {
     const s2 = service();
     const r = run();
     await expect(call(s2, { provider: 'router', model: 'vendor/other' }, r)).rejects.toThrow(
+      UnpricedModelError,
+    );
+    expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'unpriced' });
+  });
+});
+
+describe('LlmService.decide', () => {
+  const QUESTIONS: DecideCall['questions'] = {
+    kind: { type: 'choice', instructions: 'What?', criteria: { a: 'A', b: 'B' } },
+    urgent: { type: 'noul', instructions: 'Urgent?' },
+  };
+  const decision = (reportedUsd?: number): DecideResponse => ({
+    answers: {
+      kind: { type: 'choice', choice: 'a', confidence: 0.9 },
+      urgent: { type: 'noul', noul: 0.2 },
+    },
+    usage: { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd },
+    id: 'gen-dec-1',
+    provider: 'TypeSafe',
+  });
+
+  function decide(
+    s: LlmService,
+    over: Partial<DecideCall> = {},
+    r: RunRecord = run('triage'),
+  ): ReturnType<LlmService['decide']> {
+    return s.decide(
+      {
+        provider: 'router',
+        model: 'typesafe/jev-1.13',
+        state: 'classify this',
+        questions: QUESTIONS,
+        ...over,
+      },
+      { run: r, task: r.task, signal: new AbortController().signal, log: env.log },
+    );
+  }
+
+  it('calls the adapter, ledgers the reported cost and logs the question count, never the state', async () => {
+    fake = fakeProviderFactory(usage(1, 1), decision(0.000042));
+    const s = service();
+    const r = run('triage');
+    const res = await decide(s, {}, r);
+    expect(res).toMatchObject({ usd: 0.000042, priced_by: 'provider', id: 'gen-dec-1' });
+    expect(res.answers.kind).toEqual({ type: 'choice', choice: 'a', confidence: 0.9 });
+    expect(fake.requests).toHaveLength(0);
+    expect(fake.decides).toHaveLength(1);
+    expect(fake.decides[0]?.provider).toMatchObject({ name: 'router', apiKey: 'sk-or' });
+    expect(fake.decides[0]?.req).toMatchObject({
+      model: 'typesafe/jev-1.13',
+      state: 'classify this',
+      questions: QUESTIONS,
+    });
+    expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({
+      task: 'triage',
+      provider: 'router',
+      model: 'typesafe/jev-1.13',
+      in_tok: 1000,
+      out_tok: 0,
+      usd: 0.000042,
+      priced_by: 'provider',
+    });
+    const line = env.lines.find((l) => l.msg === 'llm.decide');
+    expect(line).toMatchObject({
+      provider: 'router',
+      in_tok: 1000,
+      questions: 2,
+      upstream: 'TypeSafe',
+    });
+    expect(JSON.stringify(line)).not.toContain('classify this');
+    expect(JSON.stringify(env.lines)).not.toContain('sk-or');
+  });
+
+  it('prices from the built-in Jev entry when no cost is reported', async () => {
+    fake = fakeProviderFactory(usage(1, 1), decision());
+    const res = await decide(service());
+    expect(res.usd).toBeCloseTo(0.000042, 9);
+    expect(res.priced_by).toBe('table');
+  });
+
+  it('refuses before the call on the worst case, the run cap and the daily cap', async () => {
+    fake = fakeProviderFactory(usage(1, 1), decision(0.001));
+    const s = service({ budgets: { daily_usd: 0.0015 } });
+    // The body is ~150 chars → ~50 tokens at $0.042/Mtok ≈ $0.0000021.
+    await expect(decide(s, { maxUsd: 0.000001 })).rejects.toThrow(/worst case/);
+    expect(fake.decides).toHaveLength(0);
+    const r = run('triage');
+    await expect(decide(s, { maxUsd: 0.01 }, r)).resolves.toMatchObject({ usd: 0.001 });
+    await expect(decide(s, { maxUsd: 0.0005 }, r)).rejects.toThrow(/already spent/);
+    await expect(decide(s)).resolves.toBeDefined();
+    expect(events(BUDGET_EXCEEDED)).toHaveLength(1);
+    await expect(decide(s)).rejects.toThrow(/daily budget/);
+    expect(fake.decides).toHaveLength(2);
+  });
+
+  it('fails non-retryably on a provider whose type has no Decisions API', async () => {
+    fake = fakeProviderFactory(usage(1, 1)); // no decide method: an anthropic-style adapter
+    const s = service();
+    const p = decide(s, { provider: 'anthropic' });
+    await expect(p).rejects.toThrow(ProviderUnavailableError);
+    await expect(p).rejects.toThrow(/cannot run decide actions/);
+    expect(env.store.ledger.sumSince('2000-01-01')).toBe(0);
+  });
+
+  it('fails when the model is unpriced and the provider reports no cost, keeping the row at $0', async () => {
+    fake = fakeProviderFactory(usage(1, 1), decision());
+    const r = run('triage');
+    await expect(decide(service(), { model: 'typesafe/jev-9' }, r)).rejects.toThrow(
       UnpricedModelError,
     );
     expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'unpriced' });

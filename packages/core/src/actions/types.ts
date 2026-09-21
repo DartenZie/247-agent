@@ -18,7 +18,7 @@ export interface ConnectorClients {
   ): Promise<JsonValue>;
 }
 
-/** What a `wait` suspends the run for (ARCHITECTURE §5.5). */
+/** What a `wait` suspends the run for (ARCHITECTURE §5.6). */
 export interface WaitSpec {
   /** Event type pattern (`*` = one segment). */
   type: string;

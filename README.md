@@ -24,7 +24,8 @@ connector ──event──▶ trigger ──▶ task ──result──▶ more
   |---|---|---|
   | `shell` | run a command | no |
   | `connector` | call one operation on a sub-program | no |
-  | `llm` | one model call with a JSON schema (classify, extract) | one call |
+  | `llm` | one model call with a JSON schema (classify, extract, summarise) | one call |
+  | `decide` | typed questions to a classification-only model, probabilities back (route, triage, gate) | one call, ~100× cheaper |
   | `agent` | agentic loop in a sandboxed git worktree with tool allowlists | loop, budgeted |
   | `wait` | pause until an event arrives (human approval) | no |
   | `sequence` | a few of the above in one run | depends |
@@ -50,8 +51,9 @@ The full config is in [`docs/examples/website-updates.yaml`](docs/examples/websi
 The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
 actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
 The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action with the Anthropic,
-OpenAI and OpenRouter adapters, the cost ledger and budgets are in; the `agent` action
-and the chat connector are next.
+OpenAI and OpenRouter adapters, the `decide` action (TypeSafe's Jev via OpenRouter's
+Decisions API), the cost ledger and budgets are in; the `agent` action and the chat
+connector are next.
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
 [`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.

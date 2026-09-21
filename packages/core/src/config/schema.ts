@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ConnectorAction } from '../actions/connector.js';
+import { DecideAction } from '../actions/decide.js';
 import { LlmAction } from '../actions/llm.js';
 import { SequenceAction } from '../actions/sequence.js';
 import { ShellAction } from '../actions/shell.js';
@@ -92,10 +93,11 @@ export const Action = z.discriminatedUnion('kind', [
   WaitAction,
   SequenceAction,
   LlmAction,
+  DecideAction,
   z.looseObject({ kind: z.literal('agent') }),
 ]);
 
-/** ARCHITECTURE §5.7: one domain event (or one per `each` item) after a successful run. */
+/** ARCHITECTURE §5.8: one domain event (or one per `each` item) after a successful run. */
 export const EmitRule = z
   .strictObject({
     type: z.string().min(1),

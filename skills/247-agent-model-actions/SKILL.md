@@ -1,14 +1,14 @@
 ---
 name: 247-agent-model-actions
-description: "Design and write the model-backed steps of a 247-agent workflow, the `llm` action (one Claude call with a JSON output schema) and the `agent` action (Claude Agent SDK loop in a sandboxed git worktree with tool and bash allowlists, a budget, a RESULT.json contract and deterministic `post` gates). Use it whenever a 247-agent task needs to classify, extract, summarise, decide, or edit a repository; whenever the user mentions models, prompts, `system_file`, `output_schema`, `max_turns`, `budget`, `effort`, cost, tiers (Haiku/Sonnet/Opus), worktrees or \"let an agent do X\"; and when implementing or reviewing the `llm`/`agent` runners in `packages/core/src/actions/`. Do not skip it for \"just a quick prompt\": the tiering and budget rules apply to every model call."
+description: "Design and write the model-backed steps of a 247-agent workflow: the `decide` action (typed questions to TypeSafe's Jev classifier via OpenRouter's Decisions API, probabilities back, no text), the `llm` action (one Claude call with a JSON output schema) and the `agent` action (Claude Agent SDK loop in a sandboxed git worktree with tool and bash allowlists, a budget, a RESULT.json contract and deterministic `post` gates). Use it whenever a 247-agent task needs to classify, route, triage, extract, summarise, decide, or edit a repository; whenever the user mentions models, prompts, `system_file`, `output_schema`, `questions`, `criteria`, confidence thresholds, Jev, `max_turns`, `budget`, `effort`, cost, tiers (Haiku/Sonnet/Opus), worktrees or \"let an agent do X\"; and when implementing or reviewing the `llm`/`decide`/`agent` runners in `packages/core/src/actions/`. Do not skip it for \"just a quick prompt\": the tiering and budget rules apply to every model call."
 ---
 
 # 247-agent model actions
 
 The daemon's design rule: **no LLM in the control flow**. Matching, dedup, routing,
-retries and publishing are code. A model runs only inside an `llm` or `agent` action,
-at the cheapest tier that does the job, with a budget. This skill is about writing
-those two actions well and about the runners that execute them.
+retries and publishing are code. A model runs only inside a `decide`, `llm` or `agent`
+action, at the cheapest tier that does the job, with a budget. This skill is about
+writing those three actions well and about the runners that execute them.
 
 ## First decide whether a model is needed at all
 
@@ -16,9 +16,12 @@ Ask, in order:
 
 1. Can a trigger `filter` decide it? (sender, label, repo, keyword) Then it is not a model call.
 2. Can a script or a connector op produce the answer deterministically? Then `shell`/`connector`.
-3. Is it one judgement with a fixed output shape (classify, extract fields, summarise)?
-   Then `llm`, on Haiku first.
-4. Does it need to read files, run commands and iterate? Then `agent`, with the
+3. Is it a label, a yes/no or a level, with no text to produce (classify, route, triage,
+   gate)? Then `decide`: a classification-only model, calibrated probabilities, about a
+   hundredth of an `llm` call.
+4. Is it one judgement with a fixed output shape that needs text (extract fields,
+   summarise, draft)? Then `llm`, on Haiku first.
+5. Does it need to read files, run commands and iterate? Then `agent`, with the
    narrowest scope that can succeed.
 
 Two tasks with different intelligence needs are the **same action kind with different
@@ -42,6 +45,45 @@ No date suffixes on ids. No assistant prefill. Before building a cascade of mode
 measure the stronger model at `effort: low` on the same inputs: on the current
 generation that often beats a weaker model at high effort, and one model means one
 prompt-cache namespace.
+
+## Writing a `decide` task
+
+Full field list, wire notes and pitfalls in `references/decide-action.md`. The essentials:
+
+```yaml
+action:
+  kind: decide
+  provider: openrouter                 # must be an openrouter provider; default defaults.decide.provider
+  budget: { max_usd: 0.001 }
+  state:                               # what is judged; strings templated, keys not
+    subject: ${event.payload.subject}
+    body: ${event.payload.body}
+  questions:                           # static policy; no ${…} here
+    kind:
+      type: choice
+      instructions: What does the sender want done with the website?
+      criteria:
+        event_list_update: Add, remove or change an entry in the events list
+        general_change: Any other change to the site
+        ignore: Not a change request (question, thanks, spam)
+    urgent:
+      type: noul
+      instructions: Does the sender need this done today?
+```
+
+- The result is the answers map: `result.kind.choice`, `result.kind.confidence`,
+  `result.urgent.noul` (P(true)), `result.<score>.score` (probability-weighted mean of
+  the level indexes). Route with `emit … when:`; the **threshold lives in the task**,
+  never in the runner, and is calibrated on real data.
+- **Always include a fallback label** (`ignore`, `other`): without one, off-topic input
+  gets a confident wrong answer.
+- Criteria are followed literally: they are policy, version them like code. Keep the
+  option order stable (it shifts confidence). Ask several questions in one call; each
+  extra one costs only its own tokens.
+- Inbound content is data: it goes in `state`, never in a question. The whole request
+  must fit in 32k tokens.
+- Only the `openrouter` provider type reaches Jev (`typesafe/jev-1.13`, the default
+  model); `oa validate` refuses any other. No `pricing:` entry is needed.
 
 ## Writing an `llm` task
 
@@ -138,10 +180,12 @@ shows the ledger.
 
 The `llm` action is validated, cross-checked against `providers:`/`pricing:` and
 runnable through `ctx.llm`, with the ledger and budgets applied, and all three provider
-types (`anthropic`, `openai`, `openrouter`) have adapters. The
+types (`anthropic`, `openai`, `openrouter`) have adapters. The `decide` action runs
+through the same port (`ctx.llm.decide()`), with the Decisions API implemented in the
+`openrouter` adapter only; `docs/examples/decide-triage.yaml` is the reference. The
 `agent` action validates `kind` only and has no runner. Until then test the surrounding
 workflow with a `shell` stand-in that emits the same event (pattern in the
 `247-agent-tasks` skill).
-When adding an adapter or the `agent` runner, follow `references/llm-action.md` and
-`references/agent-action.md` and keep `docs/ARCHITECTURE.md` §5.2, §5.3, §9 and §14 in
-sync with the code.
+When adding an adapter or the `agent` runner, follow `references/llm-action.md`,
+`references/decide-action.md` and `references/agent-action.md` and keep
+`docs/ARCHITECTURE.md` §5.2, §5.3, §5.4, §9 and §14 in sync with the code.

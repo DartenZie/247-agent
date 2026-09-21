@@ -31,7 +31,7 @@ Non-goals
 | n8n / Node-RED / Windmill / Huginn | Trigger→action model fits, but they are UI-first, workflows are opaque JSON, and "an agent that edits a checkout and runs a build" is awkward to express. Heavy runtime (Postgres, Node) for one server. |
 | Temporal / Airflow / Prefect | Durable orchestration, but workflows are code (Temporal) or batch DAGs (Airflow). Overkill and not config-driven. |
 | systemd timers + scripts | Fine for cron, no event chaining, no state, no LLM budgets. |
-| Anthropic Managed Agents (scheduled deployments) | Solid option for the `agent` tier if you prefer Anthropic to host the sandbox. Rejected as the *core* because the FTP target, credentials and site checkout live on your server, and cost control wants local gating. Kept as an alternative `agent.runtime` (§5.3). |
+| Anthropic Managed Agents (scheduled deployments) | Solid option for the `agent` tier if you prefer Anthropic to host the sandbox. Rejected as the *core* because the FTP target, credentials and site checkout live on your server, and cost control wants local gating. Kept as an alternative `agent.runtime` (§5.4). |
 
 **Decision:** build a small core (~2–3k lines) and reuse aggressively underneath it:
 
@@ -217,7 +217,63 @@ the schema in strict mode, which the vendor only accepts when every property is 
 fails the call non-retryably with the vendor's message. A `batch: true` mode (Message
 Batches at half price, results arriving async as events) is planned, not implemented.
 
-### 5.3 `agent` — agentic loop with tools, sandboxed
+### 5.3 `decide` — classification only, typed answers with probabilities
+
+```yaml
+action:
+  kind: decide
+  provider: openrouter             # must be an `openrouter` provider; default: defaults.decide.provider
+  model: typesafe/jev-1.13         # default: defaults.decide.model (this value)
+  budget: { max_usd: 0.001 }       # per run; the smaller of this and the task's budget applies
+  state:                           # what is judged: a string, or an object/array; strings are templated
+    subject: ${event.payload.subject}
+    body: ${event.payload.body}
+  questions:                       # static policy, no ${…}; one typed answer each
+    kind:
+      type: choice                 # one label; answer {type, choice, confidence, probabilities}
+      instructions: What does the sender want done with the website?
+      criteria: { event_list_update: "…", general_change: "…", ignore: "Not a change request" }
+    urgent:
+      type: noul                   # yes/no; answer {type, noul} = P(true), no confidence field
+      instructions: Does the sender need this done today?
+      criteria: { "true": "…", "false": "…" }   # both sides or neither
+    anger:
+      type: score                  # ordered levels, index 0 lowest; answer {type, score, confidence, probabilities}
+      instructions: How upset is the sender?
+      criteria: [Calm, Annoyed, Furious]
+```
+
+For the case where a workflow needs a judgement but no text: TypeSafe's Jev is a
+classification-only model (no generation, ~0.4 s, $0.042 per Mtok of input, output free)
+that returns calibrated probabilities instead of a JSON document. Where `llm` on Haiku
+would do to classify, `decide` does it for a few hundredths of the price, and the
+probabilities let the task act, confirm or escalate without a second call.
+
+The result is the `answers` map keyed by the question ids, so `emit` routes on
+`` result.kind.choice != 'ignore' && result.kind.confidence > `0.5` `` and forwards
+`${result.urgent.noul}`. Thresholds are the task's decision, not the runner's: calibrate
+them on labelled data. A `score` is the probability-weighted mean of the level indexes
+(`1.05`, not a level name). Always give a `choice` a fallback label (`ignore`, `other`):
+without one, out-of-taxonomy input gets a confident wrong answer. Criteria are policy the
+model follows literally; version them like code. Inbound content is data: it goes in
+`state`, never in the questions (the schema refuses `${…}` there).
+
+The runner renders `state` (a whole-string `${event.payload}` injects the raw object,
+object keys are never templated), calls `ctx.llm.decide()` and checks the reply: every
+question answered with its own type, a `choice` inside the criteria, a `score` inside the
+range; a mismatch is the provider's fault and retryable. The port applies the same
+budgets, ledger row and breaker as an `llm` call (§9), with the worst case estimated from
+the JSON body at input price and no output. Only the `openrouter` provider type serves
+the Decisions API (`POST https://openrouter.ai/api/alpha/decisions`, a different protocol
+from Chat Completions; Jev is absent from the models catalog and rejects
+`/chat/completions`), so the cross-check refuses any other provider type. The adapter
+sends `{model, state, questions}` with the same key and attribution headers, maps 429/5xx
+to retryable errors and every other non-2xx (401 no key, 402 no credits, 413 state over
+32k tokens) to non-retryable ones, and takes the reported `usage.cost` as the ledger
+price (the built-in table knows Jev's price for the pre-call estimate). A `base_url` on
+the provider keeps its origin: the Decisions path replaces `/api/v1`.
+
+### 5.4 `agent` — agentic loop with tools, sandboxed
 
 ```yaml
 action:
@@ -268,7 +324,7 @@ Notes
   approval/logging; `managed-agents` submits a session to Anthropic's hosted sandbox with
   the repo mounted and gets the diff back. Same config, swappable runtime.
 
-### 5.4 `connector` — call one operation on a sub-program
+### 5.5 `connector` — call one operation on a sub-program
 
 ```yaml
 action:
@@ -284,7 +340,7 @@ parsed as JSON when it is JSON. An `isError` result or an op outside the manifes
 fails the run without retry; a connector that is down fails it with retry. Optional
 `timeout` bounds the call (default 60s).
 
-### 5.5 `wait` — suspend the run until an event arrives (human in the loop)
+### 5.6 `wait` — suspend the run until an event arrives (human in the loop)
 
 ```yaml
 action:
@@ -305,7 +361,7 @@ that races the asking step is not lost. The result is the matched event (`payloa
 `on_timeout: succeed` gets `{timed_out: true}`. The task `timeout` bounds each stretch of
 active work, not the time spent waiting.
 
-### 5.6 `sequence` — a few steps in one run, without inventing events for each
+### 5.7 `sequence` — a few steps in one run, without inventing events for each
 
 ```yaml
 action:
@@ -324,7 +380,7 @@ after a restart or a retry the sequence continues from that step with the matche
 Use it for tightly coupled steps (ask → wait → act). Use separate tasks and events for
 anything that another workflow might want to reuse or observe.
 
-### 5.7 Routing: `emit`
+### 5.8 Routing: `emit`
 
 Every task emits `task.<name>.succeeded|failed` automatically. `emit` adds domain events,
 including fan-out:
@@ -471,10 +527,11 @@ providers:                   # model providers by name; api_key is always a secr
 pricing: {}                  # USD per Mtok per model, merged over the built-in table: { gpt-5-mini: { input: 0.25, output: 2 } }
 defaults:
   llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
+  decide: { provider: openrouter, model: typesafe/jev-1.13 }   # `decide` actions; the provider must be an openrouter one
   agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
   retry: { attempts: 3, backoff: exponential, base: 30s }
 budgets:
-  daily_usd: 10          # global circuit breaker → all llm/agent tasks fail fast until 00:00 UTC, alert emitted
+  daily_usd: 10          # global circuit breaker → all llm/decide/agent tasks fail fast until 00:00 UTC, alert emitted
 retention: { events: 90d, runs: 90d, workspaces: 7d }
 limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
@@ -517,14 +574,19 @@ same action kind; only the config differs.
   silently-invalidated cache is visible.
 - **Dedup and filters** guarantee a model call is made at most once per real-world event.
 - **Batch API** for anything that can wait (`batch: true`) — planned.
+- **Classification is cheaper than generation.** A `decide` task (§5.3) answers typed
+  questions with probabilities at a fraction of an `llm` call's price and latency; use it
+  wherever the step needs a label, a yes/no or a level and no text.
 - **Prices are config, never guessed.** A built-in USD-per-Mtok table covers the Claude
-  and the current OpenAI models; `pricing:` in `agent.yaml` overrides or extends it. A task whose model has no
-  price fails validation unless its provider reports the cost per response (OpenRouter).
+  models, the current OpenAI models and Jev; `pricing:` in `agent.yaml` overrides or
+  extends it. A task whose model has no price fails validation unless its provider
+  reports the cost per response (OpenRouter).
   A response that arrives unpriced anyway is recorded at $0 with `priced_by: unpriced`
   and fails the run, so it is noticed.
 - **Circuit breakers.** Per run: `budget.max_usd` (the smaller of the task's and the
   action's). Before the call the worst case (input at 3 chars/token plus `max_tokens` of
-  output, at table prices) must fit; after it the actual cost must, else the run fails
+  output, at table prices; for `decide` the JSON body at input price and no output) must
+  fit; after it the actual cost must, else the run fails
   non-retryably with the row kept. Globally: `budgets.daily_usd` per UTC day, derived
   from the ledger so a restart changes nothing. The call that crosses the cap still
   returns its result; from then until 00:00 UTC every model call fails fast without
@@ -639,8 +701,8 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
-  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts (agent.ts to come); types.ts = ActionContext
-  src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger), types.ts (provider interface), adapters per provider type
+  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts (agent.ts to come); types.ts = ActionContext
+  src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call` and `decide`), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
   src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff; poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
@@ -671,6 +733,10 @@ Runtime notes
   calls `ctx.llm`; the service (`src/llm/service.ts`) does budgets, secret resolution,
   the adapter call and the ledger row. Adapters receive the JSON Schema as is
   (`output_config.format` on Anthropic, `json_schema` formats elsewhere).
+- `decide` runtime: the runner resolves `defaults.decide`, renders `state`, calls
+  `ctx.llm.decide()` and checks the answers against the questions; the service shares
+  the budget/ledger path with `call` and dispatches to the adapter's optional `decide`
+  method, which only `openrouter.ts` implements (a plain `fetch` to the Decisions API).
 - Distributed as a single tarball plus `node_modules` (or bundled with `tsup`) under
   `/opt/247-agent`; systemd unit unchanged (§12).
 
@@ -696,7 +762,10 @@ validated and runnable through `ctx.llm`, the cost ledger, `budget.max_usd`,
 `budgets.daily_usd` and `budget.exceeded` work, `providers:`/`pricing:` are
 cross-checked, `oa cost` and `GET /v1/cost` exist. Steps 3(b) and 3(c) are done: the
 `anthropic`, `openai` and `openrouter` adapters (`packages/core/src/llm/anthropic.ts`,
-`openai.ts`, `openrouter.ts`). Where the code is behind this document:
+`openai.ts`, `openrouter.ts`). The `decide` action (§5.3) is done: `actions/decide.ts`,
+`ctx.llm.decide()` in the service, the Decisions API in the OpenRouter adapter,
+`defaults.decide`, the provider-type cross-check and `docs/examples/decide-triage.yaml`.
+Where the code is behind this document:
 `batch: true` is rejected; the `agent` action validates `kind` only and has no runner; `retention` and
 `defaults.agent` validate but are not applied; there is no retention GC, no metrics, no
 sandbox wrapper;
@@ -711,3 +780,6 @@ rejected; `health.interval` in manifests is accepted but unused.
   matters.
 - Whether `general_change` needs approval by default. The config supports both; start
   with approval on.
+- Whether `decide` should also reach TypeSafe directly (a `typesafe` provider type
+  against their own endpoint) rather than only through OpenRouter. Start with OpenRouter:
+  one key, one ledger price source, and the wire protocol is the same.

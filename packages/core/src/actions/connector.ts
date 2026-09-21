@@ -6,7 +6,7 @@ import { NonRetryableError, type ActionContext } from './types.js';
 
 const NAME = /^[a-z][a-z0-9_-]*$/;
 
-/** ARCHITECTURE §5.4: one MCP tool call on a connector. `args` values take `${…}` templates. */
+/** ARCHITECTURE §5.5: one MCP tool call on a connector. `args` values take `${…}` templates. */
 export const ConnectorAction = z.strictObject({
   kind: z.literal('connector'),
   connector: z.string().regex(NAME, 'connector names are [a-z][a-z0-9_-]*'),

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { Sandbox } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
-import { Budgets, LlmDefaults, Pricing, Providers } from '../llm/config.js';
+import { Budgets, DecideDefaults, LlmDefaults, Pricing, Providers } from '../llm/config.js';
 import { DURATION } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
 import { Retry } from './schema.js';
@@ -40,6 +40,7 @@ export const AgentFile = z.strictObject({
       /** For `shell` actions without `sandbox`: `none` (default) or `bwrap`. */
       sandbox: Sandbox.prefault('none'),
       llm: LlmDefaults,
+      decide: DecideDefaults,
       agent: z.unknown().optional(),
     })
     .prefault({}),

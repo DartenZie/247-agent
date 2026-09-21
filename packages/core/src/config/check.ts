@@ -95,6 +95,7 @@ export function checkConfigFile(path: string): FileCheck[] {
       providers: r.config.providers,
       pricing,
       defaults: r.config.defaults.llm,
+      decideDefaults: r.config.defaults.decide,
       configDir: dirname(r.config.file),
     });
     out.push(

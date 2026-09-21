@@ -26,6 +26,24 @@ describe('resolvePricing', () => {
       cache_write: 0.5,
     });
   });
+
+  it('knows TypeSafe Jev, input only', () => {
+    const t = resolvePricing({});
+    const jev = t.get('typesafe/jev-1.13');
+    if (jev === undefined) {
+      throw new Error('unreachable');
+    }
+    expect(jev).toEqual({ input: 0.042, output: 0, cache_read: 0.042, cache_write: 0.042 });
+    expect(t.get('~typesafe/jev-latest')).toEqual(jev);
+    expect(
+      costUsd(jev, {
+        input: 1000,
+        output: 500,
+        cacheRead: 0,
+        cacheWrite: 0,
+      }),
+    ).toBeCloseTo(0.000042, 9);
+  });
 });
 
 describe('costUsd and helpers', () => {

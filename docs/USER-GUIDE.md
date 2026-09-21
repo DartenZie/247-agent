@@ -6,9 +6,11 @@ the config files and what to type at the shell.
 
 Status of the code today: everything that does not call a model works end to end
 (`shell`, `connector`, `wait`, `sequence`, cron/event/manual triggers, routing, state,
-secrets, retries, connectors, the CLI). `llm` and `agent` actions validate but have no
-runner yet, so a run of one fails with "no runner". Budgets, retention and the cost
-ledger are accepted in config but not applied. Section 10 lists the gaps.
+secrets, retries, connectors, the CLI), and so do the two single-call model actions:
+`llm` (Anthropic, OpenAI, OpenRouter) and `decide` (TypeSafe's Jev classifier through
+OpenRouter), with the cost ledger and budgets. The `agent` action validates but has no
+runner yet, so a run of one fails with "no runner". Retention is accepted in config but
+not applied. Section 10 lists the gaps.
 
 ## 1. What it does
 
@@ -119,9 +121,10 @@ The global file. Every key has a default; the full reference is
 | `defaults.retry` | Retry policy for tasks without their own (see 4.4) | 1 attempt |
 | `defaults.sandbox` | `none` or `bwrap` for `shell` actions without their own (see 5.1) | `none` |
 | `secrets` | Where secret values come from (see 4.6) | `{ backend: env }` |
-| `providers` | Model providers for `llm` actions: `name: { type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers? }` (see 5.5) | none |
-| `pricing` | USD per million tokens per model, merged over the built-in Claude table (see 5.5) | `{}` |
+| `providers` | Model providers for `llm` and `decide` actions: `name: { type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers? }` (see 5.5) | none |
+| `pricing` | USD per million tokens per model, merged over the built-in table (Claude, current OpenAI, Jev) (see 5.5) | `{}` |
 | `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
+| `defaults.decide` | `{ provider, model }` for `decide` actions without their own; the provider must be an `openrouter` one (see 5.6) | `model: typesafe/jev-1.13` |
 | `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
 | `defaults.agent`, `retention` | Accepted, not applied yet | |
 
@@ -406,13 +409,64 @@ so OpenRouter models need no price. Put `HTTP-Referer`/`X-Title` in the provider
 in strict mode: list every property in `required` and set `additionalProperties: false`
 on every object, or the call fails with the vendor's 400.
 
-### 5.6 `agent` (not runnable yet)
+### 5.6 `decide`
+
+Classification without text generation: TypeSafe's Jev answers typed questions about a
+`state` with calibrated probabilities, in under a second and for about a hundredth of an
+`llm` call. Use it where the step needs a label, a yes/no or a level, and route on the
+probabilities. It is served only by OpenRouter's Decisions API, so the provider must be
+an `openrouter` one.
+
+```yaml
+action:
+  kind: decide
+  provider: openrouter           # an openrouter provider; default defaults.decide.provider
+  model: typesafe/jev-1.13       # default defaults.decide.model
+  budget: { max_usd: 0.001 }
+  state:                         # what is judged: a string, object or array; strings are templated
+    subject: ${event.payload.subject}
+    body: ${event.payload.body}
+  questions:                     # static; no ${…} here
+    kind:
+      type: choice
+      instructions: What does the sender want done with the website?
+      criteria: { event_list_update: "…", general_change: "…", ignore: "Not a change request" }
+    urgent:
+      type: noul                 # yes/no
+      instructions: Does the sender need this done today?
+      criteria: { "true": "…", "false": "…" }   # optional; both sides or neither
+    anger:
+      type: score                # ordered levels, first is lowest
+      instructions: How upset is the sender?
+      criteria: [Calm, Annoyed, Furious]
+```
+
+The result is one answer per question id:
+
+```json
+{
+  "kind":   { "type": "choice", "choice": "general_change", "confidence": 0.8, "probabilities": { "general_change": 0.9, "…": 0.1 } },
+  "urgent": { "type": "noul", "noul": 0.97 },
+  "anger":  { "type": "score", "score": 1.05, "confidence": 0.92, "probabilities": { "1": 0.95, "2": 0.05 } }
+}
+```
+
+so `emit` routes with `` when: "result.kind.choice != 'ignore' && result.kind.confidence > `0.5`" ``
+and forwards `${result.urgent.noul}`. A `score` is the probability-weighted mean of the
+level indexes, not a level name. Rules that matter in practice: give every `choice` a
+fallback label (`ignore`, `other`), or off-topic input gets a confident wrong answer;
+write criteria as the policy you want followed literally; pick thresholds from real
+data, not the examples. The whole request must fit in 32k tokens. Budgets, the ledger
+and `oa cost` work as for `llm`; no `pricing:` entry is needed.
+[`examples/decide-triage.yaml`](examples/decide-triage.yaml) is a complete example.
+
+### 5.7 `agent` (not runnable yet)
 
 Accepted by `oa validate` so a complete workflow can be written now;
 [`examples/website-updates.yaml`](examples/website-updates.yaml) shows the intended
 shape: a Claude Agent SDK loop in a fresh git worktree with `tools`, `bash_allow`,
 `max_turns`, a `budget`, a `RESULT.json` contract and deterministic `post` gates. A run
-fails today with "no runner". See ARCHITECTURE §5.3 for the full field list.
+fails today with "no runner". See ARCHITECTURE §5.4 for the full field list.
 
 ## 6. Connectors
 
@@ -645,7 +699,7 @@ Run statuses: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`
   agent.yaml
   tasks.d/*.yaml
   connectors.d/*.yaml
-  prompts/*.md          # for llm/agent tasks, once they run
+  prompts/*.md          # system prompts for llm tasks (and agent tasks, once they run)
   schemas/*.json
 /var/lib/247-agent/
   state.db
@@ -716,7 +770,9 @@ call, edit the site with a scoped agent, gate on a build, ask for approval on ch
 over FTP, notify. Its non-model path runs today against fake connectors in
 `packages/core/src/integration.test.ts`.
 
-Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters, the cost ledger, budgets
+Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters, the
+`decide` action (Jev via OpenRouter's Decisions API,
+[`examples/decide-triage.yaml`](examples/decide-triage.yaml)), the cost ledger, budgets
 (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and
 `oa cost`.
 
@@ -729,8 +785,8 @@ Not implemented yet, in the planned order:
 3. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
    `health.interval` in manifests, `batch: true` for `llm`.
 
-Until then, model-backed steps have to be replaced by `shell` or `connector` tasks to
-run a workflow end to end.
+Until then, `agent` steps have to be replaced by `shell` or `connector` tasks to run a
+workflow end to end.
 
 ## 11. Troubleshooting
 
@@ -744,7 +800,11 @@ run a workflow end to end.
   Remember that a task ignores events from its own runs.
 - **Run failed with "secret … is not set".** The backend has no value for that name.
   With the `env` backend the variable is `<prefix><NAME>` upper-cased.
-- **Run failed with "no runner".** The task is `llm` or `agent`; see section 10.
+- **Run failed with "no runner".** The task is `agent`; see section 10.
+- **`decide` run failed with "cannot run decide actions" or `oa validate` says "decide
+  needs an openrouter provider".** Jev is only reachable through OpenRouter's Decisions
+  API; point `provider:` (or `defaults.decide.provider`) at a provider of type
+  `openrouter`.
 - **A `wait` resumed with the wrong event.** Tighten `for.filter`; match on
   `correlation_id` as the examples do.
 - **Templates render as literal text.** Inside a YAML flow mapping the `${…}` must be

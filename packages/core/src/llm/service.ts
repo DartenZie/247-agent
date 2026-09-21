@@ -10,7 +10,13 @@ import type { Logger } from '../log.js';
 import { SecretError, type SecretsBackend } from '../secrets/secrets.js';
 import type { PricedBy } from '../store/ledger.js';
 import type { Store } from '../store/store.js';
-import type { BudgetsConfig, LlmDefaultsConfig, ProviderConfigParsed } from './config.js';
+import {
+  DecideDefaults,
+  type BudgetsConfig,
+  type DecideDefaultsConfig,
+  type LlmDefaultsConfig,
+  type ProviderConfigParsed,
+} from './config.js';
 import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './errors.js';
 import {
   costUsd,
@@ -20,10 +26,14 @@ import {
   type PricingTable,
 } from './pricing.js';
 import type {
+  DecideCall,
+  DecideCallResult,
   LlmCall,
   LlmCallContext,
   LlmCallResult,
   LlmPort,
+  LlmProvider,
+  LlmUsage,
   ProviderFactories,
   ResolvedProvider,
 } from './types.js';
@@ -41,6 +51,8 @@ export interface LlmServiceOptions {
   providers: Readonly<Record<string, ProviderConfigParsed>>;
   pricing: PricingTable;
   defaults: LlmDefaultsConfig;
+  /** `defaults.decide`; the built-in defaults when omitted. */
+  decideDefaults?: DecideDefaultsConfig | undefined;
   budgets: BudgetsConfig;
   factories: ProviderFactories;
 }
@@ -48,19 +60,34 @@ export interface LlmServiceOptions {
 /** The event the daily circuit breaker emits, once per UTC day (ARCHITECTURE §9). */
 export const BUDGET_EXCEEDED = 'budget.exceeded';
 
+/** What `execute` needs to know about a call before and after the adapter runs it. */
+interface ExecuteSpec {
+  provider: string;
+  model: string;
+  maxUsd?: number | undefined;
+  /** Worst-case usage for the pre-call check, priced from the table. */
+  estimate: LlmUsage;
+  /** The structured log line's message. */
+  msg: 'llm.call' | 'llm.decide';
+}
+
 /**
  * The `LlmPort` implementation: prices, budgets and ledgers every call. Budget state is
  * derived from the ledger, so a restart changes nothing. Ordering per call: refuse on the
  * daily cap or a worst-case per-run overrun before contacting the provider; after the call,
- * write the row and trip the breaker if the day's spend crossed the cap.
+ * write the row and trip the breaker if the day's spend crossed the cap. `call` (a model
+ * completion) and `decide` (the Decisions API) differ only in the adapter method and the
+ * worst-case estimate; everything else is `execute`.
  */
 export class LlmService implements LlmPort {
   readonly defaults: LlmDefaultsConfig;
+  readonly decideDefaults: DecideDefaultsConfig;
   private readonly o: LlmServiceOptions;
 
   constructor(opts: LlmServiceOptions) {
     this.o = opts;
     this.defaults = opts.defaults;
+    this.decideDefaults = opts.decideDefaults ?? DecideDefaults.parse({});
   }
 
   providers(): string[] {
@@ -82,9 +109,83 @@ export class LlmService implements LlmPort {
   }
 
   async call(req: LlmCall, cctx: LlmCallContext): Promise<LlmCallResult> {
-    const cfg = this.o.providers[req.provider];
+    return this.execute(
+      {
+        provider: req.provider,
+        model: req.model,
+        maxUsd: req.maxUsd,
+        msg: 'llm.call',
+        estimate: {
+          input: estimateInputTokens((req.system ?? '') + req.input),
+          output: req.maxTokens,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+      },
+      cctx,
+      (adapter) =>
+        adapter.complete({
+          model: req.model,
+          system: req.system,
+          input: req.input,
+          outputSchema: req.outputSchema,
+          maxTokens: req.maxTokens,
+          effort: req.effort,
+          signal: cctx.signal,
+        }),
+      (res) => ({ stop_reason: res.stopReason }),
+    );
+  }
+
+  async decide(req: DecideCall, cctx: LlmCallContext): Promise<DecideCallResult> {
+    return this.execute(
+      {
+        provider: req.provider,
+        model: req.model,
+        maxUsd: req.maxUsd,
+        msg: 'llm.decide',
+        // Jev bills input only; the whole JSON body is what it tokenises.
+        estimate: {
+          input: estimateInputTokens(
+            JSON.stringify({ state: req.state, questions: req.questions }),
+          ),
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+      },
+      cctx,
+      (adapter) => {
+        if (adapter.decide === undefined) {
+          throw new ProviderUnavailableError(
+            `provider "${req.provider}" (type ${adapter.type}) cannot run decide actions: only openrouter providers reach the Decisions API`,
+          );
+        }
+        return adapter.decide({
+          model: req.model,
+          state: req.state,
+          questions: req.questions,
+          signal: cctx.signal,
+        });
+      },
+      (res) => ({ questions: Object.keys(req.questions).length, upstream: res.provider }),
+    );
+  }
+
+  /**
+   * Everything around one adapter call: provider and price lookup, the daily and per-run
+   * checks, secret resolution, the ledger row, the breaker, the log line, and the post-hoc
+   * budget check. `invoke` is the one adapter method the caller wants.
+   */
+  private async execute<T extends { usage: LlmUsage }>(
+    spec: ExecuteSpec,
+    cctx: LlmCallContext,
+    invoke: (adapter: LlmProvider) => Promise<T>,
+    logFields: (res: T) => Record<string, unknown>,
+  ): Promise<T & { usd: number; priced_by: PricedBy; ledgerId: number }> {
+    const cfg = this.o.providers[spec.provider];
     if (cfg === undefined) {
-      throw new ProviderUnavailableError(`unknown provider "${req.provider}"`);
+      throw new ProviderUnavailableError(`unknown provider "${spec.provider}"`);
     }
     const factory = this.o.factories[cfg.type];
     if (factory === undefined) {
@@ -92,10 +193,10 @@ export class LlmService implements LlmPort {
         `provider type "${cfg.type}" has no adapter in this build`,
       );
     }
-    const price = this.o.pricing.get(req.model);
+    const price = this.o.pricing.get(spec.model);
     if (price === undefined && cfg.type !== 'openrouter') {
       throw new UnpricedModelError(
-        `no price for model "${req.model}" on provider "${req.provider}": add a pricing entry in agent.yaml`,
+        `no price for model "${spec.model}" on provider "${spec.provider}": add a pricing entry in agent.yaml`,
       );
     }
 
@@ -111,40 +212,27 @@ export class LlmService implements LlmPort {
       );
     }
     const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
-    if (req.maxUsd !== undefined) {
-      if (spentRun >= req.maxUsd) {
+    if (spec.maxUsd !== undefined) {
+      if (spentRun >= spec.maxUsd) {
         throw new BudgetExceededError(
           'task',
-          `run budget of $${String(req.maxUsd)} already spent ($${spentRun.toFixed(4)})`,
+          `run budget of $${String(spec.maxUsd)} already spent ($${spentRun.toFixed(4)})`,
         );
       }
       if (price !== undefined) {
-        const estimate = costUsd(price, {
-          input: estimateInputTokens((req.system ?? '') + req.input),
-          output: req.maxTokens,
-          cacheRead: 0,
-          cacheWrite: 0,
-        });
-        if (spentRun + estimate > req.maxUsd) {
+        const estimate = costUsd(price, spec.estimate);
+        if (spentRun + estimate > spec.maxUsd) {
           throw new BudgetExceededError(
             'task',
-            `worst case $${estimate.toFixed(4)} would exceed the run budget of $${String(req.maxUsd)}; lower max_tokens or raise budget.max_usd`,
+            `worst case $${estimate.toFixed(4)} would exceed the run budget of $${String(spec.maxUsd)}; shorten the input, lower max_tokens or raise budget.max_usd`,
           );
         }
       }
     }
 
-    const provider = factory(this.resolveProvider(req.provider, cfg));
+    const adapter = factory(this.resolveProvider(spec.provider, cfg));
     const startedAt = Date.now();
-    const res = await provider.complete({
-      model: req.model,
-      system: req.system,
-      input: req.input,
-      outputSchema: req.outputSchema,
-      maxTokens: req.maxTokens,
-      effort: req.effort,
-      signal: cctx.signal,
-    });
+    const res = await invoke(adapter);
     const durationMs = Date.now() - startedAt;
 
     let usd: number;
@@ -163,8 +251,8 @@ export class LlmService implements LlmPort {
       const id = this.o.store.ledger.insert({
         run_id: cctx.run.id,
         task: cctx.task,
-        provider: req.provider,
-        model: req.model,
+        provider: spec.provider,
+        model: spec.model,
         in_tok: res.usage.input,
         out_tok: res.usage.output,
         cache_read: res.usage.cacheRead,
@@ -178,27 +266,27 @@ export class LlmService implements LlmPort {
       }
       return id;
     });
-    cctx.log.info('llm.call', {
-      provider: req.provider,
-      model: req.model,
+    cctx.log.info(spec.msg, {
+      provider: spec.provider,
+      model: spec.model,
       in_tok: res.usage.input,
       out_tok: res.usage.output,
       cache_read: res.usage.cacheRead,
       cache_write: res.usage.cacheWrite,
       usd,
       priced_by: pricedBy,
-      stop_reason: res.stopReason,
       duration_ms: durationMs,
+      ...logFields(res),
     });
     if (pricedBy === 'unpriced') {
       throw new UnpricedModelError(
-        `provider "${req.provider}" reported no cost for model "${req.model}" and it has no pricing entry; the tokens are in the ledger at $0`,
+        `provider "${spec.provider}" reported no cost for model "${spec.model}" and it has no pricing entry; the tokens are in the ledger at $0`,
       );
     }
-    if (req.maxUsd !== undefined && spentRun + usd > req.maxUsd) {
+    if (spec.maxUsd !== undefined && spentRun + usd > spec.maxUsd) {
       throw new BudgetExceededError(
         'task',
-        `run spent $${(spentRun + usd).toFixed(4)}, over its budget of $${String(req.maxUsd)}`,
+        `run spent $${(spentRun + usd).toFixed(4)}, over its budget of $${String(spec.maxUsd)}`,
       );
     }
     return { ...res, usd, priced_by: pricedBy, ledgerId };

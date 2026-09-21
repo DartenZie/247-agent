@@ -45,6 +45,15 @@ describe('parseAgent', () => {
       budgets: {},
     });
     expect(r.config.defaults.llm).toEqual({ max_tokens: 1024 });
+    expect(r.config.defaults.decide).toEqual({ model: 'typesafe/jev-1.13' });
+    const decide = parseAgent(
+      'defaults: { decide: { provider: openrouter } }\n',
+      '/srv/oa/agent.yaml',
+    );
+    expect(decide.ok && decide.config.defaults.decide).toEqual({
+      provider: 'openrouter',
+      model: 'typesafe/jev-1.13',
+    });
   });
 
   it('parses providers, pricing, defaults.llm and budgets, and rejects literal API keys', () => {
@@ -244,6 +253,52 @@ describe('checkConfigFile', () => {
       }),
     ]);
     expect(checkConfigFile(join(EXAMPLES, 'agent.yaml')).every((c) => c.ok)).toBe(true);
+  });
+
+  it('cross-checks decide tasks: the provider must be an openrouter one', () => {
+    expect(checkConfigFile(join(EXAMPLES, 'decide-triage.yaml'))).toEqual([
+      expect.objectContaining({ ok: true, kind: 'tasks', summary: '2 tasks' }),
+    ]);
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(
+      join(dir, 't.yaml'),
+      [
+        'tasks:',
+        '  - name: d',
+        '    trigger: { kind: manual }',
+        '    action:',
+        '      kind: decide',
+        '      state: ${event.payload}',
+        '      questions: { urgent: { type: noul, instructions: Urgent? } }',
+      ].join('\n'),
+    );
+    writeFileSync(
+      agent,
+      [
+        'tasks: t.yaml',
+        'providers: { p: { type: anthropic, api_key: "${secrets.k}" } }',
+        'defaults: { decide: { provider: p } }',
+      ].join('\n'),
+    );
+    expect(checkConfigFile(agent)[1]).toMatchObject({
+      ok: false,
+      kind: 'tasks',
+      issues: [
+        expect.objectContaining({
+          path: 'tasks[0].action.provider',
+          message: expect.stringMatching(/decide needs an openrouter provider/) as string,
+        }),
+      ],
+    });
+    writeFileSync(
+      agent,
+      [
+        'tasks: t.yaml',
+        'providers: { p: { type: openrouter, api_key: "${secrets.k}" } }',
+        'defaults: { decide: { provider: p } }',
+      ].join('\n'),
+    );
+    expect(checkConfigFile(agent).every((c) => c.ok)).toBe(true);
   });
 
   it('validates an agent file together with the tasks file it points at', () => {

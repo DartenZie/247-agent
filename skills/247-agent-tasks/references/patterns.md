@@ -121,7 +121,7 @@ op must carry the id into the reply payload.
 
 Run with `oa run rebuild_site --wait`.
 
-## Stand-in for a model step (until `llm`/`agent` run)
+## Stand-in for a model step (until `agent` runs, or to keep a test offline)
 
 Keep the same name, trigger, filter and `emit` so downstream tasks are exercised
 unchanged; replace only the action. This is how the integration test drives the

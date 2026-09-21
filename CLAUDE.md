@@ -2,7 +2,7 @@
 
 A 24/7, config-driven automation daemon for a single Linux server. Tasks are declared in
 YAML: each has a trigger (cron, event, manual) and an action (`shell`, `connector`, `llm`,
-`agent`, `wait`, `sequence`). Deterministic work never touches a model; model calls are
+`decide`, `agent`, `wait`, `sequence`). Deterministic work never touches a model; model calls are
 tiered and budgeted per task. Sub-programs ("connectors") emit events to the core and
 expose operations as MCP servers.
 
@@ -19,7 +19,10 @@ truth for concepts, action semantics, the connector protocol and the config form
   budgets and ledgers every call and dispatches to one adapter per provider type:
   `@anthropic-ai/sdk` (structured outputs via `client.messages.parse()` /
   `output_config.format`), `openai` for OpenAI and OpenRouter. Providers are named in
-  `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `agent` actions use
+  `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `decide` actions go
+  through the same port (`ctx.llm.decide`) to OpenRouter's Decisions API
+  (`POST /api/alpha/decisions`, plain `fetch`, TypeSafe's Jev classifier); only the
+  `openrouter` provider type serves it. `agent` actions use
   `@anthropic-ai/claude-agent-sdk`. MCP client from `@modelcontextprotocol/sdk`.
 - Target runtime: systemd service on Linux, HTTP API over a Unix socket.
 
@@ -40,7 +43,7 @@ skills/                      agent skills for working with 247-agent (linked fro
 - Everything goes through events. Tasks reference event types, never other tasks.
   Do not add direct task-to-task calls.
 - No LLM in the core's control flow. Matching, dedup, routing, retries, publishing are
-  code. A model call happens only inside an `llm` or `agent` action.
+  code. A model call happens only inside an `llm`, `decide` or `agent` action.
 - Every model call records usage in the ledger and respects the task's `budget` and the
   global daily cap. Never add an unbudgeted call.
 - Agents run in a fresh git worktree with an explicit tool/bash allowlist, produce a
@@ -54,8 +57,10 @@ skills/                      agent skills for working with 247-agent (linked fro
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
   Other providers' ids are used verbatim and need a `pricing:` entry unless the built-in
-  table knows them (current OpenAI models) or the provider reports cost (OpenRouter); a
-  model without a price fails `oa validate`.
+  table knows them (current OpenAI models, `typesafe/jev-1.13`) or the provider reports
+  cost (OpenRouter); a model without a price fails `oa validate`. `decide` defaults to
+  `typesafe/jev-1.13`, which is classification-only and lives behind the Decisions API,
+  never Chat Completions.
 
 ## Commands
 

@@ -132,7 +132,7 @@ export function backoffDelay(policy: RetryConfig, attempt: number): number {
 }
 
 /**
- * Renders a task's `emit` rules (ARCHITECTURE §5.7) into events to publish. Throws
+ * Renders a task's `emit` rules (ARCHITECTURE §5.8) into events to publish. Throws
  * `NonRetryableError` when a rule cannot be rendered.
  */
 export function renderEmits(

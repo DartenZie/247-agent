@@ -124,10 +124,14 @@ the sequence; after a restart or retry it resumes there. Use a sequence only for
 tightly coupled steps; anything another workflow might observe should be its own task
 and event.
 
-### `llm` and `agent`
+### `llm`, `decide` and `agent`
 
-Validated for `kind` only today; no runner yet. Full shape and design rules in the
-`247-agent-model-actions` skill.
+`llm` (one model call, JSON out) and `decide` (typed questions to a classification-only
+model, probabilities back) run today through the budgeted `ctx.llm` port; `agent` is
+validated for `kind` only and has no runner yet. A `decide` result is the answers map
+(`result.<question>.choice`, `.confidence`, `.noul`, `.score`), so `emit.when` is where
+the threshold lives. Full shapes and design rules in the `247-agent-model-actions`
+skill.
 
 ## Routing: `emit`
 

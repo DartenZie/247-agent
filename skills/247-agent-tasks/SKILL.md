@@ -1,6 +1,6 @@
 ---
 name: 247-agent-tasks
-description: "Write, edit and review 247-agent task definitions (the `tasks:` YAML files the daemon runs). Use this whenever the user wants a new workflow or automation on the 247-agent daemon, wants to change a trigger (cron, event, manual), an action (`shell`, `connector`, `wait`, `sequence`, `llm`, `agent`), an `emit` routing rule, `state_updates`, a `${…}` template or a JMESPath `filter`/`when`, or asks why a task never runs or emits the wrong thing. Also use it when the user says \"add a task\", \"run X every N minutes\", \"when an email arrives do Y\", \"approval gate\", \"chain these steps\", or edits any file under `tasks.d/`, `tasks.yaml` or `docs/examples/*.yaml`."
+description: "Write, edit and review 247-agent task definitions (the `tasks:` YAML files the daemon runs). Use this whenever the user wants a new workflow or automation on the 247-agent daemon, wants to change a trigger (cron, event, manual), an action (`shell`, `connector`, `wait`, `sequence`, `llm`, `decide`, `agent`), an `emit` routing rule, `state_updates`, a `${…}` template or a JMESPath `filter`/`when`, or asks why a task never runs or emits the wrong thing. Also use it when the user says \"add a task\", \"run X every N minutes\", \"when an email arrives do Y\", \"approval gate\", \"chain these steps\", or edits any file under `tasks.d/`, `tasks.yaml` or `docs/examples/*.yaml`."
 ---
 
 # 247-agent tasks
@@ -21,10 +21,11 @@ never invent a way for one task to reference another by name.
    the reference workflow is `docs/examples/website-updates.yaml`; the smallest
    runnable example is `docs/examples/hello-world/hello-world.yaml`.
 2. **Decide the tier before writing anything.** If the step can be done by a command or a
-   connector operation, it is `shell` or `connector`. A model is called only inside an
-   `llm` (one call, JSON out) or `agent` (tool loop in a worktree) action, and only where
-   judgement is needed. Filtering, dedup, routing, retries and publishing are never model
-   work. For `llm`/`agent` specifics, read the `247-agent-model-actions` skill.
+   connector operation, it is `shell` or `connector`. A model is called only inside a
+   `decide` (typed questions, probabilities out, no text), an `llm` (one call, JSON out)
+   or an `agent` (tool loop in a worktree) action, and only where judgement is needed.
+   Filtering, dedup, routing, retries and publishing are never model work. For
+   `decide`/`llm`/`agent` specifics, read the `247-agent-model-actions` skill.
 3. **Put relevance checks in the trigger `filter`**, not in a prompt or a script. The
    filter is a bare JMESPath over the whole event (`payload.from == 'x@y.cz'`), it is
    cheap, and a non-match costs nothing.
@@ -75,11 +76,12 @@ never invent a way for one task to reference another by name.
 
 ## What is runnable today
 
-`shell`, `connector`, `wait`, `sequence` and all three trigger kinds run end to end.
-`llm` and `agent` validate (only `kind` is checked) but have no runner, so a run of one
-fails with "no runner". When a workflow needs a model step now, keep the real `llm`/
-`agent` task in the file for the intended shape and, for testing, use the stand-in
-pattern in `references/patterns.md` (a `shell` task with the same trigger and `emit`).
+`shell`, `connector`, `wait`, `sequence`, `llm`, `decide` and all three trigger kinds run
+end to end. `agent` validates (only `kind` is checked) but has no runner, so a run of one
+fails with "no runner". When a workflow needs an agent step now, keep the real `agent`
+task in the file for the intended shape and, for testing, use the stand-in pattern in
+`references/patterns.md` (a `shell` task with the same trigger and `emit`); the same
+stand-in keeps a model out of any test.
 
 ## Review checklist
 
@@ -96,5 +98,5 @@ Before declaring a task done, check:
 - `oa validate` passes on the file **and** on `docs/examples/*.yaml` plus
   `docs/examples/connectors.d/*.yaml` if you touched anything shared.
 
-Source of truth when in doubt: `docs/ARCHITECTURE.md` §3, §5, §5.7 and
+Source of truth when in doubt: `docs/ARCHITECTURE.md` §3, §5, §5.8 and
 `docs/USER-GUIDE.md` §4–§5 in this repo.

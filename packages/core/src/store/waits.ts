@@ -4,7 +4,7 @@ import type { JsonValue } from './types.js';
 
 export type WaitOutcome = 'matched' | 'timeout';
 
-/** A suspended run (ARCHITECTURE §5.5): what it waits for and how to pick up afterwards. */
+/** A suspended run (ARCHITECTURE §5.6): what it waits for and how to pick up afterwards. */
 export interface WaitRecord {
   run_id: string;
   task: string;

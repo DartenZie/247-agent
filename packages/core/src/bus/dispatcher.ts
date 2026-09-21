@@ -44,7 +44,7 @@ function filterView(event: EventRecord): Omit<EventRecord, 'seq'> {
  * transaction per batch: read, match, insert runs, advance cursor. A crash before commit
  * replays the batch; `UNIQUE(task, event_id)` makes the replay a no-op.
  *
- * Also ends waits (ARCHITECTURE §5.5): an event matching a `waiting` run's wait, or a wait
+ * Also ends waits (ARCHITECTURE §5.6): an event matching a `waiting` run's wait, or a wait
  * past its `expires_at`, marks the wait resolved and re-queues the run, which is handed to
  * the executor like any other queued run.
  */

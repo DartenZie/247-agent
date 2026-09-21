@@ -6,7 +6,7 @@ import type { EventRecord, JsonValue } from '../store/types.js';
 import { NonRetryableError, type ActionContext, type ResumeInfo } from './types.js';
 
 /**
- * ARCHITECTURE §5.5. The run goes to `waiting` until an event of `for.type` (a pattern)
+ * ARCHITECTURE §5.6. The run goes to `waiting` until an event of `for.type` (a pattern)
  * passes `for.filter` (a JMESPath over the event, templated first: `${event.correlation_id}`
  * is the *current* run's event) or `timeout` elapses. The wait survives restarts.
  */

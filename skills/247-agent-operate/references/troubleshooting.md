@@ -9,7 +9,8 @@
 | cron task ran nothing while the daemon was down | Missed ticks are not replayed | `oa run <task>` once |
 | event task never runs | Filter false or throws, type mismatch, or the event's `source` is the task's own runs | `oa emit <type> payload.json` and inspect; check the filter with backtick literals for numbers/booleans; remember `*` is one segment |
 | `secret "x" is not set` | Backend has no value | `env` backend: `<prefix><X>` upper-cased; `file`: key in the YAML/JSON map; systemd: `LoadCredential=x:…` |
-| `no runner` | The task is `llm` or `agent` | Not runnable yet; use a `shell` stand-in for testing |
+| `no runner` | The task is `agent` | Not runnable yet; use a `shell` stand-in for testing |
+| `cannot run decide actions` / `decide needs an openrouter provider` | A `decide` task points at a non-OpenRouter provider | Only OpenRouter serves the Decisions API; set `provider:` or `defaults.decide.provider` to an `openrouter` one |
 | `op … not allowed` | Op missing from the manifest's `ops` | Add it or use `ops: []` |
 | connector … is down (retried) | Process crashed or never started | Read `connector.output` lines; run the connector by hand with the `OA_*` env |
 | a `builtin: poller` never emits | Target down, op error, or result shape | Look for `poller.failed` lines (the `error` field says which); `poller.polled` with `new: 0` means nothing changed; `first_run: skip` seeds silently. Seen keys: `GET /v1/state/<poller>/seen` |

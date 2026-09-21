@@ -62,7 +62,7 @@ node skills/247-agent-operate/scripts/oa-api.mjs GET '/v1/runs?task=fetch_email&
 
 To exercise a whole workflow without a model or the network, replace the connectors
 with the fakes in `packages/core/test/fixtures/` (inline manifests with
-`exec: [node, …/fake-email.ts]`) and the `llm`/`agent` tasks with `shell` stand-ins
+`exec: [node, …/fake-email.ts]`) and the `llm`/`decide`/`agent` tasks with `shell` stand-ins
 that emit the same events. `packages/core/src/integration.test.ts` is a complete
 example of both and is the pattern for a new integration test.
 

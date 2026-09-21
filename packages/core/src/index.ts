@@ -103,8 +103,16 @@ export { runShell, ShellAction, ShellError, type ShellActionConfig } from './act
 export { runConnector, ConnectorAction, type ConnectorActionConfig } from './actions/connector.js';
 export { runLlm, LlmAction, type LlmActionConfig } from './actions/llm.js';
 export {
+  runDecide,
+  DecideAction,
+  DecideQuestionSchema,
+  type DecideActionConfig,
+} from './actions/decide.js';
+export {
   Budget,
   Budgets,
+  DecideDefaults,
+  DEFAULT_DECIDE_MODEL,
   EFFORTS,
   LlmDefaults,
   ModelPrice,
@@ -114,6 +122,7 @@ export {
   Providers,
   type BudgetConfig,
   type BudgetsConfig,
+  type DecideDefaultsConfig,
   type Effort,
   type LlmDefaultsConfig,
   type ModelPriceConfig,
@@ -145,6 +154,13 @@ export { createOpenRouterProvider, openrouterProvider } from './llm/openrouter.j
 export { normaliseUsage, type OpenAiCompatOptions, type RawUsage } from './llm/openai-compat.js';
 export { isReasoningModel, supportsEffort } from './llm/models.js';
 export type {
+  DecideAnswer,
+  DecideCall,
+  DecideCallResult,
+  DecideQuestion,
+  DecideRequest,
+  DecideResponse,
+  DecideState,
   LlmCall,
   LlmCallContext,
   LlmCallResult,
