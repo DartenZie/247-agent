@@ -1,6 +1,7 @@
 /**
  * A fake email connector: `fetch_new` returns the mails listed in the manifest's `config`
- * with a uid above `since_uid`; `mark_read` is a no-op. Never touches the network.
+ * with a uid above `since_uid`; `mark_read` is a no-op; `send` records the mail in the
+ * `sent` state key so tests can see what was said. Never touches the network.
  */
 import { z } from 'zod';
 
@@ -38,6 +39,25 @@ await runConnector({
         name: 'mark_read',
         input: { message_id: z.string() },
         handler: () => ({ ok: true }),
+      }),
+      defineTool({
+        name: 'send',
+        input: {
+          to: z.union([z.string(), z.array(z.string())]),
+          subject: z.string(),
+          text: z.string().optional(),
+          html: z.string().optional(),
+          in_reply_to: z.string().optional(),
+        },
+        handler: async (args) => {
+          const sent = ((await rt.core.getState('sent')) ?? []) as JsonValue[];
+          const message_id = `<fake-${String(sent.length + 1)}@example.com>`;
+          sent.push({ ...args, message_id } as unknown as JsonValue);
+          await rt.core.putState('sent', sent);
+          const to = Array.isArray(args.to) ? args.to : [args.to];
+          rt.log(`send to=${to.join(',')} subject=${args.subject}`);
+          return { message_id, accepted: to, rejected: [] };
+        },
       }),
     ];
   },

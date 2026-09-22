@@ -774,19 +774,14 @@ Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters,
 `decide` action (Jev via OpenRouter's Decisions API,
 [`examples/decide-triage.yaml`](examples/decide-triage.yaml)), the cost ledger, budgets
 (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and
-`oa cost`.
+`oa cost`; the `agent` action over ACP; and the real connectors under `connectors/`:
+`email` (IMAP/POP3 in, SMTP out, [`connectors/email/README.md`](../connectors/email/README.md)),
+`ftp` ([`connectors/ftp/README.md`](../connectors/ftp/README.md)) and `chat` (a Telegram
+bot for the approval gate, [`connectors/chat/README.md`](../connectors/chat/README.md)).
 
-Not implemented yet, in the planned order:
-
-1. The `agent` action.
-2. A real `chat` connector under `connectors/` (the `email` connector is there:
-   IMAP/POP3 in, SMTP out, see
-   [`connectors/email/README.md`](../connectors/email/README.md)).
-3. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
-   `health.interval` in manifests, `batch: true` for `llm`.
-
-Until then, `agent` steps have to be replaced by `shell` or `connector` tasks to run a
-workflow end to end.
+Not implemented yet: retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of
+connectors, `health.interval` in manifests, `batch: true` for `llm`, a Matrix backend for
+`chat`.
 
 ## 11. Troubleshooting
 

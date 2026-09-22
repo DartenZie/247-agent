@@ -1,9 +1,17 @@
-# Chat connector manifest: a Telegram/Matrix bot that asks questions and relays replies.
+# Chat connector manifest (ARCHITECTURE §6): a Telegram bot that relays the chat's messages
+# as chat.message events, asks questions with inline buttons and emits the answers as
+# chat.reply. Full config reference: connectors/chat/README.md.
 name: chat
 exec: ["node", "connectors/chat/dist/main.js"]
 transport: stdio
 emits: [chat.message, chat.reply]
 ops: [send, ask]
 config:
-  token: "${secrets.chat_token}"
-  chat_id: "${secrets.chat_id}"
+  token: "${secrets.chat_token}"        # from @BotFather
+  chat_id: "${secrets.chat_id}"         # the one chat the bot listens to and posts in
+  # backend: telegram                   # the only backend today
+  # allowed_chat_ids: []                # more chats to relay; send/ask may target them with chat_id
+  # poll_timeout: 30                    # getUpdates long-poll seconds (0..50)
+  # initial: none                       # first start: skip the backlog, or `all`
+  # ask_options: [Approve, Reject]      # default buttons; the first one means approved
+restart: { base: 1s, max: 60s }

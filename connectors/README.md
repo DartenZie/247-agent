@@ -16,7 +16,7 @@ manifest `config` block and the shape of its ops and events.
 |---|---|---|---|
 | [`email`](email/README.md) | done | `email.received` (fanned out by a cron task) | `fetch_new`, `mark_read`, `send` |
 | [`ftp`](ftp/README.md) | done | none (a task fans `list` out, see its example) | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir` over SFTP, FTP or FTPS, confined to a `root` |
-| `chat` (Telegram or Matrix) | planned | `chat.message`, `chat.reply` | `send`, `ask` |
+| [`chat`](chat/README.md) | done (Telegram; Matrix planned behind `backend`) | `chat.message` (every message in the configured chat), `chat.reply` (the answer to an `ask`, with the `correlation_id`) | `send`, `ask` (inline Approve/Reject buttons or custom options) |
 | `github`, `jira` | planned | via `poller` | their official MCP servers |
 | `webhook` | planned | generic HTTP in | none |
 | `poller` | planned, built into the core | one event per new item of any op | none |

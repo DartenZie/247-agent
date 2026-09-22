@@ -583,9 +583,13 @@ Connectors: `email` (`connectors/email`, done: IMAP or POP3 in, SMTP out, ops `f
 `mark_read`, `send`; the footer is appended to every outgoing mail; `README.md` there is
 the config reference); `ftp` (`connectors/ftp`, done: SFTP, FTP or FTPS; ops `list`,
 `stat`, `read`, `write`, `delete`, `rename`, `mkdir`, every path confined to a configured
-`root`; no events, a task fans `list` out). Planned: `chat` (Telegram or Matrix; emits `chat.message`,
-`chat.reply`; ops `send`, `ask`), `github`, `jira` (both thin wrappers or direct use of
-their official MCP servers + `poller`), `webhook` (generic HTTP in), `poller` (built-in).
+`root`; no events, a task fans `list` out); `chat` (`connectors/chat`, done: a Telegram bot
+over the Bot API with long polling, the `getUpdates` offset and the open questions kept in
+state; emits `chat.message` for every message in the configured chat and `chat.reply`,
+carrying the `correlation_id` an `ask` received, when a button is tapped or an option is
+typed as a reply; ops `send`, `ask`; `backend: telegram` leaves room for Matrix). Planned:
+`github`, `jira` (both thin wrappers or direct use of their official MCP servers +
+`poller`), `webhook` (generic HTTP in), `poller` (built-in).
 
 ## 7. Configuration layout
 
@@ -820,7 +824,7 @@ packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
 connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
 connectors/ftp/          # ssh2-sftp-client (SFTP) + basic-ftp (FTP/FTPS), paths confined to a root
-connectors/chat/         # grammy (Telegram) or matrix-js-sdk
+connectors/chat/         # Telegram Bot API over fetch (long polling), offset and pending questions in state
 docs/                        # ARCHITECTURE.md, examples/
 ```
 
@@ -862,12 +866,12 @@ Runtime notes
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
-Status: steps 1, 2 and 5 (minus a real `chat` connector) are done: `shell`, `connector`,
+Status: steps 1, 2 and 5 are done: `shell`, `connector`,
 `wait` and `sequence` actions, `${…}` templating, `emit` routing, the state KV with
 `/v1/state`, secrets backends, `retry` with recovery by policy, the connector supervisor,
-the built-in `poller`, `tasks.d`/`connectors.d` merging, the connector SDK, the `email`
-connector, and an integration test that runs the non-LLM path of the website workflow on a
-real daemon with fake connectors. Step 3(a) is done: the `llm` action is fully
+the built-in `poller`, `tasks.d`/`connectors.d` merging, the connector SDK, the `email`,
+`ftp` and `chat` (Telegram) connectors, and an integration test that runs the non-LLM path
+of the website workflow on a real daemon with fake connectors. Step 3(a) is done: the `llm` action is fully
 validated and runnable through `ctx.llm`, the cost ledger, `budget.max_usd`,
 `budgets.daily_usd` and `budget.exceeded` work, `providers:`/`pricing:` are
 cross-checked, `oa cost` and `GET /v1/cost` exist. Steps 3(b) and 3(c) are done: the

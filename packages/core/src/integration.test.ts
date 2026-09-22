@@ -282,7 +282,7 @@ describe('website workflow without a model', () => {
     expect(byTask.get('publish_site')?.result).toBe('published');
     expect(byTask.get('approve_general_change')?.result).toMatchObject({
       steps: [
-        { asked: true, question: expect.stringContaining('Spring event') as string },
+        { message_id: 1, chat_id: '1', options: ['Approve', 'Reject'] },
         { type: 'chat.reply', payload: { approved: true, correlation_id: first.correlation_id } },
         'git push origin HEAD:main',
       ],
@@ -316,6 +316,9 @@ describe('website workflow without a model', () => {
     expect((await api.getState('email', 'last_uid'))?.value).toBe(2);
     expect((await api.getState('chat', 'sent'))?.value).toEqual([
       '[247-agent] task.publish_site.succeeded: ',
+    ]);
+    expect((await api.getState('chat', 'asked'))?.value).toEqual([
+      expect.stringContaining('Spring event') as string,
     ]);
 
     // One correlation id from the manual run to the last lifecycle event, chat reply included.
