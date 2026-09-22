@@ -42,9 +42,11 @@ core is the client, protocol version 1). It serves no ops and emits no events, s
 and `emits` must be empty; `config`/`OA_CONFIG_JSON` are not needed. Same lifecycle as any
 process connector: crash backoff, `oa connector restart` to re-read a rotated key,
 stderr as `connector.output`; `oa connector list` shows `acp` as its transport. Other
-agents: `gemini --experimental-acp`, `codex-acp`, and the list at agentclientprotocol.com.
-The task's `tools`/`bash_allow` policy answers the agent's permission requests, so prefer
-agents that ask before acting.
+agents: Codex (`docs/examples/connectors.d/codex.yaml`: `@agentclientprotocol/codex-acp`,
+configured through the `CODEX_CONFIG` JSON in `env`, used with `unasked_execute:
+sandboxed` on the action), `gemini --experimental-acp`, and the list at
+agentclientprotocol.com. The task's `tools`/`bash_allow` policy answers the agent's
+permission requests, so prefer agents that ask before acting.
 
 ## Environment the supervisor provides
 

@@ -15,6 +15,14 @@ export interface AgentPolicy {
   tools: readonly ToolKind[];
   bashAllow: readonly string[];
   workspace: string;
+  /**
+   * What to make of an `execute` call the agent ran without asking. `judge` (default):
+   * its command must pass `bashAllow` like one that asked. `sandboxed`: the agent's own
+   * sandbox already confined it (no writes outside the workspace, no network: what Codex
+   * enforces at the OS level for commands it does not ask about), so only its kind and
+   * paths are judged. Calls that ask are always judged in full.
+   */
+  unaskedExecute: 'judge' | 'sandboxed';
 }
 
 /** `optionId` is what to answer: an offered option, or `PERMISSION_CANCELLED`. */
@@ -22,26 +30,43 @@ export type PermissionDecision =
   { allow: true; optionId: string } | { allow: false; optionId: string; reason: string };
 
 /**
- * Shell syntax that would run something other than the allowed program: command
- * separators and chaining, pipes, background, redirections, substitutions, line breaks.
- * Quoting does not exempt it (`-m "a; b"` is refused too): the core does not parse shell.
+ * Shell syntax that would run something other than the visible programs: redirections,
+ * substitutions, line breaks. Never allowed except in an exact entry, quoted or not: the
+ * core does not parse shell.
  */
-const SHELL_OPERATORS = /[;&|<>`\n\r]|\$\(|\$\{/;
+const SHELL_UNSAFE = /[<>`\n\r]|\$\(|\$\{/;
 
 /**
- * True when `command` is an `allow` entry itself, or starts with one followed by whitespace
- * and contains no shell operators. Only an exact entry can therefore carry `&&`, `|`, `$(`
- * and the like, so `bash_allow: ["npm run build"]` never admits `npm run build && curl …`.
+ * Operators that chain whole commands: `&&`, `||`, `|`, `;`, `&`. A linear chain is judged
+ * segment by segment. Splitting ignores quoting on purpose, which only ever refuses more:
+ * a quoted operator yields a segment that starts mid-argument and matches no entry.
+ */
+const CHAIN = /\s*(?:&&|\|\||\||;|&)\s*/;
+
+function segmentAllowed(segment: string, allow: readonly string[]): boolean {
+  return (
+    allow.includes(segment) ||
+    allow.some((p) => segment.startsWith(p + ' ') || segment.startsWith(p + '\t'))
+  );
+}
+
+/**
+ * True when `command` is an `allow` entry itself, or a linear chain (`a && b | c; d`) in
+ * which every segment is an entry or starts with one followed by whitespace, with no
+ * redirection, substitution or line break anywhere. Only an exact entry can carry those,
+ * so `bash_allow: ["npm run build"]` admits `git status && npm run build` only when
+ * `git status` is listed too, and never `npm run build > ~/.profile` or `… $(curl …)`.
  */
 export function commandAllowed(command: string, allow: readonly string[]): boolean {
   const c = command.trim();
   if (allow.includes(c)) {
     return true;
   }
-  if (SHELL_OPERATORS.test(c)) {
+  if (SHELL_UNSAFE.test(c)) {
     return false;
   }
-  return allow.some((p) => c.startsWith(p + ' ') || c.startsWith(p + '\t'));
+  const segments = c.split(CHAIN);
+  return segments.every((s) => s !== '' && segmentAllowed(s, allow));
 }
 
 function pick(
@@ -66,14 +91,22 @@ export interface JudgedCall {
 
 /**
  * Why `call` falls outside the policy, or undefined when it does not. An `execute` call
- * without a known command cannot be judged on its command (only on its kind and paths).
+ * without a known command cannot be judged on its command (only on its kind and paths);
+ * neither is one the agent ran without asking (`asked: false`) under
+ * `unaskedExecute: sandboxed`.
  */
-export function policyViolation(policy: AgentPolicy, call: JudgedCall): string | undefined {
+export function policyViolation(
+  policy: AgentPolicy,
+  call: JudgedCall,
+  { asked }: { asked: boolean } = { asked: true },
+): string | undefined {
   if (!policy.tools.includes(call.toolKind)) {
     return `tool kind "${call.toolKind}" is not in tools`;
   }
+  const judgeCommand = asked || policy.unaskedExecute === 'judge';
   if (
     call.toolKind === 'execute' &&
+    judgeCommand &&
     call.command !== undefined &&
     !commandAllowed(call.command, policy.bashAllow)
   ) {

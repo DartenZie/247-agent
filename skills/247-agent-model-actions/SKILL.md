@@ -156,8 +156,10 @@ Non-negotiables, because they are what make an agent safe to run unattended:
   removed on failure, kept on success. The agent never edits the base checkout.
 - **`tools` + `bash_allow` is the whole capability surface**, judged per permission
   request and never granted "always"; a tool call the agent ran without asking is judged
-  after the fact and a violation fails the run. Grant the minimum; the prompt is not a
-  security boundary. (`mcp_servers` must stay empty until the MCP proxy exists.)
+  after the fact and a violation fails the run (`unasked_execute: sandboxed` relaxes only
+  the command check, only for Codex, whose own sandbox confines what it does not ask
+  about). Grant the minimum; the prompt is not a security boundary. (`mcp_servers` must
+  stay empty until the MCP proxy exists.)
 - **The agent never holds deploy secrets and never publishes.** It edits, a `post` gate
   proves the build still works, a commit records it, and a separate `shell` task ships
   it. Rollback is `git revert` plus republish. The model key lives in the connector

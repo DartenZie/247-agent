@@ -132,11 +132,13 @@ describe('AgentAction schema', () => {
     const parsed = AgentAction.parse(action);
     expect(parsed).toMatchObject({
       bash_allow: ['npm run build'],
+      unasked_execute: 'judge',
       mcp_servers: [],
       result: { path: 'RESULT.json' },
       post: [],
     });
     expect(AgentAction.safeParse({ ...action, runtime: 'acp' }).success).toBe(false);
+    expect(AgentAction.safeParse({ ...action, unasked_execute: 'trust' }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, tools: [] }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, mcp_servers: ['email'] }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, system_file: 'p/${event.x}.md' }).success).toBe(
@@ -368,6 +370,59 @@ describe('runAgent', () => {
     expect(agents.cancels).toBe(1);
     expect(lines.find((l) => l.msg === 'agent.policy_violation')).toMatchObject({ id: 'c1' });
     expect(existsSync(join(workDir, 'run_1'))).toBe(false);
+  });
+
+  it('under unasked_execute: sandboxed, trusts the sandbox for unasked commands but still judges asked ones', async () => {
+    const sandboxed = { ...action, unasked_execute: 'sandboxed' };
+    const unasked = (id: string, command: string) => ({
+      kind: 'tool_call' as const,
+      id,
+      title: command,
+      toolKind: 'execute' as const,
+      status: 'completed' as const,
+      command,
+      locations: [] as string[],
+    });
+    // Codex-style: sandboxed reads chained with && run without asking; an escape asks.
+    const agents = fakeAgents(async function* (env) {
+      yield unasked('c1', 'git status && sed -n 1,40p data/events.yaml');
+      const escape = {
+        id: 'c2',
+        title: 'curl http://x',
+        toolKind: 'execute' as const,
+        locations: [],
+      };
+      yield { kind: 'tool_call', ...escape, status: 'pending', command: 'curl http://x' };
+      env.ask({ toolCall: { ...escape, command: 'curl http://x' }, options: [] });
+      yield {
+        kind: 'tool_call_update',
+        id: 'c2',
+        status: 'failed',
+        toolKind: undefined,
+        command: undefined,
+        locations: undefined,
+      };
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop();
+    }, workDir);
+    await expect(runAgent(sandboxed, ctx(agents))).resolves.toMatchObject({ status: 'done' });
+    expect(agents.cancels).toBe(0);
+    expect(lines.find((l) => l.msg === 'agent.policy_violation')).toBeUndefined();
+    expect(lines.find((l) => l.msg === 'agent.permission')).toMatchObject({
+      id: 'c2',
+      allowed: false,
+      reason: expect.stringMatching(/bash_allow/) as string,
+    });
+
+    // Kind and paths are still judged for an unasked call.
+    const outside = fakeAgents(async function* (env) {
+      yield { ...unasked('c3', 'cat /etc/passwd'), locations: ['/etc/passwd'] };
+      await sleep(5);
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent(sandboxed, ctx(outside)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(String(err)).toMatch(/without asking \(path outside the workspace/);
   });
 
   it('does not judge a call the agent asked about, nor an execute call with no known command', async () => {

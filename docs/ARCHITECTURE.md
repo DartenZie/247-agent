@@ -292,6 +292,7 @@ action:
     branch: main
   tools: [read, edit, search, execute]   # ACP tool kinds the agent may use; the rest is refused
   bash_allow: ["npm run build", "npm test", "git status", "git diff"]   # what `execute` may run
+  unasked_execute: judge           # judge (default) | sandboxed: what an unasked `execute` call is held to
   mcp_servers: []                  # connector ops as agent tools: planned, must be empty today
   system_file: prompts/agent_event_list.md   # static; prepended to the prompt (ACP has no system channel)
   prompt: |
@@ -319,24 +320,36 @@ manifest's `env`); the core never talks to a model provider for an `agent` actio
 
 **Policy (the capability surface).** Every permission request is judged per call, never
 `allow_always`: the tool's kind must be in `tools`; an `execute` call's command
-(`rawInput.command`, else the title) must be one of `bash_allow` exactly, or start with one
-followed by a space and contain no shell operator (`;`, `&`, `|`, `<`, `>`, backticks,
-`$(`, `${`, line breaks; quoting does not exempt them, the core does not parse shell), so
-`npm run build && curl … | sh` is refused under `["npm run build"]`; every reported path
-must lie inside the workspace. Anything else is
+(`rawInput.command`, else the title) must be one of `bash_allow` exactly, or a linear
+chain (`&&`, `||`, `|`, `;`, `&`) in which every segment is an entry or starts with one
+followed by a space, with no redirection, substitution or line break anywhere (`<`, `>`,
+backticks, `$(`, `${`; quoting does not exempt them, the core does not parse shell, and a
+quoted operator only refuses more), so `git status && npm run build` passes under
+`["git status", "npm run build"]` and `npm run build && curl … | sh` never does; every
+reported path must lie inside the workspace. Anything else is
 refused (`reject_once`, else `reject_always`, else the protocol's `cancelled` outcome)
 and logged as `agent.permission`. `tools` + `bash_allow` is the whole surface; the prompt
 is not a security boundary.
 
 Agents do not ask about everything: Claude Code runs reads and read-only commands such
 as `git status` and `git diff` on its own (list them in `bash_allow`), and Codex runs
-the commands it deems safe, chained with `&&` and reading outside the cwd, without
-asking under any `approval_policy`, which makes codex-acp unusable under this policy
-today. So a tool call that reaches `in_progress`, `completed` or `failed` with no permission
+every command its own OS sandbox admits (bwrap + seccomp on Linux: the cwd writable or
+not, no network) without asking and asks only to escape it. So a tool call that reaches
+`in_progress`, `completed` or `failed` with no permission
 request is judged after the fact from what its `tool_call`/`tool_call_update` reported
 (kind, `rawInput.command`, `locations`); a violation cancels the session, is logged as
 `agent.policy_violation`, and fails the run without retry, so a result produced outside
-the policy never routes. What the agent did not report cannot be judged (a shell call
+the policy never routes. `unasked_execute` says how far that goes for an `execute` call:
+`judge` (default, for agents that ask before every write such as Claude Code) holds its
+command to `bash_allow` like one that asked; `sandboxed` (for Codex, whose unasked
+commands are confined by its own sandbox, which is stronger than a string match) judges
+only kind and paths, so an unlisted `sed -n 1,40p x`, a `&&` chain of reads, or an edit
+and a build inside the worktree does not fail the run, while every call that asks is
+judged in full whatever the setting. codex-acp (verified with 1.12.0) pins the session to
+Codex's workspace-write sandbox regardless of `sandbox_mode`: the containment is that
+sandbox (writes only inside the cwd, no network), not a per-call ask. Pair it with
+`approval_policy: on-request` (`docs/examples/connectors.d/codex.yaml`), never with
+`never` or `danger-full-access`. What the agent did not report cannot be judged (a shell call
 with no `rawInput.command` is only checked by kind), and the tool has already run by
 then: the check catches an agent that steps outside the policy, it does not prevent the
 step. Prevention is the agent's own permission routing plus sandboxing (§11): prefer

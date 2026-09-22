@@ -14,7 +14,8 @@ a tool-call cap and a budget, ending in a RESULT.json that routing reads.
 | `budget` | `{ max_usd }`; the smaller of this and the task's applies. The session is cancelled when the agent's reported cost passes it |
 | `workspace` | `{ kind: git-worktree, repo, branch }` (a worktree on branch `agent/<run_id>`) or `{ kind: temp }`; at `<defaults.agent.work_dir>/<run_id>`, `${run.workspace}` |
 | `tools` | ACP tool kinds the agent may use: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Required |
-| `bash_allow` | what an `execute` call may run: the command must equal an entry, or start with one followed by a space and contain no shell operator (`;`, `&`, `\|`, `<`, `>`, backticks, `$(`, `${`, line breaks) |
+| `bash_allow` | what an `execute` call may run: the command must equal an entry, or be a linear chain (`&&`, `\|\|`, `\|`, `;`, `&`) whose every segment equals an entry or starts with one followed by a space, with no redirection, substitution or line break (`<`, `>`, backticks, `$(`, `${`) |
+| `unasked_execute` | `judge` (default): an `execute` call the agent ran without asking is held to `bash_allow` after the fact. `sandboxed`: only its kind and paths are judged, because the agent's own OS sandbox confined it (Codex). Calls that ask are always judged in full |
 | `mcp_servers` | connector ops as agent tools: not implemented yet, must be `[]` |
 | `system_file` | static text prepended to the prompt (ACP has no separate system channel); relative to agent.yaml |
 | `prompt` | templated; the task |
@@ -29,12 +30,21 @@ Scope is what limits damage, so make it explicit and small:
 - `tools` without `edit` when only reading is expected; without `execute` when no
   command is needed. `delete` and `move` only when the task really needs them.
 - `bash_allow` lists whole commands (`"npm run build"`), not binaries; `"git"` would
-  allow `git push`. Arguments may follow an entry, chaining may not: `npm run build &&
-  curl …` is refused, and so is a quoted `;` (the core does not parse shell). A command
-  that needs `&&` or a pipe goes in as one exact entry. List the read-only commands the
+  allow `git push`. Arguments may follow an entry, and a chain passes only when every
+  segment is allowed on its own: `git status && npm run build` needs both entries,
+  `npm run build && curl …` is refused, and so is any redirection, substitution or
+  quoted operator (the core does not parse shell). List the read-only commands the
   agent runs on its own as well (`git status`, `git diff` for `diff_stat`): Claude Code
   does not ask for those, and the after-the-fact check fails the run when they are
   missing.
+- `unasked_execute: sandboxed` only for an agent with a real OS sandbox that asks before
+  every escape, i.e. Codex on `connectors.d/codex.yaml` (`approval_policy: on-request`).
+  Codex runs reads, `sed`, `rg`, chained with `&&`, and edits and builds inside the
+  worktree, without asking, and no allowlist can enumerate them; its workspace-write
+  sandbox is what confines them (codex-acp 1.12.0 pins that sandbox whatever
+  `sandbox_mode` says). Network and writes outside the worktree are denied by the sandbox
+  and ask, and are then judged against `tools`/`bash_allow`. Never pair it with
+  `approval_policy: never` or `danger-full-access`.
 - Untrusted input in a delimited block; the `system_file` says it is data.
 - `max_tool_calls` and `budget` sized to the task: a YAML edit is 20 calls and cents, a
   site-wide change is 60 calls and a few dollars, and it gets an approval gate.
@@ -43,9 +53,9 @@ Every permission request is judged per call (never `allow_always`): tool kind in
 `tools`, `execute` command in `bash_allow`, paths inside the workspace. Refusals are
 logged as `agent.permission` with a reason. A tool call the agent ran *without* asking
 (Claude Code does that for reads and `git status`-like commands; Codex for every command
-it deems safe, chained with `&&`, whatever its `approval_policy`, so codex-acp fails
-this policy today) is judged after the fact from what the
-agent reported; a violation cancels the session and fails the run
+its own sandbox admits, asking only to escape it) is judged after the fact from what the
+agent reported, in full under `unasked_execute: judge` and on kind and paths only under
+`sandboxed`; a violation cancels the session and fails the run
 (`agent.policy_violation`). That catches a step outside the policy, it does not prevent
 it: the agent program runs as the daemon's uid like any connector, so pick agents and
 modes that ask, and sandbox the program itself when the host matters.

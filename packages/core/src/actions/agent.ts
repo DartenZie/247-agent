@@ -63,8 +63,15 @@ export const AgentAction = z
     workspace: Workspace,
     /** ACP tool kinds the agent may use; the permission policy refuses the rest. */
     tools: z.array(z.enum(TOOL_KINDS)).min(1),
-    /** Commands an `execute` tool call may run: the command must be one of these or start with one followed by a space. */
+    /** Commands an `execute` tool call may run: each segment of a linear chain must be one of these or start with one followed by a space. */
     bash_allow: z.array(z.string().min(1)).default([]),
+    /**
+     * An `execute` call the agent ran without asking: `judge` checks its command against
+     * `bash_allow` after the fact (Claude Code asks for everything else); `sandboxed` trusts
+     * the agent's own OS sandbox for it and judges only kind and paths (Codex runs sandboxed
+     * commands without asking and asks for every escape). Calls that ask are always judged.
+     */
+    unasked_execute: z.enum(['judge', 'sandboxed']).default('judge'),
     mcp_servers: z
       .array(z.string())
       .max(0, 'mcp_servers is not implemented yet (connector ops as agent tools); leave it empty')
@@ -189,7 +196,8 @@ async function runTurn(
       return;
     }
     const call = watch.calls.get(id);
-    const found = call === undefined ? undefined : policyViolation(watch.policy, call);
+    const found =
+      call === undefined ? undefined : policyViolation(watch.policy, call, { asked: false });
     if (found !== undefined) {
       violation = found;
       ctx.log.warn('agent.policy_violation', { id, reason: found });
@@ -372,7 +380,12 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
   ctx.log.info('agent.workspace', { path: ws.path, kind: cfg.workspace.kind });
   let keep = false;
   try {
-    const policy: AgentPolicy = { tools: cfg.tools, bashAllow: cfg.bash_allow, workspace: ws.path };
+    const policy: AgentPolicy = {
+      tools: cfg.tools,
+      bashAllow: cfg.bash_allow,
+      workspace: ws.path,
+      unaskedExecute: cfg.unasked_execute,
+    };
     const watch: PolicyWatch = { policy, judged: new Set(), calls: new Map() };
     const session = await agents.open(connector, {
       cwd: ws.path,
