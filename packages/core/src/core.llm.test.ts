@@ -70,7 +70,7 @@ describe('createCore with providers', () => {
       ok: false,
       issues: [expect.objectContaining({ path: 'tasks[1].action.provider' })],
     });
-    expect(core2.config().tasks).toHaveLength(7); // the previous config stays active
+    expect(core2.config().tasks).toHaveLength(8); // the previous config stays active
   });
 
   it('runs an llm task through the service and fails it when no adapter is built in', async () => {

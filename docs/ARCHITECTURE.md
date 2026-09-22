@@ -31,7 +31,7 @@ Non-goals
 | n8n / Node-RED / Windmill / Huginn | Trigger→action model fits, but they are UI-first, workflows are opaque JSON, and "an agent that edits a checkout and runs a build" is awkward to express. Heavy runtime (Postgres, Node) for one server. |
 | Temporal / Airflow / Prefect | Durable orchestration, but workflows are code (Temporal) or batch DAGs (Airflow). Overkill and not config-driven. |
 | systemd timers + scripts | Fine for cron, no event chaining, no state, no LLM budgets. |
-| Anthropic Managed Agents (scheduled deployments) | Solid option for the `agent` tier if you prefer Anthropic to host the sandbox. Rejected as the *core* because the FTP target, credentials and site checkout live on your server, and cost control wants local gating. Kept as an alternative `agent.runtime` (§5.4). |
+| Anthropic Managed Agents (scheduled deployments) | Solid option for the `agent` tier if you prefer Anthropic to host the sandbox. Rejected as the *core* because the FTP target, credentials and site checkout live on your server, and cost control wants local gating. A hosted agent that speaks ACP would plug in as one more `transport: acp` connector (§5.4). |
 
 **Decision:** build a small core (~2–3k lines) and reuse aggressively underneath it:
 
@@ -44,17 +44,21 @@ Non-goals
   provider interface (`packages/core/src/llm/`) that OpenAI and OpenRouter adapters share;
   the core prices, budgets and ledgers every call itself, so adding a provider is one
   adapter file.
-- **Claude Agent SDK** (or `claude -p` headless) as the agent loop for `agent` actions:
-  file edit, bash, MCP, permissions, max-turns and prompt caching are already solved.
+- **Agent Client Protocol (ACP, agentclientprotocol.com)** as the agent loop for `agent`
+  actions: any ACP agent program (`claude-agent-acp`, `gemini --experimental-acp`,
+  `codex-acp`, …) is a connector with `transport: acp`, the core is the client
+  (`@agentclientprotocol/sdk`), and the loop, file edits, shell, per-call permission
+  requests, cancellation and usage reporting are the protocol's. Swapping the agent is a
+  manifest change.
 - **croner** (cron parsing/scheduling), **zod** (config schema + validation, and the
   same schemas feed `betaZodTool` / structured outputs), **jmespath** (expressions),
   **better-sqlite3** (synchronous SQLite, WAL), **@modelcontextprotocol/sdk** (MCP client
   for connector ops), **execa** (subprocesses).
 
-Language: **TypeScript on Node.js 22 LTS** (decided). Reasons: `@anthropic-ai/sdk` and
-`@anthropic-ai/claude-agent-sdk` are first-class here, the MCP reference SDK is TypeScript,
-and `claude` itself is a Node program, so one runtime serves core, agent runtime and most
-connectors. Connectors remain language-agnostic (§6).
+Language: **TypeScript on Node.js 22 LTS** (decided). Reasons: `@anthropic-ai/sdk`, the
+MCP reference SDK and the ACP SDK are TypeScript, and the agent programs are mostly Node
+programs, so one runtime serves core, agents and most connectors. Connectors and agents
+remain language-agnostic (§6).
 
 ## 3. Core concepts
 
@@ -273,37 +277,102 @@ to retryable errors and every other non-2xx (401 no key, 402 no credits, 413 sta
 price (the built-in table knows Jev's price for the pre-call estimate). A `base_url` on
 the provider keeps its origin: the Decisions path replaces `/api/v1`.
 
-### 5.4 `agent` — agentic loop with tools, sandboxed
+### 5.4 `agent` — one ACP session in a fresh workspace, with a result contract
 
 ```yaml
 action:
   kind: agent
-  runtime: claude-agent-sdk        # | claude-cli | managed-agents
-  model: claude-sonnet-5
-  effort: medium
-  max_turns: 40
-  budget: { max_usd: 1.50 }        # hard stop; run → failed, on_failure fires
+  connector: claude                # a `transport: acp` connector (§6); default defaults.agent.connector
+  model: claude-sonnet-5           # optional: prices the reported tokens when the agent reports no cost
+  max_tool_calls: 40               # the core cancels the session past this; default defaults.agent
+  budget: { max_usd: 1.50 }        # hard stop: cancelled when the reported cost passes it; run → failed
   workspace:
-    kind: git-worktree             # fresh worktree per run; discarded on failure
+    kind: git-worktree             # fresh worktree per run on branch agent/<run_id>; or { kind: temp }
     repo: /var/lib/247-agent/repos/website
     branch: main
-  tools: [Read, Edit, Write, Glob, Grep, Bash]
-  bash_allow: ["npm run build", "npm test", "git status", "git diff"]
-  mcp_servers: [email]             # connectors exposed as tools (§6)
-  system_file: prompts/agent_event_list.md
+  tools: [read, edit, search, execute]   # ACP tool kinds the agent may use; the rest is refused
+  bash_allow: ["npm run build", "npm test", "git status", "git diff"]   # what `execute` may run
+  mcp_servers: []                  # connector ops as agent tools: planned, must be empty today
+  system_file: prompts/agent_event_list.md   # static; prepended to the prompt (ACP has no system channel)
   prompt: |
     Add/modify the events described in the email below in data/events.yaml
     and nothing else. Run `npm run build` before finishing.
 
-    ${event.payload.body}
+    <email>${event.payload.body}</email>
   result:
-    from: file                     # agent writes RESULT.json in the workspace
-    path: RESULT.json
-    schema: schemas/site_change.json
-  post:                            # deterministic gates, no LLM
+    path: RESULT.json              # relative to the workspace (default)
+    schema: schemas/site_change.json   # optional JSON Schema on top of the baseline
+  post:                            # deterministic gates, no LLM; only after status: done
     - shell: ["npm", "run", "build"]
     - shell: ["git", "commit", "-am", "agent: ${result.summary}"]
+      when: "result.files_changed"  # JMESPath over {event, result, state, env, run}
 ```
+
+**Protocol.** The agent is a program speaking the Agent Client Protocol (JSON-RPC over
+stdio, protocol version 1). The supervisor spawns it once like any connector and keeps
+the connection (`initialize`); each run calls `session/new` with the workspace as `cwd`,
+sends one `session/prompt` (the `system_file` text, the rendered `prompt`, and the
+result contract below), consumes `session/update` notifications (message chunks, tool
+calls, `usage_update`) and answers `session/request_permission` from the task's policy.
+`session/cancel` is the hard stop. The agent runs the model with its own key (the
+manifest's `env`); the core never talks to a model provider for an `agent` action.
+
+**Policy (the capability surface).** Every permission request is judged per call, never
+`allow_always`: the tool's kind must be in `tools`; an `execute` call's command
+(`rawInput.command`, else the title) must be one of `bash_allow` exactly, or start with one
+followed by a space and contain no shell operator (`;`, `&`, `|`, `<`, `>`, backticks,
+`$(`, `${`, line breaks; quoting does not exempt them, the core does not parse shell), so
+`npm run build && curl … | sh` is refused under `["npm run build"]`; every reported path
+must lie inside the workspace. Anything else is
+refused (`reject_once`, else `reject_always`, else the protocol's `cancelled` outcome)
+and logged as `agent.permission`. `tools` + `bash_allow` is the whole surface; the prompt
+is not a security boundary.
+
+Agents do not ask about everything: Claude Code runs reads and read-only commands such
+as `git status` and `git diff` on its own (list them in `bash_allow`), and Codex runs
+the commands it deems safe, chained with `&&` and reading outside the cwd, without
+asking under any `approval_policy`, which makes codex-acp unusable under this policy
+today. So a tool call that reaches `in_progress`, `completed` or `failed` with no permission
+request is judged after the fact from what its `tool_call`/`tool_call_update` reported
+(kind, `rawInput.command`, `locations`); a violation cancels the session, is logged as
+`agent.policy_violation`, and fails the run without retry, so a result produced outside
+the policy never routes. What the agent did not report cannot be judged (a shell call
+with no `rawInput.command` is only checked by kind), and the tool has already run by
+then: the check catches an agent that steps outside the policy, it does not prevent the
+step. Prevention is the agent's own permission routing plus sandboxing (§11): prefer
+agents and modes that ask.
+
+**Limits and money.** Tool calls are counted from `tool_call` updates; past
+`max_tool_calls` the session is cancelled and the run fails non-retryably. The agent's
+`usage_update.cost` (cumulative) is watched during the turn: past the run's cap (the
+smaller of the task's and the action's `budget.max_usd`) the session is cancelled and
+the run fails as `BudgetExceededError`. Before the turn `ctx.llm.checkBudget` refuses on
+the daily cap or a run already over its cap; after every turn `ctx.llm.record` writes one
+ledger row under `provider = <connector name>` with the reported cost (`priced_by:
+provider`) or, when the agent reports only tokens, the table price of `model`
+(`priced_by: table`). A turn that reports neither fails the run (never an unbudgeted
+call); `budgets.daily_usd` and `budget.exceeded` apply as to any model call (§9).
+
+**Result contract.** The runner appends it to every prompt: the agent must leave
+`result.path` (default `RESULT.json`) in the workspace, a JSON object with at least
+`status: "done" | "blocked"` and `summary` (a sentence for a human). `done` means the
+change is in the workspace: the `post` gates run in order (each a `shell` argv in the
+workspace, templated over `result`, skipped when its `when` is falsy; a non-zero exit
+fails the run). `blocked` means it could not be done and `summary` (plus whatever fields
+the task's schema adds, e.g. `missing`) says why: the gates are skipped and the run
+still **succeeds**, so `emit … when: "result.status == 'blocked'"` can route it to a
+task that replies to the sender, files a question, or asks a human. `result.schema` is
+validated on top of the baseline; the run result is the RESULT.json document, so
+`${result.summary}`, `${result.files_changed}` are available to `emit` and `post`. A
+missing file gets one nudge turn (same session, budgeted like the first); still missing
+or invalid fails the run, which `retry` then repeats in a fresh workspace.
+
+**Workspace.** `<defaults.agent.work_dir>/<run_id>` (default `work/` next to the
+database), available as `${run.workspace}`. `git-worktree` runs `git worktree add -B
+agent/<run_id> <path> <branch>` from `repo`; `temp` is an empty directory. It is removed
+(worktree, branch and all) when the run fails and kept when it succeeds, `blocked`
+included, for the gates, for a later publishing task and for inspection. Retention GC of
+`work/` is not implemented yet.
 
 Notes
 
@@ -311,18 +380,13 @@ Notes
   anything, a commit records it, and a separate `shell` task ships it. Rollback is
   `git revert` + republish.
 - The **agent never sees deploy credentials**. Secrets are injected only into the actions
-  that need them.
-- The agent's Bash tool and the `post` gates run in the same `bwrap` sandbox as
-  `sandbox: bwrap` on a `shell` action (§5.1), with the worktree as the writable path:
-  no core socket, no other process's environment, nothing of the daemon's state. §11
-  states the trust model this enforces.
-- `tools` + `bash_allow` + `mcp_servers` is the entire capability surface. Two tasks
-  with different intelligence needs are the same action kind with a different
-  `model`/`effort`/`max_turns`/`system_file`.
-- `runtime: claude-cli` runs `claude -p … --output-format json --max-turns N --allowedTools …`
-  as a subprocess; `claude-agent-sdk` does the same in-process with hooks for per-tool
-  approval/logging; `managed-agents` submits a session to Anthropic's hosted sandbox with
-  the repo mounted and gets the diff back. Same config, swappable runtime.
+  that need them; the manifest's `env` carries the model key and nothing else.
+- Two tasks with different intelligence needs are the same action kind with a different
+  `connector`/`max_tool_calls`/`budget`/`system_file`; model and effort are the agent
+  program's own settings until ACP config options are wired (planned).
+- `post` gates run through the `shell` runner with `cwd` = workspace, so
+  `defaults.sandbox: bwrap` applies to them. The agent program itself is not sandboxed by
+  the core today (§11).
 
 ### 5.5 `connector` — call one operation on a sub-program
 
@@ -411,7 +475,7 @@ A connector is any executable with a manifest. It may implement one or both halv
 # connectors.d/email.yaml
 name: email
 exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any language
-transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only
+transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only; acp = an agent (§5.4)
 emits: [email.received]                              # documented, shape-checked
 ops: [fetch_new, mark_read, send]                    # allowlist of MCP tools the core may call; [] = any
 config:                                              # free-form, the connector's own schema
@@ -433,8 +497,23 @@ any language. Push-style connectors (chat bots, webhooks) use this; poll-style o
 need it at all (next point).
 
 **Ops in (core → connector):** the connector is an **MCP server**. The core holds one
-client connection; agent runs get the same server passed in their MCP config. So one
-implementation of `email.send` serves both a deterministic task and an agent.
+client connection. Handing the same server to agent runs as tools (`mcp_servers`) is
+planned: it needs a small stdio proxy so the agent never receives the connector's
+secrets, and until then `mcp_servers` must be empty.
+
+**Agents (core → agent):** a manifest with `transport: acp` is an **ACP agent** (§5.4):
+the core is the client, the process serves sessions, not ops, and emits no events. It
+gets the same lifecycle (spawn, `env` with secrets rendered, crash backoff, `oa
+connector restart`), no `OA_CONFIG_JSON` is needed, and `oa connector list` shows it
+with its transport.
+
+```yaml
+# connectors.d/claude.yaml
+name: claude
+exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+transport: acp
+env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+```
 
 **Turning any MCP tool into an event source:** the built-in `poller` connector runs on a
 cron, calls `connector.op`, diffs the result against KV by `item_key`, and emits one event
@@ -528,7 +607,7 @@ pricing: {}                  # USD per Mtok per model, merged over the built-in 
 defaults:
   llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
   decide: { provider: openrouter, model: typesafe/jev-1.13 }   # `decide` actions; the provider must be an openrouter one
-  agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
+  agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # `agent` actions (§5.4); work_dir defaults to work/ next to db
   retry: { attempts: 3, backoff: exponential, base: 30s }
 budgets:
   daily_usd: 10          # global circuit breaker → all llm/decide/agent tasks fail fast until 00:00 UTC, alert emitted
@@ -543,8 +622,10 @@ manifest) and follows `agent.yaml` to every tasks file and manifest it names, ch
 task and connector names are unique across files. Given an `agent.yaml` it also
 cross-checks every `llm` task against it: the provider exists, the model has a price
 (unless the provider reports cost itself), `system_file` exists under the config
-directory. The daemon runs the same check at start and on reload. `docs/examples/agent.yaml`
-is the reference.
+directory; and every `agent` task: `model` (when set) has a price, `system_file` and
+`result.schema` exist under the config directory. The daemon runs the same check at
+start and on reload, and warns at load when an `agent` task names a connector that is
+not an acp one. `docs/examples/agent.yaml` is the reference.
 
 ## 8. Worked example: website updates from email
 
@@ -554,17 +635,21 @@ See `docs/examples/website-updates.yaml`. The flow and what each step costs:
 |---|---|---|---|---|
 | 1 | `fetch_email` | cron `*/2 * * * *` | `connector` email.fetch_new → emit `email.received` per mail | no |
 | 2 | `classify_email` | `email.received` with filter `payload.from == 'editor@…'` | `llm` Haiku 4.5, schema `{kind, summary}` → emit `email.classified` | 1 call |
-| 3 | `update_event_list` | `email.classified` where `kind == 'event_list_update'` | `agent` Sonnet 5, low turns, only `data/events.yaml` in scope, build gate | small loop |
-| 4 | `update_site_general` | `email.classified` where `kind == 'general_change'` | `agent` Opus 5, higher turns, full repo, build gate, then `wait` for chat approval | bigger loop |
-| 5 | `publish_site` | `task.update_event_list.succeeded` or `task.update_site_general.succeeded` | `shell` lftp mirror | no |
+| 3 | `update_event_list` | `email.classified` where `kind == 'event_list_update'` | `agent` on the `claude` connector, few tool calls, only `data/events.yaml` in scope, build gate; `blocked` → emit `site.change_blocked` | small loop |
+| 3b | `reply_blocked` | `site.change_blocked` | `connector` email.send: tells the editor what is missing | no |
+| 4 | `update_site_general` | `email.classified` where `kind == 'general_change'` | `agent` on the same connector, more tool calls, full repo, build gate; `done` → `site.change_ready`, then `wait` for chat approval; `blocked` → `site.change_blocked` | bigger loop |
+| 5 | `publish_site` | `task.update_event_list.succeeded` or `task.approve_general_change.succeeded` | `shell` lftp mirror | no |
 | 6 | `notify` | `task.*.failed`, `task.publish_site.succeeded` | `connector` chat.send | no |
 
 Everything that can be a filter is a filter (step 2's sender check). Steps 3 and 4 are the
-same action kind; only the config differs.
+same action kind; only the config differs. The agent's outcome is routed like any other
+result: `done` continues to gates and publishing, `blocked` becomes an email back to the
+sender with what is missing, a failure (refusal, over budget, no RESULT.json) reaches
+`notify` through `task.*.failed`.
 
 ## 9. Cost control
 
-- **Tiering is config, not code.** `model`, `effort`, `max_turns`, `max_tokens`,
+- **Tiering is config, not code.** `model`, `effort`, `max_tokens`, `max_tool_calls`,
   `budget.max_usd` per task; defaults in `agent.yaml`.
 - **Before building a model cascade, measure the top model at low effort** on the same
   task set. On the current generation, lower effort on a stronger model often beats a
@@ -582,7 +667,9 @@ same action kind; only the config differs.
   extends it. A task whose model has no price fails validation unless its provider
   reports the cost per response (OpenRouter).
   A response that arrives unpriced anyway is recorded at $0 with `priced_by: unpriced`
-  and fails the run, so it is noticed.
+  and fails the run, so it is noticed. An `agent` turn is ledgered from what the ACP
+  agent reports (`usage_update.cost`, else tokens at the table price of `model`), under
+  the connector's name as `provider`; the cap is enforced by cancelling the session.
 - **Circuit breakers.** Per run: `budget.max_usd` (the smaller of the task's and the
   action's). Before the call the worst case (input at 3 chars/token plus `max_tokens` of
   output, at table prices; for `decide` the JSON body at input price and no output) must
@@ -616,10 +703,12 @@ same action kind; only the config differs.
   stays `running` between them with the last error recorded, and `task.<name>.failed`
   fires once after the last attempt. Timeouts and connector-down errors are retried;
   wait timeouts, missing secrets, unknown connectors, `isError` op results and unrenderable
-  `emit` rules are not. `agent` actions will retry with a fresh worktree and the previous
-  failure appended to the prompt (once).
+  `emit` rules are not. `agent` actions retry in a fresh workspace (the previous one is
+  removed with the failed attempt); appending the previous failure to the prompt is
+  planned.
 - **Timeouts:** every action has one, per attempt of active work (a `waiting` run holds no
-  timer); agent timeouts are wall-clock plus `max_turns`.
+  timer); an `agent` attempt is bounded by the wall clock (the session is cancelled on
+  timeout) and by `max_tool_calls`.
 - **Concurrency:** `concurrency: 1` default for agent tasks touching the same repo; global
   worker cap.
 - **Poison events:** after `retry.attempts`, the run is `failed`, `task.<name>.failed`
@@ -643,9 +732,12 @@ process could call.
 - Secrets via `LoadCredential=` (systemd) resolved by name in config; never written to
   the DB or run logs; injected only into the actions that declare them. The `file`
   backend refuses a secrets file readable by group or others.
-- **Agent sandbox:** dedicated worktree, explicit tool allowlist, bash allowlist, no deploy
-  credentials, optional `bwrap`/`firejail` wrapper, network restricted to allowed hosts.
-  Build gate + commit before anything leaves the worktree.
+- **Agent sandbox:** dedicated worktree, explicit tool-kind allowlist, command allowlist
+  and workspace-bound paths, judged per call through ACP permission requests (§5.4), no
+  deploy credentials. Build gate + commit before anything leaves the worktree. The agent
+  program runs as the daemon's uid like any connector, so the policy only binds an agent
+  that asks before acting; running the agent program under `bwrap` with a network
+  allowlist is planned.
 - **Approval gate** (`wait` + chat) is config, so it can be required for high-impact tasks
   and skipped for routine ones.
 - Inbound content (emails, chat, PR text) is untrusted: it enters prompts as data in a
@@ -701,16 +793,16 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
-  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts (agent.ts to come); types.ts = ActionContext
+  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); types.ts = ActionContext
   src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call` and `decide`), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
-  src/connectors/            # supervisor.ts: spawn, MCP client per connector, restart backoff; poller.ts: the built-in poller
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
   src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
-  test/fixtures/             # fake connectors (email, ftp, chat, generic MCP, plain) run by Node from source
+  test/fixtures/             # fake connectors (email, ftp, chat, generic MCP, plain) and a fake ACP agent (fake-acp.ts, scripted by prompt markers) run by Node from source
 packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
 connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
@@ -726,9 +818,14 @@ Runtime notes
   per task and globally.
 - `better-sqlite3` is synchronous by design; all DB work is short transactions on the
   main thread, which is fine at this scale and removes a class of async bugs.
-- `agent` runtime uses `query()` from `@anthropic-ai/claude-agent-sdk` with `cwd` set to
-  the worktree, `allowedTools`, `maxTurns`, `mcpServers`, `permissionMode`, and a
-  `PreToolUse` hook that enforces `bash_allow` and logs every tool call to the run.
+- `agent` runtime: the runner (`actions/agent.ts`) creates the workspace, asks the
+  supervisor (`ctx.agents`, the `AgentClients` port) for a session on the acp connector,
+  drives one prompt turn as an async iterator of normalised updates, answers permission
+  requests with `agent-policy.ts`, ledgers the turn through `ctx.llm.record`, reads
+  RESULT.json (`agent-result.ts`, zod's `fromJSONSchema` for `result.schema`) and runs the
+  gates through the `shell` runner. `connectors/acp.ts` owns the SDK: `execa` + `ndJsonStream`
+  + `client().connect()`, `initialize` at spawn, `buildSession().start()` per run,
+  `session/cancel` on demand.
 - `llm` runtime: the runner resolves defaults, reads `system_file`, renders `input` and
   calls `ctx.llm`; the service (`src/llm/service.ts`) does budgets, secret resolution,
   the adapter call and the ledger row. Adapters receive the JSON Schema as is
@@ -748,7 +845,7 @@ Runtime notes
 3. `llm` action with structured outputs, cost ledger, budgets, caching — in three
    stages: (a) ledger, budgets, provider config and the runner behind the `ctx.llm` port;
    (b) the Anthropic adapter; (c) OpenAI and OpenRouter adapters.
-4. `agent` action on `claude-agent-sdk` with worktree workspace, post gates.
+4. `agent` action over ACP with worktree workspace, permission policy, result contract, post gates.
 5. `wait` action + `chat` connector (approval loop).
 6. Hardening: retention GC, metrics, sandbox wrapper, hot reload.
 
@@ -765,9 +862,16 @@ cross-checked, `oa cost` and `GET /v1/cost` exist. Steps 3(b) and 3(c) are done:
 `openai.ts`, `openrouter.ts`). The `decide` action (§5.3) is done: `actions/decide.ts`,
 `ctx.llm.decide()` in the service, the Decisions API in the OpenRouter adapter,
 `defaults.decide`, the provider-type cross-check and `docs/examples/decide-triage.yaml`.
+Step 4 is done over ACP (§5.4): `transport: acp` manifests, the ACP client
+(`connectors/acp.ts`), the `agent` runner with workspace, policy, tool-call and budget
+cancellation, the ledger's `checkBudget`/`record`, the RESULT.json contract, post gates,
+`defaults.agent`, the cross-checks, `docs/examples/connectors.d/claude.yaml` and the
+`blocked` routing in the reference workflow; tested against a fake ACP agent.
 Where the code is behind this document:
-`batch: true` is rejected; the `agent` action validates `kind` only and has no runner; `retention` and
-`defaults.agent` validate but are not applied; there is no retention GC, no metrics, no
+`batch: true` is rejected; `mcp_servers` on an `agent` action must be empty (the MCP
+proxy is not built); agent transcripts are not persisted; the agent program is not
+sandboxed by the core; ACP config options (model, mode) are not exposed; `retention`
+validates but is not applied; there is no retention GC (including `work/`), no metrics, no
 sandbox wrapper;
 `SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is
 rejected; `health.interval` in manifests is accepted but unused.

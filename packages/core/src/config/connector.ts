@@ -15,6 +15,9 @@ const NAME = /^[a-z][a-z0-9_-]*$/;
 /** Connectors that run inside the core, configured by a manifest with `builtin` instead of `exec`. */
 export const BUILTINS = ['poller'] as const;
 
+export const TRANSPORTS = ['stdio', 'none', 'acp'] as const;
+export type Transport = (typeof TRANSPORTS)[number];
+
 const ManifestFields = z.strictObject({
   name: z.string().regex(NAME, 'connector names are [a-z][a-z0-9_-]*'),
   /** argv of the connector process. Exactly one of `exec` and `builtin`. */
@@ -25,9 +28,10 @@ const ManifestFields = z.strictObject({
   cwd: z.string().min(1).optional(),
   /**
    * `stdio`: the process is an MCP server on stdin/stdout. `none`: it only emits events.
+   * `acp`: an Agent Client Protocol agent that `agent` actions open sessions on (§5.4).
    * Defaults to `stdio` for a process and `none` for a built-in.
    */
-  transport: z.enum(['stdio', 'none']).optional(),
+  transport: z.enum(TRANSPORTS).optional(),
   /** Event types the connector emits (documentation; checked for shape). */
   emits: z.array(z.string().min(1)).default([]),
   /** MCP tools the core may call; empty = whatever the server lists. */
@@ -71,9 +75,9 @@ const BUILTIN_CHECKS: Record<
 
 /** The transport a manifest means: `stdio` for a process unless it says otherwise, `none` for a built-in. */
 function effectiveTransport(m: {
-  transport?: 'stdio' | 'none' | undefined;
+  transport?: Transport | undefined;
   builtin?: string | undefined;
-}): 'stdio' | 'none' {
+}): Transport {
   return m.transport ?? (m.builtin === undefined ? 'stdio' : 'none');
 }
 
@@ -123,6 +127,24 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
       message: 'a connector with transport "none" cannot serve ops',
     });
   }
+  if (m.transport === 'acp') {
+    for (const field of ['ops', 'emits'] as const) {
+      if (m[field].length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `an acp connector runs agent sessions; it serves no ops and emits no events ("${field}" must be empty)`,
+        });
+      }
+    }
+    if (m.builtin !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['transport'],
+        message: 'a built-in connector cannot be an acp agent',
+      });
+    }
+  }
   if ((m.exec === undefined) === (m.builtin === undefined)) {
     ctx.addIssue({
       code: 'custom',
@@ -158,7 +180,7 @@ export type ConnectorManifestConfig = z.infer<typeof ConnectorManifest>;
 
 /** A manifest with `transport` and `emits` filled in, `cwd` made absolute and its origin recorded. */
 export interface ConnectorConfig extends Omit<ConnectorManifestConfig, 'transport'> {
-  transport: 'stdio' | 'none';
+  transport: Transport;
   /** The manifest file, or the agent.yaml it was inlined in. */
   file: string;
 }

@@ -3,8 +3,10 @@
 Sub-programs the daemon spawns to talk to the outside world. A connector is any
 executable with a manifest; it may **emit events** into the core (`POST /v1/events` on
 the Unix socket) and/or **expose operations** as an MCP server on stdio, which
-`connector` actions call and `agent` runs can receive as tools. Any language works;
-existing MCP servers (GitHub, filesystem, …) are connectors as-is.
+`connector` actions call (handing them to `agent` runs as tools is planned). A third
+kind, `transport: acp`, is an Agent Client Protocol agent that `agent` actions open
+sessions on (`docs/examples/connectors.d/claude.yaml`). Any language works; existing
+MCP servers (GitHub, filesystem, …) and ACP agents are connectors as-is.
 
 One npm workspace package per connector lives here (`connectors/*` in the root
 `package.json`). Each has its own `README.md` with the config reference for its

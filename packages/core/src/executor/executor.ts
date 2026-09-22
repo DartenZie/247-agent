@@ -1,11 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { workspacePath } from '../actions/agent-workspace.js';
 import {
   isRetryable,
   NonRetryableError,
   withScope,
   type ActionContext,
   type ActionRunners,
+  type AgentClients,
   type ConnectorClients,
   type ResumeInfo,
   type WaitSpec,
@@ -55,6 +57,8 @@ export interface ExecutorOptions {
   env?: Record<string, string>;
   /** Model calls for `llm` actions. */
   llm?: LlmPort;
+  /** ACP sessions for `agent` actions; its `workDir` names `${run.workspace}`. */
+  agents?: AgentClients;
 }
 
 export interface RecoveryResult {
@@ -232,6 +236,7 @@ export class Executor {
   private readonly secrets: SecretsBackend;
   private readonly connectors: ConnectorClients | undefined;
   private readonly llm: LlmPort | undefined;
+  private readonly agents: AgentClients | undefined;
   private readonly env: Record<string, string>;
 
   private readonly pending: RunRecord[] = [];
@@ -256,6 +261,7 @@ export class Executor {
     this.secrets = opts.secrets ?? NO_SECRETS;
     this.connectors = opts.connectors;
     this.llm = opts.llm;
+    this.agents = opts.agents;
     this.env = opts.env ?? {};
     parseDuration(this.defaultTimeout); // fail fast on a bad default
   }
@@ -507,7 +513,7 @@ export class Executor {
       state: this.store.state.snapshot(),
       secrets,
       env: this.env,
-      run: runView(run),
+      run: this.runView(run),
     };
     const base: ActionContext = {
       run,
@@ -523,6 +529,7 @@ export class Executor {
       connectors: this.connectors,
       sandbox: this.defaultSandbox,
       llm: this.llm,
+      agents: this.agents,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
     };
@@ -606,7 +613,7 @@ export class Executor {
           result: outcome.result,
           state: this.store.state.snapshot(),
           env: this.env,
-          run: runView(run),
+          run: this.runView(run),
         };
         emitted = renderEmits(task.config.emit ?? [], scope, source, run.event_id);
         updates = renderStateUpdates(task.config.state_updates, scope);
@@ -651,6 +658,18 @@ export class Executor {
     });
   }
 
+  /** The `run` template scope: ids, attempt, and where an `agent` run's workspace is. */
+  private runView(run: RunRecord): Record<string, JsonValue> {
+    return {
+      id: run.id,
+      task: run.task,
+      attempt: run.attempt,
+      event_id: run.event_id,
+      correlation_id: run.correlation_id,
+      workspace: this.agents === undefined ? null : workspacePath(this.agents.workDir, run.id),
+    };
+  }
+
   private publish(event: NewEvent): void {
     try {
       const r = this.bus.publish(event);
@@ -668,16 +687,6 @@ export class Executor {
 
 function fatal(error: string): Outcome {
   return { ok: false, error, retryable: false };
-}
-
-function runView(run: RunRecord): Record<string, JsonValue> {
-  return {
-    id: run.id,
-    task: run.task,
-    attempt: run.attempt,
-    event_id: run.event_id,
-    correlation_id: run.correlation_id,
-  };
 }
 
 function runFields(run: RunRecord): { run_id: string; task: string; correlation_id: string } {

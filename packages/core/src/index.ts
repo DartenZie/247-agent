@@ -95,10 +95,53 @@ export {
   type ActionKind,
   type ActionRunner,
   type ActionRunners,
+  type AgentClients,
   type ConnectorClients,
   type ResumeInfo,
   type WaitSpec,
 } from './actions/types.js';
+export { runAgent, AgentAction, type AgentActionConfig } from './actions/agent.js';
+export { AgentDefaults, type AgentDefaultsConfig } from './actions/agent-config.js';
+export {
+  commandAllowed,
+  decidePermission,
+  type AgentPolicy,
+  type PermissionDecision,
+} from './actions/agent-policy.js';
+export {
+  BaselineResult,
+  DEFAULT_RESULT_PATH,
+  readAgentResult,
+  resultInstructions,
+  type AgentResult,
+} from './actions/agent-result.js';
+export {
+  createWorkspace,
+  Workspace,
+  workspacePath,
+  type WorkspaceConfig,
+  type WorkspaceHandle,
+} from './actions/agent-workspace.js';
+export {
+  AcpAgent,
+  normalisePermission,
+  normaliseUpdate,
+  type AcpSpawnOptions,
+} from './connectors/acp.js';
+export {
+  TOOL_KINDS,
+  type AgentInfo,
+  type AgentSession,
+  type AgentSessionOptions,
+  type AgentStop,
+  type AgentStopReason,
+  type AgentUpdate,
+  type PermissionHandler,
+  type PermissionOptionKind,
+  type PermissionRequest,
+  type ToolCallStatus,
+  type ToolKind,
+} from './connectors/acp-types.js';
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
 export { runConnector, ConnectorAction, type ConnectorActionConfig } from './actions/connector.js';
 export { runLlm, LlmAction, type LlmActionConfig } from './actions/llm.js';
@@ -154,6 +197,8 @@ export { createOpenRouterProvider, openrouterProvider } from './llm/openrouter.j
 export { normaliseUsage, type OpenAiCompatOptions, type RawUsage } from './llm/openai-compat.js';
 export { isReasoningModel, supportsEffort } from './llm/models.js';
 export type {
+  AgentTurn,
+  AgentTurnResult,
   DecideAnswer,
   DecideCall,
   DecideCallResult,

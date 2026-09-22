@@ -17,7 +17,7 @@ strict; unknown keys are rejected.
 | `defaults.sandbox` | `none`, `bwrap`, or `{backend: bwrap, ro_binds, rw_binds, extra_args}` for `shell` actions without `sandbox` | `none` |
 | `defaults.llm` | `{provider?, model?, max_tokens, effort?}` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{provider?, model}` for `decide` actions without their own; the provider must be an `openrouter` one | `model: typesafe/jev-1.13` |
-| `defaults.agent` | `{model, effort, max_turns, budget}` | accepted, not applied yet |
+| `defaults.agent` | `{connector, max_tool_calls, budget, work_dir}` | `agent` actions: the acp connector, the tool-call cap (40), the budget, and where run workspaces go (`work/` next to `db`) |
 | `secrets` | `{backend: env, prefix?}`, `{backend: file, path}`, `{backend: systemd-credentials}` | `{backend: env}` |
 | `providers` | `name: {type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers?}`; `llm` and `decide` actions pick one with `provider:` | none |
 | `pricing` | `model: {input, output, cache_read?, cache_write?}` USD per Mtok, merged over the built-in table (Claude, current OpenAI, Jev); a model without a price fails validation unless its provider reports cost | `{}` |

@@ -34,7 +34,26 @@ describe('Task schema: budget and llm actions', () => {
       'action: Unrecognized key: "batch"',
     ]);
     expect(issues({ ...base, action: { kind: 'llm', input: '${secrets.x}' } })).toEqual([]);
-    expect(issues({ ...base, action: { kind: 'agent', anything: 1 } })).toEqual([]);
+    const agent = {
+      kind: 'agent',
+      connector: 'claude',
+      workspace: { kind: 'temp' },
+      tools: ['read', 'edit'],
+      prompt: 'do ${event.payload.thing}',
+    };
+    expect(issues({ ...base, action: agent })).toEqual([]);
+    expect(issues({ ...base, action: { ...agent, runtime: 'claude-agent-sdk' } })).toEqual([
+      'action: Unrecognized key: "runtime"',
+    ]);
+    expect(issues({ ...base, action: { ...agent, tools: ['Bash'] } })).toEqual([
+      expect.stringMatching(/^action\.tools\[0\]: Invalid option/),
+    ]);
+    expect(issues({ ...base, action: { ...agent, mcp_servers: ['email'] } })).toEqual([
+      expect.stringMatching(/^action\.mcp_servers: mcp_servers is not implemented yet/),
+    ]);
+    expect(
+      issues({ ...base, action: { ...agent, post: [{ shell: ['true'], when: 'result.[' }] } }),
+    ).toEqual([expect.stringMatching(/^action\.post\[0\]\.when: invalid JMESPath/)]);
   });
 });
 

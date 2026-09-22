@@ -1,64 +1,112 @@
 # `agent` action
 
-An agentic loop with tools in a sandboxed worktree. `docs/ARCHITECTURE.md` §5.4, §11, §13.
+One session on an ACP agent (Agent Client Protocol) in a fresh workspace, under a policy,
+a tool-call cap and a budget, ending in a RESULT.json that routing reads.
+`docs/ARCHITECTURE.md` §5.4, §6, §11, §13.
 
 ## Fields
 
 | field | meaning |
 |---|---|
-| `runtime` | `claude-agent-sdk` (in-process `query()`), `claude-cli` (`claude -p … --output-format json`), `managed-agents` (hosted sandbox, diff back). Same config, swappable |
-| `model`, `effort`, `max_turns` | tiering; defaults from `defaults.agent` |
-| `budget` | `{ max_usd }` hard stop; run → `failed`, `on_failure` fires |
-| `workspace` | `{ kind: git-worktree, repo, branch }`; a fresh worktree under `work/<run_id>/`, discarded on failure, GC'd by `retention.workspaces` |
-| `tools` | allowlist of SDK tools: `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash` |
-| `bash_allow` | exact command prefixes Bash may run; anything else is denied by a `PreToolUse` hook |
-| `mcp_servers` | connector names exposed as MCP tools (same server the core talks to; the manifest's `ops` allowlist still applies) |
-| `system_file`, `prompt` | static system prompt file; templated task prompt |
-| `result` | `{ from: file, path: RESULT.json, schema: schemas/x.json }` |
-| `post` | ordered deterministic gates run in the worktree: `- shell: [argv]`, templated over `result` |
+| `connector` | a `transport: acp` connector (`connectors.d/claude.yaml`); default `defaults.agent.connector` |
+| `model` | optional; prices the reported tokens when the agent reports no cost. The agent program picks its own model |
+| `max_tool_calls` | tool calls allowed in one run; past it the session is cancelled and the run fails. Default `defaults.agent.max_tool_calls` (40) |
+| `budget` | `{ max_usd }`; the smaller of this and the task's applies. The session is cancelled when the agent's reported cost passes it |
+| `workspace` | `{ kind: git-worktree, repo, branch }` (a worktree on branch `agent/<run_id>`) or `{ kind: temp }`; at `<defaults.agent.work_dir>/<run_id>`, `${run.workspace}` |
+| `tools` | ACP tool kinds the agent may use: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Required |
+| `bash_allow` | what an `execute` call may run: the command must equal an entry, or start with one followed by a space and contain no shell operator (`;`, `&`, `\|`, `<`, `>`, backticks, `$(`, `${`, line breaks) |
+| `mcp_servers` | connector ops as agent tools: not implemented yet, must be `[]` |
+| `system_file` | static text prepended to the prompt (ACP has no separate system channel); relative to agent.yaml |
+| `prompt` | templated; the task |
+| `result` | `{ path: RESULT.json, schema: schemas/x.json }`, both optional; `path` is relative to the workspace |
+| `post` | ordered gates after `status: done`: `- shell: [argv]`, optional `env`, optional `when` (JMESPath over `{event, result, state, env, run}`) |
 
 ## Scoping an agent
 
 Scope is what limits damage, so make it explicit and small:
 
 - Name the files the agent may touch in the prompt, and say "and nothing else".
-- `tools` without `Write` when only edits are expected; without `Bash` when no command
-  is needed.
-- `bash_allow` lists whole commands (`"npm run build"`), not binaries.
-- No connector in `mcp_servers` unless the task needs it, and then one whose manifest
-  `ops` excludes anything that sends or publishes.
-- Untrusted input in a delimited block; the system prompt says it is data.
-- `max_turns` and `budget` sized to the task: a YAML edit is 20 turns and cents, a
-  site-wide change is 60 turns and a few dollars, and it gets an approval gate.
+- `tools` without `edit` when only reading is expected; without `execute` when no
+  command is needed. `delete` and `move` only when the task really needs them.
+- `bash_allow` lists whole commands (`"npm run build"`), not binaries; `"git"` would
+  allow `git push`. Arguments may follow an entry, chaining may not: `npm run build &&
+  curl …` is refused, and so is a quoted `;` (the core does not parse shell). A command
+  that needs `&&` or a pipe goes in as one exact entry. List the read-only commands the
+  agent runs on its own as well (`git status`, `git diff` for `diff_stat`): Claude Code
+  does not ask for those, and the after-the-fact check fails the run when they are
+  missing.
+- Untrusted input in a delimited block; the `system_file` says it is data.
+- `max_tool_calls` and `budget` sized to the task: a YAML edit is 20 calls and cents, a
+  site-wide change is 60 calls and a few dollars, and it gets an approval gate.
+
+Every permission request is judged per call (never `allow_always`): tool kind in
+`tools`, `execute` command in `bash_allow`, paths inside the workspace. Refusals are
+logged as `agent.permission` with a reason. A tool call the agent ran *without* asking
+(Claude Code does that for reads and `git status`-like commands; Codex for every command
+it deems safe, chained with `&&`, whatever its `approval_policy`, so codex-acp fails
+this policy today) is judged after the fact from what the
+agent reported; a violation cancels the session and fails the run
+(`agent.policy_violation`). That catches a step outside the policy, it does not prevent
+it: the agent program runs as the daemon's uid like any connector, so pick agents and
+modes that ask, and sandbox the program itself when the host matters.
 
 ## RESULT.json contract
 
-The prompt tells the agent to write `RESULT.json` at the worktree root with the fields
-the schema requires (typically `summary`, `files_changed`, optionally `diff_stat`). The
-runner validates it against `result.schema`; missing or invalid means the run failed.
-Downstream `emit` rules read `${result.summary}` etc.
+The runner appends the contract to every prompt, so the agent is told, not assumed to
+know. The file (`result.path`, default `RESULT.json`, at the workspace root) is a JSON
+object with at least:
+
+- `status`: `"done"` (the change is in the workspace) or `"blocked"` (it could not be
+  done: missing information, out of scope, refused);
+- `summary`: one or two sentences for a human.
+
+`result.schema` adds the task's own fields (`files_changed`, `diff_stat`, `missing`, …)
+and is validated on top. The run result is the document itself, so `emit` and `post`
+read `${result.summary}`, `${result.missing}`.
+
+- `done` → the `post` gates run in order; a failing gate fails the run.
+- `blocked` → gates skipped, the run **succeeds**. Route it:
+
+```yaml
+emit:
+  - type: site.change_blocked
+    when: "result.status == 'blocked'"
+    payload: { summary: ${result.summary}, missing: ${result.missing}, email: ${event.payload.email} }
+```
+
+and a deterministic task on `site.change_blocked` replies to the sender (`email.send`),
+asks in chat, or files a ticket. Missing file → one nudge turn in the same session; still
+missing or invalid → the run fails, `retry` repeats it in a fresh workspace, and
+`task.<name>.failed` reaches `notify`.
 
 ## Post gates
 
-Run in order in the worktree after the agent finishes and the result validates. Typical
-sequence: build (`npm run build`), test, `git commit -am "…: ${result.summary}"`. A
-non-zero exit fails the run; nothing leaves the worktree. Publishing is a separate task
-on `task.<name>.succeeded`, which is the only place a deploy secret lives.
+Run in order in the workspace after a `done` result, through the `shell` runner (so
+`defaults.sandbox` applies). Typical sequence: build, test, `git commit -am "…:
+${result.summary}"`. A non-zero exit fails the run; nothing leaves the workspace.
+Publishing is a separate task on `task.<name>.succeeded`, which is the only place a
+deploy secret lives.
 
-## Retry
+## Money
 
-On retry the runner starts a fresh worktree and appends the previous failure to the
-prompt once. `timeout` is wall-clock per attempt, plus `max_turns`.
+`ctx.llm.checkBudget` refuses before the turn (daily cap, run already over its cap).
+During the turn the agent's `usage_update.cost` is watched and the session cancelled past
+the cap. After every turn `ctx.llm.record` writes one ledger row: `provider` = the
+connector name, cost as reported (`priced_by: provider`) or tokens at the table price of
+`model` (`priced_by: table`). A turn that reports neither fails the run. `oa cost --by
+provider` shows the agent's spend next to the direct model calls.
 
-## Runner notes (for implementing `packages/core/src/actions/agent.ts`)
+## Runner notes (`packages/core/src/actions/agent.ts`)
 
-- `query()` from `@anthropic-ai/claude-agent-sdk` with `cwd` = worktree,
-  `allowedTools`, `maxTurns`, `mcpServers`, `permissionMode`, and a `PreToolUse` hook
-  that enforces `bash_allow` and logs every tool call to the run.
-- Record usage per turn into the ledger; stop when `budget.max_usd` is reached.
-- Persist the transcript with the run.
-- The worktree is created from `workspace.repo`/`branch` before the loop and removed on
-  failure; on success it is kept for `post` gates and for `${run.workspace}` in `emit`.
-- Optional sandbox wrapper (`bwrap`/`firejail`) and network allowlist are planned; keep
-  the seam.
-- Tests use a fake runtime, never a real model.
+- `ctx.agents` (`AgentClients`, implemented by the supervisor) opens the session;
+  `connectors/acp.ts` is the only file that imports `@agentclientprotocol/sdk`.
+- `agent-policy.ts` (`decidePermission`) is pure; `agent-workspace.ts` creates and removes
+  workspaces; `agent-result.ts` reads and validates RESULT.json (zod's `fromJSONSchema`
+  for `result.schema`).
+- The turn is an async iterator of normalised updates (`connectors/acp-types.ts`); the
+  runner counts `tool_call`s, watches `usage`, cancels on the run's signal, and rethrows
+  the executor's timeout/stop reason.
+- The workspace is kept on success (both statuses) and removed with its branch on failure.
+- Tests use `packages/core/test/fixtures/fake-acp.ts`, a real ACP agent process scripted
+  by markers in the prompt (`[[run: …]]`, `[[edit: …]]`, `[[result: {…}]]`, `[[cost: …]]`,
+  `[[tools: N]]`, `[[slow: ms]]`, `[[refuse]]`, `[[crash]]`), never a model.

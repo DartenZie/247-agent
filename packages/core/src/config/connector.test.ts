@@ -27,6 +27,28 @@ function issues(doc: unknown): string[] {
   return r.ok ? [] : r.issues.map((i) => `${i.path}: ${i.message}`);
 }
 
+describe('ConnectorManifest with transport acp', () => {
+  const ACP = { name: 'claude', exec: ['claude-agent-acp'], transport: 'acp' };
+
+  it('accepts an agent program with env only', () => {
+    const r = parseManifest({ ...ACP, env: { ANTHROPIC_API_KEY: '${secrets.k}' } }, '/x/c.yaml');
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.config).toMatchObject({ transport: 'acp', ops: [], emits: [] });
+  });
+
+  it('rejects ops, emits and a built-in on an acp connector', () => {
+    expect(issues({ ...ACP, ops: ['x'] })).toEqual([
+      expect.stringMatching(/^ops: an acp connector runs agent sessions/),
+    ]);
+    expect(issues({ ...ACP, emits: ['a.b'] })).toEqual([
+      expect.stringMatching(/^emits: an acp connector runs agent sessions/),
+    ]);
+    expect(
+      issues({ name: 'p', builtin: 'poller', transport: 'acp', config: POLLER.config }),
+    ).toEqual([expect.stringMatching(/^transport: a built-in connector cannot be an acp agent/)]);
+  });
+});
+
 describe('ConnectorManifest with builtin', () => {
   it('accepts a poller, defaults transport to none and emits to the configured event', () => {
     const r = parseManifest(POLLER, '/x/connectors.d/prs.yaml');

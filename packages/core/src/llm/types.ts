@@ -159,6 +159,25 @@ export interface DecideCallResult extends DecideResponse {
 }
 
 /**
+ * A turn an ACP agent ran on its own model (ARCHITECTURE §5.4): the core only sees what the
+ * agent reported. `provider` is the connector's name; `usage.reportedUsd` is the agent's
+ * cumulative cost when it sends one, else the tokens are priced from the table for `model`.
+ */
+export interface AgentTurn {
+  provider: string;
+  model: string;
+  usage: LlmUsage;
+  /** The run's cap (the smaller of the task's and the action's `budget.max_usd`), if any. */
+  maxUsd?: number | undefined;
+}
+
+export interface AgentTurnResult {
+  usd: number;
+  priced_by: PricedBy;
+  ledgerId: number;
+}
+
+/**
  * `ctx.llm`: the only way an action reaches a model. It prices, budgets and ledgers every
  * call (CLAUDE.md: never an unbudgeted call), so runners never touch the store.
  */
@@ -176,4 +195,15 @@ export interface LlmPort {
    * when the provider's type does not serve the Decisions API.
    */
   decide(req: DecideCall, ctx: LlmCallContext): Promise<DecideCallResult>;
+  /**
+   * Before an agent turn: throws `BudgetExceededError` when the daily cap is reached or the
+   * run has already spent its `maxUsd`. No provider is contacted.
+   */
+  checkBudget(req: { maxUsd?: number | undefined }, ctx: LlmCallContext): void;
+  /**
+   * After an agent turn: the ledger row for what the agent reported, the breaker, and the
+   * post-hoc checks (`UnpricedModelError` when nothing prices it, `BudgetExceededError` when
+   * the run is now over `maxUsd`; the row stays either way).
+   */
+  record(turn: AgentTurn, ctx: LlmCallContext): AgentTurnResult;
 }

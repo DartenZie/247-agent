@@ -4,6 +4,8 @@ import {
   type LlmDefaultsConfig,
 } from './config.js';
 import type {
+  AgentTurn,
+  AgentTurnResult,
   DecideCall,
   DecideCallResult,
   DecideRequest,
@@ -66,6 +68,8 @@ export function fakeProviderFactory(
 export interface FakePort extends LlmPort {
   calls: { req: LlmCall; ctx: LlmCallContext }[];
   decides: { req: DecideCall; ctx: LlmCallContext }[];
+  /** What `record` received (agent turns). */
+  turns: { turn: AgentTurn; ctx: LlmCallContext }[];
   systemFiles: Record<string, string>;
 }
 
@@ -77,10 +81,15 @@ export function fakeLlmPort(
     systemFiles?: Record<string, string>;
     respond?: (req: LlmCall) => LlmCallResult | Promise<LlmCallResult>;
     respondDecide?: (req: DecideCall) => DecideCallResult | Promise<DecideCallResult>;
+    /** Throws to simulate a budget refusal before a turn. */
+    checkBudget?: (req: { maxUsd?: number | undefined }) => void;
+    /** Prices an agent turn; defaults to the reported cost or $0.001. */
+    record?: (turn: AgentTurn) => AgentTurnResult;
   } = {},
 ): FakePort {
   const calls: FakePort['calls'] = [];
   const decides: FakePort['decides'] = [];
+  const turns: FakePort['turns'] = [];
   const systemFiles = over.systemFiles ?? {};
   const respond =
     over.respond ??
@@ -107,6 +116,7 @@ export function fakeLlmPort(
     decideDefaults: { model: DEFAULT_DECIDE_MODEL, ...over.decideDefaults },
     calls,
     decides,
+    turns,
     systemFiles,
     providers: () => ['fake'],
     readSystemFile: (rel) => {
@@ -123,6 +133,21 @@ export function fakeLlmPort(
     decide: async (req, ctx) => {
       decides.push({ req, ctx });
       return respondDecide(req);
+    },
+    checkBudget: (req) => {
+      over.checkBudget?.(req);
+    },
+    record: (turn, ctx) => {
+      turns.push({ turn, ctx });
+      if (over.record !== undefined) {
+        return over.record(turn);
+      }
+      const reported = turn.usage.reportedUsd;
+      return {
+        usd: reported ?? 0.001,
+        priced_by: reported === undefined ? 'table' : 'provider',
+        ledgerId: turns.length,
+      };
     },
   };
 }

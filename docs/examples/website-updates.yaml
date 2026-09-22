@@ -52,7 +52,9 @@ tasks:
           summary: ${result.summary}
           email: ${event.payload}
 
-  # 3. Routine change: small model, narrow scope, few turns.
+  # 3. Routine change: an ACP agent (connectors.d/claude.yaml), narrow scope, few tool calls.
+  #    The agent ends with RESULT.json {status: done|blocked, summary, ...}; `done` runs the
+  #    post gates and publishes, `blocked` skips them and the editor gets a reply (task 3b).
   - name: update_event_list
     trigger:
       kind: event
@@ -62,30 +64,53 @@ tasks:
     timeout: 15m
     action:
       kind: agent
-      runtime: claude-agent-sdk
-      model: claude-sonnet-5
-      effort: low
-      max_turns: 20
-      budget: { max_usd: 0.50 }
+      connector: claude                 # a transport: acp connector; default: defaults.agent.connector
+      max_tool_calls: 20
+      budget: { max_usd: 0.50 }         # cancels the session when the agent's reported cost passes it
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
-      tools: [Read, Edit, Glob, Grep, Bash]
-      bash_allow: ["npm run build"]
+      tools: [read, edit, search, execute]   # ACP tool kinds the agent may use; the rest is refused
+      bash_allow: ["npm run build"]          # `execute` calls must start with one of these
       system_file: prompts/agent_event_list.md
       prompt: |
         Update data/events.yaml according to the request below. Touch no other file.
-        Run `npm run build` when done and write RESULT.json with {summary, files_changed}.
+        Run `npm run build` when done.
 
         Request summary: ${event.payload.summary}
         <email>
         ${event.payload.email.body}
         </email>
-      result: { from: file, path: RESULT.json, schema: schemas/site_change.json }
-      post:
+      result: { path: RESULT.json, schema: schemas/site_change.json }
+      post:                             # only after status: done; a failing gate fails the run
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
         - shell: ["git", "push", "origin", "HEAD:main"]
+    emit:
+      - type: site.change_blocked
+        when: "result.status == 'blocked'"
+        payload:
+          summary: ${result.summary}
+          missing: ${result.missing}
+          email: ${event.payload.email}
 
-  # 4. Anything else: stronger model, whole repo, then a human approves before publishing.
+  # 3b. The agent could not do it: tell the editor what is missing. No LLM.
+  - name: reply_blocked
+    trigger: { kind: event, type: site.change_blocked }
+    action:
+      kind: connector
+      connector: email
+      op: send
+      args:
+        to: ${event.payload.email.from}
+        in_reply_to: ${event.payload.email.message_id}
+        subject: "Re: ${event.payload.email.subject}"
+        body: |
+          Hello,
+
+          I could not apply this change to the website yet: ${event.payload.summary}
+
+          Please send: ${join(', ', event.payload.missing || `[]`)}
+
+  # 4. Anything else: same agent, whole repo, more tool calls, then a human approves before publishing.
   - name: update_site_general
     trigger:
       kind: event
@@ -95,15 +120,13 @@ tasks:
     timeout: 45m
     action:
       kind: agent
-      runtime: claude-agent-sdk
-      model: claude-opus-5
-      effort: high
-      max_turns: 60
+      connector: claude
+      max_tool_calls: 60
       budget: { max_usd: 3.00 }
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
-      tools: [Read, Edit, Write, Glob, Grep, Bash]
+      tools: [read, edit, delete, move, search, execute]
       bash_allow: ["npm run build", "npm test", "git diff", "git status"]
-      mcp_servers: [email]              # may read the thread for context; cannot send (op allowlist in connector config)
+      mcp_servers: []                   # connector ops as agent tools: not implemented yet, must be empty
       system_file: prompts/agent_site_general.md
       prompt: |
         ${event.payload.summary}
@@ -111,13 +134,20 @@ tasks:
         <email>
         ${event.payload.email.body}
         </email>
-      result: { from: file, path: RESULT.json, schema: schemas/site_change.json }
+      result: { path: RESULT.json, schema: schemas/site_change.json }
       post:
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "site: ${result.summary}"]
     emit:
       - type: site.change_ready
+        when: "result.status == 'done'"
         payload: { summary: "${result.summary}", diff: "${result.diff_stat}", worktree: "${run.workspace}" }
+      - type: site.change_blocked
+        when: "result.status == 'blocked'"
+        payload:
+          summary: ${result.summary}
+          missing: ${result.missing}
+          email: ${event.payload.email}
 
   # 4b. Approval gate via chat. No LLM.
   - name: approve_general_change

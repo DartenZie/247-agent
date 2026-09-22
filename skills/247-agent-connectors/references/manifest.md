@@ -7,7 +7,7 @@ One file per connector under `connectors.d/`, or an entry in the `connectors:` l
 name: email                                   # [a-z][a-z0-9_-]*
 exec: ["node", "connectors/email/dist/main.js"]   # any executable; argv, no shell
 cwd: .                                        # relative to the manifest (optional)
-transport: stdio                              # stdio = MCP server on stdin/stdout; none = emits only
+transport: stdio                              # stdio = MCP server on stdin/stdout; none = emits only; acp = an ACP agent (below)
 emits: [email.received]                       # documentation of the event types it publishes
 ops: [fetch_new, mark_read, send]             # MCP tools the core may call; [] = any
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
@@ -27,6 +27,24 @@ health: { interval: 60s }                     # accepted, not used yet
 - The `emits` list is documentation and shape-checking, not a filter.
 - Use `transport: none` for a pure emitter (a webhook receiver, a bot that only
   forwards messages).
+
+## An ACP agent as a connector
+
+```yaml
+name: claude
+exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]   # any Agent Client Protocol program
+transport: acp
+env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }     # the agent's own model key
+```
+
+`agent` actions name it with `connector: claude` and open one ACP session per run (the
+core is the client, protocol version 1). It serves no ops and emits no events, so `ops`
+and `emits` must be empty; `config`/`OA_CONFIG_JSON` are not needed. Same lifecycle as any
+process connector: crash backoff, `oa connector restart` to re-read a rotated key,
+stderr as `connector.output`; `oa connector list` shows `acp` as its transport. Other
+agents: `gemini --experimental-acp`, `codex-acp`, and the list at agentclientprotocol.com.
+The task's `tools`/`bash_allow` policy answers the agent's permission requests, so prefer
+agents that ask before acting.
 
 ## Environment the supervisor provides
 

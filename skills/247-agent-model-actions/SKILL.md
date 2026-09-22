@@ -1,6 +1,6 @@
 ---
 name: 247-agent-model-actions
-description: "Design and write the model-backed steps of a 247-agent workflow: the `decide` action (typed questions to TypeSafe's Jev classifier via OpenRouter's Decisions API, probabilities back, no text), the `llm` action (one Claude call with a JSON output schema) and the `agent` action (Claude Agent SDK loop in a sandboxed git worktree with tool and bash allowlists, a budget, a RESULT.json contract and deterministic `post` gates). Use it whenever a 247-agent task needs to classify, route, triage, extract, summarise, decide, or edit a repository; whenever the user mentions models, prompts, `system_file`, `output_schema`, `questions`, `criteria`, confidence thresholds, Jev, `max_turns`, `budget`, `effort`, cost, tiers (Haiku/Sonnet/Opus), worktrees or \"let an agent do X\"; and when implementing or reviewing the `llm`/`decide`/`agent` runners in `packages/core/src/actions/`. Do not skip it for \"just a quick prompt\": the tiering and budget rules apply to every model call."
+description: "Design and write the model-backed steps of a 247-agent workflow: the `decide` action (typed questions to TypeSafe's Jev classifier via OpenRouter's Decisions API, probabilities back, no text), the `llm` action (one Claude call with a JSON output schema) and the `agent` action (one session on an ACP agent such as claude-agent-acp, in a fresh git worktree, with tool-kind and command allowlists, a tool-call cap, a budget, a RESULT.json contract with `status: done | blocked` and deterministic `post` gates). Use it whenever a 247-agent task needs to classify, route, triage, extract, summarise, decide, or edit a repository; whenever the user mentions models, prompts, `system_file`, `output_schema`, `questions`, `criteria`, confidence thresholds, Jev, `max_tool_calls`, `budget`, `effort`, cost, tiers (Haiku/Sonnet/Opus), ACP, worktrees, \"blocked\" results or \"let an agent do X\"; and when implementing or reviewing the `llm`/`decide`/`agent` runners in `packages/core/src/actions/`. Do not skip it for \"just a quick prompt\": the tiering and budget rules apply to every model call."
 ---
 
 # 247-agent model actions
@@ -25,7 +25,7 @@ Ask, in order:
    narrowest scope that can succeed.
 
 Two tasks with different intelligence needs are the **same action kind with different
-`model`/`effort`/`max_turns`/`system_file`**, not different code. See
+`model`/`effort`/`max_tool_calls`/`system_file`**, not different code. See
 `docs/examples/website-updates.yaml` tasks 2–4 for the reference shapes.
 
 ## Model ids and parameters
@@ -126,41 +126,50 @@ Full field list and runner notes in `references/agent-action.md`. The essentials
 ```yaml
 action:
   kind: agent
-  runtime: claude-agent-sdk
-  model: claude-sonnet-5
-  effort: low
-  max_turns: 20
+  connector: claude                     # a transport: acp connector (connectors.d/claude.yaml)
+  max_tool_calls: 20
   budget: { max_usd: 0.50 }
   workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/site, branch: main }
-  tools: [Read, Edit, Glob, Grep, Bash]
-  bash_allow: ["npm run build"]
-  mcp_servers: []                       # connectors exposed as tools, if any
+  tools: [read, edit, search, execute]  # ACP tool kinds; everything else is refused
+  bash_allow: ["npm run build"]         # what `execute` may run
   system_file: prompts/agent_event_list.md
   prompt: |
     Update data/events.yaml according to the request below. Touch no other file.
-    Run `npm run build` when done and write RESULT.json with {summary, files_changed}.
+    Run `npm run build` when done.
 
     <email>
     ${event.payload.email.body}
     </email>
-  result: { from: file, path: RESULT.json, schema: schemas/site_change.json }
-  post:
+  result: { path: RESULT.json, schema: schemas/site_change.json }
+  post:                                 # only after status: done
     - shell: ["npm", "run", "build"]
     - shell: ["git", "commit", "-am", "events: ${result.summary}"]
+emit:
+  - type: site.change_blocked           # the agent could not do it: say what is missing
+    when: "result.status == 'blocked'"
+    payload: { summary: ${result.summary}, missing: ${result.missing}, email: ${event.payload.email} }
 ```
 
 Non-negotiables, because they are what make an agent safe to run unattended:
 
-- **Fresh git worktree per run**, discarded on failure. The agent never edits the base
-  checkout.
-- **`tools` + `bash_allow` + `mcp_servers` is the whole capability surface.** Grant the
-  minimum; the prompt is not a security boundary.
+- **Fresh workspace per run** (`git-worktree` on branch `agent/<run_id>`, or `temp`),
+  removed on failure, kept on success. The agent never edits the base checkout.
+- **`tools` + `bash_allow` is the whole capability surface**, judged per permission
+  request and never granted "always"; a tool call the agent ran without asking is judged
+  after the fact and a violation fails the run. Grant the minimum; the prompt is not a
+  security boundary. (`mcp_servers` must stay empty until the MCP proxy exists.)
 - **The agent never holds deploy secrets and never publishes.** It edits, a `post` gate
   proves the build still works, a commit records it, and a separate `shell` task ships
-  it. Rollback is `git revert` plus republish.
-- **`RESULT.json` is the contract.** The prompt says what to write; `result.schema`
-  validates it; `emit` routes from it.
+  it. Rollback is `git revert` plus republish. The model key lives in the connector
+  manifest's `env`, not in the task.
+- **`RESULT.json` is the contract**, and the runner states it in every prompt:
+  `status: done | blocked` plus `summary`, then the task's `result.schema`. `done` runs
+  the gates; `blocked` skips them and the run still succeeds, so `emit … when:
+  "result.status == 'blocked'"` routes "not done because X is missing" to a reply task.
+  Design every agent task with both branches.
 - **`post` gates are deterministic**, no model. A failing gate fails the run.
+- **`max_tool_calls` and `budget` are hard stops** (the session is cancelled); a turn the
+  agent does not report usage or cost for fails the run.
 - **`concurrency: 1`** on tasks that share a repo; `timeout` is wall-clock per attempt.
 - High-impact changes get an **approval gate** (`wait` + chat) before publishing; the
   `247-agent-tasks` skill has the pattern.
@@ -173,7 +182,10 @@ input/output/cache tokens, USD) in the ledger and enforces the run's `budget.max
 `budgets.daily_usd` per UTC day (once crossed, every model call that day fails fast and
 `budget.exceeded` is emitted once, which the `notify` task should listen to). A model
 without a price fails validation. Never add an unbudgeted call, including "helper" calls
-inside a runner: use `ctx.llm`, never an SDK directly. `oa cost --by task --since 7d`
+inside a runner: use `ctx.llm`, never an SDK directly. An `agent` turn is the one case
+where the model is called by someone else (the ACP agent, with its own key): the runner
+ledgers what the agent reports through `ctx.llm.record` under the connector's name and
+cancels the session when the reported cost passes the cap. `oa cost --by task --since 7d`
 shows the ledger.
 
 ## Status today
@@ -183,9 +195,10 @@ runnable through `ctx.llm`, with the ledger and budgets applied, and all three p
 types (`anthropic`, `openai`, `openrouter`) have adapters. The `decide` action runs
 through the same port (`ctx.llm.decide()`), with the Decisions API implemented in the
 `openrouter` adapter only; `docs/examples/decide-triage.yaml` is the reference. The
-`agent` action validates `kind` only and has no runner. Until then test the surrounding
-workflow with a `shell` stand-in that emits the same event (pattern in the
-`247-agent-tasks` skill).
-When adding an adapter or the `agent` runner, follow `references/llm-action.md`,
+`agent` action runs on ACP connectors (`transport: acp`); `docs/examples/website-updates.yaml`
+tasks 3, 3b and 4 are the reference, `docs/examples/connectors.d/claude.yaml` the
+connector. Not there yet: `mcp_servers` (connector ops as agent tools), transcript
+persistence, retention of `work/`, and exposing the agent's model/mode config options.
+When adding an adapter or changing a runner, follow `references/llm-action.md`,
 `references/decide-action.md` and `references/agent-action.md` and keep
 `docs/ARCHITECTURE.md` §5.2, §5.3, §5.4, §9 and §14 in sync with the code.

@@ -22,15 +22,19 @@ truth for concepts, action semantics, the connector protocol and the config form
   `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `decide` actions go
   through the same port (`ctx.llm.decide`) to OpenRouter's Decisions API
   (`POST /api/alpha/decisions`, plain `fetch`, TypeSafe's Jev classifier); only the
-  `openrouter` provider type serves it. `agent` actions use
-  `@anthropic-ai/claude-agent-sdk`. MCP client from `@modelcontextprotocol/sdk`.
+  `openrouter` provider type serves it. `agent` actions open a session on an ACP agent
+  (Agent Client Protocol, `@agentclientprotocol/sdk`, protocol v1): a connector with
+  `transport: acp` such as `claude-agent-acp`; the core is the client
+  (`packages/core/src/connectors/acp.ts`), the agent runs the model with its own key, and
+  the turn is ledgered from what it reports (`ctx.llm.record`). MCP client from
+  `@modelcontextprotocol/sdk`.
 - Target runtime: systemd service on Linux, HTTP API over a Unix socket.
 
 ## Layout
 
 ```
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
-packages/core/test/fixtures/  fake connectors for tests (Node runs them from .ts source)
+packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, chat, ...)
@@ -46,9 +50,11 @@ skills/                      agent skills for working with 247-agent (linked fro
   code. A model call happens only inside an `llm`, `decide` or `agent` action.
 - Every model call records usage in the ledger and respects the task's `budget` and the
   global daily cap. Never add an unbudgeted call.
-- Agents run in a fresh git worktree with an explicit tool/bash allowlist, produce a
-  `RESULT.json`, and pass deterministic `post` gates. Agents never hold deploy secrets
-  and never publish.
+- Agents run in a fresh workspace (git worktree or temp dir) with an explicit tool-kind
+  and command allowlist enforced through ACP permission requests, produce a `RESULT.json`
+  with `status: done | blocked` and `summary` (plus the task's schema), and pass
+  deterministic `post` gates only when `done`; `blocked` still succeeds so `emit` can
+  route it. Agents never hold deploy secrets and never publish.
 - Secrets are resolved by name from the configured backend at run time. Never write them
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and

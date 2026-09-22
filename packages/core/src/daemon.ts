@@ -1,6 +1,6 @@
 import { dirname } from 'node:path';
 
-import type { ActionRunners, ConnectorClients } from './actions/types.js';
+import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { createApiServer, type ApiServer } from './api/server.js';
 import { systemClock, type Clock } from './clock.js';
 import { loadAgentFile, type AgentConfig, type AgentLoadResult } from './config/agent.js';
@@ -22,6 +22,8 @@ export interface DaemonOptions {
   runners?: ActionRunners;
   /** Replaces the connector supervisor (tests). */
   connectors?: ConnectorClients;
+  /** Replaces the supervisor's agent sessions (tests). */
+  agents?: AgentClients;
   /** The daemon's environment; defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Replaces the built-in provider adapters (tests). */
@@ -128,6 +130,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     env: templateEnv(env, config.secrets.backend === 'env' ? config.secrets.prefix : undefined),
     socketPath: config.socket,
     connectors: opts.connectors ?? manifests.connectors ?? [],
+    agents: opts.agents ?? { defaults: config.defaults.agent, workDir: config.workDir },
     ...(opts.runners === undefined ? {} : { runners: opts.runners }),
     llm: {
       providers: config.providers,

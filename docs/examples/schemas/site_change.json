@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "site_change",
+  "description": "RESULT.json of the website agent tasks, on top of the baseline {status, summary}.",
+  "type": "object",
+  "required": ["status", "summary", "files_changed"],
+  "properties": {
+    "status": { "enum": ["done", "blocked"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths edited relative to the workspace; empty when blocked."
+    },
+    "diff_stat": { "type": "string", "description": "Output of git diff --stat, when available." },
+    "missing": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "When blocked: what the sender must supply (a date, a venue, a file, ...)."
+    }
+  }
+}

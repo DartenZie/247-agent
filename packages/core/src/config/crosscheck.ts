@@ -33,18 +33,47 @@ export function isInside(dir: string, target: string): boolean {
  * `llm` and `decide` task names a configured provider and a model with a known price (unless
  * the provider reports cost itself); an `llm` task's `system_file` exists under the config
  * directory; a `decide` task's provider is of type `openrouter`, the only one that serves the
- * Decisions API. Run at daemon start, on reload and by `oa validate agent.yaml`, so no
- * unpriced call can be configured.
+ * Decisions API; an `agent` task's `model` (when set), `system_file` and `result.schema`
+ * likewise. Run at daemon start, on reload and by `oa validate agent.yaml`, so no unpriced
+ * call can be configured.
  */
 export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
   const decideDefaults = ctx.decideDefaults ?? DecideDefaults.parse({});
+  const fileUnder = (field: string, relative: string, path: string): void => {
+    const abs = resolve(ctx.configDir, relative);
+    if (!isInside(ctx.configDir, abs)) {
+      issues.push({
+        path,
+        message: `${field} must stay under the config directory ${ctx.configDir}`,
+      });
+    } else if (!existsSync(abs) || !statSync(abs).isFile()) {
+      issues.push({ path, message: `${field} not found: ${abs}` });
+    }
+  };
   tasks.forEach((task, i) => {
     const a = task.action;
+    const at = (field: string): string => `tasks[${String(i)}].action.${field}`;
+    if (a.kind === 'agent') {
+      // The agent makes its own model calls; `model` only prices what it reports, so it
+      // must be priced when set. The connector is checked against the manifests by the core.
+      if (a.model !== undefined && !ctx.pricing.has(a.model)) {
+        issues.push({
+          path: at('model'),
+          message: `no price for model "${a.model}": add a pricing entry in agent.yaml (or omit model when the agent reports cost)`,
+        });
+      }
+      if (a.system_file !== undefined) {
+        fileUnder('system_file', a.system_file, at('system_file'));
+      }
+      if (a.result.schema !== undefined) {
+        fileUnder('result.schema', a.result.schema, at('result.schema'));
+      }
+      return;
+    }
     if (a.kind !== 'llm' && a.kind !== 'decide') {
       return;
     }
-    const at = (field: string): string => `tasks[${String(i)}].action.${field}`;
     const section = a.kind === 'llm' ? 'defaults.llm' : 'defaults.decide';
     const providerName =
       a.provider ?? (a.kind === 'llm' ? ctx.defaults.provider : decideDefaults.provider);
@@ -87,15 +116,7 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
       });
     }
     if (a.kind === 'llm' && a.system_file !== undefined) {
-      const path = resolve(ctx.configDir, a.system_file);
-      if (!isInside(ctx.configDir, path)) {
-        issues.push({
-          path: at('system_file'),
-          message: `system_file must stay under the config directory ${ctx.configDir}`,
-        });
-      } else if (!existsSync(path) || !statSync(path).isFile()) {
-        issues.push({ path: at('system_file'), message: `system_file not found: ${path}` });
-      }
+      fileUnder('system_file', a.system_file, at('system_file'));
     }
   });
   return issues;

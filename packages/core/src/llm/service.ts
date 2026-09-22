@@ -23,9 +23,12 @@ import {
   estimateInputTokens,
   startOfUtcDay,
   utcDay,
+  type ModelPrice,
   type PricingTable,
 } from './pricing.js';
 import type {
+  AgentTurn,
+  AgentTurnResult,
   DecideCall,
   DecideCallResult,
   LlmCall,
@@ -77,7 +80,9 @@ interface ExecuteSpec {
  * daily cap or a worst-case per-run overrun before contacting the provider; after the call,
  * write the row and trip the breaker if the day's spend crossed the cap. `call` (a model
  * completion) and `decide` (the Decisions API) differ only in the adapter method and the
- * worst-case estimate; everything else is `execute`.
+ * worst-case estimate; everything else is `execute`. An agent turn (`checkBudget` before,
+ * `record` after) is the same path with the model call made by the ACP agent itself, so
+ * there is no adapter, no estimate and no provider lookup: the row names the connector.
  */
 export class LlmService implements LlmPort {
   readonly defaults: LlmDefaultsConfig;
@@ -172,6 +177,31 @@ export class LlmService implements LlmPort {
     );
   }
 
+  checkBudget(req: { maxUsd?: number | undefined }, cctx: LlmCallContext): void {
+    this.precheck({ maxUsd: req.maxUsd }, cctx);
+  }
+
+  record(turn: AgentTurn, cctx: LlmCallContext): AgentTurnResult {
+    const price = this.o.pricing.get(turn.model);
+    const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
+    const settled = this.settle(
+      { provider: turn.provider, model: turn.model, msg: 'agent.turn' },
+      turn.usage,
+      price,
+      spentRun,
+      this.o.clock.now(),
+      cctx,
+      {},
+    );
+    if (settled.pricedBy === 'unpriced') {
+      throw new UnpricedModelError(
+        `agent "${turn.provider}" reported no cost and model "${turn.model}" has no pricing entry; the tokens are in the ledger at $0`,
+      );
+    }
+    this.overrun(turn.maxUsd, spentRun, settled.usd);
+    return { usd: settled.usd, priced_by: settled.pricedBy, ledgerId: settled.ledgerId };
+  }
+
   /**
    * Everything around one adapter call: provider and price lookup, the daily and per-run
    * checks, secret resolution, the ledger row, the breaker, the log line, and the post-hoc
@@ -199,7 +229,39 @@ export class LlmService implements LlmPort {
         `no price for model "${spec.model}" on provider "${spec.provider}": add a pricing entry in agent.yaml`,
       );
     }
+    const { now, spentRun } = this.precheck(
+      {
+        maxUsd: spec.maxUsd,
+        estimate: price === undefined ? undefined : costUsd(price, spec.estimate),
+      },
+      cctx,
+    );
 
+    const adapter = factory(this.resolveProvider(spec.provider, cfg));
+    const startedAt = Date.now();
+    const res = await invoke(adapter);
+    const durationMs = Date.now() - startedAt;
+    const settled = this.settle(spec, res.usage, price, spentRun, now, cctx, {
+      duration_ms: durationMs,
+      ...logFields(res),
+    });
+    if (settled.pricedBy === 'unpriced') {
+      throw new UnpricedModelError(
+        `provider "${spec.provider}" reported no cost for model "${spec.model}" and it has no pricing entry; the tokens are in the ledger at $0`,
+      );
+    }
+    this.overrun(spec.maxUsd, spentRun, settled.usd);
+    return { ...res, usd: settled.usd, priced_by: settled.pricedBy, ledgerId: settled.ledgerId };
+  }
+
+  /**
+   * The checks before any spend: the daily cap (tripping the breaker when it is already
+   * reached), the run's own cap, and, when a worst-case `estimate` is known, that it fits.
+   */
+  private precheck(
+    req: { maxUsd?: number | undefined; estimate?: number | undefined },
+    cctx: LlmCallContext,
+  ): { now: Date; spentRun: number } {
     const now = this.o.clock.now();
     const day = utcDay(now);
     const dailyCap = this.o.budgets.daily_usd;
@@ -212,51 +274,58 @@ export class LlmService implements LlmPort {
       );
     }
     const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
-    if (spec.maxUsd !== undefined) {
-      if (spentRun >= spec.maxUsd) {
+    if (req.maxUsd !== undefined) {
+      if (spentRun >= req.maxUsd) {
         throw new BudgetExceededError(
           'task',
-          `run budget of $${String(spec.maxUsd)} already spent ($${spentRun.toFixed(4)})`,
+          `run budget of $${String(req.maxUsd)} already spent ($${spentRun.toFixed(4)})`,
         );
       }
-      if (price !== undefined) {
-        const estimate = costUsd(price, spec.estimate);
-        if (spentRun + estimate > spec.maxUsd) {
-          throw new BudgetExceededError(
-            'task',
-            `worst case $${estimate.toFixed(4)} would exceed the run budget of $${String(spec.maxUsd)}; shorten the input, lower max_tokens or raise budget.max_usd`,
-          );
-        }
+      if (req.estimate !== undefined && spentRun + req.estimate > req.maxUsd) {
+        throw new BudgetExceededError(
+          'task',
+          `worst case $${req.estimate.toFixed(4)} would exceed the run budget of $${String(req.maxUsd)}; shorten the input, lower max_tokens or raise budget.max_usd`,
+        );
       }
     }
+    return { now, spentRun };
+  }
 
-    const adapter = factory(this.resolveProvider(spec.provider, cfg));
-    const startedAt = Date.now();
-    const res = await invoke(adapter);
-    const durationMs = Date.now() - startedAt;
-
+  /** Prices the usage, writes the ledger row, trips the breaker if due, logs the line. */
+  private settle(
+    spec: { provider: string; model: string; msg: string },
+    usage: LlmUsage,
+    price: ModelPrice | undefined,
+    spentRun: number,
+    now: Date,
+    cctx: LlmCallContext,
+    logFields: Record<string, unknown>,
+  ): { usd: number; pricedBy: PricedBy; ledgerId: number } {
     let usd: number;
     let pricedBy: PricedBy;
-    if (res.usage.reportedUsd !== undefined) {
-      usd = res.usage.reportedUsd;
+    if (usage.reportedUsd !== undefined) {
+      usd = usage.reportedUsd;
       pricedBy = 'provider';
     } else if (price !== undefined) {
-      usd = costUsd(price, res.usage);
+      usd = costUsd(price, usage);
       pricedBy = 'table';
     } else {
       usd = 0;
       pricedBy = 'unpriced';
     }
+    const day = utcDay(now);
+    const dailyCap = this.o.budgets.daily_usd;
+    const spentToday = this.o.store.ledger.sumSince(startOfUtcDay(now));
     const ledgerId = this.o.store.transaction(() => {
       const id = this.o.store.ledger.insert({
         run_id: cctx.run.id,
         task: cctx.task,
         provider: spec.provider,
         model: spec.model,
-        in_tok: res.usage.input,
-        out_tok: res.usage.output,
-        cache_read: res.usage.cacheRead,
-        cache_write: res.usage.cacheWrite,
+        in_tok: usage.input,
+        out_tok: usage.output,
+        cache_read: usage.cacheRead,
+        cache_write: usage.cacheWrite,
         usd,
         priced_by: pricedBy,
         ts: now.toISOString(),
@@ -269,27 +338,25 @@ export class LlmService implements LlmPort {
     cctx.log.info(spec.msg, {
       provider: spec.provider,
       model: spec.model,
-      in_tok: res.usage.input,
-      out_tok: res.usage.output,
-      cache_read: res.usage.cacheRead,
-      cache_write: res.usage.cacheWrite,
+      in_tok: usage.input,
+      out_tok: usage.output,
+      cache_read: usage.cacheRead,
+      cache_write: usage.cacheWrite,
       usd,
       priced_by: pricedBy,
-      duration_ms: durationMs,
-      ...logFields(res),
+      run_usd: spentRun + usd,
+      ...logFields,
     });
-    if (pricedBy === 'unpriced') {
-      throw new UnpricedModelError(
-        `provider "${spec.provider}" reported no cost for model "${spec.model}" and it has no pricing entry; the tokens are in the ledger at $0`,
-      );
-    }
-    if (spec.maxUsd !== undefined && spentRun + usd > spec.maxUsd) {
+    return { usd, pricedBy, ledgerId };
+  }
+
+  private overrun(maxUsd: number | undefined, spentRun: number, usd: number): void {
+    if (maxUsd !== undefined && spentRun + usd > maxUsd) {
       throw new BudgetExceededError(
         'task',
-        `run spent $${(spentRun + usd).toFixed(4)}, over its budget of $${String(spec.maxUsd)}`,
+        `run spent $${(spentRun + usd).toFixed(4)}, over its budget of $${String(maxUsd)}`,
       );
     }
-    return { ...res, usd, priced_by: pricedBy, ledgerId };
   }
 
   /** Renders `api_key`/`headers` with freshly resolved secrets; nothing is kept between calls. */

@@ -28,7 +28,11 @@ const tasks = config([
     action: { kind: 'shell', cmd: ['sleep', '30'] },
     timeout: '200ms',
   },
-  { name: 'model', trigger: { kind: 'event', type: 'x.model' }, action: { kind: 'agent' } },
+  {
+    name: 'model',
+    trigger: { kind: 'event', type: 'x.model' },
+    action: { kind: 'agent', workspace: { kind: 'temp' }, tools: ['read'], prompt: 'x' },
+  },
 ]);
 
 let env: TestEnv;

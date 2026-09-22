@@ -339,6 +339,110 @@ describe('LlmService.decide', () => {
   });
 });
 
+describe('LlmService agent turns (checkBudget + record)', () => {
+  const cctx = (r: RunRecord) => ({
+    run: r,
+    task: r.task,
+    signal: new AbortController().signal,
+    log: env.log,
+  });
+
+  it('records a reported cost under the connector name, then prices tokens from the table', () => {
+    const s = service();
+    const r = run('agent_task');
+    const first = s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        maxUsd: 1,
+        usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.05 },
+      },
+      cctx(r),
+    );
+    expect(first).toMatchObject({ usd: 0.05, priced_by: 'provider' });
+    const second = s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        maxUsd: 1,
+        usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 },
+      },
+      cctx(r),
+    );
+    expect(second.priced_by).toBe('table');
+    expect(second.usd).toBeCloseTo(0.003); // sonnet: 1000 in at $2/M + 100 out at $10/M
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      { provider: 'claude', model: 'claude-sonnet-5', usd: 0.05, priced_by: 'provider' },
+      { provider: 'claude', model: 'claude-sonnet-5', priced_by: 'table' },
+    ]);
+    expect(env.lines.filter((l) => l.msg === 'agent.turn')).toHaveLength(2);
+    expect(env.lines.at(-1)).toMatchObject({
+      msg: 'agent.turn',
+      run_usd: expect.closeTo(0.053, 4) as number,
+    });
+  });
+
+  it('fails an unpriced turn and an overrun, keeping the rows', () => {
+    const s = service();
+    const r = run();
+    expect(() =>
+      s.record(
+        {
+          provider: 'gemini',
+          model: 'gemini-x',
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+        },
+        cctx(r),
+      ),
+    ).toThrow(UnpricedModelError);
+    expect(() =>
+      s.record(
+        {
+          provider: 'claude',
+          model: 'claude-sonnet-5',
+          maxUsd: 0.01,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.02 },
+        },
+        cctx(r),
+      ),
+    ).toThrow(BudgetExceededError);
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      { priced_by: 'unpriced', usd: 0 },
+      { priced_by: 'provider', usd: 0.02 },
+    ]);
+  });
+
+  it('checkBudget refuses a run that already spent its cap and a day over the daily cap', () => {
+    const s = service({ budgets: { daily_usd: 0.1 } });
+    const r = run();
+    s.checkBudget({ maxUsd: 0.05 }, cctx(r));
+    s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.05 },
+      },
+      cctx(r),
+    );
+    expect(() => {
+      s.checkBudget({ maxUsd: 0.05 }, cctx(r));
+    }).toThrow(/already spent/);
+    s.checkBudget({}, cctx(r)); // no run cap: fine while the day is under its cap
+    s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.05 },
+      },
+      cctx(r),
+    );
+    expect(events(BUDGET_EXCEEDED)).toHaveLength(1);
+    expect(() => {
+      s.checkBudget({}, cctx(run()));
+    }).toThrow(/daily budget/);
+  });
+});
+
 describe('LlmService.readSystemFile', () => {
   it('reads relative to the config dir and refuses to leave it', () => {
     mkdirSync(join(env.dir, 'prompts'));

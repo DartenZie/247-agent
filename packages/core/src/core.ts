@@ -1,10 +1,12 @@
+import { runAgent } from './actions/agent.js';
+import type { AgentDefaultsConfig } from './actions/agent-config.js';
 import { runConnector } from './actions/connector.js';
 import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
 import { runSequence } from './actions/sequence.js';
 import type { SandboxConfig } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
-import type { ActionRunners, ConnectorClients } from './actions/types.js';
+import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { runWait } from './actions/wait.js';
 import { createBus, type EventBus } from './bus/bus.js';
 import { runTaskManually, type ManualInput } from './bus/manual.js';
@@ -67,6 +69,12 @@ export interface CoreOptions {
   connectors?: readonly ConnectorConfig[] | ConnectorClients;
   /** Passed to supervised connectors as `OA_CORE_SOCKET`. */
   socketPath?: string;
+  /**
+   * `defaults.agent` and the workspace root for `agent` actions on the supervisor's acp
+   * connectors, or a ready-made `AgentClients` (tests). Without either, `agent` actions
+   * fail.
+   */
+  agents?: { defaults: AgentDefaultsConfig; workDir: string } | AgentClients;
   /**
    * Model providers, prices and budgets from agent.yaml. Without it `llm` and `decide`
    * actions fail with "no llm service is configured" and the tasks are not cross-checked
@@ -134,6 +142,7 @@ export const defaultRunners: ActionRunners = {
   connector: runConnector,
   llm: runLlm,
   decide: runDecide,
+  agent: runAgent,
   wait: runWait,
   sequence: runSequence,
 };
@@ -147,6 +156,10 @@ export const defaultProviderFactories: ProviderFactories = {
 
 function isClients(v: readonly ConnectorConfig[] | ConnectorClients): v is ConnectorClients {
   return !Array.isArray(v);
+}
+
+function isAgentClients(v: NonNullable<CoreOptions['agents']>): v is AgentClients {
+  return 'open' in v;
 }
 
 /** For a poller whose target has no supervisor (only reachable with a hand-built config). */
@@ -171,6 +184,8 @@ export function createCore(opts: CoreOptions): Core {
 
   let supervisor: ConnectorSupervisor | undefined;
   let connectors: ConnectorClients | undefined;
+  let agents: AgentClients | undefined =
+    opts.agents !== undefined && isAgentClients(opts.agents) ? opts.agents : undefined;
   let builtins: readonly ConnectorConfig[] = [];
   if (opts.connectors !== undefined) {
     if (isClients(opts.connectors)) {
@@ -187,8 +202,11 @@ export function createCore(opts: CoreOptions): Core {
           socketPath: opts.socketPath,
           secrets,
           log,
+          agents:
+            opts.agents === undefined || isAgentClients(opts.agents) ? undefined : opts.agents,
         });
         connectors = supervisor;
+        agents ??= supervisor;
       }
     }
   }
@@ -235,6 +253,7 @@ export function createCore(opts: CoreOptions): Core {
     secrets,
     ...(llm === undefined ? {} : { llm }),
     ...(connectors === undefined ? {} : { connectors }),
+    ...(agents === undefined ? {} : { agents }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
     ...(opts.workers === undefined ? {} : { workers: opts.workers }),
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
@@ -251,10 +270,18 @@ export function createCore(opts: CoreOptions): Core {
       compiled = compileConfig(result.config);
       bus.dispatcher.setConfig(compiled);
       const names = new Set(connectors?.names() ?? []);
+      const agentNames = new Set(agents?.agentNames() ?? []);
       for (const task of compiled.tasks) {
         for (const ref of connectorRefs(task.config.action)) {
           if (!names.has(ref)) {
             log.warn('core.unknown_connector', { task: task.name, connector: ref });
+          }
+        }
+        const a = task.config.action;
+        if (a.kind === 'agent') {
+          const ref = a.connector ?? agents?.defaults.connector;
+          if (ref === undefined || !agentNames.has(ref)) {
+            log.warn('core.unknown_agent', { task: task.name, connector: ref ?? null });
           }
         }
       }
@@ -350,7 +377,7 @@ function crossCheck(
   return { ok: false, files };
 }
 
-/** Connector names an action (or its sequence steps) calls. */
+/** Connector names an action (or its sequence steps) calls ops on; `agent` connectors are checked separately. */
 function connectorRefs(action: CompiledConfig['tasks'][number]['config']['action']): string[] {
   if (action.kind === 'connector') {
     return [action.connector];
