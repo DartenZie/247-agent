@@ -4,7 +4,7 @@
 name: ftp
 exec: ["node", "connectors/ftp/dist/main.js"]
 transport: stdio
-ops: [list, stat, read, write, delete, rename, mkdir]   # give agents a copy with [list, stat, read]
+ops: [list, stat, read, write, delete, rename, mkdir, sync]   # give agents a copy with [list, stat, read]
 config:
   protocol: sftp                         # sftp | ftp | ftps
   host: sftp.example.com                 # port 22 by default (21 for ftp/ftps, 990 for implicit ftps)
@@ -12,4 +12,5 @@ config:
   password: "${secrets.ftp_pass}"        # or private_key: "${secrets.ftp_key}" for sftp
   root: /srv/exchange                    # every path is relative to this and confined to it
   max_bytes: 1000000                     # cap for read results and write payloads
+  # local_roots: [/var/lib/247-agent/repos/site/dist]   # local directories `sync` may upload from; empty disables sync
 restart: { base: 1s, max: 60s }

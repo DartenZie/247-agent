@@ -38,6 +38,8 @@ export interface FileClient {
   read(path: string): Promise<Buffer>;
   /** Creates or overwrites. */
   write(path: string, data: Buffer): Promise<void>;
+  /** Creates or overwrites `path` from a local file, streamed; the parent must exist. */
+  upload(local: string, path: string): Promise<void>;
   /** Removes one file or symlink. */
   remove(path: string): Promise<void>;
   rmdir(path: string, recursive: boolean): Promise<void>;
@@ -159,5 +161,25 @@ export interface MkdirArgs {
 
 export interface MkdirResult {
   path: string;
+  [key: string]: JsonValue;
+}
+
+export interface SyncArgs {
+  /** Absolute local directory, inside one of the config's `local_roots`. */
+  local: string;
+  /** Remote directory relative to the root; default the root itself. */
+  remote?: string | undefined;
+  /** Remove remote files and directories under `remote` that the local tree lacks. */
+  prune?: boolean | undefined;
+}
+
+export interface SyncResult {
+  local: string;
+  remote: string;
+  /** Relative paths uploaded, in order. */
+  uploaded: string[];
+  bytes: number;
+  /** Relative remote paths removed (files first, then emptied directories). */
+  pruned: string[];
   [key: string]: JsonValue;
 }

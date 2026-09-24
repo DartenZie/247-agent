@@ -1,6 +1,6 @@
 /**
  * The (S)FTP connector: files inside one remote directory over SFTP, FTP or FTPS. Ops:
- * `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir`. Spawned by the core with
+ * `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir`, `sync`. Spawned by the core with
  * the manifest's `config` in `OA_CONFIG_JSON`; see README.md.
  */
 import { z } from 'zod';
@@ -85,6 +85,13 @@ await runConnector({
         description: 'Creates a directory and its parents; succeeds when it already exists.',
         input: { path: z.string() },
         handler: async (args) => (await ops.mkdir(args)) as unknown as JsonValue,
+      }),
+      defineTool({
+        name: 'sync',
+        description:
+          'Uploads every file below a local directory (inside the config’s local_roots) to a remote directory, default the root; prune: true then removes remote files and directories the local tree lacks. Returns {local, remote, uploaded, bytes, pruned}.',
+        input: { local: z.string(), remote: z.string().optional(), prune: z.boolean().optional() },
+        handler: async (args) => (await ops.sync(args)) as unknown as JsonValue,
       }),
     ];
   },

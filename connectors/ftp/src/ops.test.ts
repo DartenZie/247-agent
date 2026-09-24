@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { FileOps } from './ops.js';
@@ -263,5 +267,85 @@ describe('every op', () => {
     expect(await code(ops.read({ path: 'nope' }))).toBe('not_found');
     expect(client.calls).toEqual(['stat /srv/x/nope', 'close']);
     expect(client.closed).toBe(true);
+  });
+});
+
+describe('sync', () => {
+  /** A local tree: a.html, css/site.css, img/1.jpg, an empty dir and a symlink (skipped). */
+  function localSite(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'ftp-sync-'));
+    writeFileSync(join(dir, 'a.html'), '<a>');
+    mkdirSync(join(dir, 'css'));
+    writeFileSync(join(dir, 'css', 'site.css'), 'body{}');
+    mkdirSync(join(dir, 'img'));
+    writeFileSync(join(dir, 'img', '1.jpg'), 'jpegjpeg');
+    mkdirSync(join(dir, 'empty'));
+    symlinkSync(join(dir, 'a.html'), join(dir, 'link.html'));
+    return dir;
+  }
+
+  it('uploads every regular file under a local root, creating directories, on one connection', async () => {
+    const local = localSite();
+    const { ops, client, connects } = setup({ local_roots: [tmpdir()] });
+    const r = await ops.sync({ local, remote: 'site' });
+    expect(r).toMatchObject({
+      remote: 'site',
+      uploaded: ['a.html', 'css/site.css', 'img/1.jpg'],
+      bytes: 3 + 6 + 8,
+      pruned: [],
+    });
+    expect(client.files.get('/srv/x/site/css/site.css')?.toString()).toBe('body{}');
+    expect(client.files.has('/srv/x/site/link.html')).toBe(false);
+    expect(client.dirs.has('/srv/x/site/empty')).toBe(true);
+    expect(connects()).toBe(1);
+    expect(client.calls).toEqual([
+      'mkdir /srv/x/site',
+      'mkdir /srv/x/site/css',
+      'mkdir /srv/x/site/empty',
+      'mkdir /srv/x/site/img',
+      'upload /srv/x/site/a.html',
+      'upload /srv/x/site/css/site.css',
+      'upload /srv/x/site/img/1.jpg',
+      'close',
+    ]);
+  });
+
+  it('prunes what the local tree lacks, inside the target directory only', async () => {
+    const local = localSite();
+    const { ops, client } = setup({ local_roots: [local] });
+    client.seed('/srv/x/site/old.html', 'x');
+    client.seed('/srv/x/site/gone/deep/z.txt', 'z');
+    client.seed('/srv/x/site/css/site.css', 'stale');
+    const r = await ops.sync({ local, remote: 'site', prune: true });
+    expect(r.pruned).toEqual(['gone/deep/z.txt', 'old.html', 'gone/deep', 'gone']);
+    expect(client.files.get('/srv/x/site/css/site.css')?.toString()).toBe('body{}');
+    expect(client.files.has('/srv/x/site/old.html')).toBe(false);
+    expect(client.dirs.has('/srv/x/site/gone')).toBe(false);
+    // Siblings of the target directory are not touched.
+    expect(client.files.has('/srv/x/notes.txt')).toBe(true);
+    expect(client.files.has('/srv/x/incoming/a.csv')).toBe(true);
+  });
+
+  it('defaults to the root and works with a relative root', async () => {
+    const local = localSite();
+    const { ops, client } = setup({ local_roots: [local] }, '.');
+    const r = await ops.sync({ local });
+    expect(r.remote).toBe('.');
+    expect(client.files.get('css/site.css')?.toString()).toBe('body{}');
+    expect(client.calls.slice(0, 3)).toEqual(['mkdir css', 'mkdir empty', 'mkdir img']);
+  });
+
+  it('refuses without local_roots, outside them, relative, missing, or a file', async () => {
+    const local = localSite();
+    const other = mkdtempSync(join(tmpdir(), 'ftp-other-'));
+    const off = setup();
+    expect(await code(off.ops.sync({ local }))).toBe('path');
+    const { ops, connects } = setup({ local_roots: [local] });
+    expect(await code(ops.sync({ local: other }))).toBe('path');
+    expect(await code(ops.sync({ local: 'site/dist' }))).toBe('path');
+    expect(await code(ops.sync({ local: join(local, 'nope') }))).toBe('not_found');
+    expect(await code(ops.sync({ local: join(local, 'a.html') }))).toBe('path');
+    expect(await code(ops.sync({ local, remote: '../x' }))).toBe('path');
+    expect(connects()).toBe(0);
   });
 });

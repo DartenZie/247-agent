@@ -6,6 +6,7 @@
  * into a Writable and uploads come from a Readable; `ensureDir` changes the working
  * directory, which is restored so a relative root keeps working on the same connection.
  */
+import { createReadStream } from 'node:fs';
 import { posix } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
@@ -130,6 +131,14 @@ export class FtpFileClient implements FileClient {
   async write(path: string, data: Buffer): Promise<void> {
     try {
       await this.lib.uploadFrom(Readable.from(data), path);
+    } catch (err) {
+      throw describe('upload', path, err);
+    }
+  }
+
+  async upload(local: string, path: string): Promise<void> {
+    try {
+      await this.lib.uploadFrom(createReadStream(local), path);
     } catch (err) {
       throw describe('upload', path, err);
     }

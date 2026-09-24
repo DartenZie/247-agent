@@ -4,7 +4,8 @@ Files inside one remote directory over SFTP, FTP or FTPS. An ops-only connector:
 nothing by itself, and every op opens one connection, does its work and closes it, so the
 process stays stateless. Every path a task passes is relative to the configured `root`
 and confined to it; `..`, absolute paths and backslashes are refused before a connection
-is opened.
+is opened. `sync` is the one op that reads the local disk: a directory tree under a
+manifest-listed `local_roots` entry, uploaded as a whole (a built site, a report folder).
 
 ```
 npm run build
@@ -17,7 +18,7 @@ node packages/cli/dist/main.js validate docs/examples/connectors.d/ftp.yaml
 name: ftp
 exec: ["node", "connectors/ftp/dist/main.js"]
 transport: stdio
-ops: [list, stat, read, write, delete, rename, mkdir]
+ops: [list, stat, read, write, delete, rename, mkdir, sync]
 config:
   protocol: sftp                        # sftp (default) | ftp | ftps
   host: sftp.example.com
@@ -33,6 +34,7 @@ config:
   max_bytes: 1000000                    # cap for read results and write payloads
   list_limit: 1000                      # max entries one list returns
   timeout: 30000                        # connect and command timeout, ms
+  local_roots: [/var/lib/247-agent/repos/site/dist]   # local directories `sync` may upload from; empty (default) disables sync
 ```
 
 Credentials come from the secrets backend through `${secrets.<name>}`; the connector never
@@ -50,7 +52,12 @@ logs them. A multi-line private key fits the `file` backend as a YAML block scal
   prints the value.
 - `max_bytes` bounds memory: `read` refuses a file larger than that before the transfer
   when the listing knows the size. FTP cannot abort a transfer half-way, so on a server
-  whose listing hides sizes the file is downloaded fully and then refused.
+  whose listing hides sizes the file is downloaded fully and then refused. `sync` streams
+  files from disk and is not capped.
+- `local_roots` is the only way the connector reads the local disk. Leave it empty on a
+  manifest that agents or inbound content can reach; list exactly the build output a
+  deterministic publishing task uploads. Symlinks are resolved before the check and
+  never followed inside the tree.
 
 ## Ops
 
@@ -101,6 +108,29 @@ Moves or renames inside the root; `parents: true` creates the target directory f
 ### `mkdir({ path })` → `{ path }`
 
 `mkdir -p`: creates parents, succeeds when the directory exists.
+
+### `sync({ local, remote?, prune? })` → `{ local, remote, uploaded, bytes, pruned }`
+
+Uploads every regular file below the local directory `local` (absolute, inside a
+`local_roots` entry) to the remote directory `remote` (default: the root), creating
+directories as needed, over one connection. Symlinks and special files are skipped.
+`prune: true` then removes remote files and directories under `remote` that the local
+tree lacks, so the remote directory mirrors the local one; nothing outside `remote` is
+touched. `uploaded` and `pruned` list relative paths. Fails with `path` when `sync` is
+disabled (`local_roots` empty), `local` is relative, a file, or outside the roots, or a
+local name would escape the remote root; `not_found` when `local` does not exist.
+Every file is re-uploaded on every call: there is no change detection, which keeps the
+op stateless and correct when the remote was edited by hand.
+
+```yaml
+- name: publish_site
+  trigger: { kind: event, type: site.built }
+  action:
+    kind: connector
+    connector: ftp
+    op: sync
+    args: { local: /var/lib/247-agent/repos/site/dist, remote: ".", prune: true }
+```
 
 ## Examples
 

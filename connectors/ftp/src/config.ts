@@ -34,6 +34,12 @@ const schema = z
     list_limit: z.number().int().min(1).max(10_000).default(1000),
     /** Connect and command timeout in milliseconds. */
     timeout: z.number().int().min(1).default(30_000),
+    /**
+     * Absolute local directories `sync` may upload from (the directory itself or anything
+     * below it). Empty, the default, disables `sync`: the connector never reads the local
+     * disk unless the manifest says where.
+     */
+    local_roots: z.array(z.string().min(1)).default([]),
   })
   .superRefine((c, ctx) => {
     const sftpOnly = ['private_key', 'passphrase', 'host_key_fingerprint'] as const;

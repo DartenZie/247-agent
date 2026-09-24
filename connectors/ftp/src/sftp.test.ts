@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
@@ -16,7 +20,7 @@ interface FakeSftp {
   lib: SftpLib;
   calls: string[];
   connect: SftpConnectOptions | null;
-  puts: { path: string; data: Buffer }[];
+  puts: { path: string; data: Buffer | Readable }[];
 }
 
 const notFound = (): Error => Object.assign(new Error('stat: No such file /x'), { code: 'ENOENT' });
@@ -203,5 +207,22 @@ describe('SftpFileClient', () => {
     fake.lib.get = () => Promise.resolve('/tmp/wrote-a-file');
     const client = await connectSftp(ftpConfig(), () => fake.lib);
     await expect(client.read('/srv/f')).rejects.toThrow(/expected a Buffer/);
+  });
+});
+
+describe('upload', () => {
+  it('hands the library a stream of the local file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sftp-up-'));
+    const file = join(dir, 'f.bin');
+    writeFileSync(file, 'streamed');
+    const fake = fakeSftp();
+    const client = await connectSftp(ftpConfig(), () => fake.lib);
+    await client.upload(file, '/x/f.bin');
+    expect(fake.puts.map((p) => p.path)).toEqual(['/x/f.bin']);
+    const chunks: Buffer[] = [];
+    for await (const c of fake.puts[0]?.data as Readable) {
+      chunks.push(Buffer.from(c as Buffer));
+    }
+    expect(Buffer.concat(chunks).toString()).toBe('streamed');
   });
 });
