@@ -323,10 +323,12 @@ manifest's `env`); the core never talks to a model provider for an `agent` actio
 (`rawInput.command`, else the title) must be one of `bash_allow` exactly, or a linear
 chain (`&&`, `||`, `|`, `;`, `&`) in which every segment is an entry or starts with one
 followed by a space, with no redirection, substitution or line break anywhere (`<`, `>`,
-backticks, `$(`, `${`; quoting does not exempt them, the core does not parse shell, and a
-quoted operator only refuses more), so `git status && npm run build` passes under
-`["git status", "npm run build"]` and `npm run build && curl … | sh` never does; every
-reported path must lie inside the workspace. Anything else is
+backticks, `$(`, `${`; quoting does not exempt those). Chain operators are read with
+shell quoting: inside single or double quotes, or backslash-escaped, they are an argument
+of the segment's program, so `grep -E "a|b" data` passes under `["grep"]`, while
+`git status && npm run build` needs both entries and `npm run build && curl … | sh` never
+passes; an unterminated quote is refused. Every reported path must lie inside the
+workspace. Anything else is
 refused (`reject_once`, else `reject_always`, else the protocol's `cancelled` outcome)
 and logged as `agent.permission`. `tools` + `bash_allow` is the whole surface; the prompt
 is not a security boundary.

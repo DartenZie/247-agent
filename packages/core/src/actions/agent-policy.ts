@@ -37,11 +37,63 @@ export type PermissionDecision =
 const SHELL_UNSAFE = /[<>`\n\r]|\$\(|\$\{/;
 
 /**
- * Operators that chain whole commands: `&&`, `||`, `|`, `;`, `&`. A linear chain is judged
- * segment by segment. Splitting ignores quoting on purpose, which only ever refuses more:
- * a quoted operator yields a segment that starts mid-argument and matches no entry.
+ * Splits a command on the operators that chain whole commands (`&&`, `||`, `|`, `;`, `&`)
+ * the way a POSIX shell reads them: an operator inside single or double quotes, or
+ * escaped with a backslash, is an argument of the program before it, not a chain. That is
+ * what lets `grep -E "a|b" data` pass under `["grep"]` while `grep a | sh` still needs
+ * `sh` listed. Returns `null` for an unterminated quote, which no shell would run either.
  */
-const CHAIN = /\s*(?:&&|\|\||\||;|&)\s*/;
+export function splitChain(command: string): string[] | null {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let i = 0;
+  while (i < command.length) {
+    const ch = command.charAt(i);
+    if (quote !== null) {
+      if (ch === quote) {
+        quote = null;
+      } else if (ch === '\\' && quote === '"' && i + 1 < command.length) {
+        current += command.charAt(i + 1);
+        i += 1;
+      }
+      current += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < command.length) {
+      current += ch + command.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+    const two = command.slice(i, i + 2);
+    if (two === '&&' || two === '||') {
+      segments.push(current);
+      current = '';
+      i += 2;
+      continue;
+    }
+    if (ch === '|' || ch === ';' || ch === '&') {
+      segments.push(current);
+      current = '';
+      i += 1;
+      continue;
+    }
+    current += ch;
+    i += 1;
+  }
+  if (quote !== null) {
+    return null;
+  }
+  segments.push(current);
+  return segments.map((s) => s.trim());
+}
 
 function segmentAllowed(segment: string, allow: readonly string[]): boolean {
   return (
@@ -53,9 +105,11 @@ function segmentAllowed(segment: string, allow: readonly string[]): boolean {
 /**
  * True when `command` is an `allow` entry itself, or a linear chain (`a && b | c; d`) in
  * which every segment is an entry or starts with one followed by whitespace, with no
- * redirection, substitution or line break anywhere. Only an exact entry can carry those,
- * so `bash_allow: ["npm run build"]` admits `git status && npm run build` only when
- * `git status` is listed too, and never `npm run build > ~/.profile` or `… $(curl …)`.
+ * redirection, substitution or line break anywhere, quoted or not. Only an exact entry
+ * can carry those, so `bash_allow: ["npm run build"]` admits `git status && npm run build`
+ * only when `git status` is listed too, and never `npm run build > ~/.profile` or
+ * `… $(curl …)`. A chain operator inside quotes belongs to the segment's own arguments
+ * (`splitChain`), so what runs is still only the listed programs.
  */
 export function commandAllowed(command: string, allow: readonly string[]): boolean {
   const c = command.trim();
@@ -65,8 +119,8 @@ export function commandAllowed(command: string, allow: readonly string[]): boole
   if (SHELL_UNSAFE.test(c)) {
     return false;
   }
-  const segments = c.split(CHAIN);
-  return segments.every((s) => s !== '' && segmentAllowed(s, allow));
+  const segments = splitChain(c);
+  return segments?.every((s) => s !== '' && segmentAllowed(s, allow)) ?? false;
 }
 
 function pick(

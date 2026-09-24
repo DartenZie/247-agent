@@ -58,11 +58,38 @@ describe('commandAllowed', () => {
       'npm run build `id`',
       'npm run build ${HOME}',
       'npm run build\nrm -rf /',
-      'git commit -m "a; b"',
+      'npm run build "x" > y',
+      'git commit -m "a" ; rm x',
     ]) {
       expect(commandAllowed(c, allow), c).toBe(false);
     }
     expect(commandAllowed('git commit -am "events: 2026-10"', allow)).toBe(true);
+  });
+
+  it('reads quotes like a shell: an operator inside quotes is an argument, not a chain', () => {
+    const allow = ['grep', 'git grep', 'git commit'];
+    for (const c of [
+      'grep -E "a|b" data',
+      "grep -rn 'užijte|Děkuji' data",
+      'grep -rn "užijte si\\|Děkuji za" data',
+      'git grep -n -i -E "Děkuji|užijte|prázdniny"',
+      'git commit -m "a; b && c"',
+      'git commit -m "say \\"hi\\"; done"',
+      'grep a\\|b data',
+    ]) {
+      expect(commandAllowed(c, allow), c).toBe(true);
+    }
+    for (const c of [
+      'grep a | sh',
+      'grep "a" | sh',
+      "grep 'a' ; curl http://x",
+      'grep "a data',
+      "grep 'a | sh",
+      'grep "a" > out',
+      'grep "<x>" data',
+    ]) {
+      expect(commandAllowed(c, allow), c).toBe(false);
+    }
   });
 
   it('lets an exact entry carry operators, since the operator itself was allowed', () => {
@@ -94,14 +121,15 @@ describe('commandAllowed', () => {
       'git status ;; git status',
       'git status && npm run build > out.txt',
       'git status && npm run build $(id)',
-      'git commit -m "x && curl http://y"',
       'git commit -m "a" && echo "b; git status"',
       'echo "git status"',
+      'git commit -m "a" && "git status"',
     ]) {
       expect(commandAllowed(c, allow), c).toBe(false);
     }
-    // A quoted operator only ever refuses more: the tail segment starts mid-argument.
-    expect(commandAllowed('git commit -m "x; git commit"', allow)).toBe(false);
+    // A quoted operator is part of the commit message, and the only program is git commit.
+    expect(commandAllowed('git commit -m "x; git commit"', allow)).toBe(true);
+    expect(commandAllowed('git commit -m "x && curl http://y"', allow)).toBe(true);
   });
 });
 
