@@ -1,9 +1,11 @@
 import type { TaskConfig } from '../config/schema.js';
+import type { AgentInfo, AgentSession, AgentSessionOptions } from '../connectors/acp-types.js';
 import { renderText, renderValue, type TemplateScope } from '../expr/template.js';
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import type { StateSnapshot } from '../store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
+import type { AgentDefaultsConfig } from './agent-config.js';
 import type { SandboxConfig } from './sandbox.js';
 
 /** An operation on a connector, as the `connector` action and sequences call it. */
@@ -16,6 +18,23 @@ export interface ConnectorClients {
     args: Record<string, JsonValue>,
     opts: { signal: AbortSignal; timeoutMs?: number | undefined },
   ): Promise<JsonValue>;
+}
+
+/**
+ * ACP agents (`transport: acp` connectors) as the `agent` action opens sessions on them
+ * (ARCHITECTURE §5.4). The supervisor implements it next to `ConnectorClients`.
+ */
+export interface AgentClients {
+  /** `defaults.agent` from agent.yaml. */
+  readonly defaults: AgentDefaultsConfig;
+  /** Where run workspaces are created: `<workDir>/<run_id>`. */
+  readonly workDir: string;
+  /** Names of the configured acp connectors. */
+  agentNames(): string[];
+  /** Throws `NonRetryableError` for an unknown or non-acp name, `ConnectorDownError` when it is not up. */
+  open(connector: string, opts: AgentSessionOptions): Promise<AgentSession>;
+  /** What the agent said about itself at `initialize`; `undefined` until it is up. */
+  info(connector: string): AgentInfo | undefined;
 }
 
 /** What a `wait` suspends the run for (ARCHITECTURE §5.6). */
@@ -66,6 +85,8 @@ export interface ActionContext {
   readonly sandbox?: SandboxConfig | undefined;
   /** Model calls for `llm` actions; absent when the core runs without `providers`. */
   readonly llm?: LlmPort | undefined;
+  /** ACP sessions for `agent` actions; absent when the core runs without a supervisor. */
+  readonly agents?: AgentClients | undefined;
   /**
    * Parks the run in `waiting` until an event matches `spec` or it times out; the executor
    * then starts the runner again with `resume` set. The returned promise never resolves:

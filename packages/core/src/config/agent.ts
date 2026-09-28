@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { AgentDefaults } from '../actions/agent-config.js';
 import { Sandbox } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
@@ -18,8 +19,8 @@ const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
 
 /**
  * `agent.yaml` (ARCHITECTURE §7). Relative paths are resolved against the file's own
- * directory. `retention` and `defaults.agent` are accepted so a full config validates, but
- * nothing reads them until retention GC and the `agent` runner exist.
+ * directory. `retention` is accepted so a full config validates, but nothing reads it
+ * until retention GC exists.
  */
 export const AgentFile = z.strictObject({
   db: z.string().min(1).default('/var/lib/247-agent/state.db'),
@@ -41,7 +42,8 @@ export const AgentFile = z.strictObject({
       sandbox: Sandbox.prefault('none'),
       llm: LlmDefaults,
       decide: DecideDefaults,
-      agent: z.unknown().optional(),
+      /** For `agent` actions; `work_dir` defaults to `work/` next to the database. */
+      agent: AgentDefaults,
     })
     .prefault({}),
   secrets: SecretsConfig.prefault({ backend: 'env' }),
@@ -65,6 +67,8 @@ export interface AgentConfig extends Omit<AgentFileConfig, 'tasks' | 'connectors
   connectorPaths: string[];
   /** Manifests written inline in agent.yaml. */
   connectors: ConnectorConfig[];
+  /** Absolute `defaults.agent.work_dir`, or `work/` next to the database. */
+  workDir: string;
 }
 
 export type AgentLoadResult =
@@ -109,17 +113,22 @@ export function parseAgent(text: string, file: string): AgentLoadResult {
   if (issues.length > 0) {
     return { ok: false, file, issues };
   }
+  const db = resolve(base, c.db);
   return {
     ok: true,
     file,
     config: {
       ...c,
       file: absolute,
-      db: resolve(base, c.db),
+      db,
       socket: resolve(base, c.socket),
       tasks,
       connectorPaths,
       connectors,
+      workDir:
+        c.defaults.agent.work_dir === undefined
+          ? resolve(dirname(db), 'work')
+          : resolve(base, c.defaults.agent.work_dir),
     },
   };
 }

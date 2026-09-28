@@ -1,5 +1,5 @@
-import { createInterface } from 'node:readline';
-import type { Stream } from 'node:stream';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -9,13 +9,17 @@ import {
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { execa } from 'execa';
 
-import { NonRetryableError, type ConnectorClients } from '../actions/types.js';
-import type { ConnectorConfig } from '../config/connector.js';
+import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
+import { NonRetryableError, type AgentClients, type ConnectorClients } from '../actions/types.js';
+import type { ConnectorConfig, Transport } from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
+import { VERSION } from '../version.js';
+import type { AgentInfo, AgentSession, AgentSessionOptions } from './acp-types.js';
+import { AcpAgent, pipeLines } from './acp.js';
 
 export interface SupervisorOptions {
   manifests: readonly ConnectorConfig[];
@@ -27,12 +31,15 @@ export interface SupervisorOptions {
   env?: Record<string, string>;
   /** Per-op default when the action names none. */
   callTimeoutMs?: number;
+  /** `defaults.agent` and the workspace root for `agent` runs on acp connectors. */
+  agents?: { defaults: AgentDefaultsConfig; workDir: string } | undefined;
 }
 
 export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped';
 
 export interface ConnectorStatus {
   name: string;
+  transport: Transport;
   state: ConnectorState;
   pid: number | null;
   restarts: number;
@@ -80,7 +87,9 @@ interface Managed {
   state: ConnectorState;
   client: Client | undefined;
   transport: StdioClientTransport | undefined;
+  /** A `none` child, or the `acp` agent (which is also a plain process to watch and stop). */
   process: PlainProcess | undefined;
+  acp: AcpAgent | undefined;
   restarts: number;
   error: string | null;
   upSince: number;
@@ -89,11 +98,14 @@ interface Managed {
 
 /**
  * Connector supervisor (ARCHITECTURE §4, §6): spawns each configured connector, keeps one
- * MCP client per `stdio` connector, restarts crashed processes with exponential backoff
- * and serves `op` calls to the executor. Secrets named in a manifest's `config`/`env` are
- * resolved at spawn time and reach the child only through its environment.
+ * MCP client per `stdio` connector and one ACP connection per `acp` connector, restarts
+ * crashed processes with exponential backoff, and serves `op` calls and agent sessions to
+ * the executor. Secrets named in a manifest's `config`/`env` are resolved at spawn time
+ * and reach the child only through its environment.
  */
-export class ConnectorSupervisor implements ConnectorClients {
+export class ConnectorSupervisor implements ConnectorClients, AgentClients {
+  readonly defaults: AgentDefaultsConfig;
+  readonly workDir: string;
   private readonly managed = new Map<string, Managed>();
   private readonly socketPath: string;
   private readonly secrets: SecretsBackend;
@@ -108,6 +120,8 @@ export class ConnectorSupervisor implements ConnectorClients {
     this.log = opts.log;
     this.baseEnv = opts.env ?? getDefaultEnvironment();
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
+    this.defaults = opts.agents?.defaults ?? AgentDefaults.parse({});
+    this.workDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
     for (const manifest of opts.manifests) {
       this.managed.set(manifest.name, {
         manifest,
@@ -115,6 +129,7 @@ export class ConnectorSupervisor implements ConnectorClients {
         client: undefined,
         transport: undefined,
         process: undefined,
+        acp: undefined,
         restarts: 0,
         error: null,
         upSince: 0,
@@ -127,14 +142,41 @@ export class ConnectorSupervisor implements ConnectorClients {
     return [...this.managed.keys()];
   }
 
+  agentNames(): string[] {
+    return [...this.managed.values()]
+      .filter((m) => m.manifest.transport === 'acp')
+      .map((m) => m.manifest.name);
+  }
+
+  info(connector: string): AgentInfo | undefined {
+    return this.managed.get(connector)?.acp?.info;
+  }
+
   status(): ConnectorStatus[] {
     return [...this.managed.values()].map((m) => ({
       name: m.manifest.name,
+      transport: m.manifest.transport,
       state: m.state,
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
       error: m.error,
     }));
+  }
+
+  async open(connector: string, opts: AgentSessionOptions): Promise<AgentSession> {
+    const m = this.managed.get(connector);
+    if (m === undefined) {
+      throw new NonRetryableError(`unknown connector "${connector}"`);
+    }
+    if (m.manifest.transport !== 'acp') {
+      throw new NonRetryableError(
+        `connector "${connector}" is not an acp agent (transport ${m.manifest.transport})`,
+      );
+    }
+    if (m.acp === undefined || m.state !== 'up') {
+      throw new ConnectorDownError(connector);
+    }
+    return m.acp.openSession(opts);
   }
 
   /** Spawns every connector; a failed spawn is logged and retried with backoff. */
@@ -183,7 +225,7 @@ export class ConnectorSupervisor implements ConnectorClients {
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${connector}"`);
     }
-    if (m.manifest.transport === 'none') {
+    if (m.manifest.transport !== 'stdio') {
       throw new ConnectorOpError(connector, op, 'this connector serves no ops');
     }
     if (m.manifest.ops.length > 0 && !m.manifest.ops.includes(op)) {
@@ -271,8 +313,29 @@ export class ConnectorSupervisor implements ConnectorClients {
         ),
       };
       m.process = proc;
-      this.pipeLines(child.stdout, 'stdout', log);
-      this.pipeLines(child.stderr, 'stderr', log);
+      pipeLines(child.stdout, 'stdout', log);
+      pipeLines(child.stderr, 'stderr', log);
+      this.up(m, log);
+      return;
+    }
+    if (m.manifest.transport === 'acp') {
+      let agent: AcpAgent;
+      try {
+        agent = await AcpAgent.spawn({ exec: [command, ...args], cwd, env, log });
+      } catch (err) {
+        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        return;
+      }
+      m.acp = agent;
+      m.process = agent;
+      void agent.exited.then(() => {
+        if (m.process !== agent) {
+          return; // killed on purpose (stop/restart); not a crash
+        }
+        m.process = undefined;
+        m.acp = undefined;
+        this.exited(m, 'process exited', log);
+      });
       this.up(m, log);
       return;
     }
@@ -283,11 +346,11 @@ export class ConnectorSupervisor implements ConnectorClients {
       ...(cwd === undefined ? {} : { cwd }),
       stderr: 'pipe',
     });
-    const client = new Client({ name: '247-agent-core', version: '0' });
+    const client = new Client({ name: '247-agent-core', version: VERSION });
     transport.onerror = (err) => {
       log.warn('connector.transport_error', { error: err.message });
     };
-    this.pipeLines(transport.stderr, 'stderr', log);
+    pipeLines(transport.stderr as NodeJS.ReadableStream | null, 'stderr', log);
     try {
       await client.connect(transport);
     } catch (err) {
@@ -306,16 +369,6 @@ export class ConnectorSupervisor implements ConnectorClients {
       this.exited(m, 'process exited', log);
     };
     this.up(m, log);
-  }
-
-  private pipeLines(stream: Stream | null | undefined, name: string, log: Logger): void {
-    if (stream === null || stream === undefined) {
-      return;
-    }
-    const rl = createInterface({ input: stream as unknown as NodeJS.ReadableStream });
-    rl.on('line', (line) => {
-      log.info('connector.output', { stream: name, line: line.slice(0, 2000) });
-    });
   }
 
   private up(m: Managed, log: Logger): void {
@@ -375,6 +428,7 @@ export class ConnectorSupervisor implements ConnectorClients {
     m.client = undefined;
     m.transport = undefined;
     m.process = undefined;
+    m.acp = undefined;
     if (transport !== undefined) {
       await transport.close().catch(() => undefined);
     }

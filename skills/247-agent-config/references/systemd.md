@@ -3,7 +3,7 @@
 ## Layout
 
 ```
-/opt/247-agent/                  # the built repo (or tarball): packages/*/dist, node_modules
+/opt/247-agent/                  # the unpacked release tarball: bin/, lib/, node/, node_modules/, share/
 /etc/247-agent/
   agent.yaml
   tasks.d/*.yaml
@@ -23,6 +23,11 @@ deploy.
 
 ## Unit
 
+Shipped as `/opt/247-agent/share/systemd/247-agent.service` (`packaging/247-agent.service`
+in the repository). Secrets are added in a drop-in (`systemctl edit 247-agent`), one
+`LoadCredential=<name>:/etc/credstore/<name>` per secret the tasks and manifests use,
+so the shipped unit never references files that may not exist.
+
 ```ini
 # /etc/systemd/system/247-agent.service
 [Unit]
@@ -33,13 +38,10 @@ Wants=network-online.target
 [Service]
 User=247-agent
 Group=247-agent
-ExecStart=/usr/bin/node /opt/247-agent/packages/core/dist/main.js --config /etc/247-agent/agent.yaml
+ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
-LoadCredential=anthropic_api_key:/etc/credstore/anthropic_api_key
-LoadCredential=imap_pass:/etc/credstore/imap_pass
-LoadCredential=ftp_pass:/etc/credstore/ftp_pass
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 ProtectSystem=strict
@@ -58,25 +60,63 @@ directory a `shell` task writes to (a site checkout, for example).
 
 ## Install and upgrade
 
+On Debian, Ubuntu or Fedora the package is the normal path; installing a newer file
+upgrades, `apt remove` keeps config, state, drop-ins and the user, `apt purge` removes
+them:
+
+```
+apt install ./247-agent_<version>-1_amd64.deb      # dnf install ./247-agent-<version>-1.x86_64.rpm
+```
+
+Elsewhere the installer script does the same things from the tarball; run it again to
+upgrade (never mix the two on one machine, both own /opt/247-agent):
+
+```
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh -s -- --version 0.2.0
+sh /opt/247-agent/share/uninstall.sh [--purge]      # keeps config, state, drop-ins, user unless --purge
+```
+
+It verifies the tarball's checksum, installs `/opt/247-agent-<version>` with
+`/opt/247-agent` as a symlink (rollback: `ln -sfn` the old tree, restart), links
+`/usr/local/bin/oa`, creates the user and a starter `/etc/247-agent` once, replaces the
+unit file (keep local changes in `systemctl edit 247-agent`), validates the existing
+config with the new version before switching, and restarts a running service unless
+`--no-restart`. `--from <tarball>` installs a local build, `--no-service` only the tree.
+
+By hand:
+
 ```
 useradd --system --home /var/lib/247-agent --shell /usr/sbin/nologin 247-agent
-git clone <repo> /opt/247-agent && cd /opt/247-agent && npm ci && npm run build
+tar -xzf 247-agent-<version>-linux-x64.tar.gz   # from the GitHub release of tag v<version>
+mv 247-agent-<version>-linux-x64 /opt/247-agent
+ln -s /opt/247-agent/bin/oa /usr/local/bin/oa
 apt install bubblewrap          # for sandbox: bwrap on shell actions (optional)
 install -d -m 750 -o 247-agent /etc/247-agent
 # write agent.yaml, tasks.d/, connectors.d/ ; put secrets under /etc/credstore
-node /opt/247-agent/packages/cli/dist/main.js validate /etc/247-agent/agent.yaml
+cp /opt/247-agent/share/systemd/247-agent.service /etc/systemd/system/
+systemctl edit 247-agent        # drop-in with one LoadCredential= per secret
+oa validate /etc/247-agent/agent.yaml
 systemctl daemon-reload && systemctl enable --now 247-agent
 journalctl -u 247-agent -o cat -f | jq
 ```
 
-Upgrade: `git pull && npm ci && npm run build`, validate, `systemctl restart 247-agent`.
+The tarball is self-contained (bundled code, vendored Node, the SQLite addon); the
+machine needs nothing else. Manifests name the bundled connectors by launcher,
+`exec: ["247-agent-connector-email"]`, since the daemon puts `/opt/247-agent/bin` and
+its Node first on `PATH` for every child. A source checkout has the same `bin/`, so the
+same manifests work in development; `npm run release` builds the tarball
+(`scripts/build-release.sh --target linux-x64` cross-builds from a Mac).
+
+Upgrade: unpack the new tarball as `/opt/247-agent-<version>`, repoint `/opt/247-agent`
+(a symlink is easiest), `oa validate`, `systemctl restart 247-agent`.
 Prefer restarting when no `agent` run is in flight (`GET /v1/runs?status=running`);
 interrupted runs are retried per policy or failed as interrupted.
 
 ## Operating
 
-- `oa` on the server: `alias oa='node /opt/247-agent/packages/cli/dist/main.js'`;
-  the default socket path matches the unit, so no `OA_CORE_SOCKET` is needed. The
+- `oa` on the server: `/opt/247-agent/bin/oa` (symlinked to `/usr/local/bin/oa`
+  above); the default socket path matches the unit, so no `OA_CORE_SOCKET` is needed. The
   invoking user needs write access to the socket (add them to the `247-agent` group and
   set the socket mode accordingly, or run `oa` as that user).
 - Logs: JSON lines; `journalctl -u 247-agent -o cat | jq 'select(.run_id=="…")'`.

@@ -79,7 +79,15 @@ export interface RunResponse {
 /** `GET /v1/connectors`: a supervised process, or a built-in run in the core. */
 export type ConnectorEntry =
   | (ConnectorStatus & { builtin: null })
-  | { name: string; builtin: 'poller'; state: 'up'; pid: null; restarts: 0; error: string | null };
+  | {
+      name: string;
+      builtin: 'poller';
+      transport: 'none';
+      state: 'up';
+      pid: null;
+      restarts: 0;
+      error: string | null;
+    };
 
 const RUN_STATUSES = ['queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 
@@ -263,6 +271,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
   const builtins: ConnectorEntry[] = ctx.core.pollers.map((p) => ({
     name: p.status().name,
     builtin: 'poller',
+    transport: 'none',
     state: 'up',
     pid: null,
     restarts: 0,

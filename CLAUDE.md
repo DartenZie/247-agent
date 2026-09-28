@@ -22,15 +22,22 @@ truth for concepts, action semantics, the connector protocol and the config form
   `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `decide` actions go
   through the same port (`ctx.llm.decide`) to OpenRouter's Decisions API
   (`POST /api/alpha/decisions`, plain `fetch`, TypeSafe's Jev classifier); only the
-  `openrouter` provider type serves it. `agent` actions use
-  `@anthropic-ai/claude-agent-sdk`. MCP client from `@modelcontextprotocol/sdk`.
+  `openrouter` provider type serves it. `agent` actions open a session on an ACP agent
+  (Agent Client Protocol, `@agentclientprotocol/sdk`, protocol v1): a connector with
+  `transport: acp` such as `claude-agent-acp`; the core is the client
+  (`packages/core/src/connectors/acp.ts`), the agent runs the model with its own key, and
+  the turn is ledgered from what it reports (`ctx.llm.record`). MCP client from
+  `@modelcontextprotocol/sdk`.
 - Target runtime: systemd service on Linux, HTTP API over a Unix socket.
 
 ## Layout
 
 ```
+bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>); same files in a checkout and a release
+scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release)
+packaging/               247-agent.service, etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
-packages/core/test/fixtures/  fake connectors for tests (Node runs them from .ts source)
+packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, chat, ...)
@@ -46,13 +53,21 @@ skills/                      agent skills for working with 247-agent (linked fro
   code. A model call happens only inside an `llm`, `decide` or `agent` action.
 - Every model call records usage in the ledger and respects the task's `budget` and the
   global daily cap. Never add an unbudgeted call.
-- Agents run in a fresh git worktree with an explicit tool/bash allowlist, produce a
-  `RESULT.json`, and pass deterministic `post` gates. Agents never hold deploy secrets
-  and never publish.
+- Agents run in a fresh workspace (git worktree or temp dir) with an explicit tool-kind
+  and command allowlist enforced through ACP permission requests, produce a `RESULT.json`
+  with `status: done | blocked` and `summary` (plus the task's schema), and pass
+  deterministic `post` gates only when `done`; `blocked` still succeeds so `emit` can
+  route it. Agents never hold deploy secrets and never publish.
 - Secrets are resolved by name from the configured backend at run time. Never write them
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and
   `docs/examples/connectors.d/*.yaml`.
+- Manifests name the bundled connectors by launcher (`exec: ["247-agent-connector-email"]`),
+  never by a `dist/` path: the daemon puts `<install root>/bin` and its own Node first on
+  `PATH` for every child (`packages/core/src/home.ts`). New bundled connectors need a
+  launcher in `bin/` and an entry in `scripts/bundle.mjs`.
+- The version lives in `packages/core/src/version.ts` and the root `package.json` (a test
+  keeps them equal); release tags are `v<version>` and CI builds the tarballs from them.
 - Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
@@ -69,12 +84,15 @@ npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run lint           # eslint + prettier check
+npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
+npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
 node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
 node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
+bin/oa …, bin/247-agent-core …                                         # the launchers; same commands, in a checkout or /opt/247-agent
 ```
 
 (Keep this list in sync with `package.json`.)

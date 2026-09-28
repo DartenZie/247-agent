@@ -1,6 +1,10 @@
 import type { Readable, Writable } from 'node:stream';
 
 import { FileType } from 'basic-ftp';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -232,6 +236,20 @@ describe('FtpFileClient', () => {
       'removeEmptyDir /srv/sub',
       'removeDir /srv/sub',
       'rename /srv/a /srv/b',
+    ]);
+  });
+});
+
+describe('upload', () => {
+  it('streams a local file to the remote path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ftp-up-'));
+    const file = join(dir, 'f.bin');
+    writeFileSync(file, 'streamed');
+    const fake = fakeFtp();
+    const client = await connectFtp(ftpConfig({ protocol: 'ftp' }), () => fake.lib);
+    await client.upload(file, '/home/u/f.bin');
+    expect(fake.uploads.map((u) => [u.path, u.data.toString()])).toEqual([
+      ['/home/u/f.bin', 'streamed'],
     ]);
   });
 });

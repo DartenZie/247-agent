@@ -1,0 +1,9 @@
+# An ACP agent as a connector (ARCHITECTURE §5.4, §6): the core is the client, this program
+# is the agent. `agent` actions name it with `connector: claude` and open one session per
+# run with the run's workspace as cwd. It serves no ops and emits no events. The model key
+# goes to the agent, never to the tasks; deploy secrets never go to the agent.
+name: claude
+exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+transport: acp
+env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+restart: { base: 1s, max: 60s }

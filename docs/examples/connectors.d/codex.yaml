@@ -1,0 +1,22 @@
+# Codex as an ACP agent (ARCHITECTURE §5.4, §6): `@agentclientprotocol/codex-acp` bundles the
+# Codex CLI and speaks ACP on stdio. Tasks name it with `connector: codex`.
+#
+# Codex has its own OS sandbox (bwrap + seccomp on Linux, Seatbelt on macOS) and asks only
+# before a command that must escape it. codex-acp (verified with 1.12.0) pins every session
+# to Codex's workspace-write sandbox, whatever `sandbox_mode` in config or CODEX_CONFIG
+# says: writes inside the session cwd and reads anywhere run without asking; network and
+# writes outside the cwd are denied and ask. So `agent` actions on this connector set
+# `unasked_execute: sandboxed`: unasked commands are trusted to that sandbox, every escape
+# is judged against the task's `tools`/`bash_allow`, and every reported tool kind and
+# path is still judged. `CODEX_CONFIG` is JSON merged into every session's Codex config
+# (model, reasoning effort, approval policy). codex-acp reports tokens but no cost, so the
+# action names `model:` and agent.yaml prices it under `pricing:` unless the built-in
+# table knows it. Codex runs commands in a login shell: put the node/npm the build needs on
+# PATH here if the daemon's PATH would not reach it.
+name: codex
+exec: ["npx", "-y", "@agentclientprotocol/codex-acp"]
+transport: acp
+env:
+  OPENAI_API_KEY: "${secrets.openai_api_key}"
+  CODEX_CONFIG: '{"model":"gpt-5.6-sol","approval_policy":"on-request","model_reasoning_effort":"medium"}'
+restart: { base: 1s, max: 60s }

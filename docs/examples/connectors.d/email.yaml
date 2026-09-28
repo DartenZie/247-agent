@@ -1,7 +1,7 @@
 # Email connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
 # IMAP or POP3 in, SMTP out. Full config reference: connectors/email/README.md.
 name: email
-exec: ["node", "connectors/email/dist/main.js"]
+exec: ["247-agent-connector-email"]
 transport: stdio
 emits: [email.received]
 ops: [fetch_new, mark_read, send]

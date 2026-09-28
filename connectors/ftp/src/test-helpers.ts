@@ -1,4 +1,5 @@
 /** An in-memory `FileClient` and config helpers for the tests. */
+import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 
 import { parseConfig, type FtpConfig } from './config.js';
@@ -94,6 +95,16 @@ export class MemoryFileClient implements FileClient {
       return Promise.reject(new Error(`no such directory: ${parent}`));
     }
     this.files.set(path, data);
+    return Promise.resolve();
+  }
+
+  upload(local: string, path: string): Promise<void> {
+    this.calls.push(`upload ${path}`);
+    const parent = posix.dirname(path);
+    if (!this.isDir(parent)) {
+      return Promise.reject(new Error(`no such directory: ${parent}`));
+    }
+    this.files.set(path, readFileSync(local));
     return Promise.resolve();
   }
 

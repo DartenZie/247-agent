@@ -13,7 +13,7 @@ defaults:
   sandbox: none                   # bwrap: run shell actions in bubblewrap (ARCHITECTURE §5.1)
   llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
   decide: { provider: openrouter, model: typesafe/jev-1.13 }   # classification via the Decisions API (ARCHITECTURE §5.3)
-  agent: { model: claude-sonnet-5, effort: medium, max_turns: 30, budget: { max_usd: 1.0 } }
+  agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # `agent` actions: which ACP connector, tool-call cap, budget; work_dir defaults to work/ next to the db (ARCHITECTURE §5.4)
   retry: { attempts: 3, backoff: exponential, base: 30s }
 secrets: { backend: systemd-credentials }   # or { backend: env, prefix: OA_SECRET_ } or { backend: file, path: secrets.yaml }
 # Model providers (ARCHITECTURE §5.2). Keys are secret references, resolved per call.

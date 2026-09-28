@@ -5,6 +5,7 @@
     { "path": "packages/cli" },
     { "path": "packages/connector-sdk" },
     { "path": "connectors/email" },
-    { "path": "connectors/ftp" }
+    { "path": "connectors/ftp" },
+    { "path": "connectors/chat" }
   ]
 }

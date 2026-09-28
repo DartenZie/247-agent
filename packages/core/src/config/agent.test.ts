@@ -202,7 +202,7 @@ describe('checkConfigFile', () => {
         ok: true,
         file: join(EXAMPLES, 'website-updates.yaml'),
         kind: 'tasks',
-        summary: '7 tasks',
+        summary: '8 tasks',
       },
     ]);
   });

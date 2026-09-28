@@ -27,7 +27,97 @@ Tasks never call each other. A task that should run "after `fetch_email`" trigge
 an event `fetch_email` emits, or on the automatic `task.fetch_email.succeeded` event.
 That is what lets you add or remove tasks without editing the others.
 
-## 2. Install and build
+## 2. Install
+
+Every release is self-contained: the bundled programs, the one native module, a pinned
+Node.js, the docs, the examples and the agent skills. Nothing else has to be installed
+on the machine (`bubblewrap` is the optional exception, §5.1). It comes in three forms,
+all with the same layout under `/opt/247-agent`, the same unit and the same starter
+config: a `.deb` and an `.rpm` (§2.1), a tarball with an installer script (§2.2), and the
+source (§2.3).
+
+### 2.1 Debian, Ubuntu, Fedora: the package
+
+```
+curl -fsSLO https://github.com/DartenZie/247-agent/releases/download/v0.1.0/247-agent_0.1.0-1_amd64.deb
+sudo apt install ./247-agent_0.1.0-1_amd64.deb        # or: sudo dnf install ./247-agent-0.1.0-1.x86_64.rpm
+```
+
+The package installs `/opt/247-agent`, links `/usr/bin/oa`, ships the unit as
+`/usr/lib/systemd/system/247-agent.service`, creates the `247-agent` user and puts a
+starter config in `/etc/247-agent` (`agent.yaml`, `tasks.d/hello.yaml`, an empty
+`connectors.d/`) as configuration files the package manager never overwrites. On a fresh
+install it enables and starts the service; on an upgrade it restarts a running one. Then:
+
+```
+sudo oa run hello --wait                     # the starter task (the socket is the service user's)
+journalctl -u 247-agent -o cat -f | jq       # the logs
+```
+
+`apt remove` keeps the config, the state, the unit's drop-ins and the user; `apt purge`
+removes them too. Secrets under `/etc/credstore` are never touched. (`arm64` and
+`aarch64` packages exist as well; an apt repository is planned, until then `apt install`
+of the downloaded file is the way, and upgrading is installing the newer file.)
+
+### 2.2 Other Linux: the tarball and its installer
+
+One tarball per target (`linux-x64`, `linux-arm64`) with the same tree. The installer does
+the rest, as root or a sudoer:
+
+```
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
+```
+
+It downloads the latest release for the machine's architecture, verifies the checksum,
+unpacks it as `/opt/247-agent-<version>` with `/opt/247-agent` as a symlink to it, links
+`oa` into `/usr/local/bin`, creates the `247-agent` user, writes a starter
+`/etc/247-agent` (`agent.yaml`, `tasks.d/hello.yaml`, an empty `connectors.d/`), installs
+the systemd unit and starts the service. Then:
+
+```
+sudo oa run hello --wait                     # the starter task (the socket is the service user's)
+journalctl -u 247-agent -o cat -f | jq       # the logs
+```
+
+Running it again upgrades: the new version's `oa validate` must accept the existing
+config before the symlink moves, the unit file is replaced (local changes belong in
+`systemctl edit 247-agent`), the config is never touched, and the service restarts unless
+`--no-restart`. Rollback is `ln -sfn /opt/247-agent-<old> /opt/247-agent` and a restart.
+Options: `--version 0.2.0`, `--from <tarball>` (a local `npm run release` build),
+`--prefix`, `--bin-dir`, `--no-service` (tree and symlinks only, also for macOS and
+user-local installs, which then need no sudo). `sh /opt/247-agent/share/uninstall.sh`
+removes what the installer put there and keeps the config, state, drop-ins and user;
+`--purge` removes those too. Secrets under `/etc/credstore` are never touched.
+
+Do not mix it with the package on one machine: both want `/opt/247-agent`. By hand, the
+tarball unpacks to one directory and `bin/` is the whole interface:
+
+```
+curl -fsSLO https://github.com/DartenZie/247-agent/releases/download/v0.1.0/247-agent-0.1.0-linux-x64.tar.gz
+tar -xzf 247-agent-0.1.0-linux-x64.tar.gz
+sudo mv 247-agent-0.1.0-linux-x64 /opt/247-agent
+sudo ln -s /opt/247-agent/bin/oa /usr/local/bin/oa
+oa --version
+```
+
+| Path | What |
+|---|---|
+| `bin/247-agent-core` | the daemon, the always-on process |
+| `bin/oa` | the CLI: validate config, run tasks by hand, inject events |
+| `bin/247-agent-connector-<name>` | the bundled connectors (`email`, `ftp`, `chat`), named in manifests |
+| `lib/`, `node/`, `node_modules/` | the bundled code, the vendored Node (with `npm`/`npx`), the SQLite addon |
+| `share/doc`, `share/examples`, `share/skills` | this guide, the example config, the agent skills |
+| `share/systemd/247-agent.service` | the unit file (§9.2) |
+| `share/install.sh`, `share/uninstall.sh` | the installer (also on the release page) and its counterpart |
+| `VERSION` | version, target and Node version of the build |
+
+The tree is relocatable: every launcher finds its siblings from its own location, and
+the daemon puts `bin/` and the vendored Node first on `PATH` for everything it spawns,
+so a manifest can say `exec: ["247-agent-connector-email"]` or `exec: ["node", …]` and
+gets this install's copies. To upgrade, unpack the new version next to the old one,
+switch the symlink or directory, validate, restart (§9.2).
+
+### 2.3 From source (development)
 
 Requirements: Node.js 22 or newer, npm, git. Linux is the target; macOS works for
 development.
@@ -39,19 +129,13 @@ npm run build
 npm test            # optional, no network needed
 ```
 
-This produces two entry points:
-
-| Program | Path after build | Purpose |
-|---|---|---|
-| daemon | `packages/core/dist/main.js` | `247-agent-core`, the always-on process |
-| CLI | `packages/cli/dist/main.js` | `oa`: validate config, run tasks by hand, inject events |
-
-For convenience in a shell:
-
-```
-alias 247-agent-core='node /opt/247-agent/packages/core/dist/main.js'
-alias oa='node /opt/247-agent/packages/cli/dist/main.js'
-```
+The same launchers exist in the checkout's `bin/` and run the workspace build under the
+Node on `PATH`, so `bin/oa` and `bin/247-agent-core` work like the installed ones (the
+`dist/` paths, `node packages/cli/dist/main.js`, work too). `npm run release` builds the
+release tarball for this machine into `dist-release/`; `scripts/build-release.sh
+--target linux-x64` cross-builds (it only needs the Node download for the target), and
+`scripts/build-package.sh --target linux-x64` turns that tree into the `.deb` and `.rpm`
+(`packaging/nfpm.yaml`; nfpm is downloaded on first use).
 
 ## 3. Five-minute start
 
@@ -481,7 +565,7 @@ One file per connector under `connectors.d/`, or inline in the `connectors:` lis
 
 ```yaml
 name: email                                   # [a-z][a-z0-9_-]*, unique
-exec: ["node", "connectors/email/dist/main.js"]
+exec: ["247-agent-connector-email"]           # argv; the install's bin/ is first on PATH
 cwd: .                                        # relative to the manifest (optional)
 transport: stdio                              # stdio = MCP server; none = emits only
 emits: [email.received]                       # documentation of what it publishes
@@ -695,6 +779,7 @@ Run statuses: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`
 ### 9.1 Layout
 
 ```
+/opt/247-agent/         # the release tree (§2): bin/, lib/, node/, share/; a symlink with the installer script
 /etc/247-agent/
   agent.yaml
   tasks.d/*.yaml
@@ -712,31 +797,56 @@ Keep `/etc/247-agent` in git and run `oa validate` on it before every deploy.
 
 ### 9.2 systemd unit
 
+The package (§2.1) and `install.sh` (§2.2) do all of this. By hand, the release ships the
+unit as `share/systemd/247-agent.service` (in the repository: `packaging/247-agent.service`):
+
+```
+useradd --system --home /var/lib/247-agent --shell /usr/sbin/nologin 247-agent
+install -d -m 750 -o 247-agent /etc/247-agent
+cp /opt/247-agent/share/systemd/247-agent.service /etc/systemd/system/
+systemctl edit 247-agent        # add one LoadCredential= per secret, see below
+oa validate /etc/247-agent/agent.yaml
+systemctl daemon-reload && systemctl enable --now 247-agent
+```
+
 ```ini
-# /etc/systemd/system/247-agent.service
+# /etc/systemd/system/247-agent.service (as shipped)
 [Unit]
 Description=247-agent core
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=247-agent
-ExecStart=/usr/bin/node /opt/247-agent/packages/core/dist/main.js --config /etc/247-agent/agent.yaml
+Group=247-agent
+ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
-LoadCredential=imap_pass:/etc/credstore/imap_pass
-LoadCredential=ftp_pass:/etc/credstore/ftp_pass
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 ProtectSystem=strict
+ReadWritePaths=/var/lib/247-agent
+PrivateTmp=yes
 NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+Secrets go in a drop-in (`systemctl edit 247-agent`), one `LoadCredential=` per name the
+tasks and manifests use:
+
+```ini
+[Service]
+LoadCredential=imap_pass:/etc/credstore/imap_pass
+LoadCredential=ftp_pass:/etc/credstore/ftp_pass
+```
+
 With `secrets: { backend: systemd-credentials }` each `LoadCredential=` name becomes a
-secret of the same name. Logs are JSON lines on stdout, so `journalctl -u 247-agent
+secret of the same name. Upgrade: unpack the new tarball, point `/opt/247-agent` at it,
+`oa validate`, `systemctl restart 247-agent` (preferably while no `agent` run is in
+flight). Logs are JSON lines on stdout, so `journalctl -u 247-agent
 -o cat | jq` works. Every line about a run carries `run_id`, `task` and
 `correlation_id`.
 
@@ -756,11 +866,15 @@ stale socket file left by a dead daemon is replaced; a live one refuses the star
 ### 9.4 Daemon flags
 
 ```
-247-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error]
+247-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error] [--version]
 ```
 
 `--config` defaults to `/etc/247-agent/agent.yaml`; `--log-level` overrides
-`log.level` from the config.
+`log.level` from the config. `OA_HOME` names the install root (the launchers set it;
+otherwise the daemon finds the nearest ancestor of its own script with
+`bin/247-agent-core`) and is exported, with `<OA_HOME>/bin` and the daemon's Node first
+on `PATH`, to every connector and shell action. The first log line, `daemon.home`,
+shows both.
 
 ## 10. Reference workflow and current gaps
 
@@ -774,19 +888,14 @@ Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters,
 `decide` action (Jev via OpenRouter's Decisions API,
 [`examples/decide-triage.yaml`](examples/decide-triage.yaml)), the cost ledger, budgets
 (`budget.max_usd`, `budgets.daily_usd`, `budget.exceeded`), `providers:`/`pricing:` and
-`oa cost`.
+`oa cost`; the `agent` action over ACP; and the real connectors under `connectors/`:
+`email` (IMAP/POP3 in, SMTP out, [`connectors/email/README.md`](../connectors/email/README.md)),
+`ftp` ([`connectors/ftp/README.md`](../connectors/ftp/README.md)) and `chat` (a Telegram
+bot for the approval gate, [`connectors/chat/README.md`](../connectors/chat/README.md)).
 
-Not implemented yet, in the planned order:
-
-1. The `agent` action.
-2. A real `chat` connector under `connectors/` (the `email` connector is there:
-   IMAP/POP3 in, SMTP out, see
-   [`connectors/email/README.md`](../connectors/email/README.md)).
-3. Retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of connectors,
-   `health.interval` in manifests, `batch: true` for `llm`.
-
-Until then, `agent` steps have to be replaced by `shell` or `connector` tasks to run a
-workflow end to end.
+Not implemented yet: retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of
+connectors, `health.interval` in manifests, `batch: true` for `llm`, a Matrix backend for
+`chat`.
 
 ## 11. Troubleshooting
 

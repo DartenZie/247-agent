@@ -223,6 +223,108 @@ describe('ConnectorSupervisor', () => {
   });
 });
 
+describe('ConnectorSupervisor with an acp connector', () => {
+  const acp = (over: Record<string, unknown> = {}): ConnectorConfig =>
+    manifest({
+      name: 'claude',
+      transport: 'acp',
+      exec: ['node', `${FIXTURES}fake-acp.ts`],
+      ...over,
+    });
+
+  it('spawns the agent, serves sessions, refuses ops and lists it as an agent', async () => {
+    const s = make([acp(), manifest()]);
+    await s.start();
+    expect(s.status()).toMatchObject([
+      { name: 'claude', transport: 'acp', state: 'up', restarts: 0 },
+      { name: 'fake', transport: 'stdio', state: 'up' },
+    ]);
+    expect(s.agentNames()).toEqual(['claude']);
+    expect(s.info('claude')).toEqual({ name: 'fake-acp', version: '0.1.0' });
+    expect(s.info('fake')).toBeUndefined();
+    await expect(s.call('claude', 'echo', {}, { signal: signal() })).rejects.toThrow(
+      /serves no ops/,
+    );
+    await expect(
+      s.open('fake', {
+        cwd: '/tmp',
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'cancelled',
+      }),
+    ).rejects.toThrow(/not an acp agent/);
+    await expect(
+      s.open('nope', {
+        cwd: '/tmp',
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'cancelled',
+      }),
+    ).rejects.toThrow(/unknown connector/);
+
+    const session = await s.open('claude', {
+      cwd: '/tmp',
+      signal: signal(),
+      log: createLogger({ sink: () => undefined }),
+      onPermission: () => 'cancelled',
+    });
+    const gen = session.prompt('[[no-cost]]');
+    let stop;
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) {
+        stop = next.value;
+        break;
+      }
+    }
+    expect(stop).toMatchObject({ stopReason: 'end_turn' });
+    session.close();
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        msg: 'connector.acp_initialized',
+        connector: 'claude',
+        agent: 'fake-acp',
+      }),
+    );
+  });
+
+  it('restarts a crashed agent with backoff and reports it down meanwhile', async () => {
+    const s = make([acp()]);
+    await s.start();
+    const session = await s.open('claude', {
+      cwd: '/tmp',
+      signal: signal(),
+      log: createLogger({ sink: () => undefined }),
+      onPermission: () => 'cancelled',
+    });
+    await expect(session.prompt('[[crash]]').next()).rejects.toThrow();
+    await until(() => s.status()[0]?.state === 'down');
+    await expect(
+      s.open('claude', {
+        cwd: '/tmp',
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'cancelled',
+      }),
+    ).rejects.toThrow(ConnectorDownError);
+    await until(() => s.status()[0]?.state === 'up');
+    expect(s.status()[0]).toMatchObject({ state: 'up', restarts: 1 });
+    expect(lines.map((l) => l.msg)).toEqual(
+      expect.arrayContaining(['connector.exited', 'connector.restart_scheduled', 'connector.up']),
+    );
+  });
+
+  it('keeps retrying a program that is not an ACP agent', async () => {
+    const s = make([acp({ exec: ['node', '-e', 'process.exit(5)'] })]);
+    await s.start();
+    expect(s.status()[0]).toMatchObject({
+      state: 'down',
+      error: expect.stringMatching(/exited with code 5 before completing initialize/) as string,
+    });
+    await until(() => (s.status()[0]?.restarts ?? 0) >= 2);
+  });
+});
+
 describe('toolResultToJson', () => {
   it('prefers structuredContent, parses JSON text, keeps plain text, joins several', () => {
     expect(toolResultToJson('c', 'o', { structuredContent: { a: 1 }, content: [] })).toEqual({

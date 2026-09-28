@@ -3,8 +3,10 @@
 Sub-programs the daemon spawns to talk to the outside world. A connector is any
 executable with a manifest; it may **emit events** into the core (`POST /v1/events` on
 the Unix socket) and/or **expose operations** as an MCP server on stdio, which
-`connector` actions call and `agent` runs can receive as tools. Any language works;
-existing MCP servers (GitHub, filesystem, …) are connectors as-is.
+`connector` actions call (handing them to `agent` runs as tools is planned). A third
+kind, `transport: acp`, is an Agent Client Protocol agent that `agent` actions open
+sessions on (`docs/examples/connectors.d/claude.yaml`). Any language works; existing
+MCP servers (GitHub, filesystem, …) and ACP agents are connectors as-is.
 
 One npm workspace package per connector lives here (`connectors/*` in the root
 `package.json`). Each has its own `README.md` with the config reference for its
@@ -14,7 +16,7 @@ manifest `config` block and the shape of its ops and events.
 |---|---|---|---|
 | [`email`](email/README.md) | done | `email.received` (fanned out by a cron task) | `fetch_new`, `mark_read`, `send` |
 | [`ftp`](ftp/README.md) | done | none (a task fans `list` out, see its example) | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir` over SFTP, FTP or FTPS, confined to a `root` |
-| `chat` (Telegram or Matrix) | planned | `chat.message`, `chat.reply` | `send`, `ask` |
+| [`chat`](chat/README.md) | done (Telegram; Matrix planned behind `backend`) | `chat.message` (every message in the configured chat), `chat.reply` (the answer to an `ask`, with the `correlation_id`) | `send`, `ask` (inline Approve/Reject buttons or custom options) |
 | `github`, `jira` | planned | via `poller` | their official MCP servers |
 | `webhook` | planned | generic HTTP in | none |
 | `poller` | planned, built into the core | one event per new item of any op | none |

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { AgentAction } from '../actions/agent.js';
 import { ConnectorAction } from '../actions/connector.js';
 import { DecideAction } from '../actions/decide.js';
 import { LlmAction } from '../actions/llm.js';
@@ -83,10 +84,7 @@ export const ManualTrigger = z.strictObject({ kind: z.literal('manual') });
 
 export const Trigger = z.discriminatedUnion('kind', [CronTrigger, EventTrigger, ManualTrigger]);
 
-/**
- * Each action kind is validated by the schema its runner exports; `agent` has no runner
- * yet and is checked for `kind` only.
- */
+/** Each action kind is validated by the schema its runner exports. */
 export const Action = z.discriminatedUnion('kind', [
   ShellAction,
   ConnectorAction,
@@ -94,7 +92,7 @@ export const Action = z.discriminatedUnion('kind', [
   SequenceAction,
   LlmAction,
   DecideAction,
-  z.looseObject({ kind: z.literal('agent') }),
+  AgentAction,
 ]);
 
 /** ARCHITECTURE §5.8: one domain event (or one per `each` item) after a successful run. */

@@ -1,0 +1,33 @@
+# systemd unit for the 247-agent daemon, installed from a release tarball under
+# /opt/247-agent (USER-GUIDE §9, ARCHITECTURE §12). Copy to /etc/systemd/system/, then add
+# the secrets the tasks name as LoadCredential= lines in a drop-in (`systemctl edit
+# 247-agent`), one per secret, and set `secrets: { backend: systemd-credentials }` in
+# agent.yaml:
+#
+#   [Service]
+#   LoadCredential=anthropic_api_key:/etc/credstore/anthropic_api_key
+#   LoadCredential=imap_pass:/etc/credstore/imap_pass
+#
+# Add ReadWritePaths= for any other directory a shell task writes to (a site checkout).
+[Unit]
+Description=247-agent core
+Documentation=file:///opt/247-agent/share/doc/USER-GUIDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=247-agent
+Group=247-agent
+ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+RuntimeDirectory=247-agent
+StateDirectory=247-agent
+ProtectSystem=strict
+ReadWritePaths=/var/lib/247-agent
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

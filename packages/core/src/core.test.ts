@@ -57,11 +57,12 @@ afterEach(async () => {
 const started = () => core.store.runs.listByStatus('running').map((r) => r.task);
 
 describe('createCore with the reference workflow', () => {
-  it('arms the cron task and loads all seven tasks', () => {
+  it('arms the cron task and loads all eight tasks', () => {
     expect(core.config().tasks.map((t) => t.name)).toEqual([
       'fetch_email',
       'classify_email',
       'update_event_list',
+      'reply_blocked',
       'update_site_general',
       'approve_general_change',
       'publish_site',
@@ -141,7 +142,7 @@ describe('createCore with the reference workflow', () => {
     writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
     const bad = core.reload();
     expect(bad.ok).toBe(false);
-    expect(core.config().tasks).toHaveLength(7);
+    expect(core.config().tasks).toHaveLength(8);
     expect(lines.find((l) => l.msg === 'core.config_invalid')).toBeDefined();
 
     writeFileSync(

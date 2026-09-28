@@ -7,7 +7,20 @@ export default tseslint.config(
   // outside every tsconfig project); it is not part of the workspace build. `.claude/skills/`
   // holds symlinks into it, and an editor that opens a template through one of those paths
   // would otherwise lint a file `eslint .` never sees, so ignore both spellings.
-  { ignores: ['**/dist/', '**/node_modules/', 'coverage/', 'skills/', '.claude/'] },
+  {
+    ignores: [
+      '**/dist/',
+      '**/node_modules/',
+      'coverage/',
+      'skills/',
+      '.claude/',
+      // Release tarballs and the Node download cache (scripts/build-release.sh), and the
+      // gitignored local testing examples.
+      'dist-release/',
+      '.cache/',
+      'local/',
+    ],
+  },
   js.configs.recommended,
   {
     files: ['**/*.ts'],

@@ -52,8 +52,19 @@ The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `s
 actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
 The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action with the Anthropic,
 OpenAI and OpenRouter adapters, the `decide` action (TypeSafe's Jev via OpenRouter's
-Decisions API), the cost ledger and budgets are in; the `agent` action and the chat
-connector are next.
+Decisions API), the cost ledger and budgets are in. The `agent` action runs on any ACP
+agent (verified against claude-agent-acp); the chat connector is next.
+
+Install on a Linux server: the `.deb` or `.rpm` from the
+[latest release](https://github.com/DartenZie/247-agent/releases/latest), or on any other
+Linux the installer script, which downloads the release tarball and sets up the user,
+`/etc/247-agent` and the systemd unit:
+
+```
+sudo apt install ./247-agent_<version>-1_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
+```
+
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
 [`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.
@@ -62,8 +73,9 @@ Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operat
 
 TypeScript on Node.js 22, SQLite, MCP for connector operations, the Anthropic and OpenAI
 SDKs behind one provider interface for single model calls (Anthropic, OpenAI,
-OpenRouter) and the Claude Agent SDK for agent loops. See the architecture doc
-for why these and not an off-the-shelf workflow engine.
+OpenRouter) and the Agent Client Protocol (ACP) for agent loops: any ACP agent program
+(claude-agent-acp, gemini, codex-acp, …) is a connector. See the architecture doc for
+why these and not an off-the-shelf workflow engine.
 
 ## Roadmap
 
@@ -71,7 +83,8 @@ for why these and not an off-the-shelf workflow engine.
 2. Connector supervisor, built-in poller, email connector.
 3. `llm` action with structured outputs, cost ledger and budgets (done), then the
    Anthropic, OpenAI and OpenRouter adapters.
-4. `agent` action on the Claude Agent SDK with worktrees and post-run gates.
+4. `agent` action over ACP with worktrees, a permission policy, a `done | blocked`
+   result contract and post-run gates (done).
 5. `wait` action and chat connector for approvals.
 6. Hardening: retention, metrics, sandboxing, hot reload.
 

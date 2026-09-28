@@ -8,10 +8,11 @@ const EXAMPLE = new URL('../../../../docs/examples/website-updates.yaml', import
 describe('loadTasksFile', () => {
   it('loads the reference workflow', () => {
     const r = loadTasksFile(EXAMPLE);
-    expect(formatLoadResult(r)).toEqual([`ok ${EXAMPLE} (7 tasks)`]);
+    expect(formatLoadResult(r)).toEqual([`ok ${EXAMPLE} (8 tasks)`]);
     if (r.ok) {
       expect(r.config.tasks.map((t) => t.trigger.kind)).toEqual([
         'cron',
+        'event',
         'event',
         'event',
         'event',

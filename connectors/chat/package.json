@@ -1,0 +1,12 @@
+{
+  "name": "@247-agent/connector-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chat connector: a Telegram bot that relays messages as events, asks questions with inline buttons and emits the answers as chat.reply.",
+  "type": "module",
+  "main": "dist/main.js",
+  "dependencies": {
+    "@247-agent/connector-sdk": "0.1.0",
+    "zod": "^4.6.5"
+  }
+}

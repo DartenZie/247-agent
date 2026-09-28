@@ -11,3 +11,10 @@ coverage/
 
 # local testing examples (not committed)
 /local/
+
+# release tarballs and the Node download cache of scripts/build-release.sh
+dist-release/
+.cache/
+
+# editor settings (local)
+.zed/

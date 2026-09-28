@@ -3,7 +3,9 @@
  * uses, so tests inject a fake through the factory instead of a server.
  */
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { posix } from 'node:path';
+import type { Readable } from 'node:stream';
 
 import SftpClient from 'ssh2-sftp-client';
 
@@ -42,7 +44,7 @@ export interface SftpLib {
   list(path: string): Promise<SftpFileInfo[]>;
   stat(path: string): Promise<SftpFileStats>;
   get(path: string): Promise<unknown>;
-  put(input: Buffer, path: string): Promise<unknown>;
+  put(input: Buffer | Readable, path: string): Promise<unknown>;
   delete(path: string): Promise<unknown>;
   rmdir(path: string, recursive?: boolean): Promise<unknown>;
   rename(from: string, to: string): Promise<unknown>;
@@ -153,6 +155,14 @@ export class SftpFileClient implements FileClient {
   async write(path: string, data: Buffer): Promise<void> {
     try {
       await this.lib.put(data, path);
+    } catch (err) {
+      throw describe('put', path, err);
+    }
+  }
+
+  async upload(local: string, path: string): Promise<void> {
+    try {
+      await this.lib.put(createReadStream(local), path);
     } catch (err) {
       throw describe('put', path, err);
     }

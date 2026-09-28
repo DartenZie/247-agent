@@ -41,6 +41,11 @@ Use your own `OA_CONNECTOR_NAME` as the namespace. Tasks can read it as
 
 ## Ops (core → connector): MCP over stdio
 
+With `transport: acp`, the process is not a connector in this sense but an Agent Client
+Protocol agent (agentclientprotocol.com): the core is the ACP client, `agent` actions open
+sessions on it, and it serves no ops (see `manifest.md`). The rest of this file is about
+`stdio` and `none`.
+
 With `transport: stdio`, the process is an MCP server: JSON-RPC on stdin/stdout, tools
 listed by `tools/list`, called by `tools/call`. The core holds one client connection
 for the daemon's lifetime and calls only the ops in the manifest allowlist.

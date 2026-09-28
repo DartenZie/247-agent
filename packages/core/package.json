@@ -1,6 +1,6 @@
 {
   "name": "@247-agent/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Daemon: config, store, bus, actions, connectors, api, expr.",
   "type": "module",
@@ -16,6 +16,7 @@
     }
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.5.0",
     "@anthropic-ai/sdk": "^0.127.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",

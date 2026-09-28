@@ -1,6 +1,6 @@
 {
   "name": "@247-agent/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "The oa command; talks to the core socket.",
   "type": "module",
@@ -16,6 +16,6 @@
     }
   },
   "dependencies": {
-    "@247-agent/core": "0.0.0"
+    "@247-agent/core": "0.1.0"
   }
 }
