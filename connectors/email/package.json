@@ -1,12 +1,12 @@
 {
   "name": "@247-agent/connector-email",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Email connector: IMAP or POP3 in, SMTP out, footer appended to every outgoing mail.",
   "type": "module",
   "main": "dist/main.js",
   "dependencies": {
-    "@247-agent/connector-sdk": "0.0.0",
+    "@247-agent/connector-sdk": "0.1.0",
     "imapflow": "^2.0.5",
     "mailparser": "^3.9.28",
     "nodemailer": "^8.0.2",

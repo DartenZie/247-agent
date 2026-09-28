@@ -489,7 +489,7 @@ A connector is any executable with a manifest. It may implement one or both halv
 ```yaml
 # connectors.d/email.yaml
 name: email
-exec: ["node", "connectors/email/dist/main.js"]  # or any executable, any language
+exec: ["247-agent-connector-email"]                  # argv; or any executable, any language
 transport: stdio                                     # stdio = MCP server on stdin/stdout; none = emits only; acp = an agent (§5.4)
 emits: [email.received]                              # documented, shape-checked
 ops: [fetch_new, mark_read, send]                    # allowlist of MCP tools the core may call; [] = any
@@ -787,6 +787,21 @@ NoNewPrivileges=yes
 the unit. Paths a sandboxed step writes to still need `ReadWritePaths=` here, since the
 sandbox lives inside the unit's own mount namespace.
 
+`/opt/247-agent` is the unpacked release tarball (`scripts/build-release.sh`): `bin/`
+launchers, one bundled `.mjs` per program under `lib/`, a vendored Node under `node/`,
+`better-sqlite3` with the target's prebuilt addon under `node_modules/`, docs, examples,
+skills and this unit under `share/`. The tree is relocatable: the daemon resolves its
+install root (`$OA_HOME`, else the nearest ancestor of its script with
+`bin/247-agent-core`) and puts `<root>/bin` and its own Node first on `PATH` for every
+child, which is how a manifest's `exec: ["247-agent-connector-email"]` finds the bundled
+connector wherever the tree lives. A source checkout has the same `bin/` (running the
+workspace `dist/`), so manifests are identical in development and production.
+`scripts/install.sh` (shipped as `share/install.sh` and attached to every release)
+installs or upgrades from the GitHub release: `/opt/247-agent-<version>` per version,
+`/opt/247-agent` a symlink, the user, a starter `/etc/247-agent`, the unit; the new
+version validates the existing config before the symlink moves. `uninstall.sh` is its
+counterpart and keeps config, state and the user unless `--purge`.
+
 `247-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
 then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in
 flight are aborted and recovered as interrupted on the next start). Logs go to journald as
@@ -807,6 +822,10 @@ oa connectors status
 
 ```
 package.json                 # workspaces: packages/*, connectors/*
+bin/                         # launchers: 247-agent-core, oa, 247-agent-connector-<name>; the same files in a checkout and a release
+scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), install.sh + uninstall.sh
+packaging/                   # 247-agent.service, shipped as share/systemd/ in the tarball
+.github/workflows/           # ci (build, lint, test, tarball smoke), release (tarballs on v* tags)
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml, tasks, connectors; loader + hot reload
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
@@ -819,6 +838,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
+  home.ts, version.ts        # install root discovery + PATH for children; the version constant (`--version`)
   src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock
   test/fixtures/             # fake connectors (email, ftp, chat, generic MCP, plain) and a fake ACP agent (fake-acp.ts, scripted by prompt markers) run by Node from source
@@ -853,8 +873,10 @@ Runtime notes
   `ctx.llm.decide()` and checks the answers against the questions; the service shares
   the budget/ledger path with `call` and dispatches to the adapter's optional `decide`
   method, which only `openrouter.ts` implements (a plain `fetch` to the Decisions API).
-- Distributed as a single tarball plus `node_modules` (or bundled with `tsup`) under
-  `/opt/247-agent`; systemd unit unchanged (§12).
+- Distributed as one self-contained tarball per target (§12): esbuild bundles each
+  program to a single ESM file (`better-sqlite3` stays outside for its native addon), a
+  pinned Node (`.node-version`) is vendored, and `packages/core/src/version.ts` carries
+  the version (checked against `package.json` by a test; release tags are `v<version>`).
 
 ## 14. Implementation order
 

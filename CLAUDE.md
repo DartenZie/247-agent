@@ -33,6 +33,9 @@ truth for concepts, action semantics, the connector protocol and the config form
 ## Layout
 
 ```
+bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>); same files in a checkout and a release
+scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); install.sh + uninstall.sh (curl | sh from the GitHub release)
+packaging/               247-agent.service (shipped as share/systemd/ in the tarball)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
@@ -59,6 +62,12 @@ skills/                      agent skills for working with 247-agent (linked fro
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and
   `docs/examples/connectors.d/*.yaml`.
+- Manifests name the bundled connectors by launcher (`exec: ["247-agent-connector-email"]`),
+  never by a `dist/` path: the daemon puts `<install root>/bin` and its own Node first on
+  `PATH` for every child (`packages/core/src/home.ts`). New bundled connectors need a
+  launcher in `bin/` and an entry in `scripts/bundle.mjs`.
+- The version lives in `packages/core/src/version.ts` and the root `package.json` (a test
+  keeps them equal); release tags are `v<version>` and CI builds the tarballs from them.
 - Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
   assistant prefill (rejected on current models). Don't append date suffixes to IDs.
@@ -75,12 +84,14 @@ npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run lint           # eslint + prettier check
+npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
 node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
 node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
+bin/oa …, bin/247-agent-core …                                         # the launchers; same commands, in a checkout or /opt/247-agent
 ```
 
 (Keep this list in sync with `package.json`.)

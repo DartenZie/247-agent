@@ -16,7 +16,7 @@ node packages/cli/dist/main.js validate docs/examples/connectors.d/ftp.yaml
 
 ```yaml
 name: ftp
-exec: ["node", "connectors/ftp/dist/main.js"]
+exec: ["247-agent-connector-ftp"]
 transport: stdio
 ops: [list, stat, read, write, delete, rename, mkdir, sync]
 config:
@@ -177,7 +177,7 @@ and TLS choreography) is worth the code; the wire is covered by a manual check:
 docker run --rm -p 2222:22 atmoz/sftp foo:pass:1001
 OA_CORE_SOCKET=/tmp/x.sock OA_CONNECTOR_NAME=ftp \
 OA_CONFIG_JSON='{"protocol":"sftp","host":"127.0.0.1","port":2222,"user":"foo","password":"pass","root":"upload"}' \
-node connectors/ftp/dist/main.js
+bin/247-agent-connector-ftp
 ```
 
 then send MCP JSON-RPC on stdin (`initialize`, then `tools/call` with `{"name":"list","arguments":{}}`),

@@ -14,7 +14,7 @@ node packages/cli/dist/main.js validate docs/examples/connectors.d/email.yaml
 
 ```yaml
 name: email
-exec: ["node", "connectors/email/dist/main.js"]
+exec: ["247-agent-connector-email"]
 transport: stdio
 emits: [email.received]
 ops: [fetch_new, mark_read, send]       # drop `send` for an agent-facing, read-only copy

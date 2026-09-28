@@ -17,6 +17,7 @@ import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
+import { VERSION } from '../version.js';
 import type { AgentInfo, AgentSession, AgentSessionOptions } from './acp-types.js';
 import { AcpAgent, pipeLines } from './acp.js';
 
@@ -345,7 +346,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       ...(cwd === undefined ? {} : { cwd }),
       stderr: 'pipe',
     });
-    const client = new Client({ name: '247-agent-core', version: '0' });
+    const client = new Client({ name: '247-agent-core', version: VERSION });
     transport.onerror = (err) => {
       log.warn('connector.transport_error', { error: err.message });
     };

@@ -319,3 +319,5 @@ export {
   type Daemon,
   type DaemonOptions,
 } from './daemon.js';
+export { VERSION } from './version.js';
+export { findHome, homeEnv, HOME_ENV } from './home.js';

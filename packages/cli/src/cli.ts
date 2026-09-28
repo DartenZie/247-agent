@@ -1,3 +1,5 @@
+import { VERSION } from '@247-agent/core';
+
 import { connector, CONNECTOR_USAGE } from './commands/connector.js';
 import { cost, COST_USAGE } from './commands/cost.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
@@ -14,6 +16,7 @@ commands:
   connector list|restart <name>      show connectors / respawn one (re-reads its secrets)
   cost [--by task|model|provider|day] [--since 7d]   sum the model-call ledger
   help [command]
+  version                            print the version
 
 The daemon socket is --socket, else $OA_CORE_SOCKET, else /run/247-agent/core.sock.
 `;
@@ -40,6 +43,11 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return await connector(rest, io);
       case 'cost':
         return await cost(rest, io);
+      case 'version':
+      case '--version':
+      case '-V':
+        io.out(VERSION);
+        return EXIT.ok;
       case undefined:
       case 'help':
       case '--help':

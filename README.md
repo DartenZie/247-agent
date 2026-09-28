@@ -54,6 +54,14 @@ The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action with the An
 OpenAI and OpenRouter adapters, the `decide` action (TypeSafe's Jev via OpenRouter's
 Decisions API), the cost ledger and budgets are in. The `agent` action runs on any ACP
 agent (verified against claude-agent-acp); the chat connector is next.
+
+Install on a Linux server (downloads the latest release, sets up the user, `/etc/247-agent`
+and the systemd unit):
+
+```
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
+```
+
 Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
 [`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.

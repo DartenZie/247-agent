@@ -2,7 +2,7 @@
 # Files inside one remote directory over SFTP, FTP or FTPS. Full config reference:
 # connectors/ftp/README.md. It emits nothing itself; a task fans `list` results out.
 name: ftp
-exec: ["node", "connectors/ftp/dist/main.js"]
+exec: ["247-agent-connector-ftp"]
 transport: stdio
 ops: [list, stat, read, write, delete, rename, mkdir, sync]   # give agents a copy with [list, stat, read]
 config:

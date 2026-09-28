@@ -1,0 +1,22 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+      - run: node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
+      - name: Release tarball builds and passes its smoke test
+        run: scripts/build-release.sh --skip-build

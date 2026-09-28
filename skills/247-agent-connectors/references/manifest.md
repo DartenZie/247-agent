@@ -5,7 +5,7 @@ One file per connector under `connectors.d/`, or an entry in the `connectors:` l
 
 ```yaml
 name: email                                   # [a-z][a-z0-9_-]*
-exec: ["node", "connectors/email/dist/main.js"]   # any executable; argv, no shell
+exec: ["247-agent-connector-email"]           # any executable; argv, no shell; the install's bin/ is first on PATH
 cwd: .                                        # relative to the manifest (optional)
 transport: stdio                              # stdio = MCP server on stdin/stdout; none = emits only; acp = an ACP agent (below)
 emits: [email.received]                       # documentation of the event types it publishes

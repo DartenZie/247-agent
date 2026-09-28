@@ -16,7 +16,7 @@ node packages/cli/dist/main.js validate docs/examples/connectors.d/chat.yaml
 
 ```yaml
 name: chat
-exec: ["node", "connectors/chat/dist/main.js"]
+exec: ["247-agent-connector-chat"]
 transport: stdio
 emits: [chat.message, chat.reply]
 ops: [send, ask]
@@ -208,7 +208,7 @@ poll loop's backoff. To try the real thing by hand:
 ```
 OA_CORE_SOCKET=/tmp/x.sock OA_CONNECTOR_NAME=chat \
 OA_CONFIG_JSON='{"token":"123:ABC","chat_id":123456789,"poll_timeout":5}' \
-node connectors/chat/dist/main.js
+bin/247-agent-connector-chat
 ```
 
 then send MCP JSON-RPC on stdin (`initialize`, then `tools/call` with

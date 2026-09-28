@@ -1,0 +1,13 @@
+#!/bin/sh
+# Launcher for the daemon. In a release tree (the tarball from scripts/build-release.sh) it
+# runs the bundled build under the vendored Node; in a source checkout it runs the
+# workspace build (npm run build) under the Node on PATH. Either way OA_HOME names the
+# install root, so the core can put its siblings in bin/ first on PATH for children.
+set -e
+self=$(readlink -f "$0" 2>/dev/null || echo "$0")
+root=$(cd "$(dirname "$self")/.." && pwd -P)
+export OA_HOME="$root"
+if [ -x "$root/node/bin/node" ] && [ -f "$root/lib/core.mjs" ]; then
+  exec "$root/node/bin/node" "$root/lib/core.mjs" "$@"
+fi
+exec node "$root/packages/core/dist/main.js" "$@"

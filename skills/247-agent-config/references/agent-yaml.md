@@ -63,7 +63,7 @@ provider exists, the model has a price (OpenRouter excepted), an `llm` task's
 ```yaml
 connectors:
   - name: email
-    exec: [node, connectors/email/dist/main.js]
+    exec: [247-agent-connector-email]
     emits: [email.received]
     ops: [fetch_new, mark_read]
     config:

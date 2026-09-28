@@ -2,7 +2,7 @@
 # as chat.message events, asks questions with inline buttons and emits the answers as
 # chat.reply. Full config reference: connectors/chat/README.md.
 name: chat
-exec: ["node", "connectors/chat/dist/main.js"]
+exec: ["247-agent-connector-chat"]
 transport: stdio
 emits: [chat.message, chat.reply]
 ops: [send, ask]
