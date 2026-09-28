@@ -34,8 +34,8 @@ truth for concepts, action semantics, the connector protocol and the config form
 
 ```
 bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>); same files in a checkout and a release
-scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); install.sh + uninstall.sh (curl | sh from the GitHub release)
-packaging/               247-agent.service (shipped as share/systemd/ in the tarball)
+scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release)
+packaging/               247-agent.service, etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
@@ -85,6 +85,7 @@ npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run lint           # eslint + prettier check
 npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
+npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET

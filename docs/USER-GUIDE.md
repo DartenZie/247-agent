@@ -29,12 +29,40 @@ That is what lets you add or remove tasks without editing the others.
 
 ## 2. Install
 
-### 2.1 From a release tarball (servers)
+Every release is self-contained: the bundled programs, the one native module, a pinned
+Node.js, the docs, the examples and the agent skills. Nothing else has to be installed
+on the machine (`bubblewrap` is the optional exception, §5.1). It comes in three forms,
+all with the same layout under `/opt/247-agent`, the same unit and the same starter
+config: a `.deb` and an `.rpm` (§2.1), a tarball with an installer script (§2.2), and the
+source (§2.3).
 
-A release is one tarball per target (`linux-x64`, `linux-arm64`) with everything inside:
-the bundled programs, the one native module, a pinned Node.js, the docs, the examples and
-the agent skills. Nothing else has to be installed on the machine (`bubblewrap` is the
-optional exception, §5.1). The installer does the rest, as root or a sudoer:
+### 2.1 Debian, Ubuntu, Fedora: the package
+
+```
+curl -fsSLO https://github.com/DartenZie/247-agent/releases/download/v0.1.0/247-agent_0.1.0-1_amd64.deb
+sudo apt install ./247-agent_0.1.0-1_amd64.deb        # or: sudo dnf install ./247-agent-0.1.0-1.x86_64.rpm
+```
+
+The package installs `/opt/247-agent`, links `/usr/bin/oa`, ships the unit as
+`/usr/lib/systemd/system/247-agent.service`, creates the `247-agent` user and puts a
+starter config in `/etc/247-agent` (`agent.yaml`, `tasks.d/hello.yaml`, an empty
+`connectors.d/`) as configuration files the package manager never overwrites. On a fresh
+install it enables and starts the service; on an upgrade it restarts a running one. Then:
+
+```
+oa run hello --wait                          # the starter task
+journalctl -u 247-agent -o cat -f | jq       # the logs
+```
+
+`apt remove` keeps the config, the state, the unit's drop-ins and the user; `apt purge`
+removes them too. Secrets under `/etc/credstore` are never touched. (`arm64` and
+`aarch64` packages exist as well; an apt repository is planned, until then `apt install`
+of the downloaded file is the way, and upgrading is installing the newer file.)
+
+### 2.2 Other Linux: the tarball and its installer
+
+One tarball per target (`linux-x64`, `linux-arm64`) with the same tree. The installer does
+the rest, as root or a sudoer:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
@@ -61,7 +89,8 @@ user-local installs, which then need no sudo). `sh /opt/247-agent/share/uninstal
 removes what the installer put there and keeps the config, state, drop-ins and user;
 `--purge` removes those too. Secrets under `/etc/credstore` are never touched.
 
-By hand, the tarball unpacks to one directory and `bin/` is the whole interface:
+Do not mix it with the package on one machine: both want `/opt/247-agent`. By hand, the
+tarball unpacks to one directory and `bin/` is the whole interface:
 
 ```
 curl -fsSLO https://github.com/DartenZie/247-agent/releases/download/v0.1.0/247-agent-0.1.0-linux-x64.tar.gz
@@ -88,7 +117,7 @@ so a manifest can say `exec: ["247-agent-connector-email"]` or `exec: ["node", �
 gets this install's copies. To upgrade, unpack the new version next to the old one,
 switch the symlink or directory, validate, restart (§9.2).
 
-### 2.2 From source (development)
+### 2.3 From source (development)
 
 Requirements: Node.js 22 or newer, npm, git. Linux is the target; macOS works for
 development.
@@ -104,7 +133,9 @@ The same launchers exist in the checkout's `bin/` and run the workspace build un
 Node on `PATH`, so `bin/oa` and `bin/247-agent-core` work like the installed ones (the
 `dist/` paths, `node packages/cli/dist/main.js`, work too). `npm run release` builds the
 release tarball for this machine into `dist-release/`; `scripts/build-release.sh
---target linux-x64` cross-builds (it only needs the Node download for the target).
+--target linux-x64` cross-builds (it only needs the Node download for the target), and
+`scripts/build-package.sh --target linux-x64` turns that tree into the `.deb` and `.rpm`
+(`packaging/nfpm.yaml`; nfpm is downloaded on first use).
 
 ## 3. Five-minute start
 
@@ -748,7 +779,7 @@ Run statuses: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`
 ### 9.1 Layout
 
 ```
-/opt/247-agent/         # the unpacked release tarball (§2.1): bin/, lib/, node/, share/
+/opt/247-agent/         # the release tree (§2): bin/, lib/, node/, share/; a symlink with the installer script
 /etc/247-agent/
   agent.yaml
   tasks.d/*.yaml
@@ -766,8 +797,8 @@ Keep `/etc/247-agent` in git and run `oa validate` on it before every deploy.
 
 ### 9.2 systemd unit
 
-`install.sh` (§2.1) does all of this. By hand, the release ships the unit as
-`share/systemd/247-agent.service` (in the repository: `packaging/247-agent.service`):
+The package (§2.1) and `install.sh` (§2.2) do all of this. By hand, the release ships the
+unit as `share/systemd/247-agent.service` (in the repository: `packaging/247-agent.service`):
 
 ```
 useradd --system --home /var/lib/247-agent --shell /usr/sbin/nologin 247-agent

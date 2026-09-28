@@ -1,0 +1,11 @@
+# 247-agent daemon config with the production defaults; every key is documented in
+# /opt/247-agent/share/doc/USER-GUIDE.md §4.1. Tasks go in tasks.d/*.yaml, connector
+# manifests in connectors.d/*.yaml; `oa validate agent.yaml` checks all of it and
+# `systemctl reload 247-agent` picks up task changes.
+db: /var/lib/247-agent/state.db
+socket: /run/247-agent/core.sock
+tasks: tasks.d
+connectors: [connectors.d]
+# One `LoadCredential=<name>:/etc/credstore/<name>` per secret in `systemctl edit 247-agent`.
+secrets: { backend: systemd-credentials }
+log: { level: info }

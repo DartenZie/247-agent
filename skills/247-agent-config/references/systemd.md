@@ -60,7 +60,16 @@ directory a `shell` task writes to (a site checkout, for example).
 
 ## Install and upgrade
 
-The installer does everything below and is the normal path; run it again to upgrade:
+On Debian, Ubuntu or Fedora the package is the normal path; installing a newer file
+upgrades, `apt remove` keeps config, state, drop-ins and the user, `apt purge` removes
+them:
+
+```
+apt install ./247-agent_<version>-1_amd64.deb      # dnf install ./247-agent-<version>-1.x86_64.rpm
+```
+
+Elsewhere the installer script does the same things from the tarball; run it again to
+upgrade (never mix the two on one machine, both own /opt/247-agent):
 
 ```
 curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh

@@ -19,6 +19,7 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "release": "scripts/build-release.sh",
+    "package": "scripts/build-package.sh",
     "start": "node packages/core/dist/main.js",
     "oa": "node packages/cli/dist/main.js"
   },

@@ -1,0 +1,9 @@
+# A first task, run by hand: `oa run hello --wait`. Replace it with your own; the examples
+# in /opt/247-agent/share/examples show cron and event triggers, connectors and models.
+tasks:
+  - name: hello
+    trigger: { kind: manual }
+    action:
+      kind: shell
+      cmd: [sh, -c, 'echo "hello from 247-agent, run $1"', --, '${run.id}']
+      result: text_stdout

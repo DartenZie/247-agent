@@ -32,6 +32,7 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: scripts/build-release.sh --target ${{ matrix.target }} --skip-build
+      - run: scripts/build-package.sh --target ${{ matrix.target }}
       - name: Installer scripts as release assets (once)
         if: matrix.target == 'linux-x64'
         run: cp scripts/install.sh scripts/uninstall.sh dist-release/
@@ -40,5 +41,9 @@ jobs:
           files: |
             dist-release/*.tar.gz
             dist-release/*.tar.gz.sha256
+            dist-release/*.deb
+            dist-release/*.deb.sha256
+            dist-release/*.rpm
+            dist-release/*.rpm.sha256
             dist-release/*.sh
           generate_release_notes: true

@@ -800,7 +800,12 @@ workspace `dist/`), so manifests are identical in development and production.
 installs or upgrades from the GitHub release: `/opt/247-agent-<version>` per version,
 `/opt/247-agent` a symlink, the user, a starter `/etc/247-agent`, the unit; the new
 version validates the existing config before the symlink moves. `uninstall.sh` is its
-counterpart and keeps config, state and the user unless `--purge`.
+counterpart and keeps config, state and the user unless `--purge`. The `.deb` and
+`.rpm` (`packaging/nfpm.yaml`, built by `scripts/build-package.sh` from the same tree
+with nfpm) install the identical layout, `/usr/bin/oa`, the unit under
+`/usr/lib/systemd/system` and the starter `/etc/247-agent` as conffiles; the maintainer
+scripts (`packaging/scripts/`) create the user, enable and start on install, restart on
+upgrade, stop on removal and clean up on purge. Both are attached to every release.
 
 `247-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
 then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in
@@ -823,8 +828,8 @@ oa connectors status
 ```
 package.json                 # workspaces: packages/*, connectors/*
 bin/                         # launchers: 247-agent-core, oa, 247-agent-connector-<name>; the same files in a checkout and a release
-scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), install.sh + uninstall.sh
-packaging/                   # 247-agent.service, shipped as share/systemd/ in the tarball
+scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), build-package.sh (.deb/.rpm), install.sh + uninstall.sh
+packaging/                   # 247-agent.service, etc/ (the starter config), nfpm.yaml + scripts/ (the .deb/.rpm)
 .github/workflows/           # ci (build, lint, test, tarball smoke), release (tarballs on v* tags)
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml, tasks, connectors; loader + hot reload

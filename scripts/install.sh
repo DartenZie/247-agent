@@ -201,38 +201,19 @@ root ln -sfn "$prefix/bin/oa" "$bin_dir/oa"
 if [ $service = 1 ]; then
   user=247-agent
   if ! id "$user" > /dev/null 2>&1; then
-    nologin=$(command -v nologin || echo /usr/sbin/nologin)
+    nologin=/bin/false
+    for s in /usr/sbin/nologin /sbin/nologin; do
+      if [ -x "$s" ]; then nologin=$s; break; fi
+    done
     root useradd --system --home-dir /var/lib/247-agent --no-create-home --shell "$nologin" "$user"
     say "created user $user"
   fi
   root install -d -m 750 -o "$user" -g "$user" /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d
   if [ ! -f "$config" ]; then
-    cat > "$tmp/agent.yaml" <<'YAML'
-# 247-agent daemon config, written by install.sh with the production defaults. Every
-# key: /opt/247-agent/share/doc/USER-GUIDE.md §4.1. Tasks go in tasks.d/*.yaml,
-# connector manifests in connectors.d/*.yaml; `oa validate agent.yaml` checks all of it,
-# `systemctl reload 247-agent` picks up task changes.
-db: /var/lib/247-agent/state.db
-socket: /run/247-agent/core.sock
-tasks: tasks.d
-connectors: [connectors.d]
-# One `LoadCredential=<name>:/etc/credstore/<name>` per secret in `systemctl edit 247-agent`.
-secrets: { backend: systemd-credentials }
-log: { level: info }
-YAML
-    cat > "$tmp/hello.yaml" <<'YAML'
-# A first task, run by hand: `oa run hello --wait`. Replace with your own; the examples
-# in /opt/247-agent/share/examples show cron and event triggers, connectors and models.
-tasks:
-  - name: hello
-    trigger: { kind: manual }
-    action:
-      kind: shell
-      cmd: [sh, -c, 'echo "hello from 247-agent, run $1"', --, "${run.id}"]
-      result: text_stdout
-YAML
-    root install -m 640 -o "$user" -g "$user" "$tmp/agent.yaml" "$config"
-    root install -m 640 -o "$user" -g "$user" "$tmp/hello.yaml" /etc/247-agent/tasks.d/hello.yaml
+    # The starter config from the tree (packaging/etc in the repository, shared with the
+    # .deb/.rpm): the production defaults and a manual `hello` task.
+    root install -m 640 -o "$user" -g "$user" "$tree/share/etc/agent.yaml" "$config"
+    root install -m 640 -o "$user" -g "$user" "$tree/share/etc/tasks.d/hello.yaml" /etc/247-agent/tasks.d/hello.yaml
     say "wrote $config and /etc/247-agent/tasks.d/hello.yaml"
   fi
 

@@ -10,7 +10,7 @@
 #   lib/            one bundled .mjs per program (scripts/bundle.mjs)
 #   node/           a vendored Node (bin/node, npm, npx) pinned by .node-version
 #   node_modules/   better-sqlite3 with the target's prebuilt addon only
-#   share/          doc/, examples/, skills/, systemd/247-agent.service, install.sh, uninstall.sh
+#   share/          doc/, examples/, skills/, systemd/247-agent.service, etc/ (starter config), install.sh, uninstall.sh
 #   LICENSE VERSION
 #
 # Defaults: the host's platform-arch, the Node version in .node-version, ./dist-release.
@@ -104,6 +104,7 @@ cp -R docs/examples "$stage/share/examples"
 cp -R skills "$stage/share/skills"
 cp packaging/247-agent.service "$stage/share/systemd/"
 cp scripts/install.sh scripts/uninstall.sh "$stage/share/"
+cp -R packaging/etc "$stage/share/etc"
 cp LICENSE "$stage/LICENSE"
 printf 'version=%s\ntarget=%s\nnode=%s\n' "$version" "$target" "$node_version" > "$stage/VERSION"
 

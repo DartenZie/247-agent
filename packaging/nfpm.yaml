@@ -1,0 +1,91 @@
+# nfpm description of the .deb and .rpm packages (scripts/build-package.sh fills the
+# variables from a release tree built by scripts/build-release.sh). The package puts the
+# same tree as the tarball under /opt/247-agent, links /usr/bin/oa, ships the unit and a
+# starter /etc/247-agent as config files the package manager never overwrites, and
+# creates the 247-agent user in preinstall. USER-GUIDE §2.1.
+name: 247-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: '1'
+section: admin
+priority: optional
+maintainer: Miroslav Pašek <miroslav.pasek@email.cz>
+description: |
+  24/7 config-driven automation daemon for a single Linux server.
+  Tasks are declared in YAML with cron, event or manual triggers and shell,
+  connector, model or agent actions; connectors emit events and expose
+  operations as MCP servers. Self-contained: bundled code and its own Node.js.
+vendor: 247-agent
+homepage: https://github.com/DartenZie/247-agent
+license: WTFPL
+recommends:
+  - bubblewrap
+contents:
+  - src: ${STAGE}/bin
+    dst: /opt/247-agent/bin
+    type: tree
+  - src: ${STAGE}/lib
+    dst: /opt/247-agent/lib
+    type: tree
+  - src: ${STAGE}/node
+    dst: /opt/247-agent/node
+    type: tree
+  - src: ${STAGE}/node_modules
+    dst: /opt/247-agent/node_modules
+    type: tree
+  - src: ${STAGE}/share/doc
+    dst: /opt/247-agent/share/doc
+    type: tree
+  - src: ${STAGE}/share/examples
+    dst: /opt/247-agent/share/examples
+    type: tree
+  - src: ${STAGE}/share/skills
+    dst: /opt/247-agent/share/skills
+    type: tree
+  - src: ${STAGE}/LICENSE
+    dst: /opt/247-agent/LICENSE
+  - src: ${STAGE}/VERSION
+    dst: /opt/247-agent/VERSION
+  - src: /opt/247-agent/bin/oa
+    dst: /usr/bin/oa
+    type: symlink
+  - src: packaging/247-agent.service
+    dst: /usr/lib/systemd/system/247-agent.service
+  - src: packaging/etc/agent.yaml
+    dst: /etc/247-agent/agent.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+      owner: 247-agent
+      group: 247-agent
+  - src: packaging/etc/tasks.d/hello.yaml
+    dst: /etc/247-agent/tasks.d/hello.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+      owner: 247-agent
+      group: 247-agent
+  - dst: /etc/247-agent
+    type: dir
+    file_info:
+      mode: 0750
+      owner: 247-agent
+      group: 247-agent
+  - dst: /etc/247-agent/tasks.d
+    type: dir
+    file_info:
+      mode: 0750
+      owner: 247-agent
+      group: 247-agent
+  - dst: /etc/247-agent/connectors.d
+    type: dir
+    file_info:
+      mode: 0750
+      owner: 247-agent
+      group: 247-agent
+scripts:
+  preinstall: packaging/scripts/preinstall.sh
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh

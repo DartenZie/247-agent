@@ -55,10 +55,13 @@ OpenAI and OpenRouter adapters, the `decide` action (TypeSafe's Jev via OpenRout
 Decisions API), the cost ledger and budgets are in. The `agent` action runs on any ACP
 agent (verified against claude-agent-acp); the chat connector is next.
 
-Install on a Linux server (downloads the latest release, sets up the user, `/etc/247-agent`
-and the systemd unit):
+Install on a Linux server: the `.deb` or `.rpm` from the
+[latest release](https://github.com/DartenZie/247-agent/releases/latest), or on any other
+Linux the installer script, which downloads the release tarball and sets up the user,
+`/etc/247-agent` and the systemd unit:
 
 ```
+sudo apt install ./247-agent_<version>-1_amd64.deb
 curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
 ```
 
