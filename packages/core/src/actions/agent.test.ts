@@ -558,18 +558,12 @@ describe('runAgent', () => {
   it('works in a git worktree: kept on success, removed with its branch on failure', async () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo);
-    const git = (...args: string[]): string =>
-      execaSync('git', args, {
-        cwd: repo,
-        env: {
-          ...process.env,
-          GIT_AUTHOR_NAME: 't',
-          GIT_AUTHOR_EMAIL: 't@x',
-          GIT_COMMITTER_NAME: 't',
-          GIT_COMMITTER_EMAIL: 't@x',
-        },
-      }).stdout;
+    const git = (...args: string[]): string => execaSync('git', args, { cwd: repo }).stdout;
     git('init', '-q', '-b', 'main');
+    // In the repo's config, not the env: the post gate's commit in the worktree needs it
+    // too, and a CI runner has no global identity.
+    git('config', 'user.name', 't');
+    git('config', 'user.email', 't@x');
     writeFileSync(join(repo, 'a.txt'), 'one\n');
     git('add', '.');
     git('commit', '-q', '-m', 'init');
