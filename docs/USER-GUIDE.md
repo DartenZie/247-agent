@@ -50,7 +50,7 @@ starter config in `/etc/247-agent` (`agent.yaml`, `tasks.d/hello.yaml`, an empty
 install it enables and starts the service; on an upgrade it restarts a running one. Then:
 
 ```
-oa run hello --wait                          # the starter task
+sudo oa run hello --wait                     # the starter task (the socket is the service user's)
 journalctl -u 247-agent -o cat -f | jq       # the logs
 ```
 
@@ -75,7 +75,7 @@ unpacks it as `/opt/247-agent-<version>` with `/opt/247-agent` as a symlink to i
 the systemd unit and starts the service. Then:
 
 ```
-oa run hello --wait                          # the starter task
+sudo oa run hello --wait                     # the starter task (the socket is the service user's)
 journalctl -u 247-agent -o cat -f | jq       # the logs
 ```
 

@@ -154,18 +154,19 @@ version=$tb_version
 tree=$prefix-$version
 
 # What is installed now, if anything.
+# `previous` is the tree the rollback hint names.
 current=
+previous=
+manual=0
 if [ -L "$prefix" ]; then
   current=$(sed -n 's/^version=//p' "$prefix/VERSION" 2> /dev/null || true)
+  previous=$(readlink "$prefix")
 elif [ -e "$prefix" ]; then
-  # A tree copied by hand (USER-GUIDE §2.1) sits where the symlink goes: move it aside.
-  old=$(sed -n 's/^version=//p' "$prefix/VERSION" 2> /dev/null || true)
-  [ -n "$old" ] || die "$prefix exists and is not a 247-agent install; move it away"
-  aside=$prefix-$old
-  [ -e "$aside" ] && aside=$prefix-$old.$(date +%Y%m%d%H%M%S)
-  say "moving the manual install at $prefix to $aside"
-  root mv "$prefix" "$aside"
-  current=$old
+  # A tree copied by hand (USER-GUIDE §2.1) sits where the symlink goes; it is moved
+  # aside once the new version has accepted the config.
+  current=$(sed -n 's/^version=//p' "$prefix/VERSION" 2> /dev/null || true)
+  [ -n "$current" ] || die "$prefix exists and is not a 247-agent install; move it away"
+  manual=1
 fi
 
 # --- stage the new version's tree ----------------------------------------------------
@@ -177,11 +178,24 @@ root cp -R "$tree_src" "$tree.new"
 
 # --- the config must satisfy the new version before anything changes -----------------
 config=/etc/247-agent/agent.yaml
-if [ $service = 1 ] && [ -f "$config" ]; then
+# /etc/247-agent is 750 and owned by the service user, so a sudoer cannot see into it:
+# look through root.
+has_config=0
+[ $service = 1 ] && root test -f "$config" && has_config=1
+if [ $has_config = 1 ]; then
   if ! root "$tree.new/bin/oa" validate "$config"; then
     root rm -rf "$tree.new"
     die "247-agent $version rejects $config; nothing was changed (the old version stays)"
   fi
+fi
+
+# --- move a manual install aside ----------------------------------------------------
+if [ $manual = 1 ]; then
+  aside=$prefix-$current
+  [ -e "$aside" ] && aside=$prefix-$current.$(date +%Y%m%d%H%M%S)
+  say "moving the manual install at $prefix to $aside"
+  root mv "$prefix" "$aside"
+  previous=$aside
 fi
 
 # --- put the tree in place (replacing the same version, if it is there) --------------
@@ -209,7 +223,7 @@ if [ $service = 1 ]; then
     say "created user $user"
   fi
   root install -d -m 750 -o "$user" -g "$user" /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d
-  if [ ! -f "$config" ]; then
+  if [ $has_config = 0 ]; then
     # The starter config from the tree (packaging/etc in the repository, shared with the
     # .deb/.rpm): the production defaults and a manual `hello` task.
     root install -m 640 -o "$user" -g "$user" "$tree/share/etc/agent.yaml" "$config"
@@ -221,7 +235,9 @@ if [ $service = 1 ]; then
   if command -v systemctl > /dev/null 2>&1; then
     fresh=1
     [ -f "$unit" ] && fresh=0
-    root install -m 644 "$tree/share/systemd/247-agent.service" "$unit"
+    # The unit names /opt/247-agent; point it at this prefix.
+    sed "s|/opt/247-agent/|$prefix/|g" "$tree/share/systemd/247-agent.service" > "$tmp/247-agent.service"
+    root install -m 644 "$tmp/247-agent.service" "$unit"
     root systemctl daemon-reload
     if [ $fresh = 1 ]; then
       root systemctl enable --now 247-agent
@@ -244,7 +260,7 @@ fi
 say ""
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
   say "upgraded 247-agent $current -> $version ($prefix -> $tree)"
-  say "rollback: ln -sfn $prefix-$current $prefix && systemctl restart 247-agent"
+  say "rollback: ln -sfn $previous $prefix && systemctl restart 247-agent"
   say "remove old versions with: rm -rf $prefix-<version>"
 else
   say "installed 247-agent $version ($prefix -> $tree)"
@@ -252,6 +268,6 @@ fi
 say "oa: $bin_dir/oa ($("$tree/bin/oa" --version))"
 if [ $service = 1 ]; then
   say "config: /etc/247-agent    logs: journalctl -u 247-agent -o cat -f | jq"
-  say "try:    oa run hello --wait"
+  say "try:    sudo oa run hello --wait"
   say "uninstall: sh $prefix/share/uninstall.sh"
 fi
