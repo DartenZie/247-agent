@@ -13,6 +13,8 @@ export interface Logger {
   error(msg: string, fields?: LogFields): void;
   /** A logger that adds `fields` (e.g. run_id, task, correlation_id) to every line. */
   child(fields: LogFields): Logger;
+  /** Changes the threshold for this logger and every child (a reload of `log.level`). */
+  setLevel?(level: LogLevel): void;
 }
 
 export interface LoggerOptions {
@@ -28,14 +30,19 @@ const defaultSink = (line: string): void => {
   process.stdout.write(line + '\n');
 };
 
+/** Shared by a logger and its children, so `setLevel` reaches all of them. */
+interface Threshold {
+  value: number;
+}
+
 function build(
   sink: (line: string) => void,
-  threshold: number,
+  threshold: Threshold,
   base: LogFields,
   clock: () => Date,
 ): Logger {
   const emit = (level: LogLevel, msg: string, fields?: LogFields): void => {
-    if (LEVELS[level] < threshold) {
+    if (LEVELS[level] < threshold.value) {
       return;
     }
     const line: Record<string, unknown> = { ts: clock().toISOString(), level, msg, ...base };
@@ -62,6 +69,9 @@ function build(
       emit('error', msg, fields);
     },
     child: (fields) => build(sink, threshold, { ...base, ...fields }, clock),
+    setLevel: (level) => {
+      threshold.value = LEVELS[level];
+    },
   };
 }
 
@@ -69,7 +79,7 @@ function build(
 export function createLogger(opts: LoggerOptions = {}): Logger {
   return build(
     opts.sink ?? defaultSink,
-    LEVELS[opts.level ?? 'info'],
+    { value: LEVELS[opts.level ?? 'info'] },
     opts.base ?? {},
     opts.clock ?? (() => new Date()),
   );

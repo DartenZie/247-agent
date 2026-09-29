@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createLogger } from '../log.js';
 import type { EventRecord } from '../store/types.js';
-import { taskSource } from './matcher.js';
+import { labelledEventTypes, taskSource } from './matcher.js';
 import { config, shell } from './testing.js';
 
 function ev(over: Partial<EventRecord>): EventRecord {
@@ -98,5 +98,36 @@ describe('compileTask', () => {
     }
     expect(manualTask?.matches(ev({ type: 'cron.tick', payload: { task: 'm' } }))).toBe(false);
     expect(manualTask?.matches(ev({ type: 'anything.else' }))).toBe(false);
+  });
+});
+
+describe('labelledEventTypes', () => {
+  it('keeps the core types and every type a task names exactly, never a pattern', () => {
+    const types = labelledEventTypes(
+      config([
+        {
+          name: 'triage',
+          trigger: { kind: 'event', type_any: ['email.received', 'chat.*'] },
+          action: {
+            kind: 'sequence',
+            steps: [shell, { kind: 'wait', for: { type: 'approval.given' }, timeout: '1h' }],
+          },
+          emit: [{ type: 'mail.triaged' }],
+        },
+        { name: 'poll', trigger: { kind: 'cron', schedule: '* * * * *' }, action: shell },
+      ]),
+    );
+    expect([...types].sort()).toEqual([
+      'approval.given',
+      'budget.exceeded',
+      'cron.tick',
+      'email.received',
+      'mail.triaged',
+      'manual.run',
+      'task.poll.failed',
+      'task.poll.succeeded',
+      'task.triage.failed',
+      'task.triage.succeeded',
+    ]);
   });
 });

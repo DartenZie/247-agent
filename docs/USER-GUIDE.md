@@ -8,9 +8,9 @@ Status of the code today: everything that does not call a model works end to end
 (`shell`, `connector`, `wait`, `sequence`, cron/event/manual triggers, routing, state,
 secrets, retries, connectors, the CLI), and so do the two single-call model actions:
 `llm` (Anthropic, OpenAI, OpenRouter) and `decide` (TypeSafe's Jev classifier through
-OpenRouter), with the cost ledger and budgets. The `agent` action validates but has no
-runner yet, so a run of one fails with "no runner". Retention is accepted in config but
-not applied. Section 10 lists the gaps.
+OpenRouter), with the cost ledger and budgets, and the `agent` action over ACP. Retention,
+`/metrics`, connector health checks and a full config reload are in. Section 10 lists the
+gaps.
 
 ## 1. What it does
 
@@ -210,7 +210,8 @@ The global file. Every key has a default; the full reference is
 | `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{ provider, model }` for `decide` actions without their own; the provider must be an `openrouter` one (see 5.6) | `model: typesafe/jev-1.13` |
 | `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
-| `defaults.agent`, `retention` | Accepted, not applied yet | |
+| `defaults.agent` | `{ connector, max_tool_calls, budget, work_dir }` for `agent` actions | `max_tool_calls: 40`, `work_dir` = `work/` next to `db` |
+| `retention` | `{ events, runs, ledger, workspaces, interval }`: how long to keep events, finished runs (with their ledger rows), ledger rows, and `work/<run_id>` directories; durations or `never`. `ledger` defaults to `runs` and cannot exceed it. A pass runs at start and every `interval`; active runs are never touched (see 9.4) | `90d`, `90d`, `90d`, `7d`, `1h` |
 
 Relative `db`, `socket`, `tasks` and `connectors` paths resolve against the directory of
 `agent.yaml`. On macOS keep the socket path short: Unix socket paths are limited to 104
@@ -375,13 +376,15 @@ exit code as a number (then a non-zero exit is a result, not a failure). A non-z
 in the other two modes fails the run with the tail of stderr in the error.
 
 `sandbox: bwrap` runs the command in bubblewrap: its own pid namespace, the OS
-(`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) read-only, a private `/tmp`, `cwd` as the only
-writable path (no `cwd` means the command runs in that `/tmp`), and an environment of
-just the action's `env` plus `PATH`, `HOME` and `LANG`. The daemon's socket, database
-and other processes are out of reach. `ro_binds`/`rw_binds` mount more host paths at the
-same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an offline step).
-The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox: none` on an action
-opts out. Needs the `bubblewrap` package (§8).
+(`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) and the install (`/opt/247-agent`, the
+daemon's Node) read-only, a private `/tmp`, `cwd` as the only writable path (no `cwd`
+means the command runs in that `/tmp`), and an environment of just the action's `env`
+plus `PATH`, `HOME` and `LANG`. The daemon's socket, database, config directory (with a
+`file` secrets backend) and other processes are out of reach: their directories are
+hidden even where `/etc` would show them. `ro_binds`/`rw_binds` mount more host paths
+at the same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an
+offline step). The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox:
+none` on an action opts out. Needs the `bubblewrap` package (9.2).
 
 ### 5.2 `connector`
 
@@ -544,13 +547,17 @@ data, not the examples. The whole request must fit in 32k tokens. Budgets, the l
 and `oa cost` work as for `llm`; no `pricing:` entry is needed.
 [`examples/decide-triage.yaml`](examples/decide-triage.yaml) is a complete example.
 
-### 5.7 `agent` (not runnable yet)
+### 5.7 `agent`
 
-Accepted by `oa validate` so a complete workflow can be written now;
-[`examples/website-updates.yaml`](examples/website-updates.yaml) shows the intended
-shape: a Claude Agent SDK loop in a fresh git worktree with `tools`, `bash_allow`,
-`max_turns`, a `budget`, a `RESULT.json` contract and deterministic `post` gates. A run
-fails today with "no runner". See ARCHITECTURE §5.4 for the full field list.
+One session on an ACP agent program (a `transport: acp` connector, 6.1) in a fresh git
+worktree or temp directory, with `tools`, `bash_allow`, `max_tool_calls`, a `budget`, a
+`RESULT.json` contract (`status: done | blocked`) and deterministic `post` gates;
+[`examples/website-updates.yaml`](examples/website-updates.yaml) shows the shape and
+ARCHITECTURE §5.4 has the full field list and the permission policy. Two layers confine
+it: the task's policy answers what the agent asks and judges what it did not ask, and
+the connector's `sandbox: bwrap` (6.1) keeps the program itself away from the daemon's
+socket, database, config and other processes. Use both: the policy alone only binds an
+agent that asks before acting.
 
 ## 6. Connectors
 
@@ -581,6 +588,32 @@ restart: { base: 1s, max: 60s }               # crash backoff, doubling
 
 `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only.
 
+An agent program is a manifest with `transport: acp`; it serves no ops, emits no events
+and takes no `config` (configure it through `env`). It should also carry a `sandbox`:
+
+```yaml
+name: claude
+exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+transport: acp
+env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }
+```
+
+`sandbox: bwrap` (same forms as on a `shell` action, 5.1; `acp` connectors only) runs
+the program in bubblewrap for its whole life: the OS and the install read-only,
+`defaults.agent.work_dir` the only writable path (every run's workspace, plus the
+program's own home `<work_dir>/home/<name>` where npm and Claude Code keep their
+caches), and the listed `ro_binds`/`rw_binds`. The daemon's socket, database, config
+directory and secrets file are unreachable, other processes invisible, and the
+environment holds only `PATH`, `HOME`, `LANG`, `OA_HOME`, `OA_CONNECTOR_NAME` and the
+manifest's `env`. List every repository the tasks' `git-worktree` workspaces come from in
+`ro_binds` (`rw_binds` only if the agent itself must commit; the reference workflow
+commits in a `post` gate instead): `oa validate` refuses a repository the sandbox cannot
+see, and a bind or `work_dir` that would show it the database, the socket, `agent.yaml`
+or the secrets file. The network is not restricted (the agent needs its model API).
+`oa connector list` shows `sandbox=bwrap`; without the `bubblewrap` package the spawn
+fails and the connector stays down with the error there.
+
 ### 6.2 Lifecycle
 
 The supervisor starts every connector with the daemon, restarts a crashed one with
@@ -593,11 +626,29 @@ top of a minimal one (`PATH`, `HOME`, …):
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
 | `OA_CONFIG_JSON` | The manifest's `config` as JSON, secrets rendered |
 
+An `acp` agent program gets `OA_CONNECTOR_NAME` and its manifest's `env` only (no
+socket, no config), and a sandboxed one nothing of the daemon's environment besides
+`PATH`, `HOME`, `LANG` and `OA_HOME`.
+
 `connectorEnv()` deletes `OA_CONFIG_JSON` from the environment after reading it, so
 subprocesses the connector starts do not inherit the rendered secrets. Anything the
-connector writes to stderr is logged by the daemon as `connector.output`. Changing a
-manifest needs a daemon restart; SIGHUP reloads tasks files only. `oa connector restart
-<name>` respawns one connector with freshly resolved secrets (section 7).
+connector writes to stderr is logged by the daemon as `connector.output`. A changed
+manifest takes effect on `oa reload` (or SIGHUP): the connector is respawned with the new
+manifest and freshly resolved secrets, new manifests are spawned, removed ones stopped.
+`oa connector restart <name>` respawns one connector with freshly resolved secrets without
+touching the config (section 7).
+
+A `stdio` manifest may ask for health checks:
+
+```yaml
+health: { interval: 60s, timeout: 10s, failures: 3 }
+```
+
+Every `interval` the daemon sends an MCP `ping`; `failures` misses in a row (no answer
+within `timeout`, or an error) are treated like a crash: the process is killed and
+respawned with the restart backoff. `oa connector list` shows the last check
+(`health=ok`, `failing(n)`, `unchecked`). `none` and `acp` connectors have no MCP server
+to ping and reject `health`; their process exit is watched instead.
 
 ### 6.3 Writing one in TypeScript
 
@@ -726,7 +777,8 @@ oa connector list [--json]
 oa connector restart <name> [--json]
 ```
 
-`list` shows every connector with its state, pid and restart count; built-in pollers
+`list` shows every connector with its state, transport, pid and restart count, plus
+`sandbox=bwrap` for an agent program the core runs in bubblewrap (6.1); built-in pollers
 appear with `builtin`. `restart` kills one supervised connector, resolves its secrets
 again and respawns it, so it is the step after rotating a secret. It exits 1 when the
 connector is not up afterwards. A built-in poller is refused, since it re-reads its
@@ -738,6 +790,22 @@ oa cost [--by task|model|provider|day] [--since 7d|2026-09-01] [--json]
 
 Sums the model-call ledger since a duration back (default `24h`) or a timestamp, one
 line per task (or model, provider, UTC day) with calls, tokens and USD.
+
+```
+oa reload [--json]
+```
+
+Asks the daemon to re-read `agent.yaml`, the connector manifests and the tasks files and
+apply them together, exactly like `systemctl reload 247-agent` (SIGHUP) but with the
+outcome printed: one `ok` line per file, the issues of any invalid file, and what happened
+to the connectors. Nothing changes when any file is invalid (exit 1). A change to `db`,
+`socket` or `secrets` is applied on the next restart only and is reported as such.
+
+```
+oa metrics
+```
+
+Prints `GET /metrics`, the Prometheus text exposition (section 8).
 
 ```
 oa runs ls [--status <s>] [--task <name>] [-n <limit>] [--json]
@@ -787,8 +855,10 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
 | `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
-| `GET /v1/connectors` | `{connectors: [{name, state, pid, restarts, error, builtin}]}` |
+| `GET /v1/connectors` | `{connectors: [{name, transport, state, pid, restarts, error, health, builtin}]}`; `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
+| `POST /v1/reload` | Re-read and apply `agent.yaml`, manifests and tasks files together (9.3). Always 200: `{ok, files: [{file, ok, issues?}], restart_required, connectors?: {added, removed, changed}, tasks}`; `ok: false` means nothing changed |
+| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}` (`type` is `other` unless the core or a task's trigger, `wait` or `emit` names it exactly, so connectors and `oa emit` cannot grow it without bound), `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
 
 Errors are `{error, issues?}` with status 400, 404, 405, 409 or 413.
 
@@ -859,6 +929,13 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 ```
 
+`sandbox: bwrap` on shell actions (5.1) and agent programs (6.1) needs the `bubblewrap`
+package (`apt install bubblewrap`; the packages recommend it) and unprivileged user
+namespaces (`sysctl kernel.unprivileged_userns_clone=1` on older Debian). A setuid
+`bwrap` does not work under `NoNewPrivileges=yes`, and the unit must not set
+`RestrictNamespaces=`. Directories a sandboxed step or agent writes to still need
+`ReadWritePaths=`; `work_dir` under `/var/lib/247-agent` is already covered.
+
 Secrets go in a drop-in (`systemctl edit 247-agent`), one `LoadCredential=` per name the
 tasks and manifests use:
 
@@ -879,7 +956,7 @@ flight). Logs are JSON lines on stdout, so `journalctl -u 247-agent
 
 | Signal | Effect |
 |---|---|
-| `SIGHUP` | Re-reads the tasks files. Running runs finish under the old config. An invalid file is logged and the previous config stays active. Connector changes need a restart |
+| `SIGHUP` (`systemctl reload 247-agent`, `oa reload`) | Re-reads `agent.yaml`, the connector manifests and the tasks files and applies them together. Everything but `db`, `socket` and `secrets` applies live: workers, defaults, providers, pricing, budgets, retention, `log.level`, limits, tasks; connectors whose manifest changed are respawned, new ones spawned, removed ones stopped. Running runs finish under the config they started with. If any file is invalid, nothing changes and the issues are logged (`daemon.reload_invalid`) |
 | `oa connector restart <name>` | Not a signal, but the way to make one connector pick up a rotated secret without restarting the daemon |
 | `SIGTERM`, `SIGINT` | Stops the daemon. Runs in flight are aborted |
 
@@ -888,7 +965,27 @@ another attempt, otherwise marked failed as interrupted. `waiting` runs stay wai
 resume when their event arrives; a wait whose timeout already passed ends immediately. A
 stale socket file left by a dead daemon is replaced; a live one refuses the start.
 
-### 9.4 Daemon flags
+### 9.4 Retention
+
+The database and `work/` would otherwise grow forever. Once at start and then every
+`retention.interval` (default hourly) the daemon deletes, in this order and only for
+finished runs:
+
+1. runs whose `finished_at` is older than `retention.runs`, with their ledger rows and
+   agent transcript;
+2. ledger rows older than `retention.ledger` (default: same as `runs`) of finished runs;
+3. events older than `retention.events` that the dispatcher has passed and that no
+   remaining run or wait references (a kept run always keeps its trigger event);
+4. `work/<run_id>` directories of runs finished longer ago than `retention.workspaces`,
+   and directories with no run at all whose last modification is that old. A git worktree
+   is detached from its repository and its `agent/<run_id>` branch deleted.
+
+`never` keeps a kind forever. Every pass logs `retention.purged` with the counts and
+updates the `oa_retention_*` metrics. Note that `dedup_key` uniqueness only spans the
+events still kept, so an item older than `retention.events` could be emitted again by a
+connector that does not remember it itself (the built-in poller does).
+
+### 9.5 Daemon flags
 
 ```
 247-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error] [--version]
@@ -918,9 +1015,14 @@ Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters,
 `ftp` ([`connectors/ftp/README.md`](../connectors/ftp/README.md)) and `chat` (a Telegram
 bot for the approval gate, [`connectors/chat/README.md`](../connectors/chat/README.md)).
 
-Not implemented yet: retention GC, `/metrics`, SIGHUP reload of
-connectors, `health.interval` in manifests, `batch: true` for `llm`, a Matrix backend for
-`chat`.
+Done since as well: retention (9.4), `/metrics` and `oa metrics`, connector health
+checks (6.2), and the full config reload (`oa reload`, 9.3).
+
+Done since as well: sandboxing of the agent program (`sandbox: bwrap` on an `acp`
+manifest, 6.1), agent transcripts and `oa runs` / `oa events` (section 7).
+
+Not implemented yet: `batch: true` for `llm`, a Matrix backend for `chat`, a network
+allowlist for sandboxed agents.
 
 ## 11. Troubleshooting
 

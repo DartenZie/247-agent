@@ -36,6 +36,8 @@ oa events show <id> [--json]
 oa cost [--by task|model|provider|day] [--since 7d] [--json]
 oa connector list [--json]                     # state, pid, restarts per connector
 oa connector restart <name> [--json]           # kill, re-resolve secrets, respawn; exit 1 if not up after
+oa reload [--json]                             # re-read agent.yaml + manifests + tasks, all or nothing; exit 1 when refused
+oa metrics                                     # GET /metrics (Prometheus text)
 ```
 
 `oa run` bypasses filters and cron overlap and gives the action `--event` as its
@@ -95,7 +97,7 @@ example of both and is the pattern for a new integration test.
 
 | Signal | Effect |
 |---|---|
-| `SIGHUP` (`systemctl reload 247-agent`) | Re-reads tasks files; running runs finish under the old config; an invalid file keeps the previous config. Connector manifest changes need a restart. |
+| `SIGHUP` (`systemctl reload 247-agent`) or `oa reload` | Re-reads agent.yaml, the manifests and the tasks files and applies them together; running runs finish under the old config; if any file is invalid nothing changes (`daemon.reload_invalid`; `oa reload` prints the issues). Connectors whose manifest changed are respawned. `db`, `socket`, `secrets` still need a restart (`daemon.reload_needs_restart`). |
 | `oa connector restart <name>` | Respawns one connector with freshly resolved secrets; the daemon and the other connectors keep running. Refused (409) for a built-in poller. |
 | `SIGTERM`/`SIGINT` | Stops the daemon; runs in flight are aborted. |
 

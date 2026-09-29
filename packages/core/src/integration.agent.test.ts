@@ -183,37 +183,43 @@ describe('agent task on the fake ACP connector', () => {
     expect(JSON.stringify(lines)).not.toContain('sk-model-not-real');
 
     // A permission request is answered as it arrives while `tool_call` updates queue behind
-    // the runner's loop, so the decision can precede the call it answers.
+    // the runner's loop, so the decision may precede or follow the call it answers.
     const { entries } = await api.getTranscript(run.id);
-    expect(entries.map((e) => e.kind)).toEqual([
-      'prompt',
-      'text',
-      'permission',
-      'tool_call',
-      'tool_call_update',
-      'permission',
-      'tool_call',
-      'tool_call_update',
-      'text',
-      'usage',
-      'stop',
-      'result',
-    ]);
+    const kinds = entries.map((e) => e.kind);
+    expect(kinds.slice(0, 2)).toEqual(['prompt', 'text']);
+    expect(kinds.slice(-4)).toEqual(['text', 'usage', 'stop', 'result']);
+    expect([...kinds.slice(2, -4)].sort()).toEqual(
+      [
+        'permission',
+        'tool_call',
+        'tool_call_update',
+        'permission',
+        'tool_call',
+        'tool_call_update',
+      ].sort(),
+    );
+    const byKind = (kind: string) => entries.filter((e) => e.kind === kind);
     expect(entries[0]?.text).toContain('Apply this request to the site.');
     expect(entries[1]?.text).toBe('Working on it. ');
-    expect(entries[2]?.data).toMatchObject({ tool_kind: 'execute', allowed: true });
-    expect(entries[3]?.data).toMatchObject({ tool_kind: 'execute', command: 'npm run build' });
-    expect(entries[6]?.data).toMatchObject({
-      tool_kind: 'edit',
-      locations: [join(ws, 'data/events.yaml')],
-    });
-    expect(entries[9]?.data).toEqual({ used: 1200, size: 200_000, cost_usd: 0.12 });
-    expect(entries[10]?.data).toEqual({
+    expect(byKind('permission').map((e) => e.data)).toMatchObject([
+      { tool_kind: 'execute', allowed: true },
+      { tool_kind: 'edit', allowed: true },
+    ]);
+    expect(byKind('tool_call').map((e) => e.data)).toMatchObject([
+      { tool_kind: 'execute', command: 'npm run build' },
+      { tool_kind: 'edit', locations: [join(ws, 'data/events.yaml')] },
+    ]);
+    expect(byKind('tool_call_update').map((e) => e.data)).toMatchObject([
+      { status: 'completed' },
+      { status: 'completed' },
+    ]);
+    expect(byKind('usage')[0]?.data).toEqual({ used: 1200, size: 200_000, cost_usd: 0.12 });
+    expect(byKind('stop')[0]?.data).toEqual({
       stop_reason: 'end_turn',
       input_tokens: 1000,
       output_tokens: 200,
     });
-    expect(entries[11]?.data).toMatchObject({ status: 'done' });
+    expect(byKind('result')[0]?.data).toMatchObject({ status: 'done' });
     expect(entries.every((e) => e.run_id === run.id && e.turn === 1)).toBe(true);
     expect(JSON.stringify(entries)).not.toContain('sk-model-not-real');
   }, 30_000);

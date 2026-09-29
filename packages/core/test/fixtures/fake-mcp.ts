@@ -1,7 +1,8 @@
 /**
  * A generic fake connector for supervisor tests: `echo` returns its args, `fail` returns an
  * MCP error, `crash` exits the process, `env` reports what the core passed in, `slow`
- * takes a while. Run with `node fake-mcp.ts` (Node strips the types).
+ * takes a while, `freeze` blocks the event loop (so pings go unanswered). Run with
+ * `node fake-mcp.ts` (Node strips the types).
  */
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -57,6 +58,17 @@ const server = createConnectorServer({
       },
     }),
     defineTool({ name: 'text', handler: () => 'plain text, not JSON' }),
+    defineTool({
+      name: 'freeze',
+      input: { ms: z.number() },
+      handler: (args) => {
+        // Answer first, then block the whole process: a health check cannot get through.
+        setTimeout(() => {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, args.ms);
+        }, 10);
+        return { freezing: args.ms };
+      },
+    }),
   ],
 });
 

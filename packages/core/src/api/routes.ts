@@ -9,6 +9,7 @@ import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import { NonRetryableError } from '../actions/types.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
+import type { ReloadReport } from '../daemon.js';
 import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
 import type { TranscriptEntry } from '../store/transcripts.js';
@@ -29,10 +30,10 @@ export interface ApiRequest {
   body?: unknown;
 }
 
-export interface ApiResponse {
-  status: number;
-  body: JsonValue;
-}
+export type ApiResponse =
+  | { status: number; body: JsonValue }
+  /** A non-JSON body (`/metrics`). */
+  | { status: number; text: string; contentType: string };
 
 export interface RouteContext {
   core: Core;
@@ -40,6 +41,8 @@ export interface RouteContext {
   startedAt: Date;
   /** Reported by `/v1/health`. */
   configFile: string;
+  /** `POST /v1/reload`: the daemon's reload (agent.yaml, manifests, tasks); 404 without it. */
+  reload?: (() => Promise<ReloadReport>) | undefined;
 }
 
 export class ApiError extends Error {
@@ -85,6 +88,7 @@ export type ConnectorEntry =
       name: string;
       builtin: 'poller';
       transport: 'none';
+      sandbox: 'none';
       state: 'up';
       pid: null;
       restarts: 0;
@@ -339,6 +343,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
     name: p.status().name,
     builtin: 'poller',
     transport: 'none',
+    sandbox: 'none',
     state: 'up',
     pid: null,
     restarts: 0,
@@ -370,6 +375,17 @@ async function restartConnector(ctx: RouteContext, name: string): Promise<ApiRes
   }
 }
 
+async function reload(ctx: RouteContext): Promise<ApiResponse> {
+  if (ctx.reload === undefined) {
+    throw new ApiError(404, 'this core has no config to reload');
+  }
+  const report = await ctx.reload();
+  return { status: 200, body: report as unknown as JsonValue };
+}
+
+/** Prometheus text exposition (version 0.0.4). */
+const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
+
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
 const RUN_TRANSCRIPT_PATH = /^\/v1\/runs\/([^/]+)\/transcript$/;
 const RUN_LEDGER_PATH = /^\/v1\/runs\/([^/]+)\/ledger$/;
@@ -383,6 +399,19 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   const { method, path } = req;
   if (path === '/v1/health') {
     return only(method, 'GET', () => ({ status: 200, body: health(ctx) }));
+  }
+  if (path === '/metrics') {
+    return only(method, 'GET', () => ({
+      status: 200,
+      text: ctx.core.metrics.render(),
+      contentType: METRICS_CONTENT_TYPE,
+    }));
+  }
+  if (path === '/v1/reload') {
+    if (method !== 'POST') {
+      throw new ApiError(405, `method ${method} not allowed; use POST`);
+    }
+    return reload(ctx);
   }
   if (path === '/v1/connectors') {
     return only(method, 'GET', () => listConnectors(ctx));

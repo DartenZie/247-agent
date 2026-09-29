@@ -4,12 +4,14 @@ import type { EventBus } from '../bus/bus.js';
 import { CRON_TICK, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import type { NewEvent } from '../store/types.js';
 
 export interface SchedulerOptions {
   bus: EventBus;
   clock: Clock;
   log: Logger;
+  metrics?: Metrics | undefined;
 }
 
 export interface ScheduledJob {
@@ -45,12 +47,14 @@ export class CronScheduler {
   private readonly bus: EventBus;
   private readonly clock: Clock;
   private readonly log: Logger;
+  private readonly metrics: Metrics;
   private jobs = new Map<string, { job: Cron; schedule: string }>();
 
   constructor(opts: SchedulerOptions) {
     this.bus = opts.bus;
     this.clock = opts.clock;
     this.log = opts.log;
+    this.metrics = opts.metrics ?? new Metrics();
   }
 
   start(config: CompiledConfig): void {
@@ -101,6 +105,7 @@ export class CronScheduler {
     const job = new Cron(schedule, options, () => {
       const at = floorToBoundary(this.clock.now(), schedule);
       const result = this.bus.publish(makeTickEvent(task.name, at));
+      this.metrics.cronTicks.inc({ task: task.name });
       this.log.debug(result.status === 'inserted' ? 'cron.tick' : 'cron.tick_duplicate', {
         task: task.name,
         scheduled_at: at.toISOString(),

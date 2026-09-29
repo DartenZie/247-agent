@@ -5,12 +5,13 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { AgentDefaults } from '../actions/agent-config.js';
-import { Sandbox } from '../actions/sandbox.js';
+import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import { Budgets, DecideDefaults, LlmDefaults, Pricing, Providers } from '../llm/config.js';
 import { DURATION } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
+import { Retention } from './retention.js';
 import { Retry } from './schema.js';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -19,8 +20,7 @@ const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
 
 /**
  * `agent.yaml` (ARCHITECTURE §7). Relative paths are resolved against the file's own
- * directory. `retention` is accepted so a full config validates, but nothing reads it
- * until retention GC exists.
+ * directory.
  */
 export const AgentFile = z.strictObject({
   db: z.string().min(1).default('/var/lib/247-agent/state.db'),
@@ -52,7 +52,8 @@ export const AgentFile = z.strictObject({
   /** Per-model USD per Mtok, merged over the built-in table (`llm/pricing.ts`). */
   pricing: Pricing,
   budgets: Budgets,
-  retention: z.unknown().optional(),
+  /** How long runs, ledger rows, events and agent workspaces are kept (`config/retention.ts`). */
+  retention: Retention,
 });
 
 export type AgentFileConfig = z.infer<typeof AgentFile>;
@@ -69,6 +70,22 @@ export interface AgentConfig extends Omit<AgentFileConfig, 'tasks' | 'connectors
   connectors: ConnectorConfig[];
   /** Absolute `defaults.agent.work_dir`, or `work/` next to the database. */
   workDir: string;
+}
+
+/**
+ * The files no sandbox may see (ARCHITECTURE §11): the database, the socket, `agent.yaml`
+ * and, with the `file` backend, the secrets file. The daemon hides them (`sandboxHost`)
+ * and `checkSandboxes` refuses a bind or `work_dir` that would show one.
+ */
+export function protectedPaths(config: AgentConfig): ProtectedPath[] {
+  return [
+    { path: config.db, what: 'database' },
+    { path: config.socket, what: 'socket' },
+    { path: config.file, what: 'config file' },
+    ...(config.secrets.backend === 'file'
+      ? [{ path: resolve(dirname(config.file), config.secrets.path), what: 'secrets file' }]
+      : []),
+  ];
 }
 
 export type AgentLoadResult =

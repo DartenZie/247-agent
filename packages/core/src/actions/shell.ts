@@ -89,7 +89,15 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
   const spawn = sandboxed
     ? // bwrap gets the daemon's env (to be found on PATH) and clears it for the child;
       // cwd, env and the command travel as bwrap arguments.
-      { argv: buildSandboxArgv({ sandbox, cmd: [file, ...args], cwd, env: env ?? {} }) }
+      {
+        argv: buildSandboxArgv({
+          sandbox,
+          cmd: [file, ...args],
+          writable: cwd,
+          env: env ?? {},
+          host: ctx.sandboxHost,
+        }),
+      }
     : {
         argv: [file, ...args],
         ...(cwd === undefined ? {} : { cwd }),

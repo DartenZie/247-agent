@@ -17,12 +17,12 @@ strict; unknown keys are rejected.
 | `defaults.sandbox` | `none`, `bwrap`, or `{backend: bwrap, ro_binds, rw_binds, extra_args}` for `shell` actions without `sandbox` | `none` |
 | `defaults.llm` | `{provider?, model?, max_tokens, effort?}` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{provider?, model}` for `decide` actions without their own; the provider must be an `openrouter` one | `model: typesafe/jev-1.13` |
-| `defaults.agent` | `{connector, max_tool_calls, budget, work_dir}` | `agent` actions: the acp connector, the tool-call cap (40), the budget, and where run workspaces go (`work/` next to `db`) |
+| `defaults.agent` | `{connector, max_tool_calls, budget, work_dir}` | `agent` actions: the acp connector, the tool-call cap (40), the budget, and where run workspaces go (`work/` next to `db`). `work_dir` is also the one writable path of a sandboxed agent program (its home is `<work_dir>/home/<connector>`), so it must not contain `db`, `socket`, `agent.yaml` or the secrets file; changing it respawns sandboxed agents |
 | `secrets` | `{backend: env, prefix?}`, `{backend: file, path}`, `{backend: systemd-credentials}` | `{backend: env}` |
 | `providers` | `name: {type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers?}`; `llm` and `decide` actions pick one with `provider:` | none |
 | `pricing` | `model: {input, output, cache_read?, cache_write?}` USD per Mtok, merged over the built-in table (Claude, current OpenAI, Jev); a model without a price fails validation unless its provider reports cost | `{}` |
 | `budgets.daily_usd` | Global cap per UTC day; once crossed, model calls fail fast until midnight and `budget.exceeded` is emitted once | none |
-| `retention` | `{events, runs, workspaces}` durations for GC | accepted, no GC yet |
+| `retention` | `{events, runs, ledger, workspaces, interval}`: how long events, finished runs (with their ledger rows), ledger rows and `work/<run_id>` directories are kept; durations or `never`; `ledger` defaults to `runs` and cannot exceed it; a pass runs at start and every `interval`; active runs are never touched | `90d`, `90d`, `90d`, `7d`, `1h` |
 
 Durations: `500ms`, `30s`, `15m`, `24h`, `7d`.
 

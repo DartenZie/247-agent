@@ -86,7 +86,8 @@ why these and not an off-the-shelf workflow engine.
 4. `agent` action over ACP with worktrees, a permission policy, a `done | blocked`
    result contract and post-run gates (done).
 5. `wait` action and chat connector for approvals.
-6. Hardening: retention, metrics, sandboxing, hot reload.
+6. Hardening: retention, metrics, hot reload and connector health checks (done);
+   sandboxing of the agent program.
 
 ## License
 

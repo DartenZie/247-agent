@@ -4,7 +4,9 @@ import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 
 export const CONNECTOR_USAGE = `usage: oa connector <list|restart <name>> [options]
 
-list             the daemon's connectors with state, transport (stdio, none, acp), pid and restart count
+list             the daemon's connectors with state, transport (stdio, none, acp), pid, restart
+                 count, sandbox=bwrap for an agent program the core runs in bubblewrap and,
+                 for a manifest with health checks, the last check
 restart <name>   kill and respawn one connector; it re-reads its secrets, so this is
                  how a rotated secret reaches a running connector (built-in pollers
                  re-read on every poll and need no restart)
@@ -40,10 +42,16 @@ export async function connector(args: string[], io: Io): Promise<number> {
           for (const c of connectors) {
             const kind =
               c.builtin === null
-                ? `${c.transport}\tpid=${c.pid === null ? '-' : String(c.pid)}`
+                ? `${c.transport}${c.sandbox === 'none' ? '' : ` sandbox=${c.sandbox}`}\tpid=${c.pid === null ? '-' : String(c.pid)}`
                 : 'builtin\tpid=-';
             const error = c.error === null ? '' : ` error=${JSON.stringify(c.error)}`;
-            io.out(`${c.name}\t${c.state}\t${kind}\trestarts=${String(c.restarts)}${error}`);
+            const health =
+              c.builtin !== null || c.health === null
+                ? ''
+                : `\thealth=${c.health.ok === null ? 'unchecked' : c.health.ok ? 'ok' : `failing(${String(c.health.failures)})`}`;
+            io.out(
+              `${c.name}\t${c.state}\t${kind}\trestarts=${String(c.restarts)}${health}${error}`,
+            );
           }
         }
         return EXIT.ok;

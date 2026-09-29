@@ -7,7 +7,7 @@ import type { StateSnapshot } from '../store/state.js';
 import type { TranscriptSink } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 import type { AgentDefaultsConfig } from './agent-config.js';
-import type { SandboxConfig } from './sandbox.js';
+import type { SandboxConfig, SandboxHost } from './sandbox.js';
 
 /** An operation on a connector, as the `connector` action and sequences call it. */
 export interface ConnectorClients {
@@ -84,6 +84,8 @@ export interface ActionContext {
   readonly connectors?: ConnectorClients | undefined;
   /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */
   readonly sandbox?: SandboxConfig | undefined;
+  /** What every sandbox hides (config, db) and shows (the install); absent = nothing. */
+  readonly sandboxHost?: SandboxHost | undefined;
   /** Model calls for `llm` actions; absent when the core runs without `providers`. */
   readonly llm?: LlmPort | undefined;
   /** ACP sessions for `agent` actions; absent when the core runs without a supervisor. */

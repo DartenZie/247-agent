@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { connect } from 'node:net';
 
 import type { Logger } from '../log.js';
-import type { JsonValue } from '../store/types.js';
 import { ApiError, route, type ApiResponse, type RouteContext } from './routes.js';
 
 export interface ApiServerOptions extends RouteContext {
@@ -110,7 +109,8 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
       }
     }
     log.debug('api.request', { method, path: url.pathname, status: response.status });
-    send(res, response.status, response.body);
+    opts.core.metrics.apiRequests.inc({ method, status: String(response.status) });
+    send(res, response);
   };
 
   const server = createServer((req, res) => {
@@ -152,10 +152,10 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
   };
 }
 
-function send(res: ServerResponse, status: number, body: JsonValue): void {
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+function send(res: ServerResponse, response: ApiResponse): void {
+  const text = 'text' in response ? response.text : JSON.stringify(response.body);
+  res.writeHead(response.status, {
+    'content-type': 'text' in response ? response.contentType : 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(text),
   });
   res.end(text);

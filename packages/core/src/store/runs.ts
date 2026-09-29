@@ -42,6 +42,8 @@ export class RunStore {
   private readonly byIdStmt: Statement;
   private readonly byTaskEventStmt: Statement;
   private readonly setStatusStmt: Statement;
+  private readonly finishedBeforeStmt: Statement;
+  private readonly deleteStmt: Statement;
 
   constructor(db: Database) {
     this.db = db;
@@ -67,6 +69,11 @@ export class RunStore {
          attempt     = COALESCE(@attempt, attempt)
        WHERE id = @id`,
     );
+    this.finishedBeforeStmt = db.prepare(
+      `SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled') AND finished_at < ?
+       ORDER BY finished_at LIMIT ?`,
+    );
+    this.deleteStmt = db.prepare('DELETE FROM runs WHERE id = ?');
   }
 
   /** Inserts a `queued` run. Returns false when `(task, event_id)` already has one. */
@@ -111,6 +118,20 @@ export class RunStore {
   getByTaskAndEvent(task: string, eventId: string): RunRecord | undefined {
     const row: unknown = this.byTaskEventStmt.get(task, eventId);
     return row === undefined ? undefined : rowToRun(row);
+  }
+
+  /** Retention: ids of runs in a terminal status finished before `beforeIso`, oldest first. */
+  listFinishedBefore(beforeIso: string, limit: number): string[] {
+    return this.finishedBeforeStmt.all(beforeIso, limit).map((row) => (row as { id: string }).id);
+  }
+
+  /** Retention: removes the runs (callers delete their ledger rows and waits first). */
+  deleteByIds(ids: readonly string[]): number {
+    let n = 0;
+    for (const id of ids) {
+      n += this.deleteStmt.run(id).changes;
+    }
+    return n;
   }
 
   /** Executor seam: transitions status and fills in timestamps/result as they become known. */

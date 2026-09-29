@@ -4,7 +4,7 @@ import { runConnector } from './actions/connector.js';
 import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
 import { runSequence } from './actions/sequence.js';
-import type { SandboxConfig } from './actions/sandbox.js';
+import type { SandboxConfig, SandboxHost } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
 import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { runWait } from './actions/wait.js';
@@ -13,11 +13,12 @@ import { runTaskManually, type ManualInput } from './bus/manual.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
-import { checkLlmTasks } from './config/crosscheck.js';
-import { loadTasks, type TasksLoadResult } from './config/load.js';
+import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './config/crosscheck.js';
+import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
+import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
-import { ConnectorSupervisor } from './connectors/supervisor.js';
+import { ConnectorSupervisor, manifestKey, type ApplyResult } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
 import type {
   BudgetsConfig,
@@ -26,16 +27,20 @@ import type {
   ProviderConfigParsed,
 } from './llm/config.js';
 import type { PricingTable } from './llm/pricing.js';
+import { startOfUtcDay } from './llm/pricing.js';
 import { anthropicProvider } from './llm/anthropic.js';
 import { openaiProvider } from './llm/openai.js';
 import { openrouterProvider } from './llm/openrouter.js';
 import { LlmService } from './llm/service.js';
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger } from './log.js';
+import { Metrics } from './metrics.js';
+import { RetentionJob } from './retention.js';
 import { CronScheduler } from './scheduler/cron.js';
 import { staticSecrets, type SecretsBackend } from './secrets/secrets.js';
 import { openStore, type Store } from './store/store.js';
 import type { RunRecord } from './store/types.js';
+import { VERSION } from './version.js';
 
 export interface CoreOptions {
   /** Tasks files and/or `tasks.d` directories, merged. */
@@ -55,6 +60,10 @@ export interface CoreOptions {
   defaultRetry?: RetryConfig;
   /** For `shell` actions without `sandbox`. */
   defaultSandbox?: SandboxConfig;
+  /** What every sandbox (shell or agent program) hides and shows on this host; fixed for the process. */
+  sandboxHost?: SandboxHost;
+  /** The agent.yaml the settings came from, named in issues about it; defaults to none. */
+  configFile?: string;
   /** Action runners by kind; defaults to the built-in ones. */
   runners?: ActionRunners;
   /** `${secrets.<name>}` backend; defaults to one with no secrets. */
@@ -81,6 +90,10 @@ export interface CoreOptions {
    * against it.
    */
   llm?: CoreLlmOptions;
+  /** `retention:` from agent.yaml; without it nothing is ever deleted. */
+  retention?: RetentionPolicy;
+  /** Shared with the API server for `GET /metrics`; defaults to a fresh registry. */
+  metrics?: Metrics;
 }
 
 export interface CoreLlmOptions {
@@ -96,23 +109,53 @@ export interface CoreLlmOptions {
   factories?: ProviderFactories;
 }
 
+/**
+ * What a reload may change (ARCHITECTURE §4, §12): everything from agent.yaml except the
+ * database, the socket and the secrets backend. Fields left out keep their current value.
+ */
+export interface CoreReloadOptions {
+  tasksFiles?: string[] | undefined;
+  /** Manifests to supervise from now on (ignored when the core was given ready-made clients). */
+  connectors?: readonly ConnectorConfig[] | undefined;
+  agents?: { defaults: AgentDefaultsConfig; workDir: string } | undefined;
+  llm?: CoreLlmOptions | undefined;
+  workers?: number | undefined;
+  defaultTimeout?: string | undefined;
+  defaultRetry?: RetryConfig | undefined;
+  defaultSandbox?: SandboxConfig | undefined;
+  maxEventDepth?: number | undefined;
+  retention?: RetentionPolicy | undefined;
+}
+
+export interface ReloadResult extends TasksLoadResult {
+  /** What happened to the supervised connectors, when the reload changed them. */
+  connectors?: ApplyResult | undefined;
+}
+
 export interface Core {
   readonly bus: EventBus;
   readonly store: Store;
   readonly scheduler: CronScheduler;
   readonly executor: Executor;
+  readonly metrics: Metrics;
   /** The supervisor when the core spawns connectors itself. */
   readonly supervisor: ConnectorSupervisor | undefined;
   /** The built-in `poller` connectors, from manifests with `builtin: poller`. */
   readonly pollers: readonly Poller[];
+  /** The retention pass, when a policy was given. */
+  readonly retention: RetentionJob | undefined;
   config(): CompiledConfig;
   /**
    * Loads config, opens the store, recovers runs, dispatches any backlog, arms cron jobs
    * and spawns connectors. Throws on invalid config.
    */
   start(): Promise<void>;
-  /** Re-reads the tasks files. An invalid file is logged and the previous config stays active. */
-  reload(): TasksLoadResult;
+  /**
+   * Re-reads the tasks files and applies `next` (new agent.yaml settings). All or nothing:
+   * an invalid tasks file is logged, nothing changes and the previous config stays active.
+   * Runs in flight finish under the settings they started with.
+   */
+  reload(next?: CoreReloadOptions): Promise<ReloadResult>;
   /** `oa run <task>`: queue a run for any task, with an optional input event. */
   runTask(name: string, input?: ManualInput): { event_id: string; run: RunRecord };
   /** Aborts runs in flight (they are recovered on the next start), stops connectors, closes the store. */
@@ -171,61 +214,71 @@ const noConnectors: ConnectorClients = {
 export function createCore(opts: CoreOptions): Core {
   const clock = opts.clock ?? systemClock;
   const log = opts.log ?? createLogger();
+  const metrics = opts.metrics ?? new Metrics();
   const secrets = opts.secrets ?? staticSecrets({});
   const store = openStore(opts.dbPath);
   const bus = createBus({
     store,
     clock,
     log,
+    metrics,
     ...(opts.maxEventDepth === undefined ? {} : { maxDepth: opts.maxEventDepth }),
   });
-  const scheduler = new CronScheduler({ bus, clock, log });
+  const scheduler = new CronScheduler({ bus, clock, log, metrics });
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
+  let tasksFiles = opts.tasksFiles;
+  let llmOptions = opts.llm;
+  let defaultSandbox = opts.defaultSandbox;
+  let startedAt: Date | undefined;
 
   let supervisor: ConnectorSupervisor | undefined;
   let connectors: ConnectorClients | undefined;
   let agents: AgentClients | undefined =
     opts.agents !== undefined && isAgentClients(opts.agents) ? opts.agents : undefined;
-  let builtins: readonly ConnectorConfig[] = [];
+  let manifests: readonly ConnectorConfig[] = [];
   if (opts.connectors !== undefined) {
     if (isClients(opts.connectors)) {
       connectors = opts.connectors;
     } else {
-      const processes = opts.connectors.filter((m) => m.builtin === undefined);
-      builtins = opts.connectors.filter((m) => m.builtin !== undefined);
-      if (processes.length > 0) {
-        if (opts.socketPath === undefined) {
-          throw new Error('socketPath is required to supervise connectors');
-        }
+      manifests = opts.connectors;
+      const processes = manifests.filter((m) => m.builtin === undefined);
+      if (opts.socketPath === undefined && processes.length > 0) {
+        throw new Error('socketPath is required to supervise connectors');
+      }
+      if (opts.socketPath !== undefined) {
         supervisor = new ConnectorSupervisor({
           manifests: processes,
           socketPath: opts.socketPath,
           secrets,
           log,
+          metrics,
           agents:
             opts.agents === undefined || isAgentClients(opts.agents) ? undefined : opts.agents,
+          sandboxHost: opts.sandboxHost,
         });
         connectors = supervisor;
         agents ??= supervisor;
       }
     }
   }
-  const pollers = builtins.map(
-    (manifest) =>
-      new Poller({
-        manifest,
-        clients: connectors ?? noConnectors,
-        store,
-        bus,
-        clock,
-        log,
-        secrets,
-        ...(opts.env === undefined ? {} : { env: opts.env }),
-      }),
-  );
+
+  const makePoller = (manifest: ConnectorConfig): Poller =>
+    new Poller({
+      manifest,
+      clients: connectors ?? noConnectors,
+      store,
+      bus,
+      clock,
+      log,
+      secrets,
+      ...(opts.env === undefined ? {} : { env: opts.env }),
+    });
+  let pollers: { manifest: ConnectorConfig; poller: Poller }[] = manifests
+    .filter((m) => m.builtin !== undefined)
+    .map((manifest) => ({ manifest, poller: makePoller(manifest) }));
 
   const llm =
-    opts.llm === undefined
+    llmOptions === undefined
       ? undefined
       : new LlmService({
           store,
@@ -233,14 +286,15 @@ export function createCore(opts: CoreOptions): Core {
           clock,
           log,
           secrets,
+          metrics,
           env: opts.env,
-          configDir: opts.llm.configDir,
-          providers: opts.llm.providers,
-          pricing: opts.llm.pricing,
-          defaults: opts.llm.defaults,
-          decideDefaults: opts.llm.decideDefaults,
-          budgets: opts.llm.budgets,
-          factories: opts.llm.factories ?? defaultProviderFactories,
+          configDir: llmOptions.configDir,
+          providers: llmOptions.providers,
+          pricing: llmOptions.pricing,
+          defaults: llmOptions.defaults,
+          decideDefaults: llmOptions.decideDefaults,
+          budgets: llmOptions.budgets,
+          factories: llmOptions.factories ?? defaultProviderFactories,
         });
 
   const executor = new Executor({
@@ -248,6 +302,7 @@ export function createCore(opts: CoreOptions): Core {
     bus,
     clock,
     log,
+    metrics,
     config: () => compiled,
     runners: opts.runners ?? defaultRunners,
     secrets,
@@ -259,34 +314,203 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
     ...(opts.defaultRetry === undefined ? {} : { defaultRetry: opts.defaultRetry }),
     ...(opts.defaultSandbox === undefined ? {} : { defaultSandbox: opts.defaultSandbox }),
+    ...(opts.sandboxHost === undefined ? {} : { sandboxHost: opts.sandboxHost }),
   });
 
-  const load = (): TasksLoadResult => {
-    let result = loadTasks(opts.tasksFiles);
-    if (result.ok && result.config !== undefined && opts.llm !== undefined) {
-      result = crossCheck(result, result.config.tasks, opts.llm);
+  const retention =
+    opts.retention === undefined
+      ? undefined
+      : new RetentionJob({
+          store,
+          clock,
+          log,
+          metrics,
+          policy: opts.retention,
+          workDir: agents?.workDir,
+        });
+
+  metrics.collect(() => {
+    const now = clock.now();
+    metrics.buildInfo.set({ version: VERSION }, 1);
+    if (startedAt !== undefined) {
+      metrics.uptime.set(undefined, Math.max(0, (now.getTime() - startedAt.getTime()) / 1000));
     }
+    metrics.configTasks.set(undefined, compiled.tasks.length);
+    const stats = executor.stats();
+    metrics.runsPending.set(undefined, stats.pending);
+    metrics.runsInFlight.set(undefined, stats.in_flight);
+    metrics.runsWaiting.set(undefined, store.waits.countPending());
+    metrics.cronNextRun.reset();
+    for (const job of scheduler.list()) {
+      if (job.nextRun !== null) {
+        metrics.cronNextRun.set({ task: job.task }, job.nextRun.getTime() / 1000);
+      }
+    }
+    metrics.connectorUp.reset();
+    for (const c of supervisor?.status() ?? []) {
+      metrics.connectorUp.set(
+        { connector: c.name, transport: c.transport },
+        c.state === 'up' ? 1 : 0,
+      );
+    }
+    for (const { poller } of pollers) {
+      metrics.connectorUp.set({ connector: poller.name, transport: 'none' }, 1);
+    }
+    metrics.spendToday.set(undefined, store.ledger.sumSince(startOfUtcDay(now)));
+    metrics.dailyBudget.reset();
+    if (llmOptions?.budgets.daily_usd !== undefined) {
+      metrics.dailyBudget.set(undefined, llmOptions.budgets.daily_usd);
+    }
+    const pageCount = store.db.pragma('page_count', { simple: true }) as number;
+    const pageSize = store.db.pragma('page_size', { simple: true }) as number;
+    metrics.dbSize.set(undefined, pageCount * pageSize);
+  });
+
+  /** What the sandbox check judges the tasks against: the manifests and agent settings that will be active. */
+  const sandboxContext = (
+    ms: readonly ConnectorConfig[],
+    ag: { defaults: AgentDefaultsConfig; workDir: string } | undefined,
+    shellSandbox: SandboxConfig | undefined,
+  ): SandboxCheckContext | undefined =>
+    ag === undefined
+      ? undefined
+      : {
+          manifests: ms,
+          defaultConnector: ag.defaults.connector,
+          workDir: ag.workDir,
+          protected: opts.sandboxHost?.protected ?? [],
+          defaultSandbox: shellSandbox,
+        };
+
+  /** Loads and cross-checks the tasks files without applying anything. */
+  const load = (
+    files: string[],
+    against: CoreLlmOptions | undefined,
+    sandboxes: SandboxCheckContext | undefined,
+  ): TasksLoadResult => {
+    let result = loadTasks(files);
     if (result.ok && result.config !== undefined) {
-      compiled = compileConfig(result.config);
-      bus.dispatcher.setConfig(compiled);
-      const names = new Set(connectors?.names() ?? []);
-      const agentNames = new Set(agents?.agentNames() ?? []);
-      for (const task of compiled.tasks) {
-        for (const ref of connectorRefs(task.config.action)) {
-          if (!names.has(ref)) {
-            log.warn('core.unknown_connector', { task: task.name, connector: ref });
-          }
+      result = crossCheck(result, result.config.tasks, against, sandboxes, opts.configFile);
+    }
+    return result;
+  };
+
+  /** Makes a loaded config the active one and warns about dangling connector references. */
+  const activate = (result: TasksLoadResult): void => {
+    if (!result.ok || result.config === undefined) {
+      return;
+    }
+    compiled = compileConfig(result.config);
+    bus.setConfig(compiled);
+    const names = new Set(connectors?.names() ?? []);
+    const agentNames = new Set(agents?.agentNames() ?? []);
+    for (const task of compiled.tasks) {
+      for (const ref of connectorRefs(task.config.action)) {
+        if (!names.has(ref)) {
+          log.warn('core.unknown_connector', { task: task.name, connector: ref });
         }
-        const a = task.config.action;
-        if (a.kind === 'agent') {
-          const ref = a.connector ?? agents?.defaults.connector;
-          if (ref === undefined || !agentNames.has(ref)) {
-            log.warn('core.unknown_agent', { task: task.name, connector: ref ?? null });
-          }
+      }
+      const a = task.config.action;
+      if (a.kind === 'agent') {
+        const ref = a.connector ?? agents?.defaults.connector;
+        if (ref === undefined || !agentNames.has(ref)) {
+          log.warn('core.unknown_agent', { task: task.name, connector: ref ?? null });
         }
       }
     }
-    return result;
+  };
+
+  /** Swaps the built-in pollers to match `next`; unchanged ones keep running. */
+  const applyPollers = async (next: readonly ConnectorConfig[]): Promise<void> => {
+    const wanted = next.filter((m) => m.builtin !== undefined);
+    const keep = new Map(wanted.map((m) => [manifestKey(m), m]));
+    const kept: typeof pollers = [];
+    const stopping: Promise<void>[] = [];
+    for (const entry of pollers) {
+      if (keep.delete(manifestKey(entry.manifest))) {
+        kept.push(entry);
+      } else {
+        stopping.push(entry.poller.stop());
+      }
+    }
+    await Promise.all(stopping);
+    for (const manifest of keep.values()) {
+      const poller = makePoller(manifest);
+      kept.push({ manifest, poller });
+      poller.start();
+    }
+    pollers = kept;
+  };
+
+  let reloading: Promise<unknown> = Promise.resolve();
+
+  const reload = async (next: CoreReloadOptions = {}): Promise<ReloadResult> => {
+    const files = next.tasksFiles ?? tasksFiles;
+    const nextLlm = next.llm ?? llmOptions;
+    const nextSandbox = 'defaultSandbox' in next ? next.defaultSandbox : defaultSandbox;
+    const result = load(
+      files,
+      nextLlm,
+      sandboxContext(
+        next.connectors !== undefined && supervisor !== undefined ? next.connectors : manifests,
+        next.agents ?? agents,
+        nextSandbox,
+      ),
+    );
+    if (!result.ok) {
+      metrics.configReloads.inc({ result: 'invalid' });
+      log.error('core.config_invalid', {
+        files: result.files
+          .filter((f) => !f.ok)
+          .map((f) => f.file)
+          .join(', '),
+      });
+      return result;
+    }
+    tasksFiles = files;
+    defaultSandbox = nextSandbox;
+    if (next.llm !== undefined && llm !== undefined) {
+      llmOptions = next.llm;
+      llm.configure({
+        providers: next.llm.providers,
+        pricing: next.llm.pricing,
+        defaults: next.llm.defaults,
+        decideDefaults: next.llm.decideDefaults,
+        budgets: next.llm.budgets,
+        configDir: next.llm.configDir,
+      });
+    }
+    executor.configure({
+      workers: next.workers,
+      defaultTimeout: next.defaultTimeout,
+      defaultRetry: next.defaultRetry,
+      ...('defaultSandbox' in next ? { defaultSandbox: next.defaultSandbox } : {}),
+    });
+    if (next.maxEventDepth !== undefined) {
+      bus.dispatcher.configure({ maxDepth: next.maxEventDepth });
+    }
+    if (next.agents !== undefined) {
+      await supervisor?.configure(next.agents);
+    }
+    let applied: ApplyResult | undefined;
+    if (next.connectors !== undefined && supervisor !== undefined) {
+      manifests = next.connectors;
+      applied = await supervisor.apply(manifests.filter((m) => m.builtin === undefined));
+      await applyPollers(manifests);
+    }
+    if (next.retention !== undefined) {
+      retention?.configure(next.retention, agents?.workDir);
+    }
+    activate(result);
+    scheduler.reload(compiled);
+    metrics.configReloads.inc({ result: 'ok' });
+    log.info('core.config_reloaded', {
+      tasks: compiled.tasks.length,
+      connectors_added: joined(applied?.added),
+      connectors_removed: joined(applied?.removed),
+      connectors_changed: joined(applied?.changed),
+    });
+    return applied === undefined ? result : { ...result, connectors: applied };
   };
 
   return {
@@ -294,14 +518,24 @@ export function createCore(opts: CoreOptions): Core {
     store,
     scheduler,
     executor,
+    metrics,
     supervisor,
-    pollers,
+    get pollers() {
+      return pollers.map((p) => p.poller);
+    },
+    retention,
     config: () => compiled,
     start: async () => {
-      const result = load();
+      const result = load(
+        tasksFiles,
+        llmOptions,
+        sandboxContext(manifests, agents, defaultSandbox),
+      );
       if (!result.ok) {
         throw new ConfigLoadError(result);
       }
+      activate(result);
+      startedAt = clock.now();
       log.info('core.config_loaded', {
         files: result.files.map((f) => f.file).join(', '),
         tasks: compiled.tasks.length,
@@ -318,45 +552,67 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.start(compiled);
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
       await supervisor?.start();
-      for (const poller of pollers) {
+      for (const { poller } of pollers) {
         poller.start();
       }
+      retention?.start();
     },
-    reload: () => {
-      const result = load();
-      if (result.ok) {
-        scheduler.reload(compiled);
-        log.info('core.config_reloaded', { tasks: compiled.tasks.length });
-      } else {
-        log.error('core.config_invalid', {
-          files: result.files
-            .filter((f) => !f.ok)
-            .map((f) => f.file)
-            .join(', '),
-        });
-      }
-      return result;
+    reload: (next) => {
+      // Reloads are serialised: two SIGHUPs in a row apply in order, never interleaved.
+      const run = reloading.then(() => reload(next));
+      reloading = run.catch(() => undefined);
+      return run;
     },
     runTask: (name, input) => runTaskManually(bus, store, compiled, name, input),
     stop: async () => {
       scheduler.stop();
       bus.dispatcher.stop();
+      await retention?.stop();
       await executor.stop();
-      await Promise.all(pollers.map((p) => p.stop()));
+      await Promise.all(pollers.map((p) => p.poller.stop()));
       await supervisor?.stop();
       store.close();
     },
   };
 }
 
-/** Applies `checkLlmTasks` to a merged load; an issue fails the file its task came from. */
+/** A name list for a log field: comma-separated, or null when empty. */
+function joined(names: readonly string[] | undefined): string | null {
+  return names === undefined || names.length === 0 ? null : names.join(',');
+}
+
+/**
+ * Applies `checkLlmTasks` and `checkSandboxes` to a merged load; an issue on a task fails
+ * the file the task came from, one on a manifest or on agent.yaml is reported under that
+ * file.
+ */
 function crossCheck(
   result: TasksLoadResult,
   tasks: readonly CompiledConfig['tasks'][number]['config'][],
-  llm: CoreLlmOptions,
+  llm: CoreLlmOptions | undefined,
+  sandboxes: SandboxCheckContext | undefined,
+  configFile: string | undefined,
 ): TasksLoadResult {
-  const issues = checkLlmTasks(tasks, llm);
-  if (issues.length === 0) {
+  const issues = llm === undefined ? [] : checkLlmTasks(tasks, llm);
+  const sb = sandboxes === undefined ? undefined : checkSandboxes(tasks, sandboxes);
+  issues.push(...(sb?.tasks ?? []));
+  // One entry per file: an inline manifest's issues and agent.yaml's own share a file.
+  const byFile = new Map<string, ConfigIssue[]>();
+  const under = (file: string, list: ConfigIssue[]): void => {
+    if (list.length > 0) {
+      byFile.set(file, [...(byFile.get(file) ?? []), ...list]);
+    }
+  };
+  for (const m of sb?.manifests ?? []) {
+    under(m.file, m.issues);
+  }
+  under(configFile ?? 'agent.yaml', sb?.agent ?? []);
+  const extra: TasksLoadResult['files'] = [...byFile].map(([file, list]) => ({
+    ok: false as const,
+    file,
+    issues: list,
+  }));
+  if (issues.length === 0 && extra.length === 0) {
     return result;
   }
   // Issue paths index the merged list; map each back to its file's own index.
@@ -374,7 +630,7 @@ function crossCheck(
     });
     return own.length === 0 ? f : { ok: false as const, file: f.file, issues: own };
   });
-  return { ok: false, files };
+  return { ok: false, files: [...files, ...extra] };
 }
 
 /** Connector names an action (or its sequence steps) calls ops on; `agent` connectors are checked separately. */

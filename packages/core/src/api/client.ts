@@ -4,6 +4,7 @@ import type { ManualInput } from '../bus/manual.js';
 import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
+import type { ReloadReport } from '../daemon.js';
 import type { EventFilter } from '../store/events.js';
 import type { RunFilter } from '../store/runs.js';
 import type { StateEntry } from '../store/state.js';
@@ -212,13 +213,49 @@ export class ApiClient {
     );
   }
 
-  private request<T>(
+  /** Re-reads agent.yaml, the manifests and the tasks files (like SIGHUP); `ok: false` = nothing changed. */
+  reload(): Promise<ReloadReport> {
+    return this.request<ReloadReport>('POST', '/v1/reload');
+  }
+
+  /** The Prometheus text exposition. */
+  async metrics(): Promise<string> {
+    const { status, text } = await this.raw('GET', '/metrics');
+    if (status !== 200) {
+      throw new ApiError(status, `HTTP ${String(status)}`);
+    }
+    return text;
+  }
+
+  private async request<T>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<T> {
+    const { status, text } = await this.raw(method, path, body);
+    let parsed: unknown = null;
+    if (text !== '') {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new ApiError(status, `non-JSON response: ${text}`);
+      }
+    }
+    if (status >= 200 && status < 300) {
+      return parsed as T;
+    }
+    const e = (parsed ?? {}) as ErrorBody;
+    const message = typeof e.error === 'string' ? e.error : `HTTP ${String(status)}`;
+    throw new ApiError(status, message, parseIssues(e.issues));
+  }
+
+  private raw(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; text: string }> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    return new Promise<T>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const req = httpRequest(
         {
           socketPath: this.socketPath,
@@ -226,7 +263,7 @@ export class ApiClient {
           path,
           timeout: this.timeoutMs,
           headers: {
-            accept: 'application/json',
+            accept: path === '/metrics' ? 'text/plain' : 'application/json',
             connection: 'close',
             ...(payload === undefined
               ? {}
@@ -241,24 +278,10 @@ export class ApiClient {
           res.on('data', (c: Buffer) => chunks.push(c));
           res.on('error', reject);
           res.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8');
-            let parsed: unknown = null;
-            if (text !== '') {
-              try {
-                parsed = JSON.parse(text);
-              } catch {
-                reject(new ApiError(res.statusCode ?? 0, `non-JSON response: ${text}`));
-                return;
-              }
-            }
-            const status = res.statusCode ?? 0;
-            if (status >= 200 && status < 300) {
-              resolve(parsed as T);
-              return;
-            }
-            const e = (parsed ?? {}) as ErrorBody;
-            const message = typeof e.error === 'string' ? e.error : `HTTP ${String(status)}`;
-            reject(new ApiError(status, message, parseIssues(e.issues)));
+            resolve({
+              status: res.statusCode ?? 0,
+              text: Buffer.concat(chunks).toString('utf8'),
+            });
           });
         },
       );

@@ -63,6 +63,7 @@ export class TranscriptStore implements TranscriptSink {
   private readonly insertStmt: Statement;
   private readonly listStmt: Statement;
   private readonly countStmt: Statement;
+  private readonly deleteForRunStmt: Statement;
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
@@ -73,6 +74,7 @@ export class TranscriptStore implements TranscriptSink {
       'SELECT * FROM transcripts WHERE run_id = ? AND id > ? ORDER BY id LIMIT ?',
     );
     this.countStmt = db.prepare('SELECT COUNT(*) AS n FROM transcripts WHERE run_id = ?');
+    this.deleteForRunStmt = db.prepare('DELETE FROM transcripts WHERE run_id = ?');
   }
 
   /** Returns the new row id. */
@@ -92,5 +94,14 @@ export class TranscriptStore implements TranscriptSink {
 
   countByRun(runId: string): number {
     return (this.countStmt.get(runId) as { n: number }).n;
+  }
+
+  /** Retention: the rows of runs about to be deleted. Returns how many went. */
+  deleteForRuns(runIds: readonly string[]): number {
+    let n = 0;
+    for (const id of runIds) {
+      n += this.deleteForRunStmt.run(id).changes;
+    }
+    return n;
   }
 }

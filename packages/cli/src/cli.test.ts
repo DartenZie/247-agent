@@ -344,3 +344,42 @@ describe('oa help', () => {
     expect(await main(['frobnicate'], io)).toBe(2);
   });
 });
+
+describe('oa reload', () => {
+  it('reloads the config, reports refused reloads and prints JSON on request', async () => {
+    expect(await oa('reload')).toBe(0);
+    expect(out).toEqual([
+      `ok ${join(dir, 'agent.yaml')}`,
+      `ok ${join(dir, 'tasks.yaml')}`,
+      'reloaded: 2 tasks',
+    ]);
+    out = [];
+    writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
+    expect(await oa('reload')).toBe(1);
+    expect(err[0]).toMatch(/tasks\.yaml: .*YAML/);
+    expect(err.at(-1)).toMatch(/previous config stays active/);
+    err = [];
+    out = [];
+    writeFileSync(join(dir, 'tasks.yaml'), TASKS);
+    writeFileSync(join(dir, 'agent.yaml'), 'db: other.db\nsocket: core.sock\n');
+    expect(await oa('reload', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      ok: true,
+      restart_required: ['db'],
+      tasks: 2,
+    });
+    expect(await oa('reload', 'extra')).toBe(2);
+  });
+});
+
+describe('oa metrics', () => {
+  it('prints the Prometheus exposition', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    out = [];
+    expect(await oa('metrics')).toBe(0);
+    expect(out).toContain('# TYPE oa_runs_finished_total counter');
+    expect(out).toContain('oa_runs_finished_total{task="ok",status="succeeded"} 1');
+    expect(out.at(-1)).not.toBe('');
+    expect(await oa('metrics', 'x')).toBe(2);
+  });
+});

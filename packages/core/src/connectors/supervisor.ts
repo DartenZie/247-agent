@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -10,11 +11,18 @@ import {
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
+import {
+  buildSandboxArgv,
+  type SandboxBackend,
+  type SandboxConfig,
+  type SandboxHost,
+} from '../actions/sandbox.js';
 import { NonRetryableError, type AgentClients, type ConnectorClients } from '../actions/types.js';
 import type { ConnectorConfig, Transport } from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
@@ -33,18 +41,41 @@ export interface SupervisorOptions {
   callTimeoutMs?: number;
   /** `defaults.agent` and the workspace root for `agent` runs on acp connectors. */
   agents?: { defaults: AgentDefaultsConfig; workDir: string } | undefined;
+  /** What a sandboxed agent program must not see and must see (fixed for the process). */
+  sandboxHost?: SandboxHost | undefined;
+  metrics?: Metrics | undefined;
 }
 
 export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped';
 
+/** The last health check of a connector with `health:` in its manifest. */
+export interface ConnectorHealth {
+  /** `null` until the first check after a (re)start. */
+  ok: boolean | null;
+  checked_at: string | null;
+  /** Consecutive failures so far; `health.failures` of them respawn the process. */
+  failures: number;
+}
+
 export interface ConnectorStatus {
   name: string;
   transport: Transport;
+  /** `bwrap` when the core runs this agent program in bubblewrap (acp only). */
+  sandbox: SandboxBackend;
   state: ConnectorState;
   pid: number | null;
   restarts: number;
   /** Last spawn or transport error, if any. */
   error: string | null;
+  /** `null` when the manifest has no `health:`. */
+  health: ConnectorHealth | null;
+}
+
+/** What `apply` did to the set of connectors on a reload. */
+export interface ApplyResult {
+  added: string[];
+  removed: string[];
+  changed: string[];
 }
 
 /** The connector reported the op failed (`isError`), or the op is unknown to it. */
@@ -70,6 +101,22 @@ export class ConnectorDownError extends Error {
 /** How long a connector must stay up before its restart backoff resets. */
 const STABLE_MS = 30_000;
 
+/** The sandbox an acp manifest asks for; anything else runs as the daemon. */
+export function sandboxOf(m: ConnectorConfig): SandboxConfig | undefined {
+  return m.transport === 'acp' && m.sandbox !== undefined && m.sandbox.backend !== 'none'
+    ? m.sandbox
+    : undefined;
+}
+
+/**
+ * The home directory of a sandboxed agent program: inside `work_dir` (the one writable
+ * path) and outside every run's workspace, so its caches and settings (`~/.npm`,
+ * `~/.claude`) survive restarts and the retention sweep, which only takes `run_*` names.
+ */
+export function agentHome(workDir: string, connector: string): string {
+  return join(workDir, 'home', connector);
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -94,6 +141,34 @@ interface Managed {
   error: string | null;
   upSince: number;
   restartTimer: NodeJS.Timeout | undefined;
+  healthTimer: NodeJS.Timeout | undefined;
+  health: ConnectorHealth | null;
+  /** Bumped by every `kill`, so a spawn still starting knows it was superseded. */
+  epoch: number;
+}
+
+/** The manifest without its origin: two manifests that differ only in `file` are the same connector. */
+export function manifestKey(m: ConnectorConfig): string {
+  const { file: _file, ...rest } = m;
+  return JSON.stringify(rest);
+}
+
+function newManaged(manifest: ConnectorConfig): Managed {
+  return {
+    manifest,
+    state: 'stopped',
+    client: undefined,
+    transport: undefined,
+    process: undefined,
+    acp: undefined,
+    restarts: 0,
+    error: null,
+    upSince: 0,
+    restartTimer: undefined,
+    healthTimer: undefined,
+    health: manifest.health === undefined ? null : { ok: null, checked_at: null, failures: 0 },
+    epoch: 0,
+  };
 }
 
 /**
@@ -104,13 +179,15 @@ interface Managed {
  * and reach the child only through its environment.
  */
 export class ConnectorSupervisor implements ConnectorClients, AgentClients {
-  readonly defaults: AgentDefaultsConfig;
-  readonly workDir: string;
+  private agentDefaults: AgentDefaultsConfig;
+  private agentWorkDir: string;
   private readonly managed = new Map<string, Managed>();
   private readonly socketPath: string;
   private readonly secrets: SecretsBackend;
   private readonly log: Logger;
+  private readonly metrics: Metrics;
   private readonly baseEnv: Record<string, string>;
+  private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
   private stopping = false;
 
@@ -118,24 +195,47 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     this.socketPath = opts.socketPath;
     this.secrets = opts.secrets;
     this.log = opts.log;
+    this.metrics = opts.metrics ?? new Metrics();
     this.baseEnv = opts.env ?? getDefaultEnvironment();
+    this.sandboxHost = opts.sandboxHost;
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
-    this.defaults = opts.agents?.defaults ?? AgentDefaults.parse({});
-    this.workDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
+    this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
+    this.agentWorkDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
     for (const manifest of opts.manifests) {
-      this.managed.set(manifest.name, {
-        manifest,
-        state: 'stopped',
-        client: undefined,
-        transport: undefined,
-        process: undefined,
-        acp: undefined,
-        restarts: 0,
-        error: null,
-        upSince: 0,
-        restartTimer: undefined,
-      });
+      this.managed.set(manifest.name, newManaged(manifest));
     }
+  }
+
+  get defaults(): AgentDefaultsConfig {
+    return this.agentDefaults;
+  }
+
+  get workDir(): string {
+    return this.agentWorkDir;
+  }
+
+  /**
+   * Reload seam: `defaults.agent` and `work_dir` for runs that start from now on. A
+   * sandboxed agent program has the old `work_dir` mounted as its only writable path, so
+   * a new one respawns every such connector (with freshly resolved secrets, like
+   * `restart`); the others are untouched.
+   */
+  async configure(agents: { defaults: AgentDefaultsConfig; workDir: string }): Promise<void> {
+    const moved = agents.workDir !== this.agentWorkDir;
+    this.agentDefaults = agents.defaults;
+    this.agentWorkDir = agents.workDir;
+    if (!moved) {
+      return;
+    }
+    const affected = [...this.managed.values()].filter((m) => sandboxOf(m.manifest) !== undefined);
+    await Promise.all(
+      affected.map((m) => this.restart(m.manifest.name, 'work_dir changed').catch(() => undefined)),
+    );
+  }
+
+  /** The manifests currently supervised. */
+  manifests(): ConnectorConfig[] {
+    return [...this.managed.values()].map((m) => m.manifest);
   }
 
   names(): string[] {
@@ -156,10 +256,12 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     return [...this.managed.values()].map((m) => ({
       name: m.manifest.name,
       transport: m.manifest.transport,
+      sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
       state: m.state,
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
       error: m.error,
+      health: m.health === null ? null : { ...m.health },
     }));
   }
 
@@ -192,25 +294,70 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   }
 
   /**
+   * Reload seam (ARCHITECTURE §4): makes the supervised set match `manifests`. A connector
+   * whose manifest is unchanged keeps running; a changed one is killed and respawned with
+   * its new manifest and freshly resolved secrets; a removed one is stopped; a new one is
+   * spawned. Ops on a connector being replaced fail as "not running" meanwhile.
+   */
+  async apply(manifests: readonly ConnectorConfig[]): Promise<ApplyResult> {
+    const result: ApplyResult = { added: [], removed: [], changed: [] };
+    const next = new Map(manifests.map((m) => [m.name, m]));
+    const work: Promise<void>[] = [];
+    for (const [name, m] of this.managed) {
+      if (!next.has(name)) {
+        result.removed.push(name);
+        this.managed.delete(name);
+        work.push(this.kill(m));
+      }
+    }
+    for (const [name, manifest] of next) {
+      const current = this.managed.get(name);
+      if (current === undefined) {
+        result.added.push(name);
+        const m = newManaged(manifest);
+        this.managed.set(name, m);
+        work.push(this.spawn(m));
+        continue;
+      }
+      if (manifestKey(current.manifest) === manifestKey(manifest)) {
+        continue;
+      }
+      result.changed.push(name);
+      const replacement = newManaged(manifest);
+      this.managed.set(name, replacement);
+      work.push(this.kill(current).then(() => this.spawn(replacement)));
+    }
+    await Promise.all(work);
+    if (result.added.length + result.removed.length + result.changed.length > 0) {
+      this.log.info('connector.set_applied', {
+        added: result.added.length === 0 ? null : result.added.join(','),
+        removed: result.removed.length === 0 ? null : result.removed.join(','),
+        changed: result.changed.length === 0 ? null : result.changed.join(','),
+      });
+    }
+    return result;
+  }
+
+  /**
    * Kills one connector and spawns it again, re-resolving its secrets: how a rotated
    * secret reaches a running connector (ARCHITECTURE §6). Deliberate, so the backoff
    * counter resets. Throws for an unknown name.
    */
-  async restart(name: string): Promise<ConnectorStatus> {
+  async restart(name: string, reason = 'requested'): Promise<ConnectorStatus> {
     const m = this.managed.get(name);
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${name}"`);
     }
     const log = this.log.child({ connector: name });
-    log.info('connector.restart_requested', {});
+    log.info('connector.restart_requested', { reason });
     await this.kill(m);
     m.restarts = 0;
-    if (!this.stopping) {
+    if (!this.stopping && this.current(m)) {
       await this.spawn(m);
     }
     const status = this.status().find((s) => s.name === name);
     if (status === undefined) {
-      throw new Error(`connector "${name}" vanished`); // unreachable: managed never shrinks
+      throw new Error(`connector "${name}" was removed by a reload while restarting`);
     }
     return status;
   }
@@ -234,19 +381,46 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     if (m.client === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
-    const result = await m.client.callTool({ name: op, arguments: args }, undefined, {
-      signal: opts.signal,
-      timeout: opts.timeoutMs ?? this.callTimeoutMs,
-    });
-    return toolResultToJson(connector, op, result);
+    const startedAt = Date.now();
+    try {
+      const result = await m.client.callTool({ name: op, arguments: args }, undefined, {
+        signal: opts.signal,
+        timeout: opts.timeoutMs ?? this.callTimeoutMs,
+      });
+      const value = toolResultToJson(connector, op, result);
+      this.metrics.connectorOps.inc({ connector, op, result: 'ok' });
+      return value;
+    } catch (err) {
+      this.metrics.connectorOps.inc({ connector, op, result: 'error' });
+      throw err;
+    } finally {
+      this.metrics.connectorOpDuration.observe({ connector, op }, (Date.now() - startedAt) / 1000);
+    }
   }
 
+  /**
+   * The child's environment, secrets rendered (ARCHITECTURE §6). An acp agent gets the
+   * manifest's `env` and its name but no `OA_CORE_SOCKET` and no `OA_CONFIG_JSON`: it
+   * runs sessions, not ops, and a sandboxed one cannot reach the socket anyway. A
+   * sandboxed agent gets no base environment either (bwrap clears it and sets `PATH`,
+   * `HOME` and `LANG` itself); `OA_HOME` is kept so bundled launchers still resolve.
+   */
   private childEnv(m: Managed): Record<string, string> {
     const refs = collectTemplateRefs({ config: m.manifest.config, env: m.manifest.env });
     const secrets = this.secrets.resolve(refs.secrets);
     const scope = { secrets, env: this.baseEnv };
-    const config = renderValue(m.manifest.config, scope);
     const env = renderValue(m.manifest.env, scope) as Record<string, string>;
+    if (m.manifest.transport === 'acp') {
+      const home = this.baseEnv.OA_HOME;
+      const base =
+        sandboxOf(m.manifest) === undefined
+          ? this.baseEnv
+          : home === undefined
+            ? {}
+            : { OA_HOME: home };
+      return { ...base, ...env, OA_CONNECTOR_NAME: m.manifest.name };
+    }
+    const config = renderValue(m.manifest.config, scope);
     return {
       ...this.baseEnv,
       ...env,
@@ -256,11 +430,59 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     };
   }
 
+  /**
+   * How an acp agent is started: as it is, or as `bwrap … -- <exec>` with `work_dir`
+   * writable, its home under it, the manifest's `cwd` (else that home) as cwd and the
+   * agent's environment set inside; bwrap itself runs with the base environment, which
+   * is where it is found on PATH.
+   */
+  private agentSpawn(
+    m: Managed,
+    env: Record<string, string>,
+  ): { exec: string[]; cwd: string | undefined; env: Record<string, string> } {
+    const exec = m.manifest.exec ?? [];
+    const sandbox = sandboxOf(m.manifest);
+    if (sandbox === undefined) {
+      return { exec, cwd: m.manifest.cwd, env };
+    }
+    const home = agentHome(this.agentWorkDir, m.manifest.name);
+    mkdirSync(home, { recursive: true });
+    return {
+      exec: buildSandboxArgv({
+        sandbox,
+        cmd: exec,
+        writable: this.agentWorkDir,
+        cwd: m.manifest.cwd ?? home,
+        home,
+        env,
+        host: this.sandboxHost,
+        hostEnv: this.baseEnv,
+      }),
+      cwd: undefined,
+      env: this.baseEnv,
+    };
+  }
+
+  /** Whether `m` is still the supervised entry for its name (a reload may have replaced it). */
+  private current(m: Managed): boolean {
+    return this.managed.get(m.manifest.name) === m;
+  }
+
+  /**
+   * Whether a spawn begun at `epoch` may still attach its process: not when the core is
+   * stopping, `m` was killed meanwhile (stop, restart, a failed health check) or a reload
+   * replaced or removed it.
+   */
+  private stillWanted(m: Managed, epoch: number): boolean {
+    return !this.stopping && m.epoch === epoch && this.current(m);
+  }
+
   private async spawn(m: Managed): Promise<void> {
-    if (this.stopping) {
+    if (this.stopping || !this.current(m)) {
       return;
     }
     const log = this.log.child({ connector: m.manifest.name });
+    const epoch = m.epoch;
     m.state = 'starting';
     m.error = null;
     let env: Record<string, string>;
@@ -321,9 +543,16 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     if (m.manifest.transport === 'acp') {
       let agent: AcpAgent;
       try {
-        agent = await AcpAgent.spawn({ exec: [command, ...args], cwd, env, log });
+        const spawn = this.agentSpawn(m, env);
+        agent = await AcpAgent.spawn({ exec: spawn.exec, cwd: spawn.cwd, env: spawn.env, log });
       } catch (err) {
-        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        if (this.stillWanted(m, epoch)) {
+          this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        }
+        return;
+      }
+      if (!this.stillWanted(m, epoch)) {
+        agent.kill('SIGTERM');
         return;
       }
       m.acp = agent;
@@ -355,7 +584,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       await client.connect(transport);
     } catch (err) {
       await transport.close().catch(() => undefined);
-      this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      if (this.stillWanted(m, epoch)) {
+        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      }
+      return;
+    }
+    if (!this.stillWanted(m, epoch)) {
+      await transport.close().catch(() => undefined);
       return;
     }
     m.client = client;
@@ -377,7 +612,68 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     log.info('connector.up', {
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
+      sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
     });
+    if (m.health !== null) {
+      m.health = { ok: null, checked_at: null, failures: 0 };
+    }
+    this.armHealth(m, log);
+  }
+
+  /** Schedules the next `ping` of a stdio connector with `health:`; checks never overlap. */
+  private armHealth(m: Managed, log: Logger): void {
+    const health = m.manifest.health;
+    if (health === undefined || m.client === undefined || this.stopping) {
+      return;
+    }
+    const client = m.client;
+    m.healthTimer = setTimeout(() => {
+      m.healthTimer = undefined;
+      void this.checkHealth(m, client, log).then(() => {
+        if (m.client === client && m.state === 'up') {
+          this.armHealth(m, log);
+        }
+      });
+    }, parseDuration(health.interval));
+    m.healthTimer.unref();
+  }
+
+  private async checkHealth(m: Managed, client: Client, log: Logger): Promise<void> {
+    const health = m.manifest.health;
+    if (health === undefined || m.health === null) {
+      return;
+    }
+    const startedAt = Date.now();
+    let error: string | undefined;
+    try {
+      await client.ping({ timeout: parseDuration(health.timeout) });
+    } catch (err) {
+      error = errorMessage(err);
+    }
+    if (m.client !== client) {
+      return; // the process changed under us; the new one has its own checks
+    }
+    const now = new Date().toISOString();
+    if (error === undefined) {
+      m.health = { ok: true, checked_at: now, failures: 0 };
+      this.metrics.healthChecks.inc({ connector: m.manifest.name, result: 'ok' });
+      log.debug('connector.health_ok', { duration_ms: Date.now() - startedAt });
+      return;
+    }
+    const failures = m.health.failures + 1;
+    m.health = { ok: false, checked_at: now, failures };
+    this.metrics.healthChecks.inc({ connector: m.manifest.name, result: 'failed' });
+    log.warn('connector.unhealthy', { error, failures, max_failures: health.failures });
+    if (failures < health.failures) {
+      return;
+    }
+    log.error('connector.health_failed', { failures });
+    const epoch = m.epoch + 1; // the one this kill sets
+    await this.kill(m);
+    if (!this.current(m) || m.epoch !== epoch) {
+      return; // a restart, a stop or a reload took over while the process was being killed
+    }
+    this.exited(m, `health checks failed ${String(failures)} times (${error})`, log);
   }
 
   private failed(m: Managed, error: string, log: Logger): void {
@@ -409,6 +705,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     const max = parseDuration(m.manifest.restart.max);
     const delay = Math.min(base * 2 ** m.restarts, max);
     m.restarts++;
+    this.metrics.connectorRestarts.inc({ connector: m.manifest.name });
     log.info('connector.restart_scheduled', { delay_ms: delay, restarts: m.restarts });
     m.restartTimer = setTimeout(() => {
       m.restartTimer = undefined;
@@ -418,9 +715,14 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   }
 
   private async kill(m: Managed): Promise<void> {
+    m.epoch++;
     if (m.restartTimer !== undefined) {
       clearTimeout(m.restartTimer);
       m.restartTimer = undefined;
+    }
+    if (m.healthTimer !== undefined) {
+      clearTimeout(m.healthTimer);
+      m.healthTimer = undefined;
     }
     m.state = 'stopped';
     const transport = m.transport;

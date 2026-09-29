@@ -57,8 +57,12 @@ its own sandbox admits, asking only to escape it) is judged after the fact from 
 agent reported, in full under `unasked_execute: judge` and on kind and paths only under
 `sandboxed`; a violation cancels the session and fails the run
 (`agent.policy_violation`). That catches a step outside the policy, it does not prevent
-it: the agent program runs as the daemon's uid like any connector, so pick agents and
-modes that ask, and sandbox the program itself when the host matters.
+it, so pick agents and modes that ask, and sandbox the program itself: `sandbox: bwrap`
+on the connector's manifest (`connectors.d/claude.yaml`, the `247-agent-connectors`
+skill) keeps it away from the daemon's socket, database, config and other processes, with
+`work_dir` and the repositories listed in `ro_binds` as all it can touch. Every
+`workspace.repo` an agent task uses must be in those binds, or `oa validate` refuses the
+task.
 
 ## RESULT.json contract
 

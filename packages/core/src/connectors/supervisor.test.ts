@@ -1,5 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { AgentDefaults } from '../actions/agent-config.js';
 import type { ConnectorConfig } from '../config/connector.js';
 import { parseManifest } from '../config/connector.js';
 import { createLogger } from '../log.js';
@@ -346,5 +351,239 @@ describe('toolResultToJson', () => {
     expect(() =>
       toolResultToJson('c', 'o', { isError: true, content: [{ type: 'text', text: 'bad' }] }),
     ).toThrow('c.o: bad');
+  });
+});
+
+describe('ConnectorSupervisor health checks', () => {
+  it('pings a stdio connector on its interval and respawns it after `failures` misses', async () => {
+    const s = make([manifest({ health: { interval: '40ms', timeout: '60ms', failures: 2 } })]);
+    await s.start();
+    expect(s.status()[0]?.health).toEqual({ ok: null, checked_at: null, failures: 0 });
+    await until(() => s.status()[0]?.health?.ok === true);
+    expect(s.status()[0]?.health).toMatchObject({ ok: true, failures: 0 });
+    const pid = s.status()[0]?.pid;
+
+    // Block the connector's event loop: two pings in a row go unanswered.
+    await expect(s.call('fake', 'freeze', { ms: 1500 }, { signal: signal() })).resolves.toEqual({
+      freezing: 1500,
+    });
+    await until(() => s.status()[0]?.state === 'down', 3000);
+    expect(s.status()[0]?.error).toMatch(/health checks failed 2 times/);
+    await until(() => s.status()[0]?.state === 'up' && s.status()[0]?.pid !== pid, 5000);
+    expect(s.status()[0]).toMatchObject({ restarts: 1, health: { ok: null, failures: 0 } });
+    await expect(s.call('fake', 'echo', { value: 1 }, { signal: signal() })).resolves.toEqual({
+      echoed: 1,
+    });
+    const msgs = lines.map((l) => l.msg);
+    expect(msgs).toContain('connector.unhealthy');
+    expect(msgs).toContain('connector.health_failed');
+    expect(msgs.filter((m) => m === 'connector.health_ok').length).toBeGreaterThan(0);
+  });
+
+  it('reports no health for a manifest without it', async () => {
+    const s = make([manifest()]);
+    await s.start();
+    expect(s.status()[0]?.health).toBeNull();
+  });
+});
+
+describe('ConnectorSupervisor.apply', () => {
+  it('adds, removes and respawns connectors to match a new manifest set', async () => {
+    const secrets = { tok: 'v1' };
+    const a = manifest({ name: 'a', config: { token: '${secrets.tok}' } });
+    const b = manifest({ name: 'b' });
+    const s = make([a, b], secrets);
+    await s.start();
+    const pidA = s.status().find((c) => c.name === 'a')?.pid;
+    const pidB = s.status().find((c) => c.name === 'b')?.pid;
+
+    // Same content, different file: unchanged. `b` goes, `c` arrives, `a` changes.
+    const aMoved = { ...a, file: '/elsewhere/a.yaml' };
+    expect(await s.apply([aMoved, manifest({ name: 'c' })])).toEqual({
+      added: ['c'],
+      removed: ['b'],
+      changed: [],
+    });
+    expect(s.names().sort()).toEqual(['a', 'c']);
+    expect(s.status().find((c) => c.name === 'a')?.pid).toBe(pidA);
+    expect(s.status().find((c) => c.name === 'c')).toMatchObject({ state: 'up' });
+    await expect(s.call('b', 'echo', {}, { signal: signal() })).rejects.toThrow(
+      'unknown connector',
+    );
+
+    secrets.tok = 'v2';
+    const aChanged = manifest({ name: 'a', config: { token: '${secrets.tok}', n: 2 } });
+    expect(await s.apply([aChanged, manifest({ name: 'c' })])).toEqual({
+      added: [],
+      removed: [],
+      changed: ['a'],
+    });
+    expect(s.status().find((c) => c.name === 'a')?.pid).not.toBe(pidA);
+    await expect(s.call('a', 'env', {}, { signal: signal() })).resolves.toMatchObject({
+      config: { token: 'v2', n: 2 },
+    });
+    expect(
+      s
+        .manifests()
+        .map((m) => m.name)
+        .sort(),
+    ).toEqual(['a', 'c']);
+    expect(pidB).toEqual(expect.any(Number));
+    expect(lines.find((l) => l.msg === 'connector.set_applied')).toMatchObject({
+      added: 'c',
+      removed: 'b',
+    });
+    expect(JSON.stringify(lines)).not.toMatch(/v1|v2/);
+  });
+});
+
+describe('ConnectorSupervisor with a sandboxed acp connector', () => {
+  const BIN = `${FIXTURES}bin`;
+  let dir: string;
+  let logFile: string;
+  let work: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'oa-sbx-'));
+    logFile = join(dir, 'bwrap.log');
+    work = join(dir, 'work');
+    mkdirSync(join(dir, 'cfg'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The fake bwrap on PATH records the argv the supervisor built, then runs the agent. */
+  const makeSandboxed = (
+    sandbox: unknown = { backend: 'bwrap', ro_binds: ['/srv/repos/site'] },
+  ): ConnectorSupervisor => {
+    lines = [];
+    sup = new ConnectorSupervisor({
+      manifests: [
+        manifest({
+          name: 'claude',
+          transport: 'acp',
+          exec: ['node', `${FIXTURES}fake-acp.ts`],
+          env: { FAKE_MODEL_KEY: '${secrets.model_key}' },
+          sandbox,
+        }),
+      ],
+      socketPath: '/tmp/oa-test.sock',
+      secrets: staticSecrets({ model_key: 'sk-not-real' }),
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      env: {
+        PATH: `${BIN}:${process.env.PATH ?? ''}`,
+        FAKE_BWRAP_LOG: logFile,
+        OA_HOME: '/opt/oa-test',
+        FAKE_EXTRA: 'from-base',
+        HOME: '/home/daemon',
+      },
+      agents: { defaults: AgentDefaults.parse({}), workDir: work },
+      sandboxHost: { protected: [], masks: [join(dir, 'cfg'), '/nonexistent'], ro_binds: [] },
+    });
+    return sup;
+  };
+  const recorded = (): string[][] =>
+    readFileSync(logFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as string[]);
+  const pairs = (argv: string[], flag: string): string[][] =>
+    argv.flatMap((a, i) => (a === flag ? [argv.slice(i + 1, i + 3)] : []));
+
+  it('runs the agent program in bwrap with work_dir writable, its home inside and only its own env', async () => {
+    const s = makeSandboxed();
+    await s.start();
+    expect(s.status()[0]).toMatchObject({ name: 'claude', state: 'up', sandbox: 'bwrap' });
+    expect(lines).toContainEqual(
+      expect.objectContaining({ msg: 'connector.up', connector: 'claude', sandbox: 'bwrap' }),
+    );
+    const home = join(work, 'home', 'claude');
+    expect(existsSync(home)).toBe(true);
+
+    const [argv] = recorded();
+    expect(argv).toBeDefined();
+    const a = argv ?? [];
+    expect(a.slice(0, 4)).toEqual([
+      '--unshare-pid',
+      '--unshare-ipc',
+      '--die-with-parent',
+      '--new-session',
+    ]);
+    expect(a).toContain('--proc');
+    expect(pairs(a, '--bind')).toEqual([[work, work]]);
+    expect(pairs(a, '--ro-bind')).toContainEqual(['/srv/repos/site', '/srv/repos/site']);
+    expect(a).toContain('--tmpfs');
+    expect(a[a.indexOf('--tmpfs', a.indexOf('--tmpfs') + 1) + 1]).toBe(join(dir, 'cfg'));
+    expect(a).not.toContain('/nonexistent');
+    expect(a.slice(a.indexOf('--chdir'), a.indexOf('--chdir') + 3)).toEqual([
+      '--chdir',
+      home,
+      '--clearenv',
+    ]);
+    const env: Record<string, string> = Object.fromEntries(
+      pairs(a, '--setenv').map(([k, v]) => [k ?? '', v ?? '']),
+    );
+    expect(env).toEqual({
+      PATH: `${BIN}:${process.env.PATH ?? ''}`,
+      HOME: home,
+      OA_HOME: '/opt/oa-test',
+      FAKE_MODEL_KEY: 'sk-not-real',
+      OA_CONNECTOR_NAME: 'claude',
+    });
+    expect(a.slice(a.indexOf('--') + 1)).toEqual(['node', `${FIXTURES}fake-acp.ts`]);
+
+    // The agent behind the wrapper serves sessions as usual.
+    const session = await s.open('claude', {
+      cwd: dir,
+      signal: signal(),
+      log: createLogger({ sink: () => undefined }),
+      onPermission: () => 'cancelled',
+    });
+    const gen = session.prompt('[[no-cost]]');
+    let stop;
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) {
+        stop = next.value;
+        break;
+      }
+    }
+    expect(stop).toMatchObject({ stopReason: 'end_turn' });
+    session.close();
+  });
+
+  it('respawns the sandboxed agent when work_dir moves on reload, and only then', async () => {
+    const s = makeSandboxed();
+    await s.start();
+    expect(recorded()).toHaveLength(1);
+    await s.configure({ defaults: AgentDefaults.parse({}), workDir: work });
+    expect(recorded()).toHaveLength(1);
+
+    const moved = join(dir, 'work2');
+    await s.configure({ defaults: AgentDefaults.parse({}), workDir: moved });
+    await until(() => s.status()[0]?.state === 'up');
+    const argvs = recorded();
+    expect(argvs).toHaveLength(2);
+    expect(pairs(argvs[1] ?? [], '--bind')).toEqual([[moved, moved]]);
+    expect(existsSync(join(moved, 'home', 'claude'))).toBe(true);
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        msg: 'connector.restart_requested',
+        connector: 'claude',
+        reason: 'work_dir changed',
+      }),
+    );
+    expect(s.workDir).toBe(moved);
+  });
+
+  it('reports an unsandboxed agent as such and keeps it out of bwrap', async () => {
+    const s = makeSandboxed('none');
+    await s.start();
+    expect(s.status()[0]).toMatchObject({ state: 'up', sandbox: 'none' });
+    expect(existsSync(logFile)).toBe(false);
   });
 });

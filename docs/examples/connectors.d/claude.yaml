@@ -2,8 +2,16 @@
 # is the agent. `agent` actions name it with `connector: claude` and open one session per
 # run with the run's workspace as cwd. It serves no ops and emits no events. The model key
 # goes to the agent, never to the tasks; deploy secrets never go to the agent.
+#
+# `sandbox: bwrap` runs the program in bubblewrap (§11): it sees the OS and the install
+# read-only, `defaults.agent.work_dir` read-write (every run's workspace plus its own home,
+# `<work_dir>/home/claude`, where npx and Claude Code keep their caches) and the repositories
+# listed here; the daemon's config, database, socket and other processes are out of reach.
+# List every `workspace.repo` the tasks use (read-only: the post gates commit, not the
+# agent); `oa validate` refuses a repo it cannot see. Needs the `bubblewrap` package.
 name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }
 restart: { base: 1s, max: 60s }

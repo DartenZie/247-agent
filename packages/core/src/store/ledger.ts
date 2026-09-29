@@ -50,6 +50,8 @@ export class LedgerStore {
   private readonly sumForRunStmt: Statement;
   private readonly listByRunStmt: Statement;
   private readonly summaryStmts: Record<CostGroup, Statement>;
+  private readonly deleteForRunStmt: Statement;
+  private readonly deleteBeforeStmt: Statement;
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
@@ -61,6 +63,14 @@ export class LedgerStore {
       'SELECT COALESCE(SUM(usd), 0) AS usd FROM ledger WHERE run_id = ?',
     );
     this.listByRunStmt = db.prepare('SELECT * FROM ledger WHERE run_id = ? ORDER BY id');
+    this.deleteForRunStmt = db.prepare('DELETE FROM ledger WHERE run_id = ?');
+    // Never a row of a run still in flight: its `max_usd` check sums them.
+    this.deleteBeforeStmt = db.prepare(
+      `DELETE FROM ledger WHERE id IN (
+         SELECT id FROM ledger WHERE ts < ?
+         AND run_id NOT IN (SELECT id FROM runs WHERE status IN ('queued','running','waiting'))
+         LIMIT ?)`,
+    );
     const summary = (group: CostGroup): Statement =>
       db.prepare(
         `SELECT ${GROUP_EXPR[group]} AS key, COUNT(*) AS calls, SUM(in_tok) AS in_tok,
@@ -92,6 +102,23 @@ export class LedgerStore {
 
   listByRun(runId: string): LedgerEntry[] {
     return this.listByRunStmt.all(runId) as LedgerEntry[];
+  }
+
+  /** Retention: removes the rows of the given runs (before the runs themselves). */
+  deleteForRuns(runIds: readonly string[]): number {
+    let n = 0;
+    for (const id of runIds) {
+      n += this.deleteForRunStmt.run(id).changes;
+    }
+    return n;
+  }
+
+  /**
+   * Retention: removes up to `limit` rows older than `beforeIso` whose run is finished
+   * (kept or not). Returns how many went; fewer than `limit` means none are left.
+   */
+  deleteBefore(beforeIso: string, limit: number): number {
+    return this.deleteBeforeStmt.run(beforeIso, limit).changes;
   }
 
   /** Totals grouped by `by` for rows with `ts >= since`, most expensive first. */

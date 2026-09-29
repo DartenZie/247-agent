@@ -88,6 +88,12 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX ledger_task_ts ON ledger(task, ts);
   `,
   `
+  -- Retention: an event goes only when no run or wait points at it; without these each
+  -- candidate event would scan the whole runs table.
+  CREATE INDEX runs_event ON runs(event_id);
+  CREATE INDEX waits_event ON waits(event_id);
+  `,
+  `
   CREATE TABLE transcripts (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT    NOT NULL REFERENCES runs(id),

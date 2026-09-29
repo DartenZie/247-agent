@@ -40,12 +40,12 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(4);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(4);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
   });
 });
 
@@ -199,6 +199,7 @@ describe('WaitStore', () => {
     store.waits.insert(base);
     expect(store.waits.get('run_1')).toEqual({ ...base, outcome: null, event_id: null });
     expect(store.waits.listPending().map((w) => w.run_id)).toEqual(['run_1']);
+    expect(store.waits.countPending()).toBe(1);
     expect(store.waits.listExpired('2026-09-19T10:59:59.000Z')).toEqual([]);
     expect(store.waits.listExpired('2026-09-19T11:00:00.000Z').map((w) => w.run_id)).toEqual([
       'run_1',
@@ -206,6 +207,7 @@ describe('WaitStore', () => {
     expect(store.waits.resolve('run_1', 'matched', 'evt_1')).toBe(true);
     expect(store.waits.resolve('run_1', 'timeout', null)).toBe(false);
     expect(store.waits.listPending()).toEqual([]);
+    expect(store.waits.countPending()).toBe(0);
     expect(store.waits.listResolved()).toMatchObject([
       { run_id: 'run_1', outcome: 'matched', event_id: 'evt_1' },
     ]);
