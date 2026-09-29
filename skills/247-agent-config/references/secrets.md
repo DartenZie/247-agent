@@ -48,5 +48,8 @@ the new value. Runs already in flight keep the value they resolved at start.
 
 The daemon's uid is the boundary (ARCHITECTURE §11): every process running as the
 service user can read the others' environments and call the socket API. Never run an
-`agent` action or untrusted shell work as that user; there is no secrets endpoint on the
-API and none should be added.
+`agent` action or untrusted shell work unconfined as that user: the agent program gets
+`sandbox: bwrap` on its `acp` manifest and untrusted shell steps `sandbox: bwrap` on the
+action, which hide the socket, the other processes, the config directory (and a `file`
+secrets backend in it) and the state directory. There is no secrets endpoint on the API
+and none should be added.

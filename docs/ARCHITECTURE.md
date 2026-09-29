@@ -122,7 +122,7 @@ One daemon, `247-agent-core`, with these internal modules:
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
 | **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
-| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
+| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env (an `acp` agent gets its `env` and name only, and runs inside `bwrap` when its manifest says `sandbox: bwrap`, §6). A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
 | **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
@@ -163,12 +163,15 @@ Runs as the service user, with `timeout`, stdout/stderr captured into the run lo
 parsed JSON from stdout when `result: json_stdout`. A `user:` override is not supported.
 
 `sandbox: bwrap` wraps the command in bubblewrap (`packages/core/src/actions/sandbox.ts`):
-own pid and ipc namespaces, `/usr`, `/lib`, `/lib64`, `/bin` and `/etc` read-only, a
-private `/tmp`, `cwd` as the only writable path (without `cwd` the command runs in that
-`/tmp`), and an environment cleared down to the action's `env` plus `PATH`, `HOME` and
-`LANG`. The runtime directory with the core socket, the state directory and other
-processes are not visible. The long form
-`sandbox: { backend: bwrap, ro_binds: [/opt/247-agent], rw_binds: [], extra_args: [] }`
+own pid and ipc namespaces, `/usr`, `/lib`, `/lib64`, `/bin` and `/etc` read-only, the
+install root (`OA_HOME`) and the daemon's Node read-only (so `PATH` resolves the bundled
+tools, `node`, `npx`), a private `/tmp`, `cwd` as the only writable path (without `cwd`
+the command runs in that `/tmp`), and an environment cleared down to the action's `env`
+plus `PATH`, `HOME` and `LANG`. The directories of `agent.yaml`, the database, the socket
+and a `file` secrets backend are replaced by an empty tmpfs, so the daemon's own files do
+not show through the read-only `/etc`; the runtime directory with the core socket, the
+state directory and other processes are not visible. The long form
+`sandbox: { backend: bwrap, ro_binds: [/srv/data], rw_binds: [], extra_args: [] }`
 adds mounts and raw bwrap flags (`--unshare-net` for offline steps). Use it for every
 step that runs untrusted code or content, per the trust model in §11; steps that hold
 deploy secrets and need the network (publishing) run unsandboxed and keep the secret in
@@ -401,8 +404,9 @@ Notes
   `connector`/`max_tool_calls`/`budget`/`system_file`; model and effort are the agent
   program's own settings until ACP config options are wired (planned).
 - `post` gates run through the `shell` runner with `cwd` = workspace, so
-  `defaults.sandbox: bwrap` applies to them. The agent program itself is not sandboxed by
-  the core today (§11).
+  `defaults.sandbox: bwrap` applies to them. The agent program itself is sandboxed by its
+  manifest's `sandbox: bwrap` (§6, §11), which is where the `ro_binds` for the
+  repositories the worktrees come from live.
 
 ### 5.5 `connector` — call one operation on a sub-program
 
@@ -529,7 +533,35 @@ name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }   # §11; acp only
 ```
+
+**Sandboxing the agent program.** `sandbox` (the same `none | bwrap | { backend, ro_binds,
+rw_binds, extra_args }` as a `shell` action, §5.1) is accepted on `acp` manifests only:
+every other connector needs the core socket, which the sandbox hides. The supervisor then
+spawns `bwrap … -- <exec>` once, for the life of the process, with: the OS and the install
+read-only; `defaults.agent.work_dir` the only writable path, which holds every run's
+workspace and the program's home, `<work_dir>/home/<name>` (`HOME`; npm and Claude Code
+caches live there, the retention sweep ignores it); the manifest's `ro_binds`/`rw_binds`
+(the repositories `git-worktree` workspaces come from, read-only unless the agent itself
+commits); the directories of `agent.yaml`, the database, the socket and the secrets file
+masked with an empty tmpfs; an environment of `PATH`, `HOME`, `LANG`, `OA_HOME`,
+`OA_CONNECTOR_NAME` and the manifest's `env`, nothing of the daemon's. The runtime
+directory (socket), the state directory, `/proc` of other processes and the daemon's
+environment are not reachable, which is what §11 requires of the one process that runs
+untrusted content. The network is shared: the agent must reach its model API, and bwrap
+can only cut it off entirely (`extra_args: [--unshare-net]`); an allowlist would take a
+filtering proxy and is not built. Because the process is shared by concurrent runs, the
+sandbox is per program, not per run: an agent can see other runs' workspaces under
+`work_dir`, as it already could in one process. `oa validate` refuses a `sandbox` bind or
+a `work_dir` that contains the database, the socket, `agent.yaml` or the secrets file, a
+`cwd` outside every bind, and an `agent` task whose `workspace.repo` the sandboxed
+connector cannot see; a changed `work_dir` on reload respawns sandboxed agents, since
+they mount the old one. An `acp` connector (sandboxed or not) gets no `OA_CORE_SOCKET`
+and no `OA_CONFIG_JSON` (`config` is refused on it): the agent program is configured
+through `env` alone. `oa connector list` shows `sandbox=bwrap`. Needs the `bubblewrap`
+package and unprivileged user namespaces (§12); without `bwrap` the spawn fails and the
+connector stays down with the error in `oa connector list`.
 
 **Turning any MCP tool into an event source:** the built-in `poller` connector runs on a
 cron, calls `connector.op`, diffs the result against KV by `item_key`, and emits one event
@@ -759,10 +791,14 @@ process could call.
   backend refuses a secrets file readable by group or others.
 - **Agent sandbox:** dedicated worktree, explicit tool-kind allowlist, command allowlist
   and workspace-bound paths, judged per call through ACP permission requests (§5.4), no
-  deploy credentials. Build gate + commit before anything leaves the worktree. The agent
-  program runs as the daemon's uid like any connector, so the policy only binds an agent
-  that asks before acting; running the agent program under `bwrap` with a network
-  allowlist is planned.
+  deploy credentials. Build gate + commit before anything leaves the worktree. The policy
+  only binds an agent that asks before acting; the agent *program* is confined by
+  `sandbox: bwrap` on its manifest (§6): same uid, but its own pid namespace, no socket
+  directory, no state or config directory, no daemon environment, `work_dir` and the
+  listed repositories the only paths it can touch. That is the sandbox this section asks
+  for; a separate uid would add nothing the daemon can enforce without privileges. The
+  network stays open to the agent (it needs its model API); a network allowlist is
+  planned and would take a filtering proxy.
 - **Approval gate** (`wait` + chat) is config, so it can be required for high-impact tasks
   and skipped for routine ones.
 - Inbound content (emails, chat, PR text) is untrusted: it enters prompts as data in a
@@ -787,11 +823,13 @@ ProtectSystem=strict
 NoNewPrivileges=yes
 ```
 
-`sandbox: bwrap` (§5.1) needs the `bubblewrap` package and unprivileged user namespaces
+`sandbox: bwrap` (§5.1 for shell steps, §6 for agent programs) needs the `bubblewrap`
+package (the `.deb`/`.rpm` recommend it) and unprivileged user namespaces
 (`sysctl kernel.unprivileged_userns_clone=1` on Debian, the default elsewhere); a setuid
 `bwrap` does not work under `NoNewPrivileges=yes`. Do not set `RestrictNamespaces=` on
-the unit. Paths a sandboxed step writes to still need `ReadWritePaths=` here, since the
-sandbox lives inside the unit's own mount namespace.
+the unit. Paths a sandboxed step or agent writes to still need `ReadWritePaths=` here,
+since the sandbox lives inside the unit's own mount namespace (`work_dir` under
+`/var/lib/247-agent` is covered by the shipped unit).
 
 `/opt/247-agent` is the unpacked release tarball (`scripts/build-release.sh`): `bin/`
 launchers, one bundled `.mjs` per program under `lib/`, a vendored Node under `node/`,
@@ -925,17 +963,18 @@ Step 4 is done over ACP (§5.4): `transport: acp` manifests, the ACP client
 cancellation, the ledger's `checkBudget`/`record`, the RESULT.json contract, post gates,
 `defaults.agent`, the cross-checks, `docs/examples/connectors.d/claude.yaml` and the
 `blocked` routing in the reference workflow; tested against a fake ACP agent.
-Step 6 is done except the sandbox wrapper: the retention pass (`retention.ts`,
+Step 6 is done: the retention pass (`retention.ts`,
 `store/retention.ts`, the workspace sweep in `actions/agent-workspace.ts`), `/metrics`
 (`metrics.ts`, counters recorded in the bus, dispatcher, executor, scheduler, llm service
 and supervisor, gauges collected at scrape time in `core.ts`), connector health checks in
-the supervisor, and the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reload`,
-`oa reload`).
+the supervisor, the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reload`,
+`oa reload`), and the sandbox wrapper for agent programs (`sandbox:` on `acp`
+manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check).
 Where the code is behind this document:
 `batch: true` is rejected; `mcp_servers` on an `agent` action must be empty (the MCP
-proxy is not built); agent transcripts are not persisted; the agent program is not
-sandboxed by the core and there is no sandbox wrapper; ACP config options (model, mode)
-are not exposed; `shell.user` is rejected; `oa events` and `oa runs` do not exist.
+proxy is not built); agent transcripts are not persisted; the agent sandbox has no
+network allowlist; ACP config options (model, mode) are not exposed; `shell.user` is
+rejected; `oa events` and `oa runs` do not exist.
 
 ## 15. Open decisions
 

@@ -13,6 +13,11 @@
 # action names `model:` and agent.yaml prices it under `pricing:` unless the built-in
 # table knows it. Codex runs commands in a login shell: put the node/npm the build needs on
 # PATH here if the daemon's PATH would not reach it.
+#
+# Codex's sandbox confines what the agent runs, not the agent program itself, which still
+# runs as the daemon's user: add `sandbox: bwrap` here as in claude.yaml to change that
+# (§11). Codex would then create its own sandbox inside the daemon's, which bwrap allows
+# (nested user namespaces); this nesting has not been verified against codex-acp.
 name: codex
 exec: ["npx", "-y", "@agentclientprotocol/codex-acp"]
 transport: acp

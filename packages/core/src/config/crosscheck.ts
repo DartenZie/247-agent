@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 
+import { isInsidePath, type ProtectedPath } from '../actions/sandbox.js';
 import {
   DecideDefaults,
   type DecideDefaultsConfig,
@@ -8,6 +9,7 @@ import {
   type ProviderConfigParsed,
 } from '../llm/config.js';
 import type { PricingTable } from '../llm/pricing.js';
+import type { ConnectorConfig } from './connector.js';
 import type { ConfigIssue } from './load.js';
 import type { TaskConfig } from './schema.js';
 
@@ -22,11 +24,7 @@ export interface LlmCheckContext {
 }
 
 /** True when `target` is `dir` itself or inside it. */
-export function isInside(dir: string, target: string): boolean {
-  const base = resolve(dir);
-  const t = resolve(target);
-  return t === base || t.startsWith(base + sep);
-}
+export const isInside = isInsidePath;
 
 /**
  * What a tasks file cannot check on its own (it is validated without agent.yaml): every
@@ -120,4 +118,97 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
     }
   });
   return issues;
+}
+
+/** What `checkSandboxes` needs from agent.yaml and the manifests. */
+export interface SandboxCheckContext {
+  manifests: readonly ConnectorConfig[];
+  /** `defaults.agent.connector`. */
+  defaultConnector: string | undefined;
+  /** `defaults.agent.work_dir`, resolved: the sandboxed agents' one writable path. */
+  workDir: string;
+  /** The db, the socket, `agent.yaml`, the secrets file: nothing may bind them in. */
+  protected: readonly ProtectedPath[];
+}
+
+export interface SandboxCheckResult {
+  /** On the tasks, with merged-list paths (`tasks[i]…`). */
+  tasks: ConfigIssue[];
+  /** On a manifest, by the file it came from. */
+  manifests: { file: string; issues: ConfigIssue[] }[];
+  /** On agent.yaml itself. */
+  agent: ConfigIssue[];
+}
+
+/**
+ * A sandboxed agent program (a `transport: acp` manifest with `sandbox: bwrap`, §5.4,
+ * §11) sees the OS, the install, `work_dir` and the manifest's own binds, nothing else. So:
+ * no bind (nor `work_dir`) may contain the database, the socket, `agent.yaml` or the
+ * secrets file, which the sandbox exists to hide; the manifest's `cwd` must lie inside a
+ * bind; and the repository of every `git-worktree` workspace an `agent` task opens on
+ * that connector must lie inside a bind, or the worktree's `.git` link points nowhere.
+ * Run at daemon start, on reload and by `oa validate agent.yaml`.
+ */
+export function checkSandboxes(
+  tasks: readonly TaskConfig[],
+  ctx: SandboxCheckContext,
+): SandboxCheckResult {
+  const out: SandboxCheckResult = { tasks: [], manifests: [], agent: [] };
+  const sandboxed = ctx.manifests.filter(
+    (m) => m.transport === 'acp' && m.sandbox !== undefined && m.sandbox.backend !== 'none',
+  );
+  if (sandboxed.length === 0) {
+    return out;
+  }
+  for (const p of ctx.protected) {
+    if (isInside(ctx.workDir, p.path)) {
+      out.agent.push({
+        path: 'defaults.agent.work_dir',
+        message: `${ctx.workDir} contains the ${p.what} ${p.path}, which a sandboxed agent program (connector "${sandboxed.map((m) => m.name).join('", "')}") could then read: move it`,
+      });
+    }
+  }
+  const visible = (m: ConnectorConfig, path: string): boolean =>
+    isInside(ctx.workDir, path) ||
+    [...(m.sandbox?.ro_binds ?? []), ...(m.sandbox?.rw_binds ?? [])].some((b) => isInside(b, path));
+  for (const m of sandboxed) {
+    const issues: ConfigIssue[] = [];
+    for (const list of ['ro_binds', 'rw_binds'] as const) {
+      (m.sandbox?.[list] ?? []).forEach((bind, i) => {
+        for (const p of ctx.protected) {
+          if (isInside(bind, p.path)) {
+            issues.push({
+              path: `sandbox.${list}[${String(i)}]`,
+              message: `${bind} would expose the ${p.what} ${p.path} to the sandboxed agent program`,
+            });
+          }
+        }
+      });
+    }
+    if (m.cwd !== undefined && !visible(m, m.cwd)) {
+      issues.push({
+        path: 'cwd',
+        message: `${m.cwd} is not visible inside the sandbox: put it under work_dir or list it in sandbox.ro_binds`,
+      });
+    }
+    if (issues.length > 0) {
+      out.manifests.push({ file: m.file, issues });
+    }
+  }
+  tasks.forEach((task, i) => {
+    const a = task.action;
+    if (a.kind !== 'agent' || a.workspace.kind !== 'git-worktree') {
+      return;
+    }
+    const name = a.connector ?? ctx.defaultConnector;
+    const m = sandboxed.find((x) => x.name === name);
+    if (m === undefined || visible(m, a.workspace.repo)) {
+      return;
+    }
+    out.tasks.push({
+      path: `tasks[${String(i)}].action.workspace.repo`,
+      message: `${a.workspace.repo} is not visible to the sandboxed agent program "${m.name}": add it to sandbox.ro_binds in ${m.file} (rw_binds if the agent itself commits)`,
+    });
+  });
+  return out;
 }

@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolvePricing } from '../llm/pricing.js';
-import { checkLlmTasks, isInside, type LlmCheckContext } from './crosscheck.js';
+import { parseManifest } from './connector.js';
+import {
+  checkLlmTasks,
+  checkSandboxes,
+  isInside,
+  type LlmCheckContext,
+  type SandboxCheckContext,
+} from './crosscheck.js';
 import { Task } from './schema.js';
 
 let dir: string;
@@ -151,5 +158,120 @@ describe('checkLlmTasks: decide', () => {
     expect(wrong[0]?.message).toMatch(
       /decide needs an openrouter provider.*"anthropic" is type anthropic/,
     );
+  });
+});
+
+describe('checkSandboxes', () => {
+  const manifest = (doc: Record<string, unknown>) => {
+    const r = parseManifest(
+      { name: 'claude', exec: ['claude-agent-acp'], transport: 'acp', ...doc },
+      '/etc/247-agent/connectors.d/claude.yaml',
+    );
+    if (!r.ok) {
+      throw new Error(JSON.stringify(r.issues));
+    }
+    return r.config;
+  };
+  const agentTask = (over: Record<string, unknown> = {}) =>
+    Task.parse({
+      name: 'edit',
+      trigger: { kind: 'manual' },
+      action: {
+        kind: 'agent',
+        workspace: { kind: 'git-worktree', repo: '/var/lib/247-agent/repos/site' },
+        tools: ['read', 'edit'],
+        prompt: 'x',
+        ...over,
+      },
+    });
+  const sctx = (over: Partial<SandboxCheckContext> = {}): SandboxCheckContext => ({
+    manifests: [
+      manifest({ sandbox: { backend: 'bwrap', ro_binds: ['/var/lib/247-agent/repos'] } }),
+    ],
+    defaultConnector: 'claude',
+    workDir: '/var/lib/247-agent/work',
+    protected: [
+      { path: '/var/lib/247-agent/state.db', what: 'database' },
+      { path: '/run/247-agent/core.sock', what: 'socket' },
+      { path: '/etc/247-agent/agent.yaml', what: 'config file' },
+    ],
+    ...over,
+  });
+
+  it('passes a repo under a bind, a temp workspace, an unsandboxed connector and no sandbox at all', () => {
+    const empty = { tasks: [], manifests: [], agent: [] };
+    expect(checkSandboxes([agentTask(), shell], sctx())).toEqual(empty);
+    expect(
+      checkSandboxes([agentTask({ workspace: { kind: 'temp' } })], sctx({ manifests: [] })),
+    ).toEqual(empty);
+    expect(
+      checkSandboxes([agentTask({ connector: 'codex' })], sctx({ manifests: [manifest({})] })),
+    ).toEqual(empty);
+    expect(checkSandboxes([agentTask()], sctx({ manifests: [manifest({})] }))).toEqual(empty);
+  });
+
+  it('reports a repo outside every bind, on the action or the default connector', () => {
+    const ctx = sctx({ manifests: [manifest({ sandbox: 'bwrap' })] });
+    const r = checkSandboxes([agentTask(), agentTask({ connector: 'claude' })], ctx);
+    expect(r.tasks.map((i) => i.path)).toEqual([
+      'tasks[0].action.workspace.repo',
+      'tasks[1].action.workspace.repo',
+    ]);
+    expect(r.tasks[0]?.message).toMatch(
+      /not visible to the sandboxed agent program "claude": add it to sandbox.ro_binds in \/etc\/247-agent\/connectors.d\/claude.yaml/,
+    );
+    // A repo under work_dir is visible without a bind.
+    expect(
+      checkSandboxes(
+        [agentTask({ workspace: { kind: 'git-worktree', repo: '/var/lib/247-agent/work/base' } })],
+        ctx,
+      ).tasks,
+    ).toEqual([]);
+  });
+
+  it('refuses binds and a work_dir that would show the daemon its own files, and an invisible cwd', () => {
+    const r = checkSandboxes(
+      [],
+      sctx({
+        manifests: [
+          manifest({
+            cwd: '/srv/agents',
+            sandbox: { backend: 'bwrap', ro_binds: ['/etc'], rw_binds: ['/var/lib/247-agent'] },
+          }),
+        ],
+        workDir: '/run/247-agent',
+      }),
+    );
+    expect(r.agent).toEqual([
+      {
+        path: 'defaults.agent.work_dir',
+        message: expect.stringMatching(
+          /\/run\/247-agent contains the socket \/run\/247-agent\/core.sock, which a sandboxed agent program \(connector "claude"\) could then read/,
+        ) as string,
+      },
+    ]);
+    expect(r.manifests).toEqual([
+      {
+        file: '/etc/247-agent/connectors.d/claude.yaml',
+        issues: [
+          {
+            path: 'sandbox.ro_binds[0]',
+            message:
+              '/etc would expose the config file /etc/247-agent/agent.yaml to the sandboxed agent program',
+          },
+          {
+            path: 'sandbox.rw_binds[0]',
+            message:
+              '/var/lib/247-agent would expose the database /var/lib/247-agent/state.db to the sandboxed agent program',
+          },
+          {
+            path: 'cwd',
+            message: expect.stringMatching(
+              /^\/srv\/agents is not visible inside the sandbox/,
+            ) as string,
+          },
+        ],
+      },
+    ]);
   });
 });

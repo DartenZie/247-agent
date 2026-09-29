@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSandboxArgv, type PathProbe, Sandbox, SANDBOX_DEFAULT_CWD } from './sandbox.js';
+import {
+  buildSandboxArgv,
+  type PathProbe,
+  Sandbox,
+  SANDBOX_DEFAULT_CWD,
+  sandboxHost,
+} from './sandbox.js';
 
-/** A merged-/usr host: /bin and /lib are symlinks, /lib64 is absent. */
+/** A merged-/usr host: /bin and /lib are symlinks, /lib64 is absent; the daemon's dirs exist. */
 const probe: PathProbe = (path) => {
   switch (path) {
     case '/usr':
     case '/etc':
+    case '/etc/247-agent':
+    case '/var/lib/247-agent':
+    case '/opt/247-agent':
+    case '/home/dev/.nvm/versions/node/v22.0.0':
       return { kind: 'dir' };
     case '/bin':
       return { kind: 'symlink', target: 'usr/bin' };
@@ -43,7 +53,7 @@ describe('buildSandboxArgv', () => {
     const argv = buildSandboxArgv({
       sandbox: bwrap,
       cmd: ['npm', 'run', 'build'],
-      cwd: '/var/lib/247-agent/repos/site',
+      writable: '/var/lib/247-agent/repos/site',
       env: { CI: '1' },
       hostEnv: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', OA_SECRET_X: 'leak', HOME: '/root' },
       probe,
@@ -81,7 +91,7 @@ describe('buildSandboxArgv', () => {
     const argv = buildSandboxArgv({
       sandbox: bwrap,
       cmd: ['sh', '-c', 'pwd'],
-      cwd: undefined,
+      writable: undefined,
       env: { HOME: '/tmp/h', PATH: '/bin' },
       hostEnv: {},
       probe,
@@ -106,7 +116,7 @@ describe('buildSandboxArgv', () => {
         extra_args: ['--unshare-net'],
       }),
       cmd: ['true'],
-      cwd: '/w',
+      writable: '/w',
       env: {},
       hostEnv: {},
       probe: () => undefined,
@@ -123,5 +133,86 @@ describe('buildSandboxArgv', () => {
       '--',
       'true',
     ]);
+  });
+
+  it('mounts the install after the OS, masks the daemon dirs after that, then the writable path', () => {
+    const argv = buildSandboxArgv({
+      sandbox: Sandbox.parse({
+        backend: 'bwrap',
+        ro_binds: ['/var/lib/247-agent/repos/site'],
+      }),
+      cmd: ['npx', 'agent'],
+      writable: '/var/lib/247-agent/work',
+      cwd: '/var/lib/247-agent/work/home/claude',
+      home: '/var/lib/247-agent/work/home/claude',
+      env: { ANTHROPIC_API_KEY: 'k' },
+      host: {
+        protected: [],
+        masks: ['/etc/247-agent', '/var/lib/247-agent', '/run/247-agent', '/nonexistent'],
+        ro_binds: ['/opt/247-agent', '/missing/node'],
+      },
+      hostEnv: { PATH: '/opt/247-agent/bin:/usr/bin', HOME: '/var/lib/247-agent' },
+      probe,
+    });
+    const from = argv.indexOf('--tmpfs');
+    expect(argv.slice(from)).toEqual([
+      ...['--tmpfs', '/tmp'],
+      ...['--ro-bind', '/opt/247-agent', '/opt/247-agent'],
+      ...['--tmpfs', '/etc/247-agent'],
+      ...['--tmpfs', '/var/lib/247-agent'],
+      ...['--bind', '/var/lib/247-agent/work', '/var/lib/247-agent/work'],
+      ...['--ro-bind', '/var/lib/247-agent/repos/site', '/var/lib/247-agent/repos/site'],
+      ...['--chdir', '/var/lib/247-agent/work/home/claude'],
+      '--clearenv',
+      ...['--setenv', 'PATH', '/opt/247-agent/bin:/usr/bin'],
+      ...['--setenv', 'HOME', '/var/lib/247-agent/work/home/claude'],
+      ...['--setenv', 'ANTHROPIC_API_KEY', 'k'],
+      '--',
+      ...['npx', 'agent'],
+    ]);
+    // Masks and install binds that do not exist on the host are left out (bwrap would fail on them).
+    expect(argv).not.toContain('/run/247-agent');
+    expect(argv).not.toContain('/nonexistent');
+    expect(argv).not.toContain('/missing/node');
+  });
+});
+
+describe('sandboxHost', () => {
+  it('masks the directories of the protected files and binds the install root and Node prefix', () => {
+    const host = sandboxHost({
+      protected: [
+        { path: '/var/lib/247-agent/state.db', what: 'database' },
+        { path: '/run/247-agent/core.sock', what: 'socket' },
+        { path: '/etc/247-agent/agent.yaml', what: 'config file' },
+        { path: '/etc/247-agent/secrets.yaml', what: 'secrets file' },
+      ],
+      env: { OA_HOME: '/opt/247-agent' },
+      execPath: '/opt/247-agent/node/bin/node',
+    });
+    expect(host.masks).toEqual(['/var/lib/247-agent', '/run/247-agent', '/etc/247-agent']);
+    // The vendored Node lives inside the install root: one bind.
+    expect(host.ro_binds).toEqual(['/opt/247-agent']);
+    expect(host.protected.map((p) => p.what)).toEqual([
+      'database',
+      'socket',
+      'config file',
+      'secrets file',
+    ]);
+  });
+
+  it('binds a Node outside the install and skips what the OS mounts cover or would break', () => {
+    const host = sandboxHost({
+      protected: [
+        { path: '/state.db', what: 'database' },
+        { path: '/etc/agent.yaml', what: 'config file' },
+        { path: '/srv/oa/state.db', what: 'database' },
+      ],
+      env: { OA_HOME: '/srv/oa/checkout' },
+      execPath: '/home/dev/.nvm/versions/node/v22.0.0/bin/node',
+    });
+    // `/` and `/etc` are never masked; `/srv/oa` is.
+    expect(host.masks).toEqual(['/srv/oa']);
+    expect(host.ro_binds).toEqual(['/srv/oa/checkout', '/home/dev/.nvm/versions/node/v22.0.0']);
+    expect(sandboxHost({ protected: [], env: {}, execPath: '/usr/bin/node' }).ro_binds).toEqual([]);
   });
 });

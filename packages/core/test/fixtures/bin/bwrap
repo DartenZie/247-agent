@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test double for bubblewrap: put this directory first on PATH and `bwrap …` runs
+# fake-bwrap.ts, which applies --clearenv/--setenv/--chdir and execs the command.
+exec node "$(dirname "$0")/../fake-bwrap.ts" "$@"

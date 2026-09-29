@@ -38,13 +38,29 @@ name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]   # any Agent Client Protocol program
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }     # the agent's own model key
+sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/site] }   # run it in bubblewrap (acp only)
 ```
 
 `agent` actions name it with `connector: claude` and open one ACP session per run (the
 core is the client, protocol version 1). It serves no ops and emits no events, so `ops`
-and `emits` must be empty; `config`/`OA_CONFIG_JSON` are not needed. Same lifecycle as any
-process connector: crash backoff, `oa connector restart` to re-read a rotated key,
-stderr as `connector.output`; `oa connector list` shows `acp` as its transport. Other
+and `emits` must be empty; `config` is refused (no `OA_CONFIG_JSON`: configure the program
+through `env`). Same lifecycle as any process connector: crash backoff, `oa connector
+restart` to re-read a rotated key, stderr as `connector.output`; `oa connector list`
+shows `acp` as its transport and `sandbox=bwrap` when sandboxed.
+
+`sandbox` takes the same forms as on a `shell` action (`bwrap` or `{ backend: bwrap,
+ro_binds, rw_binds, extra_args }`) and is the trust boundary ARCHITECTURE §11 asks for:
+the program runs for its whole life inside bubblewrap with the OS and the install
+read-only, `defaults.agent.work_dir` the only writable path (every run's workspace and
+the program's home, `<work_dir>/home/<name>`, for npm and Claude Code caches), the
+listed binds, and nothing else: no core socket, no database, no config directory or
+secrets file (their directories are masked), no other process, an environment of
+`PATH`/`HOME`/`LANG`/`OA_HOME`/`OA_CONNECTOR_NAME` plus the manifest's `env`. Put every
+repository the tasks' `git-worktree` workspaces use in `ro_binds` (`rw_binds` only when
+the agent itself must commit); `oa validate` refuses a repository the sandbox cannot see,
+a bind or `work_dir` covering the daemon's files, and a `cwd` outside every bind. The
+network stays open (the model API). Needs `bubblewrap` on the host; otherwise the
+connector stays `down` with the spawn error. Other
 agents: Codex (`docs/examples/connectors.d/codex.yaml`: `@agentclientprotocol/codex-acp`,
 configured through the `CODEX_CONFIG` JSON in `env`, used with `unasked_execute:
 sandboxed` on the action), `gemini --experimental-acp`, and the list at
@@ -59,8 +75,10 @@ permission requests, so prefer agents that ask before acting.
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
 | `OA_CONFIG_JSON` | `config` as JSON, secrets rendered; read it once at start and delete it from the environment (`connectorEnv()` does) so child processes do not inherit it |
 
-Plus the manifest's `env`, on top of a minimal environment (`PATH`, `HOME`, …). Stderr
-lines are logged by the daemon as `connector.output`.
+Plus the manifest's `env`, on top of a minimal environment (`PATH`, `HOME`, …). An `acp`
+agent gets `OA_CONNECTOR_NAME` and its `env` only; sandboxed, also nothing of the
+daemon's environment beyond `PATH`, `HOME`, `LANG`, `OA_HOME`. Stderr lines are logged by
+the daemon as `connector.output`.
 
 ## The email connector (`connectors/email`)
 

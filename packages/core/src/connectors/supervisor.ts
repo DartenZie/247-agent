@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -10,6 +11,12 @@ import {
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
+import {
+  buildSandboxArgv,
+  type SandboxBackend,
+  type SandboxConfig,
+  type SandboxHost,
+} from '../actions/sandbox.js';
 import { NonRetryableError, type AgentClients, type ConnectorClients } from '../actions/types.js';
 import type { ConnectorConfig, Transport } from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
@@ -34,6 +41,8 @@ export interface SupervisorOptions {
   callTimeoutMs?: number;
   /** `defaults.agent` and the workspace root for `agent` runs on acp connectors. */
   agents?: { defaults: AgentDefaultsConfig; workDir: string } | undefined;
+  /** What a sandboxed agent program must not see and must see (fixed for the process). */
+  sandboxHost?: SandboxHost | undefined;
   metrics?: Metrics | undefined;
 }
 
@@ -51,6 +60,8 @@ export interface ConnectorHealth {
 export interface ConnectorStatus {
   name: string;
   transport: Transport;
+  /** `bwrap` when the core runs this agent program in bubblewrap (acp only). */
+  sandbox: SandboxBackend;
   state: ConnectorState;
   pid: number | null;
   restarts: number;
@@ -89,6 +100,22 @@ export class ConnectorDownError extends Error {
 
 /** How long a connector must stay up before its restart backoff resets. */
 const STABLE_MS = 30_000;
+
+/** The sandbox an acp manifest asks for; anything else runs as the daemon. */
+export function sandboxOf(m: ConnectorConfig): SandboxConfig | undefined {
+  return m.transport === 'acp' && m.sandbox !== undefined && m.sandbox.backend !== 'none'
+    ? m.sandbox
+    : undefined;
+}
+
+/**
+ * The home directory of a sandboxed agent program: inside `work_dir` (the one writable
+ * path) and outside every run's workspace, so its caches and settings (`~/.npm`,
+ * `~/.claude`) survive restarts and the retention sweep, which only takes `run_*` names.
+ */
+export function agentHome(workDir: string, connector: string): string {
+  return join(workDir, 'home', connector);
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -160,6 +187,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   private readonly log: Logger;
   private readonly metrics: Metrics;
   private readonly baseEnv: Record<string, string>;
+  private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
   private stopping = false;
 
@@ -169,6 +197,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
     this.baseEnv = opts.env ?? getDefaultEnvironment();
+    this.sandboxHost = opts.sandboxHost;
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
     this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
     this.agentWorkDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
@@ -185,10 +214,23 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     return this.agentWorkDir;
   }
 
-  /** Reload seam: `defaults.agent` and `work_dir` for runs that start from now on. */
-  configure(agents: { defaults: AgentDefaultsConfig; workDir: string }): void {
+  /**
+   * Reload seam: `defaults.agent` and `work_dir` for runs that start from now on. A
+   * sandboxed agent program has the old `work_dir` mounted as its only writable path, so
+   * a new one respawns every such connector (with freshly resolved secrets, like
+   * `restart`); the others are untouched.
+   */
+  async configure(agents: { defaults: AgentDefaultsConfig; workDir: string }): Promise<void> {
+    const moved = agents.workDir !== this.agentWorkDir;
     this.agentDefaults = agents.defaults;
     this.agentWorkDir = agents.workDir;
+    if (!moved) {
+      return;
+    }
+    const affected = [...this.managed.values()].filter((m) => sandboxOf(m.manifest) !== undefined);
+    await Promise.all(
+      affected.map((m) => this.restart(m.manifest.name, 'work_dir changed').catch(() => undefined)),
+    );
   }
 
   /** The manifests currently supervised. */
@@ -214,6 +256,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     return [...this.managed.values()].map((m) => ({
       name: m.manifest.name,
       transport: m.manifest.transport,
+      sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
       state: m.state,
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
@@ -300,13 +343,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
    * secret reaches a running connector (ARCHITECTURE §6). Deliberate, so the backoff
    * counter resets. Throws for an unknown name.
    */
-  async restart(name: string): Promise<ConnectorStatus> {
+  async restart(name: string, reason = 'requested'): Promise<ConnectorStatus> {
     const m = this.managed.get(name);
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${name}"`);
     }
     const log = this.log.child({ connector: name });
-    log.info('connector.restart_requested', {});
+    log.info('connector.restart_requested', { reason });
     await this.kill(m);
     m.restarts = 0;
     if (!this.stopping && this.current(m)) {
@@ -355,18 +398,68 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     }
   }
 
+  /**
+   * The child's environment, secrets rendered (ARCHITECTURE §6). An acp agent gets the
+   * manifest's `env` and its name but no `OA_CORE_SOCKET` and no `OA_CONFIG_JSON`: it
+   * runs sessions, not ops, and a sandboxed one cannot reach the socket anyway. A
+   * sandboxed agent gets no base environment either (bwrap clears it and sets `PATH`,
+   * `HOME` and `LANG` itself); `OA_HOME` is kept so bundled launchers still resolve.
+   */
   private childEnv(m: Managed): Record<string, string> {
     const refs = collectTemplateRefs({ config: m.manifest.config, env: m.manifest.env });
     const secrets = this.secrets.resolve(refs.secrets);
     const scope = { secrets, env: this.baseEnv };
-    const config = renderValue(m.manifest.config, scope);
     const env = renderValue(m.manifest.env, scope) as Record<string, string>;
+    if (m.manifest.transport === 'acp') {
+      const home = this.baseEnv.OA_HOME;
+      const base =
+        sandboxOf(m.manifest) === undefined
+          ? this.baseEnv
+          : home === undefined
+            ? {}
+            : { OA_HOME: home };
+      return { ...base, ...env, OA_CONNECTOR_NAME: m.manifest.name };
+    }
+    const config = renderValue(m.manifest.config, scope);
     return {
       ...this.baseEnv,
       ...env,
       OA_CORE_SOCKET: this.socketPath,
       OA_CONNECTOR_NAME: m.manifest.name,
       OA_CONFIG_JSON: JSON.stringify(config),
+    };
+  }
+
+  /**
+   * How an acp agent is started: as it is, or as `bwrap … -- <exec>` with `work_dir`
+   * writable, its home under it, the manifest's `cwd` (else that home) as cwd and the
+   * agent's environment set inside; bwrap itself runs with the base environment, which
+   * is where it is found on PATH.
+   */
+  private agentSpawn(
+    m: Managed,
+    env: Record<string, string>,
+  ): { exec: string[]; cwd: string | undefined; env: Record<string, string> } {
+    const exec = m.manifest.exec ?? [];
+    const sandbox = sandboxOf(m.manifest);
+    if (sandbox === undefined) {
+      return { exec, cwd: m.manifest.cwd, env };
+    }
+    const home = agentHome(this.agentWorkDir, m.manifest.name);
+    mkdirSync(home, { recursive: true });
+    return {
+      exec: buildSandboxArgv({
+        sandbox,
+        cmd: exec,
+        writable: this.agentWorkDir,
+        cwd: m.manifest.cwd ?? home,
+        home,
+        env,
+        host: this.sandboxHost,
+        hostEnv: this.baseEnv,
+      }),
+      cwd: undefined,
+      env: this.baseEnv,
     };
   }
 
@@ -450,7 +543,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     if (m.manifest.transport === 'acp') {
       let agent: AcpAgent;
       try {
-        agent = await AcpAgent.spawn({ exec: [command, ...args], cwd, env, log });
+        const spawn = this.agentSpawn(m, env);
+        agent = await AcpAgent.spawn({ exec: spawn.exec, cwd: spawn.cwd, env: spawn.env, log });
       } catch (err) {
         if (this.stillWanted(m, epoch)) {
           this.failed(m, `cannot start: ${errorMessage(err)}`, log);
@@ -518,6 +612,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     log.info('connector.up', {
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
+      sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
     });
     if (m.health !== null) {
       m.health = { ok: null, checked_at: null, failures: 0 };

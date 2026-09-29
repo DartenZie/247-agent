@@ -86,6 +86,7 @@ export type ConnectorEntry =
       name: string;
       builtin: 'poller';
       transport: 'none';
+      sandbox: 'none';
       state: 'up';
       pid: null;
       restarts: 0;
@@ -275,6 +276,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
     name: p.status().name,
     builtin: 'poller',
     transport: 'none',
+    sandbox: 'none',
     state: 'up',
     pid: null,
     restarts: 0,

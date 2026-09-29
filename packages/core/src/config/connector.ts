@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { Sandbox } from '../actions/sandbox.js';
 import { PollerConfig } from '../connectors/poller.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { DURATION } from './duration.js';
@@ -40,6 +41,14 @@ const ManifestFields = z.strictObject({
   config: z.record(z.string(), z.unknown()).default({}),
   /** Extra environment for the process. */
   env: z.record(z.string(), z.string()).default({}),
+  /**
+   * `acp` only: run the agent program in bubblewrap (§5.4, §11): the OS and the install
+   * read-only, `defaults.agent.work_dir` the only writable path (every run's workspace
+   * and the agent's own home, `<work_dir>/home/<name>`), the daemon's config, database
+   * and socket out of reach, other processes invisible. Repositories that `git-worktree`
+   * workspaces come from go in `ro_binds`. Default `none`: the program runs as the daemon.
+   */
+  sandbox: Sandbox.optional(),
   restart: z
     .strictObject({
       /** First delay after a crash; doubles up to `max`. */
@@ -155,6 +164,14 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
         });
       }
     }
+    if (m.builtin === undefined && Object.keys(m.config).length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['config'],
+        message:
+          'an acp connector gets no OA_CONFIG_JSON: configure the agent program through "env" (its model key and settings)',
+      });
+    }
     if (m.builtin !== undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -162,6 +179,14 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
         message: 'a built-in connector cannot be an acp agent',
       });
     }
+  }
+  if (m.sandbox !== undefined && m.sandbox.backend !== 'none' && m.transport !== 'acp') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['sandbox'],
+      message:
+        'only an acp connector (the agent program) can be sandboxed: a connector needs the core socket, which the sandbox hides',
+    });
   }
   if ((m.exec === undefined) === (m.builtin === undefined)) {
     ctx.addIssue({

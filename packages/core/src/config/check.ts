@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 
 import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
-import { checkLlmTasks } from './crosscheck.js';
+import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './crosscheck.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
@@ -84,13 +84,38 @@ export function checkConfigFile(path: string): FileCheck[] {
       }`,
     },
   ];
+  const connectors = loadConnectors(r.config.connectorPaths, r.config.connectors);
+  // What a sandboxed agent program may see (§11): judged with the manifests at hand.
+  const sandboxes: SandboxCheckContext = {
+    manifests: connectors.connectors ?? [],
+    defaultConnector: r.config.defaults.agent.connector,
+    workDir: r.config.workDir,
+    protected: [
+      { path: r.config.db, what: 'database' },
+      { path: r.config.socket, what: 'socket' },
+      { path: r.config.file, what: 'config file' },
+      ...(r.config.secrets.backend === 'file'
+        ? [
+            {
+              path: resolve(dirname(r.config.file), r.config.secrets.path),
+              what: 'secrets file',
+            },
+          ]
+        : []),
+    ],
+  };
+  const hostIssues = checkSandboxes([], sandboxes);
+  if (hostIssues.agent.length > 0) {
+    out[0] = fail(path, 'agent', hostIssues.agent);
+  }
   const tasks = loadTasks(r.config.tasks);
   for (const f of tasks.files) {
     if (!f.ok) {
       out.push(fail(f.file, 'tasks', f.issues));
       continue;
     }
-    // What the tasks file cannot know on its own: providers, prices and prompt files.
+    // What the tasks file cannot know on its own: providers, prices, prompt files and
+    // what a sandboxed agent program can see.
     const issues = checkLlmTasks(f.config.tasks, {
       providers: r.config.providers,
       pricing,
@@ -98,6 +123,7 @@ export function checkConfigFile(path: string): FileCheck[] {
       decideDefaults: r.config.defaults.decide,
       configDir: dirname(r.config.file),
     });
+    issues.push(...checkSandboxes(f.config.tasks, sandboxes).tasks);
     out.push(
       issues.length === 0
         ? {
@@ -109,15 +135,26 @@ export function checkConfigFile(path: string): FileCheck[] {
         : fail(f.file, 'tasks', issues),
     );
   }
-  const connectors = loadConnectors(r.config.connectorPaths, r.config.connectors);
   for (const f of connectors.files) {
+    const sandboxIssues = hostIssues.manifests
+      .filter((m) => m.file === f.file)
+      .flatMap((m) => m.issues);
     if (f.file === r.config.file) {
-      continue; // inline manifests were validated with agent.yaml itself
+      // Inline manifests were validated with agent.yaml itself; only their sandbox binds are new.
+      if (sandboxIssues.length > 0) {
+        const first = out[0];
+        out[0] = fail(path, 'agent', [
+          ...(first?.ok === false ? first.issues : []),
+          ...sandboxIssues,
+        ]);
+      }
+      continue;
     }
+    const issues = [...(f.ok ? [] : (f.issues ?? [])), ...sandboxIssues];
     out.push(
-      f.ok
+      issues.length === 0
         ? { ok: true, file: f.file, kind: 'connector', summary: `connector ${f.name ?? ''}` }
-        : fail(f.file, 'connector', f.issues ?? []),
+        : fail(f.file, 'connector', issues),
     );
   }
   return out;
