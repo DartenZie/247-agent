@@ -3,12 +3,17 @@ import { dirname } from 'node:path';
 import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { createApiServer, type ApiServer } from './api/server.js';
 import { systemClock, type Clock } from './clock.js';
-import { loadAgentFile, type AgentConfig, type AgentLoadResult } from './config/agent.js';
+import {
+  loadAgentFile,
+  protectedPaths,
+  type AgentConfig,
+  type AgentLoadResult,
+} from './config/agent.js';
 import { loadConnectors, type ConfigIssue } from './config/load.js';
 import { retentionPolicy } from './config/retention.js';
 import type { ApplyResult } from './connectors/supervisor.js';
 import type { AgentDefaultsConfig } from './actions/agent-config.js';
-import type { SandboxConfig } from './actions/sandbox.js';
+import { sandboxHost, type SandboxConfig } from './actions/sandbox.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
 import { createCore, type Core, type CoreLlmOptions } from './core.js';
@@ -205,9 +210,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   }
   const metrics = new Metrics();
 
+  // What no sandbox may see, and what every one needs: fixed like `db` and `secrets`.
+  const host = sandboxHost({ protected: protectedPaths(config), env });
+
   const core = createCore({
     ...coreSettings(config, read.pricing, opts.llmFactories),
     dbPath: config.db,
+    configFile: config.file,
+    sandboxHost: host,
     clock,
     log,
     metrics,

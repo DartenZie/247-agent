@@ -126,7 +126,7 @@ Full field list and runner notes in `references/agent-action.md`. The essentials
 ```yaml
 action:
   kind: agent
-  connector: claude                     # a transport: acp connector (connectors.d/claude.yaml)
+  connector: claude                     # a transport: acp connector (connectors.d/claude.yaml; sandbox: bwrap there)
   max_tool_calls: 20
   budget: { max_usd: 0.50 }
   workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/site, branch: main }

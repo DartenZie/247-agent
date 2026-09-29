@@ -376,13 +376,15 @@ exit code as a number (then a non-zero exit is a result, not a failure). A non-z
 in the other two modes fails the run with the tail of stderr in the error.
 
 `sandbox: bwrap` runs the command in bubblewrap: its own pid namespace, the OS
-(`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) read-only, a private `/tmp`, `cwd` as the only
-writable path (no `cwd` means the command runs in that `/tmp`), and an environment of
-just the action's `env` plus `PATH`, `HOME` and `LANG`. The daemon's socket, database
-and other processes are out of reach. `ro_binds`/`rw_binds` mount more host paths at the
-same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an offline step).
-The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox: none` on an action
-opts out. Needs the `bubblewrap` package (§8).
+(`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) and the install (`/opt/247-agent`, the
+daemon's Node) read-only, a private `/tmp`, `cwd` as the only writable path (no `cwd`
+means the command runs in that `/tmp`), and an environment of just the action's `env`
+plus `PATH`, `HOME` and `LANG`. The daemon's socket, database, config directory (with a
+`file` secrets backend) and other processes are out of reach: their directories are
+hidden even where `/etc` would show them. `ro_binds`/`rw_binds` mount more host paths
+at the same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an
+offline step). The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox:
+none` on an action opts out. Needs the `bubblewrap` package (9.2).
 
 ### 5.2 `connector`
 
@@ -545,13 +547,17 @@ data, not the examples. The whole request must fit in 32k tokens. Budgets, the l
 and `oa cost` work as for `llm`; no `pricing:` entry is needed.
 [`examples/decide-triage.yaml`](examples/decide-triage.yaml) is a complete example.
 
-### 5.7 `agent` (not runnable yet)
+### 5.7 `agent`
 
-Accepted by `oa validate` so a complete workflow can be written now;
-[`examples/website-updates.yaml`](examples/website-updates.yaml) shows the intended
-shape: a Claude Agent SDK loop in a fresh git worktree with `tools`, `bash_allow`,
-`max_turns`, a `budget`, a `RESULT.json` contract and deterministic `post` gates. A run
-fails today with "no runner". See ARCHITECTURE §5.4 for the full field list.
+One session on an ACP agent program (a `transport: acp` connector, 6.1) in a fresh git
+worktree or temp directory, with `tools`, `bash_allow`, `max_tool_calls`, a `budget`, a
+`RESULT.json` contract (`status: done | blocked`) and deterministic `post` gates;
+[`examples/website-updates.yaml`](examples/website-updates.yaml) shows the shape and
+ARCHITECTURE §5.4 has the full field list and the permission policy. Two layers confine
+it: the task's policy answers what the agent asks and judges what it did not ask, and
+the connector's `sandbox: bwrap` (6.1) keeps the program itself away from the daemon's
+socket, database, config and other processes. Use both: the policy alone only binds an
+agent that asks before acting.
 
 ## 6. Connectors
 
@@ -582,6 +588,32 @@ restart: { base: 1s, max: 60s }               # crash backoff, doubling
 
 `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only.
 
+An agent program is a manifest with `transport: acp`; it serves no ops, emits no events
+and takes no `config` (configure it through `env`). It should also carry a `sandbox`:
+
+```yaml
+name: claude
+exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+transport: acp
+env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
+sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }
+```
+
+`sandbox: bwrap` (same forms as on a `shell` action, 5.1; `acp` connectors only) runs
+the program in bubblewrap for its whole life: the OS and the install read-only,
+`defaults.agent.work_dir` the only writable path (every run's workspace, plus the
+program's own home `<work_dir>/home/<name>` where npm and Claude Code keep their
+caches), and the listed `ro_binds`/`rw_binds`. The daemon's socket, database, config
+directory and secrets file are unreachable, other processes invisible, and the
+environment holds only `PATH`, `HOME`, `LANG`, `OA_HOME`, `OA_CONNECTOR_NAME` and the
+manifest's `env`. List every repository the tasks' `git-worktree` workspaces come from in
+`ro_binds` (`rw_binds` only if the agent itself must commit; the reference workflow
+commits in a `post` gate instead): `oa validate` refuses a repository the sandbox cannot
+see, and a bind or `work_dir` that would show it the database, the socket, `agent.yaml`
+or the secrets file. The network is not restricted (the agent needs its model API).
+`oa connector list` shows `sandbox=bwrap`; without the `bubblewrap` package the spawn
+fails and the connector stays down with the error there.
+
 ### 6.2 Lifecycle
 
 The supervisor starts every connector with the daemon, restarts a crashed one with
@@ -593,6 +625,10 @@ top of a minimal one (`PATH`, `HOME`, …):
 | `OA_CORE_SOCKET` | The core's Unix socket |
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
 | `OA_CONFIG_JSON` | The manifest's `config` as JSON, secrets rendered |
+
+An `acp` agent program gets `OA_CONNECTOR_NAME` and its manifest's `env` only (no
+socket, no config), and a sandboxed one nothing of the daemon's environment besides
+`PATH`, `HOME`, `LANG` and `OA_HOME`.
 
 `connectorEnv()` deletes `OA_CONFIG_JSON` from the environment after reading it, so
 subprocesses the connector starts do not inherit the rendered secrets. Anything the
@@ -741,7 +777,8 @@ oa connector list [--json]
 oa connector restart <name> [--json]
 ```
 
-`list` shows every connector with its state, pid and restart count; built-in pollers
+`list` shows every connector with its state, transport, pid and restart count, plus
+`sandbox=bwrap` for an agent program the core runs in bubblewrap (6.1); built-in pollers
 appear with `builtin`. `restart` kills one supervised connector, resolves its secrets
 again and respawns it, so it is the step after rotating a secret. It exits 1 when the
 connector is not up afterwards. A built-in poller is refused, since it re-reads its
@@ -867,6 +904,13 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 ```
 
+`sandbox: bwrap` on shell actions (5.1) and agent programs (6.1) needs the `bubblewrap`
+package (`apt install bubblewrap`; the packages recommend it) and unprivileged user
+namespaces (`sysctl kernel.unprivileged_userns_clone=1` on older Debian). A setuid
+`bwrap` does not work under `NoNewPrivileges=yes`, and the unit must not set
+`RestrictNamespaces=`. Directories a sandboxed step or agent writes to still need
+`ReadWritePaths=`; `work_dir` under `/var/lib/247-agent` is already covered.
+
 Secrets go in a drop-in (`systemctl edit 247-agent`), one `LoadCredential=` per name the
 tasks and manifests use:
 
@@ -948,8 +992,11 @@ bot for the approval gate, [`connectors/chat/README.md`](../connectors/chat/READ
 Done since as well: retention (9.4), `/metrics` and `oa metrics`, connector health
 checks (6.2), and the full config reload (`oa reload`, 9.3).
 
+Done since as well: sandboxing of the agent program (`sandbox: bwrap` on an `acp`
+manifest, 6.1).
+
 Not implemented yet: `oa runs|events`, `batch: true` for `llm`, a Matrix backend for
-`chat`, sandboxing of the agent program by the core.
+`chat`, a network allowlist for sandboxed agents.
 
 ## 11. Troubleshooting
 

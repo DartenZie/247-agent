@@ -261,3 +261,149 @@ describe('health checks in a manifest', () => {
     ]);
   });
 });
+
+describe('sandbox in a manifest', () => {
+  const ACP = { name: 'claude', exec: ['claude-agent-acp'], transport: 'acp' };
+
+  it('is accepted on an acp connector in both forms', () => {
+    const short = parseManifest({ ...ACP, sandbox: 'bwrap' }, '/x/c.yaml');
+    expect(short.ok && short.config.sandbox).toEqual({
+      backend: 'bwrap',
+      extra_args: [],
+      ro_binds: [],
+      rw_binds: [],
+    });
+    const long = parseManifest(
+      { ...ACP, sandbox: { backend: 'bwrap', ro_binds: ['/srv/site'] } },
+      '/x/c.yaml',
+    );
+    expect(long.ok && long.config.sandbox?.ro_binds).toEqual(['/srv/site']);
+    expect(issues({ ...ACP, sandbox: 'firejail' })).toEqual([
+      expect.stringMatching(/^sandbox/) as string,
+    ]);
+  });
+
+  it('is refused on connectors that need the core socket, unless it is none', () => {
+    for (const transport of ['stdio', 'none']) {
+      expect(issues({ name: 'c', exec: ['x'], transport, sandbox: 'bwrap' })).toEqual([
+        expect.stringMatching(/^sandbox: only an acp connector/) as string,
+      ]);
+      expect(issues({ name: 'c', exec: ['x'], transport, sandbox: 'none' })).toEqual([]);
+    }
+  });
+
+  it('refuses config on an acp connector, which gets no OA_CONFIG_JSON', () => {
+    expect(issues({ ...ACP, config: { model: 'x' } })).toEqual([
+      expect.stringMatching(/^config: an acp connector gets no OA_CONFIG_JSON/) as string,
+    ]);
+  });
+});
+
+describe('oa validate with a sandboxed agent program', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'oa-sbx-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const write = (name: string, text: string): string => {
+    const file = join(dir, name);
+    writeFileSync(file, text);
+    return file;
+  };
+  const tasks = (repo: string): void => {
+    write(
+      'tasks.yaml',
+      `tasks:
+  - name: edit
+    trigger: { kind: manual }
+    action:
+      kind: agent
+      workspace: { kind: git-worktree, repo: ${repo} }
+      tools: [read, edit]
+      prompt: do it
+`,
+    );
+  };
+
+  it('passes when the repo is bound and nothing of the daemon is', () => {
+    tasks('/srv/repos/site');
+    write(
+      'claude.yaml',
+      'name: claude\nexec: [claude-agent-acp]\ntransport: acp\nsandbox: { backend: bwrap, ro_binds: [/srv/repos/site] }\n',
+    );
+    const agent = write(
+      'agent.yaml',
+      'db: state.db\ntasks: tasks.yaml\nconnectors: [claude.yaml]\ndefaults: { agent: { connector: claude } }\n',
+    );
+    expect(checkConfigFile(agent).map((c) => (c.ok ? c.summary : c.issues))).toEqual([
+      expect.stringContaining('connectors') as string,
+      '1 tasks',
+      'connector claude',
+    ]);
+  });
+
+  it('reports an unbound repo, a bind over the daemon files and a work_dir holding them', () => {
+    tasks('/srv/repos/site');
+    write(
+      'claude.yaml',
+      `name: claude\nexec: [claude-agent-acp]\ntransport: acp\ncwd: /elsewhere\nsandbox: { backend: bwrap, ro_binds: [${dir}] }\n`,
+    );
+    const agent = write(
+      'agent.yaml',
+      'db: state.db\ntasks: tasks.yaml\nconnectors: [claude.yaml]\nsecrets: { backend: file, path: secrets.yaml }\ndefaults: { agent: { connector: claude, work_dir: . } }\n',
+    );
+    const checks = checkConfigFile(agent);
+    const byFile = Object.fromEntries(
+      checks.map((c) => [c.file.slice(dir.length + 1), c.ok ? 'ok' : c.issues]),
+    );
+    // The socket keeps its default path under /run, so it is neither in work_dir nor in the bind.
+    expect(byFile['agent.yaml']).toEqual(
+      ['database', 'config file', 'secrets file'].map((what) => ({
+        path: 'defaults.agent.work_dir',
+        message: expect.stringMatching(`contains the ${what}`) as string,
+      })),
+    );
+    expect(byFile['tasks.yaml']).toEqual([
+      {
+        path: 'tasks[0].action.workspace.repo',
+        message: expect.stringMatching(
+          /\/srv\/repos\/site is not visible to the sandboxed agent program "claude": add it to sandbox.ro_binds/,
+        ) as string,
+      },
+    ]);
+    expect(byFile['claude.yaml']).toEqual([
+      ...['database', 'config file', 'secrets file'].map((what) => ({
+        path: 'sandbox.ro_binds[0]',
+        message: expect.stringMatching(`expose the ${what}`) as string,
+      })),
+      { path: 'cwd', message: expect.stringMatching(/not visible inside the sandbox/) as string },
+    ]);
+  });
+
+  it('checks an inline manifest and does not care about unsandboxed agents', () => {
+    tasks('/srv/repos/site');
+    const agent = write(
+      'agent.yaml',
+      `db: state.db
+tasks: tasks.yaml
+defaults: { agent: { connector: claude } }
+connectors:
+  - { name: claude, exec: [claude-agent-acp], transport: acp, sandbox: { backend: bwrap, ro_binds: [${dir}] } }
+  - { name: codex, exec: [codex-acp], transport: acp }
+`,
+    );
+    const [first] = checkConfigFile(agent);
+    // The bind covers the database and agent.yaml in `dir`; the socket has its default path elsewhere.
+    expect(first?.ok === false && first.issues.map((i) => i.path)).toEqual([
+      'sandbox.ro_binds[0]',
+      'sandbox.ro_binds[0]',
+    ]);
+    const plain = write(
+      'agent.yaml',
+      'db: state.db\ntasks: tasks.yaml\ndefaults: { agent: { connector: codex } }\nconnectors:\n  - { name: codex, exec: [codex-acp], transport: acp }\n',
+    );
+    expect(checkConfigFile(plain).every((c) => c.ok)).toBe(true);
+  });
+});

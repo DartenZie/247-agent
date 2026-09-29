@@ -57,7 +57,9 @@ skills/                      agent skills for working with 247-agent (linked fro
   and command allowlist enforced through ACP permission requests, produce a `RESULT.json`
   with `status: done | blocked` and `summary` (plus the task's schema), and pass
   deterministic `post` gates only when `done`; `blocked` still succeeds so `emit` can
-  route it. Agents never hold deploy secrets and never publish.
+  route it. Agents never hold deploy secrets and never publish. The agent program itself
+  runs in bubblewrap when its `acp` manifest says `sandbox: bwrap` (`work_dir` writable,
+  the daemon's config, db and socket hidden); only `acp` connectors may be sandboxed.
 - Secrets are resolved by name from the configured backend at run time. Never write them
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and

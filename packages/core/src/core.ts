@@ -4,7 +4,7 @@ import { runConnector } from './actions/connector.js';
 import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
 import { runSequence } from './actions/sequence.js';
-import type { SandboxConfig } from './actions/sandbox.js';
+import type { SandboxConfig, SandboxHost } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
 import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { runWait } from './actions/wait.js';
@@ -13,8 +13,8 @@ import { runTaskManually, type ManualInput } from './bus/manual.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
-import { checkLlmTasks } from './config/crosscheck.js';
-import { loadTasks, type TasksLoadResult } from './config/load.js';
+import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './config/crosscheck.js';
+import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
@@ -60,6 +60,10 @@ export interface CoreOptions {
   defaultRetry?: RetryConfig;
   /** For `shell` actions without `sandbox`. */
   defaultSandbox?: SandboxConfig;
+  /** What every sandbox (shell or agent program) hides and shows on this host; fixed for the process. */
+  sandboxHost?: SandboxHost;
+  /** The agent.yaml the settings came from, named in issues about it; defaults to none. */
+  configFile?: string;
   /** Action runners by kind; defaults to the built-in ones. */
   runners?: ActionRunners;
   /** `${secrets.<name>}` backend; defaults to one with no secrets. */
@@ -224,6 +228,7 @@ export function createCore(opts: CoreOptions): Core {
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
   let tasksFiles = opts.tasksFiles;
   let llmOptions = opts.llm;
+  let defaultSandbox = opts.defaultSandbox;
   let startedAt: Date | undefined;
 
   let supervisor: ConnectorSupervisor | undefined;
@@ -249,6 +254,7 @@ export function createCore(opts: CoreOptions): Core {
           metrics,
           agents:
             opts.agents === undefined || isAgentClients(opts.agents) ? undefined : opts.agents,
+          sandboxHost: opts.sandboxHost,
         });
         connectors = supervisor;
         agents ??= supervisor;
@@ -308,6 +314,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
     ...(opts.defaultRetry === undefined ? {} : { defaultRetry: opts.defaultRetry }),
     ...(opts.defaultSandbox === undefined ? {} : { defaultSandbox: opts.defaultSandbox }),
+    ...(opts.sandboxHost === undefined ? {} : { sandboxHost: opts.sandboxHost }),
   });
 
   const retention =
@@ -359,11 +366,31 @@ export function createCore(opts: CoreOptions): Core {
     metrics.dbSize.set(undefined, pageCount * pageSize);
   });
 
+  /** What the sandbox check judges the tasks against: the manifests and agent settings that will be active. */
+  const sandboxContext = (
+    ms: readonly ConnectorConfig[],
+    ag: { defaults: AgentDefaultsConfig; workDir: string } | undefined,
+    shellSandbox: SandboxConfig | undefined,
+  ): SandboxCheckContext | undefined =>
+    ag === undefined
+      ? undefined
+      : {
+          manifests: ms,
+          defaultConnector: ag.defaults.connector,
+          workDir: ag.workDir,
+          protected: opts.sandboxHost?.protected ?? [],
+          defaultSandbox: shellSandbox,
+        };
+
   /** Loads and cross-checks the tasks files without applying anything. */
-  const load = (files: string[], against: CoreLlmOptions | undefined): TasksLoadResult => {
+  const load = (
+    files: string[],
+    against: CoreLlmOptions | undefined,
+    sandboxes: SandboxCheckContext | undefined,
+  ): TasksLoadResult => {
     let result = loadTasks(files);
-    if (result.ok && result.config !== undefined && against !== undefined) {
-      result = crossCheck(result, result.config.tasks, against);
+    if (result.ok && result.config !== undefined) {
+      result = crossCheck(result, result.config.tasks, against, sandboxes, opts.configFile);
     }
     return result;
   };
@@ -420,7 +447,16 @@ export function createCore(opts: CoreOptions): Core {
   const reload = async (next: CoreReloadOptions = {}): Promise<ReloadResult> => {
     const files = next.tasksFiles ?? tasksFiles;
     const nextLlm = next.llm ?? llmOptions;
-    const result = load(files, nextLlm);
+    const nextSandbox = 'defaultSandbox' in next ? next.defaultSandbox : defaultSandbox;
+    const result = load(
+      files,
+      nextLlm,
+      sandboxContext(
+        next.connectors !== undefined && supervisor !== undefined ? next.connectors : manifests,
+        next.agents ?? agents,
+        nextSandbox,
+      ),
+    );
     if (!result.ok) {
       metrics.configReloads.inc({ result: 'invalid' });
       log.error('core.config_invalid', {
@@ -432,6 +468,7 @@ export function createCore(opts: CoreOptions): Core {
       return result;
     }
     tasksFiles = files;
+    defaultSandbox = nextSandbox;
     if (next.llm !== undefined && llm !== undefined) {
       llmOptions = next.llm;
       llm.configure({
@@ -453,7 +490,7 @@ export function createCore(opts: CoreOptions): Core {
       bus.dispatcher.configure({ maxDepth: next.maxEventDepth });
     }
     if (next.agents !== undefined) {
-      supervisor?.configure(next.agents);
+      await supervisor?.configure(next.agents);
     }
     let applied: ApplyResult | undefined;
     if (next.connectors !== undefined && supervisor !== undefined) {
@@ -489,7 +526,11 @@ export function createCore(opts: CoreOptions): Core {
     retention,
     config: () => compiled,
     start: async () => {
-      const result = load(tasksFiles, llmOptions);
+      const result = load(
+        tasksFiles,
+        llmOptions,
+        sandboxContext(manifests, agents, defaultSandbox),
+      );
       if (!result.ok) {
         throw new ConfigLoadError(result);
       }
@@ -540,14 +581,38 @@ function joined(names: readonly string[] | undefined): string | null {
   return names === undefined || names.length === 0 ? null : names.join(',');
 }
 
-/** Applies `checkLlmTasks` to a merged load; an issue fails the file its task came from. */
+/**
+ * Applies `checkLlmTasks` and `checkSandboxes` to a merged load; an issue on a task fails
+ * the file the task came from, one on a manifest or on agent.yaml is reported under that
+ * file.
+ */
 function crossCheck(
   result: TasksLoadResult,
   tasks: readonly CompiledConfig['tasks'][number]['config'][],
-  llm: CoreLlmOptions,
+  llm: CoreLlmOptions | undefined,
+  sandboxes: SandboxCheckContext | undefined,
+  configFile: string | undefined,
 ): TasksLoadResult {
-  const issues = checkLlmTasks(tasks, llm);
-  if (issues.length === 0) {
+  const issues = llm === undefined ? [] : checkLlmTasks(tasks, llm);
+  const sb = sandboxes === undefined ? undefined : checkSandboxes(tasks, sandboxes);
+  issues.push(...(sb?.tasks ?? []));
+  // One entry per file: an inline manifest's issues and agent.yaml's own share a file.
+  const byFile = new Map<string, ConfigIssue[]>();
+  const under = (file: string, list: ConfigIssue[]): void => {
+    if (list.length > 0) {
+      byFile.set(file, [...(byFile.get(file) ?? []), ...list]);
+    }
+  };
+  for (const m of sb?.manifests ?? []) {
+    under(m.file, m.issues);
+  }
+  under(configFile ?? 'agent.yaml', sb?.agent ?? []);
+  const extra: TasksLoadResult['files'] = [...byFile].map(([file, list]) => ({
+    ok: false as const,
+    file,
+    issues: list,
+  }));
+  if (issues.length === 0 && extra.length === 0) {
     return result;
   }
   // Issue paths index the merged list; map each back to its file's own index.
@@ -565,7 +630,7 @@ function crossCheck(
     });
     return own.length === 0 ? f : { ok: false as const, file: f.file, issues: own };
   });
-  return { ok: false, files };
+  return { ok: false, files: [...files, ...extra] };
 }
 
 /** Connector names an action (or its sequence steps) calls ops on; `agent` connectors are checked separately. */

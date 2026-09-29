@@ -163,6 +163,19 @@ export {
   type ToolKind,
 } from './connectors/acp-types.js';
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
+export {
+  buildSandboxArgv,
+  canonicalPath,
+  isInsidePath,
+  NO_HOST,
+  Sandbox,
+  sandboxHost,
+  type ProtectedPath,
+  type SandboxArgvOptions,
+  type SandboxBackend,
+  type SandboxConfig,
+  type SandboxHost,
+} from './actions/sandbox.js';
 export { runConnector, ConnectorAction, type ConnectorActionConfig } from './actions/connector.js';
 export { runLlm, LlmAction, type LlmActionConfig } from './actions/llm.js';
 export {
