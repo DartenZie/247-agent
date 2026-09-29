@@ -86,9 +86,20 @@ export const PERMISSION_CANCELLED = 'cancelled';
 /** Answers a permission request with an option id, or `PERMISSION_CANCELLED`. */
 export type PermissionHandler = (req: PermissionRequest) => string;
 
+/** An MCP server the agent launches over stdio for the session (ACP `McpServerStdio`). */
+export interface McpServerLaunch {
+  name: string;
+  /** Absolute path of the program. */
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export interface AgentSessionOptions {
   /** Absolute path the session works in (the run's workspace). */
   cwd: string;
+  /** MCP servers offered to the session (`session/new` `mcpServers`); none by default. */
+  mcpServers?: readonly McpServerLaunch[] | undefined;
   onPermission: PermissionHandler;
   /** The run's signal; pending permission requests answer `cancelled` once it aborts. */
   signal: AbortSignal;

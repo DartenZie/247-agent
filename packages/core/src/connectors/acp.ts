@@ -340,10 +340,20 @@ export class AcpAgent {
   }
 
   async openSession(opts: AgentSessionOptions): Promise<AgentSession> {
-    const active = await this.conn.agent.buildSession({ cwd: opts.cwd, mcpServers: [] }).start();
+    const mcpServers = (opts.mcpServers ?? []).map((m) => ({
+      name: m.name,
+      command: m.command,
+      args: m.args,
+      env: Object.entries(m.env).map(([name, value]) => ({ name, value })),
+    }));
+    const active = await this.conn.agent.buildSession({ cwd: opts.cwd, mcpServers }).start();
     const id = active.sessionId;
     this.sessions.set(id, { onPermission: opts.onPermission, signal: opts.signal });
-    opts.log.info('agent.session_opened', { session_id: id, agent: this.info.name });
+    opts.log.info('agent.session_opened', {
+      session_id: id,
+      agent: this.info.name,
+      mcp_servers: mcpServers.length === 0 ? null : mcpServers.map((m) => m.name).join(','),
+    });
     return new AcpSession(this.conn, active, () => {
       this.sessions.delete(id);
     });

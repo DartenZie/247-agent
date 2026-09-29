@@ -1,5 +1,6 @@
 import type { TaskConfig } from '../config/schema.js';
 import type { AgentInfo, AgentSession, AgentSessionOptions } from '../connectors/acp-types.js';
+import type { ToolGrant } from '../connectors/mcp-bridge.js';
 import { renderText, renderValue, type TemplateScope } from '../expr/template.js';
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
@@ -21,6 +22,12 @@ export interface ConnectorClients {
   ): Promise<JsonValue>;
 }
 
+/** How the `agent` action opens a session: the ACP options plus the connector ops it may call as tools. */
+export interface AgentOpenOptions extends AgentSessionOptions {
+  /** `mcp_servers`: `stdio` connectors served to the session through the tool bridge (§6). */
+  tools?: readonly ToolGrant[] | undefined;
+}
+
 /**
  * ACP agents (`transport: acp` connectors) as the `agent` action opens sessions on them
  * (ARCHITECTURE §5.4). The supervisor implements it next to `ConnectorClients`.
@@ -32,8 +39,11 @@ export interface AgentClients {
   readonly workDir: string;
   /** Names of the configured acp connectors. */
   agentNames(): string[];
-  /** Throws `NonRetryableError` for an unknown or non-acp name, `ConnectorDownError` when it is not up. */
-  open(connector: string, opts: AgentSessionOptions): Promise<AgentSession>;
+  /**
+   * Throws `NonRetryableError` for an unknown or non-acp name (or a granted tool connector
+   * that is unknown or serves no ops), `ConnectorDownError` when one of them is not up.
+   */
+  open(connector: string, opts: AgentOpenOptions): Promise<AgentSession>;
   /** What the agent said about itself at `initialize`; `undefined` until it is up. */
   info(connector: string): AgentInfo | undefined;
 }

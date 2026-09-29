@@ -8,6 +8,7 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
@@ -17,7 +18,12 @@ import {
   type SandboxConfig,
   type SandboxHost,
 } from '../actions/sandbox.js';
-import { NonRetryableError, type AgentClients, type ConnectorClients } from '../actions/types.js';
+import {
+  NonRetryableError,
+  type AgentClients,
+  type AgentOpenOptions,
+  type ConnectorClients,
+} from '../actions/types.js';
 import type { ConnectorConfig, Transport } from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
@@ -26,8 +32,9 @@ import { Metrics } from '../metrics.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
-import type { AgentInfo, AgentSession, AgentSessionOptions } from './acp-types.js';
+import type { AgentInfo, AgentSession } from './acp-types.js';
 import { AcpAgent, pipeLines } from './acp.js';
+import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
 
 export interface SupervisorOptions {
   manifests: readonly ConnectorConfig[];
@@ -178,7 +185,7 @@ function newManaged(manifest: ConnectorConfig): Managed {
  * the executor. Secrets named in a manifest's `config`/`env` are resolved at spawn time
  * and reach the child only through its environment.
  */
-export class ConnectorSupervisor implements ConnectorClients, AgentClients {
+export class ConnectorSupervisor implements ConnectorClients, AgentClients, ConnectorTools {
   private agentDefaults: AgentDefaultsConfig;
   private agentWorkDir: string;
   private readonly managed = new Map<string, Managed>();
@@ -265,7 +272,12 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     }));
   }
 
-  async open(connector: string, opts: AgentSessionOptions): Promise<AgentSession> {
+  /**
+   * Opens a session on an acp agent. With `tools` (the action's `mcp_servers`), a tool
+   * bridge is opened for the session under `<work_dir>/.mcp` and offered to the agent as
+   * its MCP servers; it closes with the session.
+   */
+  async open(connector: string, opts: AgentOpenOptions): Promise<AgentSession> {
     const m = this.managed.get(connector);
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${connector}"`);
@@ -275,10 +287,40 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
         `connector "${connector}" is not an acp agent (transport ${m.manifest.transport})`,
       );
     }
-    if (m.acp === undefined || m.state !== 'up') {
+    const acp = m.acp;
+    if (acp === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
-    return m.acp.openSession(opts);
+    const { tools = [], ...session } = opts;
+    if (tools.length === 0) {
+      return acp.openSession(session);
+    }
+    for (const grant of tools) {
+      this.opsClient(grant.connector);
+    }
+    const bridge = await openToolBridge({
+      grants: tools,
+      tools: this,
+      dir: join(this.agentWorkDir, '.mcp'),
+      signal: opts.signal,
+      log: opts.log,
+    });
+    let opened: AgentSession;
+    try {
+      opened = await acp.openSession({ ...session, mcpServers: bridge.servers });
+    } catch (err) {
+      await bridge.close();
+      throw err;
+    }
+    return {
+      sessionId: opened.sessionId,
+      prompt: (text) => opened.prompt(text),
+      cancel: () => opened.cancel(),
+      close: () => {
+        opened.close();
+        void bridge.close();
+      },
+    };
   }
 
   /** Spawns every connector; a failed spawn is logged and retried with backoff. */
@@ -368,6 +410,67 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     args: Record<string, JsonValue>,
     opts: { signal: AbortSignal; timeoutMs?: number | undefined },
   ): Promise<JsonValue> {
+    return toolResultToJson(connector, op, await this.callTool(connector, op, args, opts));
+  }
+
+  /**
+   * One op, its MCP result as returned (an `isError` result is counted as an error but not
+   * thrown). The manifest's `ops` allowlist applies. Serves `call` and the tool bridge.
+   */
+  async callTool(
+    connector: string,
+    op: string,
+    args: Record<string, unknown>,
+    opts: { signal: AbortSignal; timeoutMs?: number | undefined },
+  ): Promise<CallToolResult> {
+    const m = this.managed.get(connector);
+    if (
+      m?.manifest.transport === 'stdio' &&
+      m.manifest.ops.length > 0 &&
+      !m.manifest.ops.includes(op)
+    ) {
+      throw new ConnectorOpError(connector, op, "not in the manifest's ops");
+    }
+    const client = this.opsClient(connector, op);
+    const startedAt = Date.now();
+    try {
+      const result = (await client.callTool({ name: op, arguments: args }, undefined, {
+        signal: opts.signal,
+        timeout: opts.timeoutMs ?? this.callTimeoutMs,
+      })) as CallToolResult;
+      this.metrics.connectorOps.inc({
+        connector,
+        op,
+        result: result.isError === true ? 'error' : 'ok',
+      });
+      return result;
+    } catch (err) {
+      this.metrics.connectorOps.inc({ connector, op, result: 'error' });
+      throw err;
+    } finally {
+      this.metrics.connectorOpDuration.observe({ connector, op }, (Date.now() - startedAt) / 1000);
+    }
+  }
+
+  /** The connector's tools that its manifest's `ops` let the core call (all of them for `ops: []`). */
+  async listTools(connector: string, opts: { signal: AbortSignal }): Promise<Tool[]> {
+    const client = this.opsClient(connector);
+    const ops = this.managed.get(connector)?.manifest.ops ?? [];
+    const tools: Tool[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.listTools(cursor === undefined ? {} : { cursor }, {
+        signal: opts.signal,
+        timeout: this.callTimeoutMs,
+      });
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return ops.length === 0 ? tools : tools.filter((t) => ops.includes(t.name));
+  }
+
+  /** The MCP client of a `stdio` connector that is up; throws the errors `call` documents. */
+  private opsClient(connector: string, op = '*'): Client {
     const m = this.managed.get(connector);
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${connector}"`);
@@ -375,27 +478,10 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     if (m.manifest.transport !== 'stdio') {
       throw new ConnectorOpError(connector, op, 'this connector serves no ops');
     }
-    if (m.manifest.ops.length > 0 && !m.manifest.ops.includes(op)) {
-      throw new ConnectorOpError(connector, op, "not in the manifest's ops");
-    }
     if (m.client === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
-    const startedAt = Date.now();
-    try {
-      const result = await m.client.callTool({ name: op, arguments: args }, undefined, {
-        signal: opts.signal,
-        timeout: opts.timeoutMs ?? this.callTimeoutMs,
-      });
-      const value = toolResultToJson(connector, op, result);
-      this.metrics.connectorOps.inc({ connector, op, result: 'ok' });
-      return value;
-    } catch (err) {
-      this.metrics.connectorOps.inc({ connector, op, result: 'error' });
-      throw err;
-    } finally {
-      this.metrics.connectorOpDuration.observe({ connector, op }, (Date.now() - startedAt) / 1000);
-    }
+    return m.client;
   }
 
   /**

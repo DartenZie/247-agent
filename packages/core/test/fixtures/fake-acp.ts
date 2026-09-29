@@ -6,6 +6,10 @@
  *   [[run: npm run build]]   one `execute` tool call for that command, after asking permission
  *   [[edit: path]]           one `edit` tool call on <cwd>/path (asks permission; writes the file if allowed)
  *   [[tools: N]]             N `read` tool calls with no permission request
+ *   [[mcp: server op {...}]] after asking permission (kind `other`), launch the session's MCP
+ *                            server `server` (from session/new), list its tools, call `op` with
+ *                            the JSON args and write {tools, result} (or {tools, error}) to
+ *                            <cwd>/MCP_RESULT.json
  *   [[result: {...}]]        write that JSON as RESULT.json in cwd (a nudge turn writes a default one
  *                            unless the first prompt said [[never-result]])
  *   [[cost: 0.25]]           this turn's cost (default 0.01); reported as cumulative session cost
@@ -27,10 +31,14 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
   type AgentContext,
+  type McpServer,
 } from '@agentclientprotocol/sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 interface Session {
   cwd: string;
+  mcpServers: McpServer[];
   cancelled: boolean;
   costUsd: number;
   neverResult: boolean;
@@ -56,7 +64,7 @@ async function askPermission(
   call: {
     toolCallId: string;
     title: string;
-    kind: 'execute' | 'edit';
+    kind: 'execute' | 'edit' | 'other';
     rawInput?: unknown;
     locations?: { path: string }[];
   },
@@ -85,6 +93,7 @@ const app = agent({ name: 'fake-acp' })
     const sessionId = `sess_${String(counter)}`;
     sessions.set(sessionId, {
       cwd: ctx.params.cwd,
+      mcpServers: ctx.params.mcpServers,
       cancelled: false,
       costUsd: 0,
       neverResult: false,
@@ -193,6 +202,53 @@ const app = agent({ name: 'fake-acp' })
         sessionUpdate: 'tool_call_update',
         toolCallId,
         status: ok ? 'completed' : 'failed',
+      });
+    }
+
+    const mcp = /\[\[mcp:\s*(\S+)\s+(\S+)\s*(\{[\s\S]*?\})?\s*\]\]/.exec(prompt);
+    if (mcp !== null) {
+      const [, server = '', op = '', args = '{}'] = mcp;
+      const toolCallId = `call_${String(++counter)}`;
+      const title = `mcp__${server}__${op}`;
+      await update({
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title,
+        kind: 'other',
+        status: 'pending',
+      });
+      const ok = await askPermission(client, sessionId, { toolCallId, title, kind: 'other' });
+      const out: Record<string, unknown> = {};
+      const spec = s.mcpServers.find((m) => m.name === server);
+      if (!ok) {
+        out.error = 'permission refused';
+      } else if (spec === undefined || !('command' in spec)) {
+        out.error = `no stdio MCP server "${server}" in session/new`;
+      } else {
+        const mcpClient = new Client({ name: 'fake-acp', version: '0.1.0' });
+        try {
+          await mcpClient.connect(
+            new StdioClientTransport({
+              command: spec.command,
+              args: spec.args,
+              env: Object.fromEntries(spec.env.map((e) => [e.name, e.value])),
+              stderr: 'inherit',
+            }),
+          );
+          out.tools = (await mcpClient.listTools()).tools.map((t) => t.name);
+          out.result = await mcpClient.callTool({ name: op, arguments: JSON.parse(args) });
+        } catch (err) {
+          out.error = err instanceof Error ? err.message : String(err);
+        } finally {
+          await mcpClient.close();
+        }
+      }
+      writeFileSync(resolve(s.cwd, 'MCP_RESULT.json'), JSON.stringify(out) + '\n');
+      process.stderr.write(`fake-acp mcp ${server}.${op} ${JSON.stringify(out).slice(0, 300)}\n`);
+      await update({
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: out.error === undefined ? 'completed' : 'failed',
       });
     }
 

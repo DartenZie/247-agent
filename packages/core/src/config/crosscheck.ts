@@ -126,6 +126,48 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
   return issues;
 }
 
+/**
+ * An `agent` task's `mcp_servers` (§5.4, §6) name process connectors that serve ops
+ * (`transport: stdio`), and any ops they list are in the manifest's own `ops` when it
+ * has some: the tool bridge serves nothing else. Run with the manifests at daemon start,
+ * on reload and by `oa validate agent.yaml`.
+ */
+export function checkAgentTools(
+  tasks: readonly TaskConfig[],
+  manifests: readonly ConnectorConfig[],
+): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  tasks.forEach((task, i) => {
+    const a = task.action;
+    if (a.kind !== 'agent') {
+      return;
+    }
+    a.mcp_servers.forEach((grant, j) => {
+      const path = `tasks[${String(i)}].action.mcp_servers[${String(j)}]`;
+      const m = manifests.find((x) => x.name === grant.connector);
+      if (m === undefined) {
+        issues.push({ path, message: `unknown connector "${grant.connector}"` });
+        return;
+      }
+      if (m.transport !== 'stdio' || m.builtin !== undefined) {
+        issues.push({
+          path,
+          message: `connector "${m.name}" serves no ops (${m.builtin === undefined ? `transport ${m.transport}` : `built-in ${m.builtin}`}); only a stdio connector can be an agent's tools`,
+        });
+        return;
+      }
+      const missing = m.ops.length === 0 ? [] : grant.ops.filter((op) => !m.ops.includes(op));
+      if (missing.length > 0) {
+        issues.push({
+          path: `${path}.ops`,
+          message: `not in the ops of connector "${m.name}" (${m.file}): ${missing.join(', ')}`,
+        });
+      }
+    });
+  });
+  return issues;
+}
+
 /** What `checkSandboxes` needs from agent.yaml and the manifests. */
 export interface SandboxCheckContext {
   manifests: readonly ConnectorConfig[];

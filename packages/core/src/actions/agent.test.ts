@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   AgentInfo,
   AgentSession,
-  AgentSessionOptions,
   AgentStop,
   AgentUpdate,
   PermissionHandler,
@@ -22,7 +21,12 @@ import type { NewTranscriptEntry } from '../store/transcripts.js';
 import { AgentAction, runAgent } from './agent.js';
 import { readAgentResult, resultInstructions } from './agent-result.js';
 import { testContext } from './testing.js';
-import { NonRetryableError, type ActionContext, type AgentClients } from './types.js';
+import {
+  NonRetryableError,
+  type ActionContext,
+  type AgentClients,
+  type AgentOpenOptions,
+} from './types.js';
 
 /** What a scripted turn can do: see the prompt, the cwd, ask permission, notice a cancel. */
 interface TurnEnv {
@@ -35,7 +39,7 @@ interface TurnEnv {
 type Turn = (env: TurnEnv) => AsyncGenerator<AgentUpdate, AgentStop, undefined>;
 
 interface FakeAgents extends AgentClients {
-  opened: AgentSessionOptions[];
+  opened: AgentOpenOptions[];
   prompts: string[];
   cancels: number;
   closed: number;
@@ -149,7 +153,24 @@ describe('AgentAction schema', () => {
     expect(AgentAction.safeParse({ ...action, runtime: 'acp' }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, unasked_execute: 'trust' }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, tools: [] }).success).toBe(false);
-    expect(AgentAction.safeParse({ ...action, mcp_servers: ['email'] }).success).toBe(false);
+    expect(
+      AgentAction.parse({
+        ...action,
+        mcp_servers: ['email', { connector: 'ftp', ops: ['upload'] }],
+      }).mcp_servers,
+    ).toEqual([
+      { connector: 'email', ops: [] },
+      { connector: 'ftp', ops: ['upload'] },
+    ]);
+    expect(
+      AgentAction.safeParse({
+        ...action,
+        mcp_servers: ['email', { connector: 'email', ops: ['send'] }],
+      }).error?.issues[0]?.message,
+    ).toBe('connector "email" is listed twice');
+    const normalised = AgentAction.parse({ ...action, mcp_servers: ['ftp'] });
+    expect(AgentAction.parse(normalised).mcp_servers).toEqual([{ connector: 'ftp', ops: [] }]);
+    expect(AgentAction.safeParse({ ...action, mcp_servers: ['Email'] }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, system_file: 'p/${event.x}.md' }).success).toBe(
       false,
     );
@@ -252,7 +273,7 @@ describe('runAgent', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('You are careful.\n\nChange the banner\n\n');
     expect(seen[0]).toContain(resultInstructions('RESULT.json', undefined));
-    expect(agents.opened[0]).toMatchObject({ cwd: ws });
+    expect(agents.opened[0]).toMatchObject({ cwd: ws, tools: [] });
     expect(llm.turns).toEqual([
       expect.objectContaining({
         turn: {
@@ -296,8 +317,16 @@ describe('runAgent', () => {
       { defaults: { connector: 'claude', max_tool_calls: 5, budget: { max_usd: 0.25 } } },
     );
     const { connector: _c, ...noConnector } = action;
-    await runAgent({ ...noConnector, model: 'claude-sonnet-5' }, ctx(agents));
+    await runAgent(
+      {
+        ...noConnector,
+        model: 'claude-sonnet-5',
+        mcp_servers: [{ connector: 'ftp', ops: ['upload'] }],
+      },
+      ctx(agents),
+    );
     expect(llm.turns[0]?.turn).toMatchObject({ model: 'claude-sonnet-5', maxUsd: 0.25 });
+    expect(agents.opened[0]?.tools).toEqual([{ connector: 'ftp', ops: ['upload'] }]);
   });
 
   it('nudges once for a missing RESULT.json, then fails and removes the workspace', async () => {

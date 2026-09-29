@@ -6,7 +6,12 @@ import { parse as parseYaml } from 'yaml';
 import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent, protectedPaths } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
-import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './crosscheck.js';
+import {
+  checkAgentTools,
+  checkLlmTasks,
+  checkSandboxes,
+  type SandboxCheckContext,
+} from './crosscheck.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
@@ -104,7 +109,7 @@ export function checkConfigFile(path: string): FileCheck[] {
       continue;
     }
     // What the tasks file cannot know on its own: providers, prices, prompt files and
-    // what a sandboxed agent program can see.
+    // what a sandboxed agent program can see, which connectors an agent may call.
     const issues = checkLlmTasks(f.config.tasks, {
       providers: r.config.providers,
       pricing,
@@ -113,6 +118,7 @@ export function checkConfigFile(path: string): FileCheck[] {
       configDir: dirname(r.config.file),
     });
     issues.push(...checkSandboxes(f.config.tasks, sandboxes).tasks);
+    issues.push(...checkAgentTools(f.config.tasks, sandboxes.manifests));
     out.push(
       issues.length === 0
         ? {

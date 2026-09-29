@@ -126,7 +126,7 @@ tasks:
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
       tools: [read, edit, delete, move, search, execute]
       bash_allow: ["npm run build", "npm test", "git diff", "git status"]
-      mcp_servers: []                   # connector ops as agent tools: not implemented yet, must be empty
+      mcp_servers: []                   # connector ops as agent tools, e.g. [{ connector: email, ops: [fetch_new] }]; none here: the agent never publishes
       system_file: prompts/agent_site_general.md
       prompt: |
         ${event.payload.summary}
