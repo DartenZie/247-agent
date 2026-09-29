@@ -568,6 +568,7 @@ export class Executor {
       sandboxHost: this.sandboxHost,
       llm: this.llm,
       agents: this.agents,
+      transcripts: this.store.transcripts,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
     };

@@ -354,6 +354,31 @@ describe('POST /v1/events', () => {
   });
 });
 
+describe('GET /v1/events', () => {
+  it('lists the newest events in order, filters by type or pattern, and pages after a seq', async () => {
+    await expect(api.listEvents()).resolves.toEqual([]);
+    const emitted = async (type: string) => {
+      const r = await api.emit({ type, source: 'test' });
+      if (r.status !== 'inserted') {
+        throw new Error('duplicate');
+      }
+      return r.event;
+    };
+    const a = await emitted('mail.in');
+    const b = await emitted('mail.out');
+    const c = await emitted('chat.in');
+    const ids = (events: { id: string }[]) => events.map((e) => e.id);
+    expect(ids(await api.listEvents())).toEqual([a.id, b.id, c.id]);
+    expect(ids(await api.listEvents({ limit: 2 }))).toEqual([b.id, c.id]);
+    expect(ids(await api.listEvents({ type: 'mail.*' }))).toEqual([a.id, b.id]);
+    expect(ids(await api.listEvents({ type: 'chat.in' }))).toEqual([c.id]);
+    expect(ids(await api.listEvents({ after: a.seq }))).toEqual([b.id, c.id]);
+    expect(ids(await api.listEvents({ after: a.seq, type: 'chat.*', limit: 1 }))).toEqual([c.id]);
+    await expect(api.listEvents({ type: 'Bad Type' })).rejects.toMatchObject({ status: 400 });
+    await expect(raw('GET', '/v1/events?after=-1')).resolves.toMatchObject({ status: 400 });
+  });
+});
+
 describe('POST /v1/runs and GET /v1/runs', () => {
   it('queues a manual run with the given input event and runs it to completion', async () => {
     const { event_id, run } = await api.run('ok', {
@@ -398,7 +423,56 @@ describe('POST /v1/runs and GET /v1/runs', () => {
     await expect(api.getEvent('evt_nope')).rejects.toMatchObject({ status: 404 });
     await expect(raw('GET', '/v1/nothing')).resolves.toMatchObject({ status: 404 });
     await expect(raw('DELETE', '/v1/health')).resolves.toMatchObject({ status: 405 });
-    await expect(raw('GET', '/v1/events')).resolves.toMatchObject({ status: 405 });
+    await expect(raw('PUT', '/v1/events')).resolves.toMatchObject({ status: 405 });
+    await expect(api.getTranscript('run_nope')).rejects.toMatchObject({ status: 404 });
+    await expect(api.getRunLedger('run_nope')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("serves a run's transcript (empty for a shell run) and its ledger rows", async () => {
+    const { run } = await api.run('ok');
+    await settled(run.id);
+    await expect(api.getTranscript(run.id)).resolves.toEqual({ run_id: run.id, entries: [] });
+    daemon.core.store.transcripts.append({
+      run_id: run.id,
+      ts: '2026-09-29T10:00:00.000Z',
+      turn: 1,
+      kind: 'prompt',
+      text: 'hello',
+      data: null,
+    });
+    const second = daemon.core.store.transcripts.append({
+      run_id: run.id,
+      ts: '2026-09-29T10:00:01.000Z',
+      turn: 1,
+      kind: 'stop',
+      text: null,
+      data: { stop_reason: 'end_turn' },
+    });
+    const all = await api.getTranscript(run.id);
+    expect(all.entries.map((e) => e.kind)).toEqual(['prompt', 'stop']);
+    expect(all.entries[1]).toMatchObject({ id: second, data: { stop_reason: 'end_turn' } });
+    const after = await api.getTranscript(run.id, { after: second - 1, limit: 5 });
+    expect(after.entries.map((e) => e.id)).toEqual([second]);
+    await expect(raw('GET', `/v1/runs/${run.id}/transcript?after=x`)).resolves.toMatchObject({
+      status: 400,
+    });
+
+    daemon.core.store.ledger.insert({
+      run_id: run.id,
+      task: 'ok',
+      provider: 'p',
+      model: 'm',
+      in_tok: 10,
+      out_tok: 5,
+      cache_read: 0,
+      cache_write: 0,
+      usd: 0.25,
+      priced_by: 'table',
+      ts: '2026-09-29T10:00:00.000Z',
+    });
+    const ledger = await api.getRunLedger(run.id);
+    expect(ledger).toMatchObject({ run_id: run.id, total_usd: 0.25 });
+    expect(ledger.entries).toMatchObject([{ provider: 'p', model: 'm', usd: 0.25 }]);
   });
 
   it('rejects oversized bodies', async () => {

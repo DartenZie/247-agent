@@ -1,5 +1,6 @@
 import type { Database, Statement } from 'better-sqlite3';
 
+import { compileTypePattern, isTypePattern } from '../expr/glob.js';
 import type { EventRecord, JsonValue } from './types.js';
 
 interface EventRow {
@@ -22,13 +23,28 @@ function rowToEvent(row: unknown): EventRecord {
 
 export type InsertEventResult = { inserted: true; seq: number } | { inserted: false };
 
+export interface EventFilter {
+  /** Events with `seq > after`; without it, the newest `limit` events. */
+  after?: number | undefined;
+  /** An exact type or a trigger-style pattern (`*` = one segment). */
+  type?: string | undefined;
+  /** Capped at 1000; default 50. */
+  limit?: number | undefined;
+}
+
 export class EventStore {
   private readonly insertStmt: Statement;
   private readonly byIdStmt: Statement;
   private readonly afterStmt: Statement;
   private readonly purgeStmt: Statement;
+  private readonly db: Database;
 
   constructor(db: Database) {
+    this.db = db;
+    // `type_matches(pattern, type)` gives SQL the trigger's pattern semantics.
+    db.function('type_matches', { deterministic: true }, (pattern, type) =>
+      compileTypePattern(String(pattern))(String(type)) ? 1 : 0,
+    );
     this.insertStmt = db.prepare(
       `INSERT INTO events (id, type, source, ts, correlation_id, parent_id, dedup_key, depth, payload)
        VALUES (@id, @type, @source, @ts, @correlation_id, @parent_id, @dedup_key, @depth, @payload)
@@ -63,6 +79,34 @@ export class EventStore {
 
   listAfter(seq: number, limit: number): EventRecord[] {
     return this.afterStmt.all(seq, limit).map(rowToEvent);
+  }
+
+  /** In `seq` order, for `oa events tail`: the newest `limit`, or those after a `seq`. */
+  list(filter: EventFilter = {}): EventRecord[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.after !== undefined) {
+      where.push('seq > ?');
+      params.push(filter.after);
+    }
+    if (filter.type !== undefined) {
+      where.push(isTypePattern(filter.type) ? 'type_matches(?, type)' : 'type = ?');
+      params.push(filter.type);
+    }
+    const clause = where.length === 0 ? '' : `WHERE ${where.join(' AND ')} `;
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 1000);
+    if (filter.after !== undefined) {
+      return this.db
+        .prepare(`SELECT * FROM events ${clause}ORDER BY seq LIMIT ?`)
+        .all(...params, limit)
+        .map(rowToEvent);
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM (SELECT * FROM events ${clause}ORDER BY seq DESC LIMIT ?) ORDER BY seq`,
+      )
+      .all(...params, limit)
+      .map(rowToEvent);
   }
 
   /**

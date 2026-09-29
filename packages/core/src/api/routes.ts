@@ -4,13 +4,15 @@ import { UnknownTaskError } from '../bus/manual.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
 import { DURATION, parseDuration } from '../config/duration.js';
+import { validateTypePattern } from '../expr/glob.js';
 import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import { NonRetryableError } from '../actions/types.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
 import type { ReloadReport } from '../daemon.js';
-import type { CostGroup, CostRow } from '../store/ledger.js';
+import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
+import type { TranscriptEntry } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 
 /**
@@ -140,6 +142,36 @@ const ListRunsQuery = z.strictObject({
   limit: z.coerce.number().int().positive().optional(),
 });
 
+/** `GET /v1/events?type=&after=&limit=`: newest `limit` in order, or those after a `seq`. */
+const ListEventsQuery = z.strictObject({
+  type: z
+    .string()
+    .min(1)
+    .refine((t) => validateTypePattern(t, { allowWildcard: true }) === null, {
+      message: 'an event type or a pattern with * for one segment',
+    })
+    .optional(),
+  after: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+/** `GET /v1/runs/{id}/transcript?after=&limit=`. */
+const TranscriptQuery = z.strictObject({
+  after: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+export interface TranscriptBody {
+  run_id: string;
+  entries: TranscriptEntry[];
+}
+
+export interface RunLedgerBody {
+  run_id: string;
+  entries: LedgerEntry[];
+  total_usd: number;
+}
+
 function parse<T extends z.ZodType>(schema: T, input: unknown, what: string): z.output<T> {
   const r = schema.safeParse(input);
   if (!r.success) {
@@ -228,11 +260,46 @@ function costSummary(ctx: RouteContext, query: URLSearchParams): ApiResponse {
 }
 
 function getRun(ctx: RouteContext, id: string): ApiResponse {
+  return { status: 200, body: requireRun(ctx, id) as unknown as JsonValue };
+}
+
+function listEvents(ctx: RouteContext, query: URLSearchParams): ApiResponse {
+  const q = parse(ListEventsQuery, Object.fromEntries(query), 'query');
+  const events: EventRecord[] = ctx.core.store.events.list({
+    type: q.type,
+    after: q.after,
+    limit: q.limit,
+  });
+  return { status: 200, body: { events: events as unknown as JsonValue } };
+}
+
+function requireRun(ctx: RouteContext, id: string): RunRecord {
   const run = ctx.core.store.runs.getById(id);
   if (run === undefined) {
     throw new ApiError(404, `unknown run "${id}"`);
   }
-  return { status: 200, body: run as unknown as JsonValue };
+  return run;
+}
+
+function getTranscript(ctx: RouteContext, id: string, query: URLSearchParams): ApiResponse {
+  const q = parse(TranscriptQuery, Object.fromEntries(query), 'query');
+  const run = requireRun(ctx, id);
+  const body: TranscriptBody = {
+    run_id: run.id,
+    entries: ctx.core.store.transcripts.listByRun(run.id, { after: q.after, limit: q.limit }),
+  };
+  return { status: 200, body: body as unknown as JsonValue };
+}
+
+function getRunLedger(ctx: RouteContext, id: string): ApiResponse {
+  const run = requireRun(ctx, id);
+  const entries = ctx.core.store.ledger.listByRun(run.id);
+  const body: RunLedgerBody = {
+    run_id: run.id,
+    entries,
+    total_usd: entries.reduce((sum, e) => sum + e.usd, 0),
+  };
+  return { status: 200, body: body as unknown as JsonValue };
 }
 
 function getEvent(ctx: RouteContext, id: string): ApiResponse {
@@ -320,6 +387,8 @@ async function reload(ctx: RouteContext): Promise<ApiResponse> {
 const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
+const RUN_TRANSCRIPT_PATH = /^\/v1\/runs\/([^/]+)\/transcript$/;
+const RUN_LEDGER_PATH = /^\/v1\/runs\/([^/]+)\/ledger$/;
 const CONNECTOR_RESTART_PATH = /^\/v1\/connectors\/([^/]+)\/restart$/;
 const EVENT_PATH = /^\/v1\/events\/([^/]+)$/;
 const STATE_NS_PATH = /^\/v1\/state\/([^/]+)$/;
@@ -356,6 +425,9 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
     return restartConnector(ctx, name);
   }
   if (path === '/v1/events') {
+    if (method === 'GET') {
+      return listEvents(ctx, req.query);
+    }
     return only(method, 'POST', () => emit(ctx, req.body));
   }
   if (path === '/v1/cost') {
@@ -371,6 +443,16 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   if (run?.[1] !== undefined) {
     const id = run[1];
     return only(method, 'GET', () => getRun(ctx, id));
+  }
+  const transcript = RUN_TRANSCRIPT_PATH.exec(path);
+  if (transcript?.[1] !== undefined) {
+    const id = transcript[1];
+    return only(method, 'GET', () => getTranscript(ctx, id, req.query));
+  }
+  const ledger = RUN_LEDGER_PATH.exec(path);
+  if (ledger?.[1] !== undefined) {
+    const id = ledger[1];
+    return only(method, 'GET', () => getRunLedger(ctx, id));
   }
   const event = EVENT_PATH.exec(path);
   if (event?.[1] !== undefined) {

@@ -350,7 +350,7 @@ export class Metrics {
 
   readonly retentionDeleted = this.registry.counter(
     'oa_retention_deleted_total',
-    'Rows and directories removed by retention, by kind (events, runs, ledger, workspaces)',
+    'Rows and directories removed by retention, by kind (events, runs, ledger, transcripts, workspaces)',
     ['kind'],
   );
   readonly retentionRuns = this.registry.counter(

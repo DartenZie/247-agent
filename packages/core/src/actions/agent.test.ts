@@ -18,6 +18,7 @@ import type {
 import { BudgetExceededError } from '../llm/errors.js';
 import { fakeLlmPort, type FakePort } from '../llm/testing.js';
 import { createLogger } from '../log.js';
+import type { NewTranscriptEntry } from '../store/transcripts.js';
 import { AgentAction, runAgent } from './agent.js';
 import { readAgentResult, resultInstructions } from './agent-result.js';
 import { testContext } from './testing.js';
@@ -102,12 +103,20 @@ let dir: string;
 let workDir: string;
 let llm: FakePort;
 let lines: Record<string, unknown>[];
+let transcript: NewTranscriptEntry[];
 
 function ctx(agents: AgentClients, over: Partial<ActionContext> = {}): ActionContext {
   lines = [];
+  transcript = [];
   return testContext({
     agents,
     llm,
+    transcripts: {
+      append: (e) => {
+        transcript.push(e);
+        return transcript.length;
+      },
+    },
     log: createLogger({
       level: 'debug',
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
@@ -220,6 +229,26 @@ describe('runAgent', () => {
     });
     const ws = join(workDir, 'run_test');
     expect(readFileSync(join(ws, 'gate.txt'), 'utf8')).toBe('edited (y/n)\n');
+    expect(transcript.map((e) => [e.turn, e.kind])).toEqual([
+      [1, 'prompt'],
+      [1, 'text'],
+      [1, 'permission'],
+      [1, 'permission'],
+      [1, 'tool_call'],
+      [1, 'usage'],
+      [1, 'stop'],
+      [1, 'result'],
+    ]);
+    expect(transcript[0]?.text).toBe(seen[0]);
+    expect(transcript[1]?.text).toBe('Working. ');
+    expect(transcript[2]?.data).toMatchObject({ id: 'c1', allowed: true });
+    expect(transcript[3]?.data).toMatchObject({
+      id: 'c2',
+      allowed: false,
+    });
+    expect((transcript[3]?.data as { reason: string }).reason).toMatch(/curl/);
+    expect(transcript[7]?.data).toMatchObject({ status: 'done', summary: 'edited (y/n)' });
+    expect(transcript.every((e) => e.run_id === 'run_test')).toBe(true);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('You are careful.\n\nChange the banner\n\n');
     expect(seen[0]).toContain(resultInstructions('RESULT.json', undefined));
@@ -285,6 +314,14 @@ describe('runAgent', () => {
     });
     expect(agents.prompts).toHaveLength(2);
     expect(llm.turns).toHaveLength(2);
+    expect(transcript.map((e) => [e.turn, e.kind])).toEqual([
+      [1, 'prompt'],
+      [1, 'stop'],
+      [2, 'prompt'],
+      [2, 'stop'],
+      [2, 'result'],
+    ]);
+    expect(transcript[2]?.text).toMatch(/^You have not written RESULT.json/);
 
     writeOnNudge = false;
     llm = fakeLlmPort();
@@ -339,6 +376,10 @@ describe('runAgent', () => {
     expect(String(err)).toMatch(/max_tool_calls \(3\)/);
     expect(agents.cancels).toBe(1);
     expect(llm.turns).toHaveLength(1); // the cancelled turn is still ledgered
+    expect(transcript.filter((e) => e.kind === 'cancel')).toMatchObject([
+      { turn: 1, data: { reason: 'tool_calls', detail: null } },
+    ]);
+    expect(transcript.at(-1)).toMatchObject({ kind: 'stop', data: { stop_reason: 'cancelled' } });
   });
 
   it('fails the run when the agent runs a tool call outside the policy without asking', async () => {

@@ -28,6 +28,12 @@ failure, 2 usage.
 oa validate <file>...                          # tasks files, manifests, agent.yaml (follows references)
 oa run <task> [--event f.json] [--type t] [--correlation id] [--wait] [--json]
 oa emit <type> [payload.json|-] [--source s] [--dedup-key k] [--parent evt] [--correlation id] [--json]
+oa runs ls [--status s] [--task t] [-n N] [--json]   # newest runs: id, task, status, created, duration, error
+oa runs show <id> [--json]                     # trigger event, timings, ledger rows, result or error; exit 1 if failed
+oa runs logs <id> [--follow] [--json]          # the agent transcript (prompt, messages, tool calls, permissions, result)
+oa events tail [--type t] [-n N] [--follow] [--json]   # newest events in order; --type takes a trigger pattern
+oa events show <id> [--json]
+oa cost [--by task|model|provider|day] [--since 7d] [--json]
 oa connector list [--json]                     # state, pid, restarts per connector
 oa connector restart <name> [--json]           # kill, re-resolve secrets, respawn; exit 1 if not up after
 oa reload [--json]                             # re-read agent.yaml + manifests + tasks, all or nothing; exit 1 when refused
@@ -38,6 +44,11 @@ oa metrics                                     # GET /metrics (Prometheus text)
 trigger event, so it tests the action and `emit`. `oa emit` goes through the trigger
 and filter, so it tests the routing too. `--wait` prints the result and exits 1 on
 failure.
+
+To see what happened to a run: `oa runs ls --status failed`, then `oa runs show <id>`
+for the error, cost and trigger event, and `oa runs logs <id>` for an agent run's
+transcript (what it was asked, said, ran, and which permissions were refused).
+`oa events tail --type 'task.*.failed' --follow` watches failures live.
 
 The API has more than the CLI exposes; use `scripts/oa-api.mjs` (Node, no
 dependencies) or `curl --unix-socket`. Endpoints in `references/api.md`.

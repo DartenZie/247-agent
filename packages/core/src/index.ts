@@ -333,6 +333,16 @@ export {
 } from './config/agent.js';
 export { checkConfigFile, formatCheck, type FileCheck, type FileKind } from './config/check.js';
 export type { RunFilter } from './store/runs.js';
+export type { EventFilter } from './store/events.js';
+export {
+  TRANSCRIPT_KINDS,
+  type NewTranscriptEntry,
+  type TranscriptEntry,
+  type TranscriptFilter,
+  type TranscriptKind,
+  type TranscriptSink,
+} from './store/transcripts.js';
+export { TranscriptWriter, TRANSCRIPT_TEXT_MAX } from './actions/agent-transcript.js';
 export {
   route,
   EmitBody,
@@ -345,7 +355,9 @@ export {
   type CostBody,
   type HealthBody,
   type RouteContext,
+  type RunLedgerBody,
   type RunResponse,
+  type TranscriptBody,
 } from './api/routes.js';
 export { createApiServer, type ApiServer, type ApiServerOptions } from './api/server.js';
 export {

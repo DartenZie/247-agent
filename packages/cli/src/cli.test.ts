@@ -149,6 +149,180 @@ describe('oa emit', () => {
   });
 });
 
+describe('oa runs', () => {
+  it('lists runs newest first with filters, shows one with its event and cost, and rejects bad input', async () => {
+    expect(await oa('runs', 'ls')).toBe(0);
+    expect(out).toEqual(['no runs']);
+    out = [];
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    expect(await oa('run', 'bad', '--wait')).toBe(1);
+    const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    const badId = /^failed (run_\w+)/.exec(out[2] ?? '')?.[1] ?? '';
+    out = [];
+    expect(await oa('runs', 'ls')).toBe(0);
+    expect(out[0]).toMatch(new RegExp(`^${badId}  bad  failed     \\S+  +[\\d.]+s  .*exit`));
+    expect(out[1]).toMatch(new RegExp(`^${okId}  ok   succeeded  \\S+  +[\\d.]+s$`));
+    out = [];
+    expect(await oa('runs', 'ls', '--status', 'failed', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ runs: [{ id: badId, status: 'failed' }] });
+    out = [];
+    expect(await oa('runs', 'ls', '--task', 'ok', '-n', '1')).toBe(0);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain(okId);
+    out = [];
+
+    daemon.core.store.ledger.insert({
+      run_id: okId,
+      task: 'ok',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      in_tok: 100,
+      out_tok: 20,
+      cache_read: 0,
+      cache_write: 0,
+      usd: 0.0123,
+      priced_by: 'table',
+      ts: '2026-09-29T10:00:00.000Z',
+    });
+    expect(await oa('runs', 'show', okId)).toBe(0);
+    expect(out[0]).toBe(`run         ${okId}`);
+    expect(out[1]).toBe('task        ok');
+    expect(out[2]).toBe('status      succeeded');
+    expect(out[3]).toMatch(
+      /^event {7}\S+ {2}evt_\w+ {2}manual\.run {2}source=manual {2}correlation=cor_\w+$/,
+    );
+    expect(out[4]).toMatch(/^payload {5}\{"task":"ok"/);
+    expect(out.find((l) => l.startsWith('cost'))).toBe('cost        $0.0123 in 1 call');
+    expect(out.find((l) => l.includes('anthropic/claude-haiku-4-5'))).toMatch(
+      /\$0\.0123 \(table\)$/,
+    );
+    expect(out.find((l) => l.startsWith('transcript'))).toBeUndefined();
+    expect(out.at(-1)).toBe('result      ""');
+    out = [];
+    expect(await oa('runs', 'show', badId)).toBe(1);
+    expect(out.find((l) => l.startsWith('error'))).toMatch(/^error {7}.*exit/);
+    out = [];
+    expect(await oa('runs', 'show', badId, '--json')).toBe(1);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      run: { id: badId },
+      event: { type: 'manual.run' },
+      ledger: { total_usd: 0 },
+      has_transcript: false,
+    });
+
+    expect(await oa('runs', 'show', 'run_nope')).toBe(1);
+    expect(err[0]).toMatch(/unknown run "run_nope"/);
+    expect(await oa('runs', 'ls', '--status', 'weird')).toBe(2);
+    expect(await oa('runs', 'ls', '-n', '0')).toBe(2);
+    expect(await oa('runs', 'show')).toBe(2);
+    expect(await oa('runs', 'frob')).toBe(2);
+    expect(await oa('runs')).toBe(2);
+  });
+
+  it('prints a transcript as lines or JSON, follows a run to its end, and says when there is none', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    const id = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    out = [];
+    expect(await oa('runs', 'logs', id, '--follow')).toBe(0);
+    expect(out).toEqual([`no transcript for ${id} (ok, succeeded): only agent runs record one`]);
+    out = [];
+
+    const base = { run_id: id, ts: '2026-09-29T10:00:00.000Z', turn: 1 as const };
+    const rows = [
+      { kind: 'prompt' as const, text: 'Change the banner.\nKeep it short.', data: null },
+      {
+        kind: 'tool_call' as const,
+        text: null,
+        data: {
+          id: 'c1',
+          title: 'Run build',
+          tool_kind: 'execute',
+          status: 'pending',
+          command: 'npm run build',
+          locations: [],
+        },
+      },
+      {
+        kind: 'permission' as const,
+        text: null,
+        data: { id: 'c1', allowed: false, option_id: 'n', reason: 'command not allowed' },
+      },
+      { kind: 'tool_call_update' as const, text: null, data: { id: 'c1', status: 'failed' } },
+      { kind: 'text' as const, text: 'Done.', data: null },
+      { kind: 'usage' as const, text: null, data: { used: 500, size: 200000, cost_usd: 0.02 } },
+      {
+        kind: 'stop' as const,
+        text: null,
+        data: { stop_reason: 'end_turn', input_tokens: 10, output_tokens: 2 },
+      },
+      { kind: 'result' as const, text: null, data: { status: 'blocked', summary: 'no build' } },
+    ];
+    const ids = rows.map((r) => daemon.core.store.transcripts.append({ ...base, ...r }));
+    expect(await oa('runs', 'logs', id)).toBe(0);
+    expect(out).toEqual([
+      '2026-09-29T10:00:00.000Z  turn 1  prompt',
+      '    Change the banner.',
+      '    Keep it short.',
+      '2026-09-29T10:00:00.000Z  turn 1  tool_call  c1  execute  "Run build"  cmd="npm run build"  pending',
+      '2026-09-29T10:00:00.000Z  turn 1  permission  c1  refused  command not allowed',
+      '2026-09-29T10:00:00.000Z  turn 1  tool_call_update  c1  failed',
+      '2026-09-29T10:00:00.000Z  turn 1  text',
+      '    Done.',
+      '2026-09-29T10:00:00.000Z  turn 1  usage  context=500/200000  cost_usd=0.0200',
+      '2026-09-29T10:00:00.000Z  turn 1  stop  end_turn  in=10  out=2',
+      '2026-09-29T10:00:00.000Z  turn 1  result  blocked  "no build"',
+    ]);
+    out = [];
+    expect(await oa('runs', 'logs', id, '--after', String(ids[5]), '--json')).toBe(0);
+    expect(out.map((l) => (JSON.parse(l) as { kind: string }).kind)).toEqual(['stop', 'result']);
+    out = [];
+    expect(await oa('runs', 'show', id)).toBe(0);
+    expect(out.find((l) => l.startsWith('transcript'))).toBe(
+      `transcript  yes  (oa runs logs ${id})`,
+    );
+    expect(await oa('runs', 'logs', 'run_nope')).toBe(1);
+    expect(await oa('runs', 'logs')).toBe(2);
+  });
+});
+
+describe('oa events', () => {
+  it('tails the newest events in order with a type filter, shows one, and validates input', async () => {
+    expect(await oa('events', 'tail')).toBe(0);
+    expect(out).toEqual(['no events']);
+    out = [];
+    expect(await oa('emit', 'mail.in', '--json')).toBe(0);
+    expect(await oa('emit', 'mail.out', '--json')).toBe(0);
+    expect(await oa('emit', 'chat.in', '--json')).toBe(0);
+    const ids = out.map((l) => (JSON.parse(l) as { event: { id: string } }).event.id);
+    out = [];
+    expect(await oa('events', 'tail')).toBe(0);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toMatch(
+      new RegExp(`^\\S+  ${ids[0] ?? ''}  mail\\.in  source=manual  correlation=cor_\\w+$`),
+    );
+    out = [];
+    expect(await oa('events', 'tail', '-n', '1')).toBe(0);
+    expect(out[0]).toContain(ids[2]);
+    out = [];
+    expect(await oa('events', 'tail', '--type', 'mail.*', '--json')).toBe(0);
+    expect(out.map((l) => (JSON.parse(l) as { id: string }).id)).toEqual([ids[0], ids[1]]);
+    out = [];
+    expect(await oa('events', 'show', ids[2] ?? '')).toBe(0);
+    expect(out[0]).toContain('chat.in');
+    expect(out[1]).toBe('payload: null');
+    out = [];
+    expect(await oa('events', 'show', ids[2] ?? '', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ id: ids[2], type: 'chat.in' });
+
+    expect(await oa('events', 'tail', '--type', 'Bad Type')).toBe(2);
+    expect(err[0]).toMatch(/invalid query/);
+    expect(await oa('events', 'show', 'evt_nope')).toBe(1);
+    expect(await oa('events', 'tail', '-n', 'x')).toBe(2);
+    expect(await oa('events', 'show')).toBe(2);
+    expect(await oa('events')).toBe(2);
+  });
+});
+
 describe('oa connector', () => {
   it('lists connectors and reports an unknown one on restart', async () => {
     expect(await oa('connector', 'list')).toBe(0);

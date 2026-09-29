@@ -5,11 +5,20 @@ import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { ReloadReport } from '../daemon.js';
+import type { EventFilter } from '../store/events.js';
 import type { RunFilter } from '../store/runs.js';
 import type { StateEntry } from '../store/state.js';
+import type { TranscriptFilter } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
 import type { CostGroup } from '../store/ledger.js';
-import type { ConnectorEntry, CostBody, HealthBody, RunResponse } from './routes.js';
+import type {
+  ConnectorEntry,
+  CostBody,
+  HealthBody,
+  RunLedgerBody,
+  RunResponse,
+  TranscriptBody,
+} from './routes.js';
 
 export const DEFAULT_SOCKET = '/run/247-agent/core.sock';
 
@@ -107,8 +116,46 @@ export class ApiClient {
     return runs;
   }
 
+  /** The run's agent transcript (empty for other action kinds); `after` an entry id to follow. */
+  getTranscript(id: string, filter: TranscriptFilter = {}): Promise<TranscriptBody> {
+    const q = new URLSearchParams();
+    if (filter.after !== undefined) {
+      q.set('after', String(filter.after));
+    }
+    if (filter.limit !== undefined) {
+      q.set('limit', String(filter.limit));
+    }
+    const qs = q.size === 0 ? '' : `?${q.toString()}`;
+    return this.request<TranscriptBody>(
+      'GET',
+      `/v1/runs/${encodeURIComponent(id)}/transcript${qs}`,
+    );
+  }
+
+  /** The run's ledger rows (one per model call or agent turn) and their total. */
+  getRunLedger(id: string): Promise<RunLedgerBody> {
+    return this.request<RunLedgerBody>('GET', `/v1/runs/${encodeURIComponent(id)}/ledger`);
+  }
+
   getEvent(id: string): Promise<EventRecord> {
     return this.request<EventRecord>('GET', `/v1/events/${encodeURIComponent(id)}`);
+  }
+
+  /** Events in `seq` order: the newest `limit`, or those after a `seq` (`after`). */
+  async listEvents(filter: EventFilter = {}): Promise<EventRecord[]> {
+    const q = new URLSearchParams();
+    if (filter.type !== undefined) {
+      q.set('type', filter.type);
+    }
+    if (filter.after !== undefined) {
+      q.set('after', String(filter.after));
+    }
+    if (filter.limit !== undefined) {
+      q.set('limit', String(filter.limit));
+    }
+    const qs = q.size === 0 ? '' : `?${q.toString()}`;
+    const { events } = await this.request<{ events: EventRecord[] }>('GET', `/v1/events${qs}`);
+    return events;
   }
 
   /** `undefined` when the key is not set. */

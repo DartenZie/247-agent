@@ -98,8 +98,23 @@ describe('purgeStore', () => {
     store.cursors.set('dispatch', 6);
     const undispatched = seed({ ts: ago(60) });
 
+    const transcript = (runId: string | undefined, text: string) =>
+      store.transcripts.append({
+        run_id: runId ?? '',
+        ts: NOW.toISOString(),
+        turn: 1,
+        kind: 'text',
+        text,
+        data: null,
+      });
+    transcript(oldDone.runId, 'old');
+    transcript(oldDone.runId, 'old too');
+    transcript(running.runId, 'live');
+
     const counts = await purgeStore(store, NOW, policy());
-    expect(counts).toEqual({ runs: 2, ledger: 1, events: 2 });
+    expect(counts).toEqual({ runs: 2, ledger: 1, transcripts: 2, events: 2 });
+    expect(store.transcripts.countByRun(oldDone.runId ?? '')).toBe(0);
+    expect(store.transcripts.countByRun(running.runId ?? '')).toBe(1);
     expect(store.runs.getById(oldDone.runId ?? '')).toBeUndefined();
     expect(store.runs.getById(oldFailed.runId ?? '')).toBeUndefined();
     expect(store.runs.getById(recent.runId ?? '')?.status).toBe('succeeded');
@@ -118,7 +133,12 @@ describe('purgeStore', () => {
     expect(store.events.getById(undispatched.eventId)).toBeDefined();
     expect(store.events.getById(recent.eventId)).toBeDefined();
     // A second pass finds nothing more.
-    expect(await purgeStore(store, NOW, policy())).toEqual({ runs: 0, ledger: 0, events: 0 });
+    expect(await purgeStore(store, NOW, policy())).toEqual({
+      runs: 0,
+      ledger: 0,
+      transcripts: 0,
+      events: 0,
+    });
   });
 
   it('keeps a run whose event is old and an event whose run is kept, and honours never', async () => {
@@ -130,17 +150,20 @@ describe('purgeStore', () => {
     ).toEqual({
       runs: 0,
       ledger: 0,
+      transcripts: 0,
       events: 0,
     });
     expect(await purgeStore(store, NOW, policy({ runs: 'never' }))).toEqual({
       runs: 0,
       ledger: 0,
+      transcripts: 0,
       events: 0,
     });
     // `ledger` shorter than `runs`: rows go while the run stays.
     expect(await purgeStore(store, NOW, policy({ runs: 'never', ledger: '20d' }))).toEqual({
       runs: 0,
       ledger: 1,
+      transcripts: 0,
       events: 0,
     });
     expect(store.ledger.sumForRun(kept.runId ?? '')).toBe(1);
@@ -152,7 +175,12 @@ describe('purgeStore', () => {
       seed({ ts: ago(40), status: 'succeeded', finishedAt: ago(39) });
     }
     store.cursors.set('dispatch', 5000);
-    expect(await purgeStore(store, NOW, policy())).toEqual({ runs: 1203, ledger: 0, events: 1203 });
+    expect(await purgeStore(store, NOW, policy())).toEqual({
+      runs: 1203,
+      ledger: 0,
+      transcripts: 0,
+      events: 1203,
+    });
     expect(store.runs.list({ limit: 1 })).toEqual([]);
   });
 
@@ -177,7 +205,7 @@ describe('purgeStore', () => {
     const tick = setInterval(() => (ticks += 1), 0);
     const counts = await purgeStore(store, NOW, policy({ runs: 'never', ledger: '20d' }));
     clearInterval(tick);
-    expect(counts).toEqual({ runs: 0, ledger: 1203, events: 0 });
+    expect(counts).toEqual({ runs: 0, ledger: 1203, transcripts: 0, events: 0 });
     expect(store.ledger.sumForRun(runId ?? '')).toBe(0);
     expect(ticks).toBeGreaterThan(0);
   });

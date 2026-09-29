@@ -40,12 +40,12 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(4);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(4);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
   });
 });
 
@@ -292,5 +292,61 @@ describe('LedgerStore', () => {
       ['2026-09-20', 1],
     ]);
     expect(store.ledger.summary({ since: '2026-09-20T00:00:00.000Z', by: 'day' })).toHaveLength(1);
+  });
+});
+
+describe('EventStore.list', () => {
+  it('returns the newest events in seq order, filtered by type or pattern, or those after a seq', () => {
+    for (const type of ['a.x', 'a.y', 'b.x', 'a.x']) {
+      store.events.insert(event({ type }));
+    }
+    const types = (events: EventRecord[]) => events.map((e) => `${String(e.seq)}:${e.type}`);
+    expect(types(store.events.list())).toEqual(['1:a.x', '2:a.y', '3:b.x', '4:a.x']);
+    expect(types(store.events.list({ limit: 2 }))).toEqual(['3:b.x', '4:a.x']);
+    expect(types(store.events.list({ type: 'a.x' }))).toEqual(['1:a.x', '4:a.x']);
+    expect(types(store.events.list({ type: 'a.*', limit: 2 }))).toEqual(['2:a.y', '4:a.x']);
+    expect(types(store.events.list({ type: '*.x' }))).toEqual(['1:a.x', '3:b.x', '4:a.x']);
+    expect(types(store.events.list({ after: 1 }))).toEqual(['2:a.y', '3:b.x', '4:a.x']);
+    expect(types(store.events.list({ after: 1, type: 'a.*', limit: 1 }))).toEqual(['2:a.y']);
+    expect(store.events.list({ after: 4 })).toEqual([]);
+  });
+});
+
+describe('TranscriptStore', () => {
+  it('appends entries per run in order, pages after an id and counts them', () => {
+    store.events.insert(event({ id: 'evt_t' }));
+    for (const id of ['run_a', 'run_b']) {
+      store.runs.insertQueued({
+        id,
+        task: id,
+        event_id: 'evt_t',
+        correlation_id: 'cor_t',
+        created_at: '2026-09-29T10:00:00.000Z',
+      });
+    }
+    const base = { run_id: 'run_a', ts: '2026-09-29T10:00:00.000Z', turn: 1 as const };
+    const first = store.transcripts.append({ ...base, kind: 'prompt', text: 'do it', data: null });
+    store.transcripts.append({
+      ...base,
+      kind: 'tool_call',
+      text: null,
+      data: { id: 'call_1', command: 'npm run build' },
+    });
+    store.transcripts.append({ ...base, run_id: 'run_b', kind: 'text', text: 'other', data: null });
+    const a = store.transcripts.listByRun('run_a');
+    expect(a).toMatchObject([
+      { id: first, kind: 'prompt', text: 'do it', data: null },
+      { kind: 'tool_call', text: null, data: { id: 'call_1', command: 'npm run build' } },
+    ]);
+    expect(store.transcripts.listByRun('run_a', { after: first })).toMatchObject([
+      { kind: 'tool_call' },
+    ]);
+    expect(store.transcripts.listByRun('run_a', { limit: 1 })).toHaveLength(1);
+    expect(store.transcripts.countByRun('run_a')).toBe(2);
+    expect(store.transcripts.countByRun('run_b')).toBe(1);
+    expect(store.transcripts.listByRun('run_c')).toEqual([]);
+    expect(() =>
+      store.transcripts.append({ ...base, run_id: 'run_c', kind: 'text', text: 'x', data: null }),
+    ).toThrow(/FOREIGN KEY/);
   });
 });

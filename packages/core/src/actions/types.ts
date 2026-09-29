@@ -4,6 +4,7 @@ import { renderText, renderValue, type TemplateScope } from '../expr/template.js
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import type { StateSnapshot } from '../store/state.js';
+import type { TranscriptSink } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 import type { AgentDefaultsConfig } from './agent-config.js';
 import type { SandboxConfig, SandboxHost } from './sandbox.js';
@@ -89,6 +90,8 @@ export interface ActionContext {
   readonly llm?: LlmPort | undefined;
   /** ACP sessions for `agent` actions; absent when the core runs without a supervisor. */
   readonly agents?: AgentClients | undefined;
+  /** Where `agent` actions persist their session transcript (the store's `transcripts`). */
+  readonly transcripts?: TranscriptSink | undefined;
   /**
    * Parks the run in `waiting` until an event matches `spec` or it times out; the executor
    * then starts the runner again with `resume` set. The returned promise never resolves:

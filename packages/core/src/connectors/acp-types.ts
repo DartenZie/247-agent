@@ -29,7 +29,7 @@ export type AgentStopReason =
 /** One `session/update` notification, reduced to what the runner acts on. */
 export type AgentUpdate =
   | { kind: 'text'; text: string; messageId: string | null }
-  | { kind: 'thought' }
+  | { kind: 'thought'; text: string }
   | {
       kind: 'tool_call';
       id: string;

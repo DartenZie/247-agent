@@ -22,6 +22,7 @@ import {
   resultInstructions,
   type AgentResult,
 } from './agent-result.js';
+import { TranscriptWriter } from './agent-transcript.js';
 import { createWorkspace, Workspace } from './agent-workspace.js';
 import { runShell, ShellError } from './shell.js';
 import { NonRetryableError, withScope, type ActionContext } from './types.js';
@@ -143,6 +144,7 @@ interface TurnLimits {
   /** Tool calls already made in earlier turns of this run. */
   toolCallsBefore: number;
   watch: PolicyWatch;
+  transcript: TranscriptWriter;
 }
 
 /** Statuses at which the tool has run or is running, so asking is no longer possible. */
@@ -159,8 +161,9 @@ async function runTurn(
   limits: TurnLimits,
   ctx: ActionContext,
 ): Promise<TurnOutcome & { toolCalls: number }> {
+  const { watch, transcript } = limits;
+  transcript.begin(text);
   const gen = session.prompt(text);
-  const { watch } = limits;
   let toolCalls = limits.toolCallsBefore;
   let costUsd: number | undefined;
   let kept = '';
@@ -173,6 +176,7 @@ async function runTurn(
     }
     cancelReason = reason;
     ctx.log.warn('agent.cancelling', { reason, tool_calls: toolCalls, cost_usd: costUsd ?? null });
+    transcript.cancel(reason, reason === 'policy' ? violation : undefined);
     grace = new Promise((_, reject) => {
       setTimeout(() => {
         reject(new Error(`the agent did not stop within ${String(CANCEL_GRACE_MS)}ms of cancel`));
@@ -212,9 +216,11 @@ async function runTurn(
     for (;;) {
       const next = grace === undefined ? await gen.next() : await Promise.race([gen.next(), grace]);
       if (next.done) {
+        transcript.stop(next.value);
         return { stop: next.value, cancelReason, violation, costUsd, text: kept, toolCalls };
       }
       const u = next.value;
+      transcript.update(u);
       switch (u.kind) {
         case 'text':
           if (kept.length < TEXT_KEEP) {
@@ -270,6 +276,7 @@ async function runTurn(
     // Not `gen.return()`: a generator parked on `nextUpdate()` would only return once that
     // resolves. `session.close()` disposes the queue, which ends the generator.
     ctx.signal.removeEventListener('abort', onAbort);
+    transcript.flush();
   }
 }
 
@@ -387,6 +394,12 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       unaskedExecute: cfg.unasked_execute,
     };
     const watch: PolicyWatch = { policy, judged: new Set(), calls: new Map() };
+    const transcript = new TranscriptWriter({
+      sink: ctx.transcripts,
+      runId: ctx.run.id,
+      secrets: ctx.secrets,
+      log: ctx.log,
+    });
     const session = await agents.open(connector, {
       cwd: ws.path,
       signal: ctx.signal,
@@ -394,6 +407,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       onPermission: (req) => {
         watch.judged.add(req.toolCall.id);
         const d = decidePermission(policy, req);
+        transcript.permission(req, d);
         ctx.log.info('agent.permission', {
           id: req.toolCall.id,
           tool_kind: req.toolCall.toolKind,
@@ -412,7 +426,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       const out = await runTurn(
         session,
         text,
-        { maxToolCalls, maxUsd, toolCallsBefore: toolCalls, watch },
+        { maxToolCalls, maxUsd, toolCallsBefore: toolCalls, watch, transcript },
         ctx,
       );
       toolCalls = out.toolCalls;
@@ -489,6 +503,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         );
       }
       const result = read.result;
+      transcript.result(result);
       ctx.log.info('agent.result', {
         status: result.status,
         summary: result.summary.slice(0, 500),

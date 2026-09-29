@@ -4,6 +4,7 @@ import type { Store } from './store.js';
 export interface PurgeCounts {
   runs: number;
   ledger: number;
+  transcripts: number;
   events: number;
 }
 
@@ -34,7 +35,7 @@ function cutoff(now: Date, ms: number): string {
 
 /**
  * The database half of a retention pass (ARCHITECTURE §7, `retention:`). Order matters
- * for the foreign keys: a run's ledger rows and wait go first, then the run, and an event
+ * for the foreign keys: a run's ledger rows, transcript and wait go first, then the run, and an event
  * only once no run points at it. Active runs (`queued`, `running`, `waiting`) are never
  * touched, nor are events the dispatcher has not passed yet. Each batch is its own short
  * transaction and the event loop gets a turn between batches, so a big backlog (the first
@@ -46,12 +47,13 @@ export async function purgeStore(
   now: Date,
   policy: RetentionPolicy,
 ): Promise<PurgeCounts> {
-  const counts: PurgeCounts = { runs: 0, ledger: 0, events: 0 };
+  const counts: PurgeCounts = { runs: 0, ledger: 0, transcripts: 0, events: 0 };
   if (policy.runsMs !== undefined) {
     const before = cutoff(now, policy.runsMs);
     await drain(store, () => {
       const ids = store.runs.listFinishedBefore(before, BATCH);
       counts.ledger += store.ledger.deleteForRuns(ids);
+      counts.transcripts += store.transcripts.deleteForRuns(ids);
       for (const id of ids) {
         store.waits.delete(id);
       }

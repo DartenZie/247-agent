@@ -808,11 +808,33 @@ oa metrics
 Prints `GET /metrics`, the Prometheus text exposition (section 8).
 
 ```
-oa help [command]
+oa runs ls [--status <s>] [--task <name>] [-n <limit>] [--json]
+oa runs show <id> [--json]
+oa runs logs <id> [--follow] [--after <entry_id>] [--json]
 ```
 
-`oa events` and `oa runs` from the architecture document do not exist yet; use the API
-(section 8) for the same information.
+`ls` prints the newest runs (default 20), one per line: id, task, status, created,
+duration and the error if any. `show` prints one run with its trigger event and payload,
+timings, the ledger rows it cost and its result or error; it exits 1 when the run failed.
+`logs` prints the run's agent transcript: the prompt, what the agent said and thought,
+every tool call with its command or paths, every permission decision, usage, how the
+turn stopped and the RESULT.json it wrote (section 5.7). `--follow` keeps printing while
+the run is queued, running or waiting, `--json` prints one entry per line. Other action
+kinds record no transcript; `logs` says so and shows the run's error instead.
+
+```
+oa events tail [--type <type|pattern>] [-n <limit>] [--follow] [--json]
+oa events show <id> [--json]
+```
+
+`tail` prints the newest events (default 20) in order, one per line with time, id, type,
+source and correlation id; `--type` takes an exact type or a trigger-style pattern
+(`email.*`, `task.*.failed`), `--follow` polls for new ones until interrupted. `show`
+prints one event with its payload.
+
+```
+oa help [command]
+```
 
 ## 8. The API
 
@@ -823,10 +845,13 @@ what you use for anything the CLI does not cover yet.
 |---|---|
 | `GET /v1/health` | `{ok, pid, started_at, uptime_s, config_file, tasks, runs: {…}}` |
 | `POST /v1/events` | Publish an event. 201 inserted, 200 duplicate |
+| `GET /v1/events?type=&after=&limit=` | The newest `limit` events in order, or those after a `seq`; `type` is an exact type or a pattern (`*` = one segment) |
 | `GET /v1/events/{id}` | One event |
 | `POST /v1/runs` | Start a task by hand: `{"task": "...", "type"?: "...", "payload"?: ..., "correlation_id"?: "..."}` |
 | `GET /v1/runs?status=&task=&limit=` | Runs, newest first |
 | `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
+| `GET /v1/runs/{id}/transcript?after=&limit=` | `{run_id, entries: [{id, ts, turn, kind, text, data}]}`: the agent transcript, empty for other action kinds; `after` an entry id to follow a running agent |
+| `GET /v1/runs/{id}/ledger` | `{run_id, entries: [ledger rows], total_usd}`: the run's model calls |
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
 | `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
@@ -946,7 +971,8 @@ The database and `work/` would otherwise grow forever. Once at start and then ev
 `retention.interval` (default hourly) the daemon deletes, in this order and only for
 finished runs:
 
-1. runs whose `finished_at` is older than `retention.runs`, with their ledger rows;
+1. runs whose `finished_at` is older than `retention.runs`, with their ledger rows and
+   agent transcript;
 2. ledger rows older than `retention.ledger` (default: same as `runs`) of finished runs;
 3. events older than `retention.events` that the dispatcher has passed and that no
    remaining run or wait references (a kept run always keeps its trigger event);
@@ -993,10 +1019,10 @@ Done since as well: retention (9.4), `/metrics` and `oa metrics`, connector heal
 checks (6.2), and the full config reload (`oa reload`, 9.3).
 
 Done since as well: sandboxing of the agent program (`sandbox: bwrap` on an `acp`
-manifest, 6.1).
+manifest, 6.1), agent transcripts and `oa runs` / `oa events` (section 7).
 
-Not implemented yet: `oa runs|events`, `batch: true` for `llm`, a Matrix backend for
-`chat`, a network allowlist for sandboxed agents.
+Not implemented yet: `batch: true` for `llm`, a Matrix backend for `chat`, a network
+allowlist for sandboxed agents.
 
 ## 11. Troubleshooting
 

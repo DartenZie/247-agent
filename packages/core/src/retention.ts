@@ -121,11 +121,13 @@ export class RetentionJob {
       };
       this.metrics.retentionDeleted.inc({ kind: 'runs' }, counts.runs);
       this.metrics.retentionDeleted.inc({ kind: 'ledger' }, counts.ledger);
+      this.metrics.retentionDeleted.inc({ kind: 'transcripts' }, counts.transcripts);
       this.metrics.retentionDeleted.inc({ kind: 'events' }, counts.events);
       this.metrics.retentionDeleted.inc({ kind: 'workspaces' }, workspaces);
       this.metrics.retentionRuns.inc({ result: 'ok' });
       this.metrics.retentionLastSuccess.set(undefined, Math.floor(now.getTime() / 1000));
-      const level = counts.runs + counts.ledger + counts.events + workspaces > 0 ? 'info' : 'debug';
+      const deleted = counts.runs + counts.ledger + counts.transcripts + counts.events + workspaces;
+      const level = deleted > 0 ? 'info' : 'debug';
       this.log[level]('retention.purged', { ...report });
       return report;
     } catch (err) {

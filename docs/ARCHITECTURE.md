@@ -121,9 +121,9 @@ One daemon, `247-agent-core`, with these internal modules:
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
-| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events?type=&after=&limit=` (the newest `limit` in `seq` order, or those after a `seq`; `type` is an exact type or a trigger pattern), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/runs/{id}/transcript?after=&limit=` (the agent transcript, §5.4), `GET /v1/runs/{id}/ledger` (its model calls and their total), `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env (an `acp` agent gets its `env` and name only, and runs inside `bwrap` when its manifest says `sandbox: bwrap`, §6). A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
-| **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
+| **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows and transcript, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
 store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams).
@@ -394,6 +394,22 @@ agent/<run_id> <path> <branch>` from `repo`; `temp` is an empty directory. It is
 (worktree, branch and all) when the run fails and kept when it succeeds, `blocked`
 included, for the gates, for a later publishing task and for inspection, until the
 retention pass removes it `retention.workspaces` after the run finished (§7).
+
+**Transcript.** Every session is persisted as rows of the `transcripts` table
+(`run_id, ts, turn, kind, text, data`), written as the runner sees the session: the
+`prompt` it sent (turn 1, the nudge as turn 2), the agent's `text` and `thought` chunks
+coalesced into one row per message, each `tool_call` and `tool_call_update` (id, kind,
+title, command, locations, status), every `permission` decision with its reason, each
+`usage` report, the `stop` (reason and token counts), a `cancel` by the core (budget,
+tool calls, policy, abort) and the `result` it read. A permission row can precede the
+`tool_call` it answers: requests are answered as they arrive, updates queue behind the
+loop. Secret values resolved for the run are replaced by `[secret:<name>]` before a row
+is written (values under 4 characters are left alone), tool output is not recorded, and
+a row's text is split past 64k characters. Writing is best effort: a failing store is
+logged once (`agent.transcript_failed`) and the run continues. `GET
+/v1/runs/{id}/transcript` and `oa runs logs <id>` (with `--follow` while the run is
+active) read it back; no other action kind records one. The rows go with the run when
+`retention.runs` deletes it (§4).
 
 Notes
 
@@ -866,12 +882,15 @@ textfile on a timer, or a small HTTP proxy in front of the socket). CLI (`--sock
 oa validate <file>...           # tasks files and agent.yaml, schema + semantic checks
 oa run <task> [--event f.json]  # manual trigger; --wait blocks and exits 1 on failure
 oa emit <type> [payload.json|-] # inject an event (--source, --dedup-key, --parent)
+oa runs ls [--status s] [--task t] [-n N]   # newest runs: id, task, status, created, duration, error
+oa runs show <id>               # the run, its trigger event, ledger rows, result or error
+oa runs logs <id> [--follow]    # the agent transcript (§5.4); --follow while the run is active
+oa events tail [--type t] [-n N] [--follow]   # newest events in order; --type takes a trigger pattern
+oa events show <id>
 oa connector list|restart <name>
 oa cost --by task --since 7d
 oa reload                       # like SIGHUP; exits 1 and prints the issues when refused
 oa metrics                      # GET /metrics
-oa events tail [--type …]       # not built yet
-oa runs ls|show <id>|logs <id>  # not built yet
 ```
 
 ## 13. Repository layout
@@ -974,9 +993,8 @@ the supervisor, the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reloa
 manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check).
 Where the code is behind this document:
 `batch: true` is rejected; `mcp_servers` on an `agent` action must be empty (the MCP
-proxy is not built); agent transcripts are not persisted; the agent sandbox has no
-network allowlist; ACP config options (model, mode) are not exposed; `shell.user` is
-rejected; `oa events` and `oa runs` do not exist.
+proxy is not built); the agent sandbox has no network allowlist; ACP config options
+(model, mode) are not exposed; `shell.user` is rejected.
 
 ## 15. Open decisions
 

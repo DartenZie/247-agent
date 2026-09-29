@@ -98,7 +98,7 @@ describe('RetentionJob', () => {
 
     const metrics = new Metrics();
     const report = await job(workDir, metrics).run();
-    expect(report).toMatchObject({ runs: 0, ledger: 0, events: 0, workspaces: 2 });
+    expect(report).toMatchObject({ runs: 0, ledger: 0, transcripts: 0, events: 0, workspaces: 2 });
     expect(existsSync(oldDone)).toBe(false);
     expect(existsSync(orphanOld)).toBe(false);
     expect(existsSync(recent)).toBe(true);

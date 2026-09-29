@@ -98,6 +98,8 @@ node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/conne
 node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
 node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
 node packages/cli/dist/main.js emit <type> [payload.json|-]
+node packages/cli/dist/main.js runs ls|show <id>|logs <id> [--follow]   # logs = the agent transcript
+node packages/cli/dist/main.js events tail [--type t] [--follow]|show <id>
 node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
 node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
 node packages/cli/dist/main.js reload                                   # like SIGHUP: agent.yaml + manifests + tasks, all or nothing
