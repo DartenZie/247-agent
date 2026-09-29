@@ -314,6 +314,10 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     }
     return {
       sessionId: opened.sessionId,
+      get configOptions() {
+        return opened.configOptions;
+      },
+      setConfigOption: (id, value) => opened.setConfigOption(id, value),
       prompt: (text) => opened.prompt(text),
       cancel: () => opened.cancel(),
       close: () => {

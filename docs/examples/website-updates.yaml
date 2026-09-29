@@ -65,6 +65,8 @@ tasks:
     action:
       kind: agent
       connector: claude                 # a transport: acp connector; default: defaults.agent.connector
+      model: claude-sonnet-5            # set on the session as ACP config options; unset = the agent's own
+      effort: low
       max_tool_calls: 20
       budget: { max_usd: 0.50 }         # cancels the session when the agent's reported cost passes it
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
@@ -121,6 +123,8 @@ tasks:
     action:
       kind: agent
       connector: claude
+      model: claude-opus-5
+      effort: high
       max_tool_calls: 60
       budget: { max_usd: 3.00 }
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }

@@ -17,6 +17,12 @@
  *   [[slow: ms]]             keep the turn going for ms, checking for session/cancel
  *   [[refuse]]               end the turn with stopReason: refusal
  *   [[crash]]                exit the process with code 3 during the turn
+ *   [[config]]               write the session's {model, effort} to <cwd>/CONFIG.json
+ *
+ * Every session offers two config options, like claude-agent-acp: `model` (category
+ * `model`, values in groups: `default`, `claude-sonnet-5`, `claude-opus-5`) and `effort` (category
+ * `thought_level`: `low`, `medium`, plus `high` on `claude-opus-5`; switching the model
+ * resets it to `medium` when the level is gone). An unknown value is an error.
  *
  * Run with `node fake-acp.ts` (Node strips the types).
  */
@@ -32,6 +38,7 @@ import {
   PROTOCOL_VERSION,
   type AgentContext,
   type McpServer,
+  type SessionConfigOption,
 } from '@agentclientprotocol/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -42,6 +49,37 @@ interface Session {
   cancelled: boolean;
   costUsd: number;
   neverResult: boolean;
+  model: string;
+  effort: string;
+}
+
+function effortLevels(model: string): string[] {
+  return model === 'claude-opus-5' ? ['low', 'medium', 'high'] : ['low', 'medium'];
+}
+
+function configOptions(s: Session): SessionConfigOption[] {
+  const levels = (values: string[]) => values.map((value) => ({ value, name: value }));
+  return [
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: s.model,
+      options: [
+        { group: 'auto', name: 'Auto', options: levels(['default']) },
+        { group: 'fake', name: 'Fake', options: levels(['claude-sonnet-5', 'claude-opus-5']) },
+      ],
+    },
+    {
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue: s.effort,
+      options: levels(effortLevels(s.model)),
+    },
+  ];
 }
 
 const sessions = new Map<string, Session>();
@@ -97,9 +135,33 @@ const app = agent({ name: 'fake-acp' })
       cancelled: false,
       costUsd: 0,
       neverResult: false,
+      model: 'default',
+      effort: 'medium',
     });
     process.stderr.write(`fake-acp session ${sessionId} cwd=${ctx.params.cwd}\n`);
-    return { sessionId };
+    return { sessionId, configOptions: configOptions(sessions.get(sessionId) as Session) };
+  })
+  .onRequest(methods.agent.session.setConfigOption, (ctx) => {
+    const s = sessions.get(ctx.params.sessionId);
+    if (s === undefined) {
+      throw new Error(`unknown session ${ctx.params.sessionId}`);
+    }
+    const { configId, value } = ctx.params;
+    if (
+      configId === 'model' &&
+      ['default', 'claude-sonnet-5', 'claude-opus-5'].includes(String(value))
+    ) {
+      s.model = String(value);
+      if (!effortLevels(s.model).includes(s.effort)) {
+        s.effort = 'medium';
+      }
+    } else if (configId === 'effort' && effortLevels(s.model).includes(String(value))) {
+      s.effort = String(value);
+    } else {
+      throw new Error(`Invalid value for config option ${configId}: ${String(value)}`);
+    }
+    process.stderr.write(`fake-acp config ${configId}=${String(value)}\n`);
+    return { configOptions: configOptions(s) };
   })
   .onNotification(methods.agent.session.cancel, (ctx) => {
     const s = sessions.get(ctx.params.sessionId);
@@ -141,6 +203,12 @@ const app = agent({ name: 'fake-acp' })
       process.stderr.write('fake-acp crashing\n');
       setTimeout(() => process.exit(3), 10);
       await sleep(1000);
+    }
+    if (flag(prompt, 'config')) {
+      writeFileSync(
+        resolve(s.cwd, 'CONFIG.json'),
+        JSON.stringify({ model: s.model, effort: s.effort }) + '\n',
+      );
     }
     if (flag(prompt, 'never-result')) {
       s.neverResult = true;

@@ -122,6 +122,38 @@ describe('AcpAgent', () => {
     );
   });
 
+  it('reports the session config options and sets them over session/set_config_option', async () => {
+    const a = await spawnFake();
+    const session = await a.openSession({
+      cwd: dir,
+      signal: new AbortController().signal,
+      log: log(),
+      onPermission: () => 'no',
+    });
+    expect(session.configOptions).toEqual([
+      {
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        type: 'select',
+        currentValue: 'default',
+        values: ['default', 'claude-sonnet-5', 'claude-opus-5'],
+      },
+      expect.objectContaining({ id: 'effort', currentValue: 'medium', values: ['low', 'medium'] }),
+    ]);
+    const after = await session.setConfigOption('model', 'claude-opus-5');
+    expect(after[1]).toMatchObject({ id: 'effort', values: ['low', 'medium', 'high'] });
+    await session.setConfigOption('effort', 'high');
+    expect(session.configOptions.map((o) => o.currentValue)).toEqual(['claude-opus-5', 'high']);
+    await expect(session.setConfigOption('effort', 'max')).rejects.toThrow();
+    await drain(session, '[[config]]');
+    expect(JSON.parse(readFileSync(join(dir, 'CONFIG.json'), 'utf8'))).toEqual({
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
+    session.close();
+  });
+
   it('cancels a running turn and answers pending permission requests as cancelled after the signal aborts', async () => {
     const a = await spawnFake();
     const controller = new AbortController();

@@ -81,6 +81,8 @@ tasks:
     timeout: 20s
     action:
       kind: agent
+      model: claude-opus-5
+      effort: high
       workspace: { kind: temp }
       tools: [read, other]
       mcp_servers: [chat]
@@ -157,10 +159,10 @@ const settled = async (id: string) => {
 };
 
 describe('agent task on the fake ACP connector', () => {
-  it('mcp_servers: the agent calls a connector op through the tool bridge, never seeing its config', async () => {
+  it('mcp_servers: the agent calls a connector op through the tool bridge, never seeing its config; model and effort are set on the session', async () => {
     const { run } = await api.run('tell_human', {
       payload: {
-        body: '[[mcp: chat send {"text":"asked by the agent"}]] [[result: {"status":"done","summary":"told"}]]',
+        body: '[[mcp: chat send {"text":"asked by the agent"}]] [[config]] [[result: {"status":"done","summary":"told"}]]',
       },
     });
     expect(await settled(run.id)).toMatchObject({
@@ -172,6 +174,10 @@ describe('agent task on the fake ACP connector', () => {
       tools: string[];
     };
     expect(mcp.tools).toEqual(['send']);
+    expect(JSON.parse(readFileSync(join(dir, 'work', run.id, 'CONFIG.json'), 'utf8'))).toEqual({
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
     expect(lines.filter((l) => l.msg === 'agent.permission')).toMatchObject([
       { allowed: true, tool_kind: 'other', title: 'mcp__chat__send' },
     ]);
