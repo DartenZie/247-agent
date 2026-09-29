@@ -16,7 +16,7 @@ a tool-call cap and a budget, ending in a RESULT.json that routing reads.
 | `tools` | ACP tool kinds the agent may use: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Required |
 | `bash_allow` | what an `execute` call may run: the command must equal an entry, or be a linear chain (`&&`, `\|\|`, `\|`, `;`, `&`) whose every segment equals an entry or starts with one followed by a space, with no redirection, substitution or line break (`<`, `>`, backticks, `$(`, `${`) anywhere. A chain operator inside quotes or backslash-escaped is an argument, not a chain (`grep -E "a\|b" x` passes under `grep`); an unterminated quote is refused |
 | `unasked_execute` | `judge` (default): an `execute` call the agent ran without asking is held to `bash_allow` after the fact. `sandboxed`: only its kind and paths are judged, because the agent's own OS sandbox confined it (Codex). Calls that ask are always judged in full |
-| `mcp_servers` | connector ops as agent tools: not implemented yet, must be `[]` |
+| `mcp_servers` | connector ops as agent tools: a `stdio` connector's name (every op its manifest allows) or `{ connector, ops: [..] }`. Served through the core's tool bridge (a per-run socket and a stdio proxy), so the agent never gets the connector's secrets. The agent reports these calls as tool calls of its own kind (claude-agent-acp: `other`), so add that kind to `tools`; they count toward `max_tool_calls`. Default `[]` |
 | `system_file` | static text prepended to the prompt (ACP has no separate system channel); relative to agent.yaml |
 | `prompt` | templated; the task |
 | `result` | `{ path: RESULT.json, schema: schemas/x.json }`, both optional; `path` is relative to the workspace |

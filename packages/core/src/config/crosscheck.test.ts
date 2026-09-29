@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolvePricing } from '../llm/pricing.js';
 import { parseManifest } from './connector.js';
 import {
+  checkAgentTools,
   checkLlmTasks,
   checkSandboxes,
   isInside,
@@ -158,6 +159,88 @@ describe('checkLlmTasks: decide', () => {
     expect(wrong[0]?.message).toMatch(
       /decide needs an openrouter provider.*"anthropic" is type anthropic/,
     );
+  });
+});
+
+describe('checkAgentTools', () => {
+  const manifest = (doc: Record<string, unknown>) => {
+    const r = parseManifest(doc, `/etc/247-agent/connectors.d/${String(doc.name)}.yaml`);
+    if (!r.ok) {
+      throw new Error(JSON.stringify(r.issues));
+    }
+    return r.config;
+  };
+  const manifests = [
+    manifest({ name: 'claude', exec: ['claude-agent-acp'], transport: 'acp' }),
+    manifest({ name: 'email', exec: ['247-agent-connector-email'], ops: ['send', 'fetch_new'] }),
+    manifest({ name: 'github', exec: ['github-mcp'] }),
+    manifest({ name: 'hook', exec: ['hook'], transport: 'none' }),
+    manifest({
+      name: 'prs',
+      builtin: 'poller',
+      config: {
+        schedule: '* * * * *',
+        connector: 'github',
+        op: 'list',
+        event: 'pr.new',
+        item_key: 'n',
+      },
+    }),
+  ];
+  const agent = (mcp_servers: unknown[]) =>
+    Task.parse({
+      name: 'edit',
+      trigger: { kind: 'manual' },
+      action: {
+        kind: 'agent',
+        workspace: { kind: 'temp' },
+        tools: ['other'],
+        prompt: 'x',
+        mcp_servers,
+      },
+    });
+
+  it('accepts stdio connectors and ops their manifests allow', () => {
+    expect(
+      checkAgentTools([agent(['github', { connector: 'email', ops: ['send'] }]), shell], manifests),
+    ).toEqual([]);
+    expect(
+      checkAgentTools([agent([{ connector: 'github', ops: ['anything'] }])], manifests),
+    ).toEqual([]);
+  });
+
+  it('refuses unknown connectors, ones that serve no ops and ops outside the manifest', () => {
+    expect(
+      checkAgentTools(
+        [agent(['nope', 'claude', 'hook', 'prs', { connector: 'email', ops: ['send', 'delete'] }])],
+        manifests,
+      ),
+    ).toEqual([
+      { path: 'tasks[0].action.mcp_servers[0]', message: 'unknown connector "nope"' },
+      {
+        path: 'tasks[0].action.mcp_servers[1]',
+        message: expect.stringMatching(
+          /^connector "claude" serves no ops \(transport acp\)/,
+        ) as string,
+      },
+      {
+        path: 'tasks[0].action.mcp_servers[2]',
+        message: expect.stringMatching(
+          /^connector "hook" serves no ops \(transport none\)/,
+        ) as string,
+      },
+      {
+        path: 'tasks[0].action.mcp_servers[3]',
+        message: expect.stringMatching(
+          /^connector "prs" serves no ops \(built-in poller\)/,
+        ) as string,
+      },
+      {
+        path: 'tasks[0].action.mcp_servers[4].ops',
+        message:
+          'not in the ops of connector "email" (/etc/247-agent/connectors.d/email.yaml): delete',
+      },
+    ]);
   });
 });
 

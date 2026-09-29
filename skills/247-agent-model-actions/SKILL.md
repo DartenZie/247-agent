@@ -158,8 +158,10 @@ Non-negotiables, because they are what make an agent safe to run unattended:
   request and never granted "always"; a tool call the agent ran without asking is judged
   after the fact and a violation fails the run (`unasked_execute: sandboxed` relaxes only
   the command check, only for Codex, whose own sandbox confines what it does not ask
-  about). Grant the minimum; the prompt is not a security boundary. (`mcp_servers` must
-  stay empty until the MCP proxy exists.)
+  about). Grant the minimum; the prompt is not a security boundary. `mcp_servers` adds
+  connector ops as tools: grant named ops (`{ connector: email, ops: [fetch_new] }`)
+  rather than a whole connector, add the agent's kind for them (`other` for
+  claude-agent-acp) to `tools`, and never a connector that publishes or sends on its own.
 - **The agent never holds deploy secrets and never publishes.** It edits, a `post` gate
   proves the build still works, a commit records it, and a separate `shell` task ships
   it. Rollback is `git revert` plus republish. The model key lives in the connector
@@ -200,8 +202,9 @@ through the same port (`ctx.llm.decide()`), with the Decisions API implemented i
 `agent` action runs on ACP connectors (`transport: acp`); `docs/examples/website-updates.yaml`
 tasks 3, 3b and 4 are the reference, `docs/examples/connectors.d/claude.yaml` the
 connector; the session is persisted as a transcript (`oa runs logs <id>`), deleted with
-the run by `retention.runs`. Not there yet: `mcp_servers` (connector ops as agent tools)
-and exposing the agent's model/mode config options. `work/<run_id>` of a finished run is
+the run by `retention.runs`. `mcp_servers` serves connector ops to the session through
+the core's tool bridge (`packages/core/src/connectors/mcp-bridge.ts`). Not there yet:
+exposing the agent's model/mode config options. `work/<run_id>` of a finished run is
 swept `retention.workspaces` (default 7d) after it finished.
 When adding an adapter or changing a runner, follow `references/llm-action.md`,
 `references/decide-action.md` and `references/agent-action.md` and keep

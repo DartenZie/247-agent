@@ -13,7 +13,12 @@ import { runTaskManually, type ManualInput } from './bus/manual.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
-import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './config/crosscheck.js';
+import {
+  checkAgentTools,
+  checkLlmTasks,
+  checkSandboxes,
+  type SandboxCheckContext,
+} from './config/crosscheck.js';
 import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
@@ -582,7 +587,7 @@ function joined(names: readonly string[] | undefined): string | null {
 }
 
 /**
- * Applies `checkLlmTasks` and `checkSandboxes` to a merged load; an issue on a task fails
+ * Applies `checkLlmTasks`, `checkSandboxes` and `checkAgentTools` to a merged load; an issue on a task fails
  * the file the task came from, one on a manifest or on agent.yaml is reported under that
  * file.
  */
@@ -596,6 +601,9 @@ function crossCheck(
   const issues = llm === undefined ? [] : checkLlmTasks(tasks, llm);
   const sb = sandboxes === undefined ? undefined : checkSandboxes(tasks, sandboxes);
   issues.push(...(sb?.tasks ?? []));
+  if (sandboxes !== undefined) {
+    issues.push(...checkAgentTools(tasks, sandboxes.manifests));
+  }
   // One entry per file: an inline manifest's issues and agent.yaml's own share a file.
   const byFile = new Map<string, ConfigIssue[]>();
   const under = (file: string, list: ConfigIssue[]): void => {

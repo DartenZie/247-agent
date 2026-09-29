@@ -47,6 +47,22 @@ const PostGate = z
   });
 
 /**
+ * One `mcp_servers` entry, normalised to `{connector, ops}` (`ops: []` = every op the
+ * manifest allows). Parsing the normalised form again yields it unchanged, as the executor
+ * re-parses stored actions.
+ */
+const McpGrant = z.union([
+  z
+    .string()
+    .regex(NAME, 'connector names are [a-z][a-z0-9_-]*')
+    .transform((connector) => ({ connector, ops: [] as string[] })),
+  z.strictObject({
+    connector: z.string().regex(NAME, 'connector names are [a-z][a-z0-9_-]*'),
+    ops: z.array(z.string().min(1)).default([]),
+  }),
+]);
+
+/**
  * ARCHITECTURE §5.4: one prompt turn on an ACP agent (`connector`, a `transport: acp`
  * manifest) in a fresh workspace, under a tool-kind allowlist, a shell-command allowlist,
  * a tool-call cap and a budget, ending in a RESULT.json that `emit` rules route on.
@@ -73,10 +89,12 @@ export const AgentAction = z
      * commands without asking and asks for every escape). Calls that ask are always judged.
      */
     unasked_execute: z.enum(['judge', 'sandboxed']).default('judge'),
-    mcp_servers: z
-      .array(z.string())
-      .max(0, 'mcp_servers is not implemented yet (connector ops as agent tools); leave it empty')
-      .default([]),
+    /**
+     * Connector ops the agent may call as MCP tools, through the core's tool bridge (the
+     * agent never gets the connector's secrets): a `stdio` connector's name for every op
+     * its manifest allows, or `{connector, ops}` for some of them.
+     */
+    mcp_servers: z.array(McpGrant).default([]),
     /** Static text prepended to the prompt (ACP has no separate system channel); relative to agent.yaml. */
     system_file: z.string().min(1).optional(),
     /** Templated; the task itself. */
@@ -99,6 +117,17 @@ export const AgentAction = z
     post: z.array(PostGate).default([]),
   })
   .superRefine((a, ctx) => {
+    const seen = new Set<string>();
+    for (const [i, g] of a.mcp_servers.entries()) {
+      if (seen.has(g.connector)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['mcp_servers', i],
+          message: `connector "${g.connector}" is listed twice`,
+        });
+      }
+      seen.add(g.connector);
+    }
     if (a.system_file?.includes('${') === true) {
       ctx.addIssue({
         code: 'custom',
@@ -402,6 +431,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
     });
     const session = await agents.open(connector, {
       cwd: ws.path,
+      tools: cfg.mcp_servers,
       signal: ctx.signal,
       log: ctx.log,
       onPermission: (req) => {

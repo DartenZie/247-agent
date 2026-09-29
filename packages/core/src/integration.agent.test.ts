@@ -6,7 +6,15 @@
  * and emits `site.change_ready`, `blocked` emits `site.change_blocked` and a deterministic
  * task replies through the fake chat connector, a refusal fails the run and reaches `notify`.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -67,6 +75,16 @@ tasks:
       - type: site.change_blocked
         when: "result.status == 'blocked'"
         payload: { summary: "\${result.summary}", missing: "\${result.missing}" }
+
+  - name: tell_human
+    trigger: { kind: manual }
+    timeout: 20s
+    action:
+      kind: agent
+      workspace: { kind: temp }
+      tools: [read, other]
+      mcp_servers: [chat]
+      prompt: "\${event.payload.body}"
 
   - name: reply_blocked
     trigger: { kind: event, type: site.change_blocked }
@@ -139,6 +157,38 @@ const settled = async (id: string) => {
 };
 
 describe('agent task on the fake ACP connector', () => {
+  it('mcp_servers: the agent calls a connector op through the tool bridge, never seeing its config', async () => {
+    const { run } = await api.run('tell_human', {
+      payload: {
+        body: '[[mcp: chat send {"text":"asked by the agent"}]] [[result: {"status":"done","summary":"told"}]]',
+      },
+    });
+    expect(await settled(run.id)).toMatchObject({
+      status: 'succeeded',
+      result: { status: 'done' },
+    });
+    expect((await api.getState('chat', 'sent'))?.value).toEqual(['asked by the agent']);
+    const mcp = JSON.parse(readFileSync(join(dir, 'work', run.id, 'MCP_RESULT.json'), 'utf8')) as {
+      tools: string[];
+    };
+    expect(mcp.tools).toEqual(['send']);
+    expect(lines.filter((l) => l.msg === 'agent.permission')).toMatchObject([
+      { allowed: true, tool_kind: 'other', title: 'mcp__chat__send' },
+    ]);
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        msg: 'agent.mcp_call',
+        run_id: run.id,
+        connector: 'chat',
+        op: 'send',
+        ok: true,
+      }),
+    );
+    expect(
+      existsSync(join(dir, 'work', '.mcp')) ? readdirSync(join(dir, 'work', '.mcp')) : [],
+    ).toEqual([]);
+  });
+
   it('done: edits in the workspace under the policy, runs the gates, ledgers the cost, emits change_ready', async () => {
     const { run } = await api.run('change_site', {
       payload: {

@@ -299,7 +299,7 @@ action:
   tools: [read, edit, search, execute]   # ACP tool kinds the agent may use; the rest is refused
   bash_allow: ["npm run build", "npm test", "git status", "git diff"]   # what `execute` may run
   unasked_execute: judge           # judge (default) | sandboxed: what an unasked `execute` call is held to
-  mcp_servers: []                  # connector ops as agent tools: planned, must be empty today
+  mcp_servers: [{ connector: email, ops: [fetch_new] }]   # connector ops as agent tools (a name alone = every op its manifest allows); default []
   system_file: prompts/agent_event_list.md   # static; prepended to the prompt (ACP has no system channel)
   prompt: |
     Add/modify the events described in the email below in data/events.yaml
@@ -362,6 +362,30 @@ with no `rawInput.command` is only checked by kind), and the tool has already ru
 then: the check catches an agent that steps outside the policy, it does not prevent the
 step. Prevention is the agent's own permission routing plus sandboxing (§11): prefer
 agents and modes that ask.
+
+**Connector tools (`mcp_servers`).** Each entry grants the session one `stdio`
+connector's ops as MCP tools: a name for every op its manifest's `ops` allow, or
+`{connector, ops}` for some of them. The agent is not handed the connector (whose process
+holds its secrets) but a **tool bridge** (`connectors/mcp-bridge.ts`): per run the core
+listens on a Unix socket `<work_dir>/.mcp/<random>.sock` (0600 in a 0700 directory,
+inside `work_dir` so a sandboxed agent sees it), and `session/new` offers one stdio MCP
+server per granted connector, named after it, whose command is a small proxy (the
+daemon's own Node running an inline script) with nothing in its environment but the
+socket path, a per-run token and the server name. The proxy pipes its stdin and stdout
+to the socket after a one-line hello; the core drops a client whose token or server name
+is wrong (`agent.mcp_refused`) and serves the rest as MCP servers that list only the
+granted tools (with the connector's own schemas) and forward each call over the
+supervisor's existing client, so the manifest's `ops` still apply underneath. A call
+outside the grant, or to an op the connector does not list, comes back as a tool error;
+so do connector failures, so the agent can react instead of losing the server. Each call
+is logged as `agent.mcp_call` and counted in the connector op metrics; calls are aborted
+with the run, and the socket is removed when the session closes. The agent reports these
+calls as ordinary tool calls, so they count toward `max_tool_calls` and pass the
+permission policy by their kind: claude-agent-acp (verified with 0.84.0) reports MCP tools
+as `other`, titled `mcp__<connector>__<op>`, so `tools` must include `other`. `oa validate` checks each
+entry names a `stdio` connector and only ops its manifest lists. Granting an op is
+granting what it does: an agent that can call `send` on `email` can send mail, and the
+**agent never publishes** rule below means no deploy connector in `mcp_servers`.
 
 **Limits and money.** Tool calls are counted from `tool_call` updates; past
 `max_tool_calls` the session is cancelled and the run fails non-retryably. The agent's
@@ -535,9 +559,9 @@ any language. Push-style connectors (chat bots, webhooks) use this; poll-style o
 need it at all (next point).
 
 **Ops in (core → connector):** the connector is an **MCP server**. The core holds one
-client connection. Handing the same server to agent runs as tools (`mcp_servers`) is
-planned: it needs a small stdio proxy so the agent never receives the connector's
-secrets, and until then `mcp_servers` must be empty.
+client connection. Agent runs reach the same server as tools (`mcp_servers`, §5.4)
+through the core's tool bridge: a per-run socket and a stdio proxy that carries no
+connector secret, serving only the ops the task grants.
 
 **Agents (core → agent):** a manifest with `transport: acp` is an **ACP agent** (§5.4):
 the core is the client, the process serves sessions, not ops, and emits no events. It
@@ -809,7 +833,9 @@ process could call.
   backend refuses a secrets file readable by group or others.
 - **Agent sandbox:** dedicated worktree, explicit tool-kind allowlist, command allowlist
   and workspace-bound paths, judged per call through ACP permission requests (§5.4), no
-  deploy credentials. Build gate + commit before anything leaves the worktree. The policy
+  deploy credentials. Connector ops reach an agent only as the tools a task grants
+  (`mcp_servers`), through the core's tool bridge: the agent holds a per-run socket and
+  token, never the connector's secrets. Build gate + commit before anything leaves the worktree. The policy
   only binds an agent that asks before acting; the agent *program* is confined by
   `sandbox: bwrap` on its manifest (§6): same uid, but its own pid namespace, no socket
   directory, no state or config directory, no daemon environment, `work_dir` and the
@@ -910,7 +936,7 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); types.ts = ActionContext
   src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call` and `decide`), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
-  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; poller.ts: the built-in poller
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
@@ -991,9 +1017,11 @@ and supervisor, gauges collected at scrape time in `core.ts`), connector health 
 the supervisor, the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reload`,
 `oa reload`), and the sandbox wrapper for agent programs (`sandbox:` on `acp`
 manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check).
+Connector ops as agent tools are done: `mcp_servers` on the `agent` action, the tool
+bridge (`connectors/mcp-bridge.ts`) opened by the supervisor per session, and the
+`checkAgentTools` cross-check.
 Where the code is behind this document:
-`batch: true` is rejected; `mcp_servers` on an `agent` action must be empty (the MCP
-proxy is not built); the agent sandbox has no network allowlist; ACP config options
+`batch: true` is rejected; the agent sandbox has no network allowlist; ACP config options
 (model, mode) are not exposed; `shell.user` is rejected.
 
 ## 15. Open decisions

@@ -48,8 +48,9 @@ describe('Task schema: budget and llm actions', () => {
     expect(issues({ ...base, action: { ...agent, tools: ['Bash'] } })).toEqual([
       expect.stringMatching(/^action\.tools\[0\]: Invalid option/),
     ]);
-    expect(issues({ ...base, action: { ...agent, mcp_servers: ['email'] } })).toEqual([
-      expect.stringMatching(/^action\.mcp_servers: mcp_servers is not implemented yet/),
+    expect(issues({ ...base, action: { ...agent, mcp_servers: ['email'] } })).toEqual([]);
+    expect(issues({ ...base, action: { ...agent, mcp_servers: ['email', 'email'] } })).toEqual([
+      'action.mcp_servers[1]: connector "email" is listed twice',
     ]);
     expect(
       issues({ ...base, action: { ...agent, post: [{ shell: ['true'], when: 'result.[' }] } }),

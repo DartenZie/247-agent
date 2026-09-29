@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -327,6 +327,105 @@ describe('ConnectorSupervisor with an acp connector', () => {
       error: expect.stringMatching(/exited with code 5 before completing initialize/) as string,
     });
     await until(() => (s.status()[0]?.restarts ?? 0) >= 2);
+  });
+});
+
+describe('ConnectorSupervisor serving connector ops to an agent session', () => {
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'oa-mcp-'));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const agentManifest = manifest({
+    name: 'claude',
+    transport: 'acp',
+    exec: ['node', `${FIXTURES}fake-acp.ts`],
+  });
+
+  async function turn(
+    s: ConnectorSupervisor,
+    prompt: string,
+    tools: { connector: string; ops: string[] }[],
+  ): Promise<Record<string, unknown>> {
+    const session = await s.open('claude', {
+      cwd,
+      tools,
+      signal: signal(),
+      log: createLogger({ sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>) }),
+      onPermission: () => 'yes',
+    });
+    try {
+      const gen = session.prompt(prompt);
+      while (!(await gen.next()).done) {
+        // drain
+      }
+    } finally {
+      session.close();
+    }
+    return JSON.parse(readFileSync(join(cwd, 'MCP_RESULT.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it('lists and calls only the granted ops, through the proxy, without the connector env', async () => {
+    const s = make(
+      [agentManifest, manifest({ ops: ['echo', 'env', 'fail'], config: { key: '${secrets.k}' } })],
+      { k: 'hunter2' },
+    );
+    await s.start();
+    const echoed = await turn(s, '[[no-cost]] [[mcp: fake echo {"value": 42}]]', [
+      { connector: 'fake', ops: ['echo', 'fail'] },
+    ]);
+    expect(echoed.tools).toEqual(['echo', 'fail']);
+    expect(echoed.result).toMatchObject({ content: [{ type: 'text', text: '{"echoed":42}' }] });
+    expect(lines).toContainEqual(
+      expect.objectContaining({ msg: 'agent.mcp_call', connector: 'fake', op: 'echo', ok: true }),
+    );
+
+    const refused = await turn(s, '[[no-cost]] [[mcp: fake env {}]]', [
+      { connector: 'fake', ops: ['echo'] },
+    ]);
+    expect(refused.result).toMatchObject({ isError: true });
+    expect(JSON.stringify(refused)).not.toContain('hunter2');
+
+    const failed = await turn(s, '[[no-cost]] [[mcp: fake fail {"message": "boom"}]]', [
+      { connector: 'fake', ops: [] },
+    ]);
+    expect(failed.tools).toEqual(['echo', 'fail', 'env']);
+    expect(failed.result).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'boom' }],
+    });
+
+    const unknown = await turn(s, '[[no-cost]] [[mcp: fake crash {}]]', [
+      { connector: 'fake', ops: [] },
+    ]);
+    expect(unknown.result).toMatchObject({ isError: true });
+    expect(s.status().find((x) => x.name === 'fake')?.state).toBe('up');
+
+    // The bridge is gone with the session.
+    const dir = join(s.workDir, '.mcp');
+    await until(() => !existsSync(dir) || readdirSync(dir).length === 0);
+  });
+
+  it('refuses a tool connector that serves no ops or is unknown', async () => {
+    const s = make([agentManifest, manifest({ name: 'plain', transport: 'none' })]);
+    await s.start();
+    const open = (connector: string): Promise<unknown> =>
+      s.open('claude', {
+        cwd,
+        tools: [{ connector, ops: [] }],
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'yes',
+      });
+    await expect(open('claude')).rejects.toThrow(/serves no ops/);
+    await expect(open('plain')).rejects.toThrow(/serves no ops/);
+    await expect(open('nope')).rejects.toThrow(/unknown connector/);
   });
 });
 
