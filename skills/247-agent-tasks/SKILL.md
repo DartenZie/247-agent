@@ -92,7 +92,8 @@ Before declaring a task done, check:
 - Is there a `notify`-style task on `task.*.failed` (and `budget.exceeded`) so failures
   are seen?
 - Are timeouts and `retry` right for the action? Timeouts and connector-down are
-  retried; wait timeouts, missing secrets, `isError` op results and unrenderable `emit`
+  retried, and so are an `agent`'s failed `post` gates and missing/invalid RESULT.json
+  (each retry costs another session; the prompt carries the previous error); wait timeouts, missing secrets, `isError` op results and unrenderable `emit`
   rules are not.
 - `concurrency: 1` for anything that touches a shared checkout or a cursor.
 - `oa validate` passes on the file **and** on `docs/examples/*.yaml` plus

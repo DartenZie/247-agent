@@ -121,12 +121,15 @@ const events = (): EventRecord[] => env.store.events.listAfter(0, 100);
 function flakyRunner(
   failures: number,
   error: () => Error = () => new Error('flake'),
-): { runner: ActionRunner; calls: () => number } {
+): { runner: ActionRunner; calls: () => number; seen: (string | null)[] } {
   let calls = 0;
+  const seen: (string | null)[] = [];
   return {
     calls: () => calls,
-    runner: () => {
+    seen,
+    runner: (_action, ctx) => {
       calls++;
+      seen.push(ctx.run.error);
       return calls <= failures
         ? Promise.reject(error())
         : Promise.resolve(`ok after ${String(calls)}`);
@@ -244,6 +247,8 @@ describe('retry', () => {
     });
     expect(events().map((e) => e.type)).toEqual(['x.flaky', 'task.flaky.succeeded']);
     expect(env.lines.filter((l) => l.msg === 'run.retry').map((l) => l.attempt)).toEqual([1, 2]);
+    // Each attempt sees what the one before it failed with (an agent retry puts it in the prompt).
+    expect(flaky.seen).toEqual([null, 'flake', 'flake']);
 
     const dead = flakyRunner(10);
     const ex2 = make({}, { shell: dead.runner });
@@ -326,5 +331,6 @@ describe('retry', () => {
       status: 'succeeded',
       attempt: 2,
     });
+    expect(flaky.seen).toEqual([null, 'flake']);
   });
 });

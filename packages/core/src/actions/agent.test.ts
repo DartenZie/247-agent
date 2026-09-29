@@ -19,10 +19,11 @@ import { BudgetExceededError } from '../llm/errors.js';
 import { fakeLlmPort, type FakePort } from '../llm/testing.js';
 import { createLogger } from '../log.js';
 import type { NewTranscriptEntry } from '../store/transcripts.js';
-import { AgentAction, runAgent } from './agent.js';
+import { AgentAction, previousFailure, runAgent } from './agent.js';
 import { readAgentResult, resultInstructions } from './agent-result.js';
 import { testContext } from './testing.js';
 import {
+  isRetryable,
   NonRetryableError,
   type ActionContext,
   type AgentClients,
@@ -471,6 +472,32 @@ describe('runAgent', () => {
     expect(lines.find((l) => l.msg === 'agent.workspace_removed')).toBeDefined();
   });
 
+  it('tells a retry what the previous attempt failed with, and fails a missing result retryably', async () => {
+    const agents = fakeAgents(async function* (env) {
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop();
+    }, workDir);
+    await runAgent(action, ctx(agents));
+    expect(agents.prompts[0]).not.toContain('previous attempt');
+
+    const run = { ...testContext().run, attempt: 2, error: 'post[0] (npm run build) failed: boom' };
+    await runAgent(action, ctx(agents, { run }));
+    const retried = agents.prompts.at(-1) ?? '';
+    expect(retried).toContain('This is attempt 2. The previous attempt failed with this error:');
+    expect(retried).toContain('post[0] (npm run build) failed: boom');
+    expect(retried.indexOf('boom')).toBeGreaterThan(retried.indexOf('Change the banner'));
+    expect(retried.indexOf('boom')).toBeLessThan(retried.indexOf('When you are finished'));
+    expect(previousFailure({ ...run, error: 'x'.repeat(5000) })?.length).toBeLessThan(2300);
+    expect(previousFailure({ ...run, attempt: 1 })).toBeUndefined();
+
+    const silent = fakeAgents(async function* () {
+      return stop();
+    }, workDir);
+    const err = await runAgent(action, ctx(silent)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(isRetryable(err)).toBe(true);
+  });
+
   it('validates the result against the baseline and result.schema', async () => {
     llm = fakeLlmPort({
       systemFiles: {
@@ -702,7 +729,7 @@ describe('runAgent', () => {
     expect(existsSync(join(workDir, 'run_test'))).toBe(false);
   });
 
-  it('fails on a failing post gate and removes the workspace', async () => {
+  it('fails retryably on a failing post gate and removes the workspace', async () => {
     const agents = fakeAgents(async function* (env) {
       writeResult(env.cwd, { status: 'done', summary: 'x' });
       return stop();
@@ -711,7 +738,8 @@ describe('runAgent', () => {
       { ...action, post: [{ shell: ['sh', '-c', 'echo boom >&2; exit 7'] }] },
       ctx(agents),
     ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err).toBeInstanceOf(Error);
+    expect(isRetryable(err)).toBe(true);
     expect(String(err)).toMatch(/post\[0\] \(sh -c echo boom.*\) failed: exit code 7: boom/);
     expect(existsSync(join(workDir, 'run_test'))).toBe(false);
   });

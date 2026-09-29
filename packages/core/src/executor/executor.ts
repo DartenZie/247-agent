@@ -431,8 +431,11 @@ export class Executor {
       const resuming = resume !== undefined && run.status === 'queued';
       let attempt = run.attempt + (resuming ? 0 : 1);
       const policy = this.retryFor(task);
+      // What the previous attempt failed with (from the store after a recovery), handed to
+      // the runner as `ctx.run.error` so an `agent` retry can tell the agent (§10).
+      let lastError = attempt > 1 ? run.error : null;
       for (;;) {
-        const current: RunRecord = { ...run, attempt, status: 'running' };
+        const current: RunRecord = { ...run, attempt, status: 'running', error: lastError };
         this.store.runs.setStatus(run.id, 'running', {
           started_at: this.clock.now().toISOString(),
           attempt,
@@ -472,6 +475,7 @@ export class Executor {
           error: outcome.error,
         });
         this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
+        lastError = outcome.error;
         try {
           await sleep(delay, undefined, { signal: slot.stop.signal });
         } catch {

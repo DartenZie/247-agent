@@ -417,14 +417,15 @@ call); `budgets.daily_usd` and `budget.exceeded` apply as to any model call (§9
 `status: "done" | "blocked"` and `summary` (a sentence for a human). `done` means the
 change is in the workspace: the `post` gates run in order (each a `shell` argv in the
 workspace, templated over `result`, skipped when its `when` is falsy; a non-zero exit
-fails the run). `blocked` means it could not be done and `summary` (plus whatever fields
+fails the run retryably, so `retry` hands the gate's error to a fresh attempt, §10). `blocked` means it could not be done and `summary` (plus whatever fields
 the task's schema adds, e.g. `missing`) says why: the gates are skipped and the run
 still **succeeds**, so `emit … when: "result.status == 'blocked'"` can route it to a
 task that replies to the sender, files a question, or asks a human. `result.schema` is
 validated on top of the baseline; the run result is the RESULT.json document, so
 `${result.summary}`, `${result.files_changed}` are available to `emit` and `post`. A
 missing file gets one nudge turn (same session, budgeted like the first); still missing
-or invalid fails the run, which `retry` then repeats in a fresh workspace.
+or invalid fails the run retryably: `retry` repeats it in a fresh workspace, with that error
+in the prompt (§10).
 
 **Workspace.** `<defaults.agent.work_dir>/<run_id>` (default `work/` next to the
 database), available as `${run.workspace}`. `git-worktree` runs `git worktree add -B
@@ -813,11 +814,14 @@ sender with what is missing, a failure (refusal, over budget, no RESULT.json) re
 - **Retries:** per-task policy (`retry: {attempts, backoff: fixed|exponential, base, max}`,
   default from `defaults.retry`) with backoff; attempts belong to the same run, the run
   stays `running` between them with the last error recorded, and `task.<name>.failed`
-  fires once after the last attempt. Timeouts and connector-down errors are retried;
-  wait timeouts, missing secrets, unknown connectors, `isError` op results and unrenderable
+  fires once after the last attempt. Timeouts, connector-down errors and an `agent`'s
+  failed `post` gate or missing/invalid RESULT.json are retried; wait timeouts, missing secrets, unknown connectors, `isError` op results and unrenderable
   `emit` rules are not. `agent` actions retry in a fresh workspace (the previous one is
-  removed with the failed attempt); appending the previous failure to the prompt is
-  planned.
+  removed with the failed attempt), and the runner tells the agent what went wrong: the
+  executor hands each attempt the previous one's error as `ctx.run.error` (read back from
+  the run after a restart), and the prompt gains a note between the task's prompt and the
+  result contract: the attempt number, that error (first 2000 characters), and that the
+  earlier changes were discarded.
 - **Timeouts:** every action has one, per attempt of active work (a `waiting` run holds no
   timer); an `agent` attempt is bounded by the wall clock (the session is cancelled on
   timeout) and by `max_tool_calls`.
