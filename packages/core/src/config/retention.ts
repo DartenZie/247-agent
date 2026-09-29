@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { DURATION, parseDuration } from './duration.js';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** A duration, or `never` to keep that kind forever. */
 const keepFor = z.union([
   z.string().regex(DURATION, 'durations look like 7d, 90d, 24h; or never'),
@@ -29,6 +31,17 @@ export const Retention = z
   })
   .prefault({})
   .superRefine((r, ctx) => {
+    // The daily budget sums today's ledger rows; purging any of them would lift the cap.
+    for (const key of ['runs', 'ledger'] as const) {
+      const v = r[key];
+      if (v !== undefined && v !== 'never' && parseDuration(v) < DAY_MS) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: 'keep at least 1d: the daily budget is summed from the ledger rows of today',
+        });
+      }
+    }
     if (r.ledger === undefined || r.ledger === 'never') {
       if (r.ledger === 'never' && r.runs !== 'never') {
         ctx.addIssue({

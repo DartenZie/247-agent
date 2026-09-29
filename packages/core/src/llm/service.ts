@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 
 import { NonRetryableError } from '../actions/types.js';
 import type { EventBus } from '../bus/bus.js';
+import { BUDGET_EXCEEDED } from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import { isInside } from '../config/crosscheck.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
@@ -69,7 +70,7 @@ export type LlmServiceSettings = Pick<
 >;
 
 /** The event the daily circuit breaker emits, once per UTC day (ARCHITECTURE §9). */
-export const BUDGET_EXCEEDED = 'budget.exceeded';
+export { BUDGET_EXCEEDED };
 
 /** What `execute` needs to know about a call before and after the adapter runs it. */
 interface ExecuteSpec {

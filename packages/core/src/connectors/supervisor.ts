@@ -116,6 +116,8 @@ interface Managed {
   restartTimer: NodeJS.Timeout | undefined;
   healthTimer: NodeJS.Timeout | undefined;
   health: ConnectorHealth | null;
+  /** Bumped by every `kill`, so a spawn still starting knows it was superseded. */
+  epoch: number;
 }
 
 /** The manifest without its origin: two manifests that differ only in `file` are the same connector. */
@@ -138,6 +140,7 @@ function newManaged(manifest: ConnectorConfig): Managed {
     restartTimer: undefined,
     healthTimer: undefined,
     health: manifest.health === undefined ? null : { ok: null, checked_at: null, failures: 0 },
+    epoch: 0,
   };
 }
 
@@ -306,7 +309,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     log.info('connector.restart_requested', {});
     await this.kill(m);
     m.restarts = 0;
-    if (!this.stopping) {
+    if (!this.stopping && this.current(m)) {
       await this.spawn(m);
     }
     const status = this.status().find((s) => s.name === name);
@@ -367,11 +370,26 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     };
   }
 
+  /** Whether `m` is still the supervised entry for its name (a reload may have replaced it). */
+  private current(m: Managed): boolean {
+    return this.managed.get(m.manifest.name) === m;
+  }
+
+  /**
+   * Whether a spawn begun at `epoch` may still attach its process: not when the core is
+   * stopping, `m` was killed meanwhile (stop, restart, a failed health check) or a reload
+   * replaced or removed it.
+   */
+  private stillWanted(m: Managed, epoch: number): boolean {
+    return !this.stopping && m.epoch === epoch && this.current(m);
+  }
+
   private async spawn(m: Managed): Promise<void> {
-    if (this.stopping) {
+    if (this.stopping || !this.current(m)) {
       return;
     }
     const log = this.log.child({ connector: m.manifest.name });
+    const epoch = m.epoch;
     m.state = 'starting';
     m.error = null;
     let env: Record<string, string>;
@@ -434,7 +452,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       try {
         agent = await AcpAgent.spawn({ exec: [command, ...args], cwd, env, log });
       } catch (err) {
-        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        if (this.stillWanted(m, epoch)) {
+          this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        }
+        return;
+      }
+      if (!this.stillWanted(m, epoch)) {
+        agent.kill('SIGTERM');
         return;
       }
       m.acp = agent;
@@ -466,7 +490,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       await client.connect(transport);
     } catch (err) {
       await transport.close().catch(() => undefined);
-      this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      if (this.stillWanted(m, epoch)) {
+        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      }
+      return;
+    }
+    if (!this.stillWanted(m, epoch)) {
+      await transport.close().catch(() => undefined);
       return;
     }
     m.client = client;
@@ -543,7 +573,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       return;
     }
     log.error('connector.health_failed', { failures });
+    const epoch = m.epoch + 1; // the one this kill sets
     await this.kill(m);
+    if (!this.current(m) || m.epoch !== epoch) {
+      return; // a restart, a stop or a reload took over while the process was being killed
+    }
     this.exited(m, `health checks failed ${String(failures)} times (${error})`, log);
   }
 
@@ -586,6 +620,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   }
 
   private async kill(m: Managed): Promise<void> {
+    m.epoch++;
     if (m.restartTimer !== undefined) {
       clearTimeout(m.restartTimer);
       m.restartTimer = undefined;

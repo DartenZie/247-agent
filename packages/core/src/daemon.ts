@@ -219,8 +219,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     ...(opts.runners === undefined ? {} : { runners: opts.runners }),
   });
 
+  // What the process actually runs with: a reload never swaps these, so they are
+  // compared against (and kept in `config`) until a restart.
+  const fixed = { db: config.db, socket: config.socket, secrets: config.secrets };
+
   const reload = async (): Promise<ReloadReport> => {
-    const before = config;
     const tasks = (): number => core.config().tasks.length;
     const next = readAgentConfig(opts.configFile);
     if (!next.ok) {
@@ -234,7 +237,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       };
     }
     const restartRequired = FIXED_KEYS.filter(
-      (k) => JSON.stringify(next.config[k]) !== JSON.stringify(before[k]),
+      (k) => JSON.stringify(next.config[k]) !== JSON.stringify(fixed[k]),
     );
     if (restartRequired.length > 0) {
       log.warn('daemon.reload_needs_restart', { keys: restartRequired.join(',') });
@@ -267,7 +270,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       files.push(f.ok ? { file: f.file, ok: true } : { file: f.file, ok: false, issues: f.issues });
     }
     if (result.ok) {
-      config = next.config;
+      config = { ...next.config, ...fixed };
       log.setLevel?.(opts.logLevel ?? config.log.level);
       log.info('daemon.reloaded', { tasks: tasks(), config_file: config.file });
     }

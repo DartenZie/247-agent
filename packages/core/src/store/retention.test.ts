@@ -86,7 +86,7 @@ const policy = (over: Record<string, string> = {}) =>
   });
 
 describe('purgeStore', () => {
-  it('deletes old finished runs with their ledger rows, then events nothing references', () => {
+  it('deletes old finished runs with their ledger rows, then events nothing references', async () => {
     const oldDone = seed({ ts: ago(40), status: 'succeeded', finishedAt: ago(39), usd: 0.5 });
     const oldFailed = seed({ ts: ago(20), status: 'failed', finishedAt: ago(11) });
     const recent = seed({ ts: ago(5), status: 'succeeded', finishedAt: ago(4), usd: 0.1 });
@@ -98,7 +98,7 @@ describe('purgeStore', () => {
     store.cursors.set('dispatch', 6);
     const undispatched = seed({ ts: ago(60) });
 
-    const counts = purgeStore(store, NOW, policy());
+    const counts = await purgeStore(store, NOW, policy());
     expect(counts).toEqual({ runs: 2, ledger: 1, events: 2 });
     expect(store.runs.getById(oldDone.runId ?? '')).toBeUndefined();
     expect(store.runs.getById(oldFailed.runId ?? '')).toBeUndefined();
@@ -118,27 +118,27 @@ describe('purgeStore', () => {
     expect(store.events.getById(undispatched.eventId)).toBeDefined();
     expect(store.events.getById(recent.eventId)).toBeDefined();
     // A second pass finds nothing more.
-    expect(purgeStore(store, NOW, policy())).toEqual({ runs: 0, ledger: 0, events: 0 });
+    expect(await purgeStore(store, NOW, policy())).toEqual({ runs: 0, ledger: 0, events: 0 });
   });
 
-  it('keeps a run whose event is old and an event whose run is kept, and honours never', () => {
+  it('keeps a run whose event is old and an event whose run is kept, and honours never', async () => {
     const kept = seed({ ts: ago(100), status: 'succeeded', finishedAt: ago(1), usd: 1 });
     seed({ ts: ago(100), status: 'succeeded', finishedAt: ago(50), usd: 1 });
     store.cursors.set('dispatch', 10);
     expect(
-      purgeStore(store, NOW, policy({ runs: 'never', events: 'never', ledger: 'never' })),
+      await purgeStore(store, NOW, policy({ runs: 'never', events: 'never', ledger: 'never' })),
     ).toEqual({
       runs: 0,
       ledger: 0,
       events: 0,
     });
-    expect(purgeStore(store, NOW, policy({ runs: 'never' }))).toEqual({
+    expect(await purgeStore(store, NOW, policy({ runs: 'never' }))).toEqual({
       runs: 0,
       ledger: 0,
       events: 0,
     });
     // `ledger` shorter than `runs`: rows go while the run stays.
-    expect(purgeStore(store, NOW, policy({ runs: 'never', ledger: '20d' }))).toEqual({
+    expect(await purgeStore(store, NOW, policy({ runs: 'never', ledger: '20d' }))).toEqual({
       runs: 0,
       ledger: 1,
       events: 0,
@@ -147,12 +147,38 @@ describe('purgeStore', () => {
     expect(store.events.getById(kept.eventId)).toBeDefined();
   });
 
-  it('works through more rows than one batch', () => {
+  it('works through more rows than one batch', async () => {
     for (let i = 0; i < 1203; i++) {
       seed({ ts: ago(40), status: 'succeeded', finishedAt: ago(39) });
     }
     store.cursors.set('dispatch', 5000);
-    expect(purgeStore(store, NOW, policy())).toEqual({ runs: 1203, ledger: 0, events: 1203 });
+    expect(await purgeStore(store, NOW, policy())).toEqual({ runs: 1203, ledger: 0, events: 1203 });
     expect(store.runs.list({ limit: 1 })).toEqual([]);
+  });
+
+  it('batches the ledger purge and yields to the event loop between batches', async () => {
+    const { runId } = seed({ ts: ago(40), status: 'succeeded', finishedAt: ago(39) });
+    for (let i = 0; i < 1203; i++) {
+      store.ledger.insert({
+        run_id: runId ?? '',
+        task: 't',
+        provider: 'p',
+        model: 'm',
+        in_tok: 1,
+        out_tok: 1,
+        cache_read: 0,
+        cache_write: 0,
+        usd: 0.01,
+        priced_by: 'table',
+        ts: ago(25),
+      });
+    }
+    let ticks = 0;
+    const tick = setInterval(() => (ticks += 1), 0);
+    const counts = await purgeStore(store, NOW, policy({ runs: 'never', ledger: '20d' }));
+    clearInterval(tick);
+    expect(counts).toEqual({ runs: 0, ledger: 1203, events: 0 });
+    expect(store.ledger.sumForRun(runId ?? '')).toBe(0);
+    expect(ticks).toBeGreaterThan(0);
   });
 });

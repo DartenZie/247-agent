@@ -66,8 +66,10 @@ export class LedgerStore {
     this.deleteForRunStmt = db.prepare('DELETE FROM ledger WHERE run_id = ?');
     // Never a row of a run still in flight: its `max_usd` check sums them.
     this.deleteBeforeStmt = db.prepare(
-      `DELETE FROM ledger WHERE ts < ?
-       AND run_id NOT IN (SELECT id FROM runs WHERE status IN ('queued','running','waiting'))`,
+      `DELETE FROM ledger WHERE id IN (
+         SELECT id FROM ledger WHERE ts < ?
+         AND run_id NOT IN (SELECT id FROM runs WHERE status IN ('queued','running','waiting'))
+         LIMIT ?)`,
     );
     const summary = (group: CostGroup): Statement =>
       db.prepare(
@@ -111,9 +113,12 @@ export class LedgerStore {
     return n;
   }
 
-  /** Retention: removes rows older than `beforeIso` whose run is finished (kept or not). */
-  deleteBefore(beforeIso: string): number {
-    return this.deleteBeforeStmt.run(beforeIso).changes;
+  /**
+   * Retention: removes up to `limit` rows older than `beforeIso` whose run is finished
+   * (kept or not). Returns how many went; fewer than `limit` means none are left.
+   */
+  deleteBefore(beforeIso: string, limit: number): number {
+    return this.deleteBeforeStmt.run(beforeIso, limit).changes;
   }
 
   /** Totals grouped by `by` for rows with `ts >= since`, most expensive first. */

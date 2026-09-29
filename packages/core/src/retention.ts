@@ -11,6 +11,9 @@ import { purgeStore, type PurgeCounts } from './store/retention.js';
 import type { Store } from './store/store.js';
 import { ACTIVE_STATUSES } from './store/types.js';
 
+/** The longest delay `setTimeout`/`setInterval` accept (2^31 - 1 ms). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export interface RetentionOptions {
   store: Store;
   clock: Clock;
@@ -60,11 +63,15 @@ export class RetentionJob {
     void this.run();
   }
 
-  /** A new policy (reload): the timer is re-armed, a pass is not forced. */
+  /**
+   * A new policy (reload): a pass is not forced, and the timer is re-armed only when the
+   * interval changed, so frequent reloads never keep postponing the next pass.
+   */
   configure(policy: RetentionPolicy, workDir: string | undefined): void {
+    const rearm = policy.intervalMs !== this.policy.intervalMs;
     this.policy = policy;
     this.workDir = workDir;
-    if (!this.stopped) {
+    if (rearm && !this.stopped) {
       this.arm();
     }
   }
@@ -91,9 +98,13 @@ export class RetentionJob {
     if (this.timer !== undefined) {
       clearInterval(this.timer);
     }
-    this.timer = setInterval(() => {
-      void this.run();
-    }, this.policy.intervalMs);
+    // Node fires a longer delay after 1 ms; cap it at the ~24.8 days a timer can hold.
+    this.timer = setInterval(
+      () => {
+        void this.run();
+      },
+      Math.min(this.policy.intervalMs, MAX_TIMER_MS),
+    );
     this.timer.unref();
   }
 
@@ -101,7 +112,7 @@ export class RetentionJob {
     const startedAt = Date.now();
     try {
       const now = this.clock.now();
-      const counts = purgeStore(this.store, now, this.policy);
+      const counts = await purgeStore(this.store, now, this.policy);
       const workspaces = await this.sweepWorkspaces(now);
       const report: RetentionReport = {
         ...counts,

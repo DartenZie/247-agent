@@ -36,6 +36,7 @@ export class WaitStore {
   private readonly insertStmt: Statement;
   private readonly getStmt: Statement;
   private readonly pendingStmt: Statement;
+  private readonly countPendingStmt: Statement;
   private readonly resolvedStmt: Statement;
   private readonly expiredStmt: Statement;
   private readonly resolveStmt: Statement;
@@ -48,6 +49,7 @@ export class WaitStore {
     );
     this.getStmt = db.prepare('SELECT * FROM waits WHERE run_id = ?');
     this.pendingStmt = db.prepare('SELECT * FROM waits WHERE outcome IS NULL ORDER BY created_at');
+    this.countPendingStmt = db.prepare('SELECT COUNT(*) AS n FROM waits WHERE outcome IS NULL');
     this.resolvedStmt = db.prepare(
       'SELECT * FROM waits WHERE outcome IS NOT NULL ORDER BY created_at',
     );
@@ -74,6 +76,11 @@ export class WaitStore {
   /** Waits still armed. */
   listPending(): WaitRecord[] {
     return this.pendingStmt.all().map(rowToWait);
+  }
+
+  /** How many waits are still armed, without loading them (the `oa_runs_waiting` gauge). */
+  countPending(): number {
+    return (this.countPendingStmt.get() as { n: number }).n;
   }
 
   /** Waits that are over but whose run has not been resumed yet. */

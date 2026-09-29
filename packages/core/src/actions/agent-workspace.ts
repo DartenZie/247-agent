@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -123,22 +123,24 @@ export function listWorkspaces(workDir: string): WorkspaceEntry[] {
   return out;
 }
 
-/** The base repository of a git worktree at `path` (from its `.git` file), or undefined. */
-function worktreeRepo(path: string): string | undefined {
+/**
+ * The git directory of the repository a worktree at `path` belongs to (from its `.git`
+ * file: `<git dir>/worktrees/<name>`), or undefined. A git directory rather than a working
+ * tree, so a bare `repo` works too.
+ */
+function worktreeGitDir(path: string): string | undefined {
   let text: string;
   try {
     text = readFileSync(join(path, '.git'), 'utf8');
   } catch {
     return undefined;
   }
-  const m = /^gitdir:\s*(.+)\s*$/m.exec(text);
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
   if (m?.[1] === undefined) {
     return undefined;
   }
-  // `<repo>/.git/worktrees/<name>`
   const gitdir = isAbsolute(m[1]) ? m[1] : resolve(path, m[1]);
-  const dotGit = dirname(dirname(gitdir));
-  return dotGit.endsWith('.git') ? dirname(dotGit) : undefined;
+  return basename(dirname(gitdir)) === 'worktrees' ? dirname(dirname(gitdir)) : undefined;
 }
 
 /**
@@ -147,13 +149,15 @@ function worktreeRepo(path: string): string | undefined {
  * then the directory goes. Never throws.
  */
 export async function removeWorkspaceDir(entry: WorkspaceEntry): Promise<void> {
-  const repo = worktreeRepo(entry.path);
-  if (repo !== undefined) {
-    await git(['-C', repo, 'worktree', 'remove', '--force', entry.path]).catch(() => undefined);
+  const gitDir = worktreeGitDir(entry.path);
+  const inRepo = (args: string[]): Promise<unknown> =>
+    git([`--git-dir=${gitDir ?? ''}`, ...args]).catch(() => undefined);
+  if (gitDir !== undefined) {
+    await inRepo(['worktree', 'remove', '--force', entry.path]);
   }
   rmSync(entry.path, { recursive: true, force: true });
-  if (repo !== undefined) {
-    await git(['-C', repo, 'worktree', 'prune']).catch(() => undefined);
-    await git(['-C', repo, 'branch', '-D', `agent/${entry.runId}`]).catch(() => undefined);
+  if (gitDir !== undefined) {
+    await inRepo(['worktree', 'prune']);
+    await inRepo(['branch', '-D', `agent/${entry.runId}`]);
   }
 }

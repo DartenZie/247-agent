@@ -245,7 +245,7 @@ export class Metrics {
 
   readonly eventsPublished = this.registry.counter(
     'oa_events_published_total',
-    'Events published, by type and whether they were inserted or dropped as duplicates',
+    'Events published, by type ("other" unless the core or a task names it exactly) and whether they were inserted or dropped as duplicates',
     ['type', 'result'],
   );
   readonly eventsDropped = this.registry.counter(

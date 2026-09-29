@@ -332,7 +332,7 @@ export function createCore(opts: CoreOptions): Core {
     const stats = executor.stats();
     metrics.runsPending.set(undefined, stats.pending);
     metrics.runsInFlight.set(undefined, stats.in_flight);
-    metrics.runsWaiting.set(undefined, store.waits.listPending().length);
+    metrics.runsWaiting.set(undefined, store.waits.countPending());
     metrics.cronNextRun.reset();
     for (const job of scheduler.list()) {
       if (job.nextRun !== null) {
@@ -374,7 +374,7 @@ export function createCore(opts: CoreOptions): Core {
       return;
     }
     compiled = compileConfig(result.config);
-    bus.dispatcher.setConfig(compiled);
+    bus.setConfig(compiled);
     const names = new Set(connectors?.names() ?? []);
     const agentNames = new Set(agents?.agentNames() ?? []);
     for (const task of compiled.tasks) {
