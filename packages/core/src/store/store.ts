@@ -6,6 +6,7 @@ import { EventStore } from './events.js';
 import { LedgerStore } from './ledger.js';
 import { RunStore } from './runs.js';
 import { StateStore } from './state.js';
+import { TranscriptStore } from './transcripts.js';
 import { WaitStore } from './waits.js';
 
 export interface Store {
@@ -16,6 +17,7 @@ export interface Store {
   readonly state: StateStore;
   readonly waits: WaitStore;
   readonly ledger: LedgerStore;
+  readonly transcripts: TranscriptStore;
   /** Runs `fn` in a `BEGIN IMMEDIATE` transaction (nested calls become savepoints). */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -31,6 +33,7 @@ export function openStore(path: string): Store {
     state: new StateStore(db),
     waits: new WaitStore(db),
     ledger: new LedgerStore(db),
+    transcripts: new TranscriptStore(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
     close: () => {
       db.close();

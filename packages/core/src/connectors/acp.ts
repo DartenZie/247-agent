@@ -105,8 +105,13 @@ export function normaliseUpdate(update: SessionUpdate): AgentUpdate {
         messageId: update.messageId ?? null,
       };
     }
-    case 'agent_thought_chunk':
-      return { kind: 'thought' };
+    case 'agent_thought_chunk': {
+      const content: ContentBlock = update.content;
+      return {
+        kind: 'thought',
+        text: content.type === 'text' ? content.text : `[${content.type}]`,
+      };
+    }
     case 'tool_call':
       return {
         kind: 'tool_call',

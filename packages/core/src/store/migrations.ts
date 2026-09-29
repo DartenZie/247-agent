@@ -87,6 +87,18 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX ledger_run ON ledger(run_id);
   CREATE INDEX ledger_task_ts ON ledger(task, ts);
   `,
+  `
+  CREATE TABLE transcripts (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT    NOT NULL REFERENCES runs(id),
+    ts     TEXT    NOT NULL,
+    turn   INTEGER NOT NULL,
+    kind   TEXT    NOT NULL,
+    text   TEXT,
+    data   TEXT
+  );
+  CREATE INDEX transcripts_run ON transcripts(run_id, id);
+  `,
 ];
 
 export function migrate(db: Database): void {

@@ -199,8 +199,9 @@ through the same port (`ctx.llm.decide()`), with the Decisions API implemented i
 `openrouter` adapter only; `docs/examples/decide-triage.yaml` is the reference. The
 `agent` action runs on ACP connectors (`transport: acp`); `docs/examples/website-updates.yaml`
 tasks 3, 3b and 4 are the reference, `docs/examples/connectors.d/claude.yaml` the
-connector. Not there yet: `mcp_servers` (connector ops as agent tools), transcript
-persistence, retention of `work/`, and exposing the agent's model/mode config options.
+connector; the session is persisted as a transcript (`oa runs logs <id>`). Not there
+yet: `mcp_servers` (connector ops as agent tools), retention of `work/`, and exposing the
+agent's model/mode config options.
 When adding an adapter or changing a runner, follow `references/llm-action.md`,
 `references/decide-action.md` and `references/agent-action.md` and keep
 `docs/ARCHITECTURE.md` §5.2, §5.3, §5.4, §9 and §14 in sync with the code.

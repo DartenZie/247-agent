@@ -530,6 +530,7 @@ export class Executor {
       sandbox: this.defaultSandbox,
       llm: this.llm,
       agents: this.agents,
+      transcripts: this.store.transcripts,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
     };

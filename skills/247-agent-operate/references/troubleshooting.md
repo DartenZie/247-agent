@@ -22,6 +22,7 @@
 | `a task never triggers on its own … event` | Trigger on `task.<self>.succeeded\|failed` | Trigger on a domain event the task emits, or on another task |
 | run failed with stderr tail, `shell` | Non-zero exit with `text_stdout`/`json_stdout` | Fix the command, or use `result: exit_code` if non-zero is a legitimate outcome |
 | `json_stdout` parse error | Command printed non-JSON | Print only JSON on stdout; send diagnostics to stderr |
-| run is `running` for a long time | Between retry attempts (backoff) or waiting on `timeout` | `GET /v1/runs/{id}` shows `attempt` and the last error |
+| run is `running` for a long time | Between retry attempts (backoff) or waiting on `timeout` | `oa runs show <id>` shows `attempt` and the last error; for an agent run `oa runs logs <id> --follow` shows what it is doing |
+| an `agent` run failed or came back `blocked` | Policy refusal, tool-call cap, budget, missing RESULT.json, or the agent's own judgement | `oa runs logs <id>`: `permission … refused` rows name the command or path, a `cancel` row says which limit hit, the `result` row holds the summary |
 | event dropped, `depth` | Chain deeper than `limits.max_event_depth` (32) | You have a loop: task A emits what triggers B which emits what triggers A. Break it with a filter or a `dedup_key` |
 | duplicate event ignored (200) | Same `dedup_key` already published | Intended; change the key if it is a genuinely new item |

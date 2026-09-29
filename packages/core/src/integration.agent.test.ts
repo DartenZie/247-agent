@@ -181,6 +181,41 @@ describe('agent task on the fake ACP connector', () => {
       priced_by: 'provider',
     });
     expect(JSON.stringify(lines)).not.toContain('sk-model-not-real');
+
+    // A permission request is answered as it arrives while `tool_call` updates queue behind
+    // the runner's loop, so the decision can precede the call it answers.
+    const { entries } = await api.getTranscript(run.id);
+    expect(entries.map((e) => e.kind)).toEqual([
+      'prompt',
+      'text',
+      'permission',
+      'tool_call',
+      'tool_call_update',
+      'permission',
+      'tool_call',
+      'tool_call_update',
+      'text',
+      'usage',
+      'stop',
+      'result',
+    ]);
+    expect(entries[0]?.text).toContain('Apply this request to the site.');
+    expect(entries[1]?.text).toBe('Working on it. ');
+    expect(entries[2]?.data).toMatchObject({ tool_kind: 'execute', allowed: true });
+    expect(entries[3]?.data).toMatchObject({ tool_kind: 'execute', command: 'npm run build' });
+    expect(entries[6]?.data).toMatchObject({
+      tool_kind: 'edit',
+      locations: [join(ws, 'data/events.yaml')],
+    });
+    expect(entries[9]?.data).toEqual({ used: 1200, size: 200_000, cost_usd: 0.12 });
+    expect(entries[10]?.data).toEqual({
+      stop_reason: 'end_turn',
+      input_tokens: 1000,
+      output_tokens: 200,
+    });
+    expect(entries[11]?.data).toMatchObject({ status: 'done' });
+    expect(entries.every((e) => e.run_id === run.id && e.turn === 1)).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain('sk-model-not-real');
   }, 30_000);
 
   it('blocked: skips the gates, still succeeds, and the reply task tells the sender what is missing', async () => {
