@@ -8,6 +8,7 @@ import { execaSync } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type {
+  AgentConfigOption,
   AgentInfo,
   AgentSession,
   AgentStop,
@@ -40,10 +41,26 @@ type Turn = (env: TurnEnv) => AsyncGenerator<AgentUpdate, AgentStop, undefined>;
 
 interface FakeAgents extends AgentClients {
   opened: AgentOpenOptions[];
+  /** The session's config options; `setConfigOption` changes them and records `[id, value]`. */
+  config: AgentConfigOption[];
+  sets: [string, string][];
   prompts: string[];
   cancels: number;
   closed: number;
 }
+
+const select = (
+  id: string,
+  category: string | undefined,
+  values: string[],
+  currentValue = values[0] ?? '',
+): AgentConfigOption => ({ id, name: id, category, type: 'select', currentValue, values });
+
+/** Like claude-agent-acp: a model picker and an effort level, both selects. */
+const agentConfig = (): AgentConfigOption[] => [
+  select('model', 'model', ['default', 'claude-sonnet-5', 'claude-opus-5']),
+  select('effort', 'thought_level', ['low', 'medium', 'high'], 'medium'),
+];
 
 /** An in-memory `AgentClients` whose one connector runs `turn` for every prompt. */
 function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {}): FakeAgents {
@@ -51,6 +68,8 @@ function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {
     defaults: { max_tool_calls: 40 },
     workDir,
     opened: [],
+    config: agentConfig(),
+    sets: [],
     prompts: [],
     cancels: 0,
     closed: 0,
@@ -64,6 +83,18 @@ function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {
       let cancelled = false;
       const session: AgentSession = {
         sessionId: 'sess_1',
+        get configOptions() {
+          return fake.config;
+        },
+        setConfigOption: (id, value) => {
+          fake.sets.push([id, value]);
+          const option = fake.config.find((o) => o.id === id);
+          if (option?.values.includes(value) !== true) {
+            return Promise.reject(new Error(`Invalid value for config option ${id}: ${value}`));
+          }
+          fake.config = fake.config.map((o) => (o.id === id ? { ...o, currentValue: value } : o));
+          return Promise.resolve(fake.config);
+        },
         prompt: (text) => {
           fake.prompts.push(text);
           return turn({ text, cwd: opts.cwd, ask: opts.onPermission, cancelled: () => cancelled });
@@ -153,6 +184,11 @@ describe('AgentAction schema', () => {
     expect(AgentAction.safeParse({ ...action, runtime: 'acp' }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, unasked_execute: 'trust' }).success).toBe(false);
     expect(AgentAction.safeParse({ ...action, tools: [] }).success).toBe(false);
+    expect(AgentAction.parse({ ...action, model: 'claude-opus-5', effort: 'high' })).toMatchObject({
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
+    expect(AgentAction.safeParse({ ...action, effort: '' }).success).toBe(false);
     expect(
       AgentAction.parse({
         ...action,
@@ -327,6 +363,82 @@ describe('runAgent', () => {
     );
     expect(llm.turns[0]?.turn).toMatchObject({ model: 'claude-sonnet-5', maxUsd: 0.25 });
     expect(agents.opened[0]?.tools).toEqual([{ connector: 'ftp', ops: ['upload'] }]);
+  });
+
+  it('sets model, then effort, as session config options before the first prompt', async () => {
+    const agents = fakeAgents(async function* (env) {
+      expect(agents.sets).toHaveLength(2);
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop();
+    }, workDir);
+    await runAgent({ ...action, model: 'claude-opus-5', effort: 'high' }, ctx(agents));
+    expect(agents.sets).toEqual([
+      ['model', 'claude-opus-5'],
+      ['effort', 'high'],
+    ]);
+    expect(lines.find((l) => l.msg === 'agent.config')).toMatchObject({
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
+  });
+
+  it('finds the options by category and leaves unset ones to the agent', async () => {
+    const agents = fakeAgents(async function* (env) {
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop();
+    }, workDir);
+    agents.config = [
+      select('mode', 'mode', ['read-only', 'auto']),
+      select('reasoning_effort', 'thought_level', ['minimal', 'low', 'high'], 'low'),
+      select('model', 'model', ['gpt-5.6-sol']),
+    ];
+    await runAgent({ ...action, effort: 'minimal' }, ctx(agents));
+    expect(agents.sets).toEqual([['reasoning_effort', 'minimal']]);
+    expect(lines.find((l) => l.msg === 'agent.config')).toMatchObject({
+      model: 'gpt-5.6-sol',
+      effort: 'minimal',
+    });
+    agents.sets = [];
+    await runAgent(action, ctx(agents));
+    expect(agents.sets).toEqual([]);
+  });
+
+  it('fails before the prompt when the agent has no such option or refuses the value', async () => {
+    const agents = fakeAgents(async function* () {
+      return stop();
+    }, workDir);
+    agents.config = [select('model', 'model', ['default', 'claude-sonnet-5'])];
+    const noEffort = await runAgent({ ...action, effort: 'high' }, ctx(agents)).catch(
+      (e: unknown) => e,
+    );
+    expect(noEffort).toBeInstanceOf(NonRetryableError);
+    expect(String(noEffort)).toMatch(
+      /agent "claude" offers no thought_level config option to set effort "high"; its options: model \(model\)/,
+    );
+    const refused = await runAgent({ ...action, model: 'claude-opus-5' }, ctx(agents)).catch(
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(NonRetryableError);
+    expect(String(refused)).toMatch(
+      /refused model "claude-opus-5" \(Invalid value .*\); it offers default, claude-sonnet-5/,
+    );
+    expect(agents.prompts).toEqual([]);
+    expect(agents.closed).toBe(2);
+    expect(existsSync(join(workDir, 'run_test'))).toBe(false);
+  });
+
+  it('fails when the agent accepts an effort but does not apply it', async () => {
+    const agents = fakeAgents(async function* () {
+      return stop();
+    }, workDir);
+    const open = agents.open.bind(agents);
+    agents.open = async (connector, opts) => {
+      const session = await open(connector, opts);
+      return Object.assign(session, { setConfigOption: () => Promise.resolve(agentConfig()) });
+    };
+    await expect(runAgent({ ...action, effort: 'low' }, ctx(agents))).rejects.toThrow(
+      /left effort at "medium" after it was set to "low"/,
+    );
   });
 
   it('nudges once for a missing RESULT.json, then fails and removes the workspace', async () => {

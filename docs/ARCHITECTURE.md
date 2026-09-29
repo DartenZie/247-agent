@@ -289,7 +289,8 @@ the provider keeps its origin: the Decisions path replaces `/api/v1`.
 action:
   kind: agent
   connector: claude                # a `transport: acp` connector (§6); default defaults.agent.connector
-  model: claude-sonnet-5           # optional: prices the reported tokens when the agent reports no cost
+  model: claude-sonnet-5           # optional: the session's model (ACP config option); also prices tokens when the agent reports no cost
+  effort: medium                   # optional: the session's effort (ACP `thought_level` option); unset = the agent's own
   max_tool_calls: 40               # the core cancels the session past this; default defaults.agent
   budget: { max_usd: 1.50 }        # hard stop: cancelled when the reported cost passes it; run → failed
   workspace:
@@ -318,11 +319,24 @@ action:
 **Protocol.** The agent is a program speaking the Agent Client Protocol (JSON-RPC over
 stdio, protocol version 1). The supervisor spawns it once like any connector and keeps
 the connection (`initialize`); each run calls `session/new` with the workspace as `cwd`,
-sends one `session/prompt` (the `system_file` text, the rendered `prompt`, and the
+sets `model` and then `effort` with `session/set_config_option` (below), sends one `session/prompt` (the `system_file` text, the rendered `prompt`, and the
 result contract below), consumes `session/update` notifications (message chunks, tool
 calls, `usage_update`) and answers `session/request_permission` from the task's policy.
 `session/cancel` is the hard stop. The agent runs the model with its own key (the
 manifest's `env`); the core never talks to a model provider for an `agent` action.
+
+**Model and effort.** Agents name their config options freely (claude-agent-acp `model`
+and `effort`, codex-acp `model` and `reasoning_effort`), so the core finds them by the
+protocol's category in the `configOptions` of `session/new`: `model` sets the select
+option of category `model`, then `effort` the one of category `thought_level` (model
+first, since a model switch changes the effort levels on offer). The model value may be
+an alias the agent resolves (claude-agent-acp maps `claude-opus-5` to its picker entry);
+the effort must come back as sent. An agent with no option of that category, or one that
+refuses the value, fails the run non-retryably before the prompt, with the options it
+offers in the error. Unset fields keep the agent program's own default (its settings,
+`CODEX_CONFIG`); `agent.config` logs the model and effort the session ends up with.
+`mode` is deliberately not exposed: a mode such as `bypassPermissions` would take the
+permission requests the policy relies on away.
 
 **Policy (the capability surface).** Every permission request is judged per call, never
 `allow_always`: the tool's kind must be in `tools`; an `execute` call's command
@@ -443,8 +457,7 @@ Notes
 - The **agent never sees deploy credentials**. Secrets are injected only into the actions
   that need them; the manifest's `env` carries the model key and nothing else.
 - Two tasks with different intelligence needs are the same action kind with a different
-  `connector`/`max_tool_calls`/`budget`/`system_file`; model and effort are the agent
-  program's own settings until ACP config options are wired (planned).
+  `connector`/`model`/`effort`/`max_tool_calls`/`budget`/`system_file`.
 - `post` gates run through the `shell` runner with `cwd` = workspace, so
   `defaults.sandbox: bwrap` applies to them. The agent program itself is sandboxed by its
   manifest's `sandbox: bwrap` (§6, §11), which is where the `ro_binds` for the
@@ -1019,10 +1032,11 @@ the supervisor, the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reloa
 manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check).
 Connector ops as agent tools are done: `mcp_servers` on the `agent` action, the tool
 bridge (`connectors/mcp-bridge.ts`) opened by the supervisor per session, and the
-`checkAgentTools` cross-check.
+`checkAgentTools` cross-check. An agent's `model` and `effort` are set as ACP session
+config options by category (`actions/agent-session-config.ts`).
 Where the code is behind this document:
-`batch: true` is rejected; the agent sandbox has no network allowlist; ACP config options
-(model, mode) are not exposed; `shell.user` is rejected.
+`batch: true` is rejected; the agent sandbox has no network allowlist; `shell.user` is
+rejected.
 
 ## 15. Open decisions
 

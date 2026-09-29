@@ -9,7 +9,8 @@ a tool-call cap and a budget, ending in a RESULT.json that routing reads.
 | field | meaning |
 |---|---|
 | `connector` | a `transport: acp` connector (`connectors.d/claude.yaml`); default `defaults.agent.connector` |
-| `model` | optional; prices the reported tokens when the agent reports no cost. The agent program picks its own model |
+| `model` | optional; the session's model, set through the agent's ACP config option of category `model` (an alias the agent resolves is fine). Also prices the reported tokens when the agent reports no cost, so it needs a price. Unset: the agent program's own default |
+| `effort` | optional; the session's effort level, set through the option of category `thought_level` after the model (claude-agent-acp: `low`…`max` by model; codex-acp: `minimal`…`xhigh`). Must be a value the agent offers for that model. Unset: the agent's own default |
 | `max_tool_calls` | tool calls allowed in one run; past it the session is cancelled and the run fails. Default `defaults.agent.max_tool_calls` (40) |
 | `budget` | `{ max_usd }`; the smaller of this and the task's applies. The session is cancelled when the agent's reported cost passes it |
 | `workspace` | `{ kind: git-worktree, repo, branch }` (a worktree on branch `agent/<run_id>`) or `{ kind: temp }`; at `<defaults.agent.work_dir>/<run_id>`, `${run.workspace}` |
@@ -112,6 +113,11 @@ provider` shows the agent's spend next to the direct model calls.
 
 ## Runner notes (`packages/core/src/actions/agent.ts`)
 
+- `agent-session-config.ts` applies `model` then `effort` before the first prompt, finding
+  the options by category (ids differ per agent: `effort` vs `reasoning_effort`); no such
+  option, a refused value, or an effort that does not stick fails the run non-retryably
+  with what the agent offers. `mode` is not exposed (a permissive mode would bypass the
+  policy).
 - `ctx.agents` (`AgentClients`, implemented by the supervisor) opens the session;
   `connectors/acp.ts` is the only file that imports `@agentclientprotocol/sdk`.
 - `agent-policy.ts` (`decidePermission`) is pure; `agent-workspace.ts` creates and removes

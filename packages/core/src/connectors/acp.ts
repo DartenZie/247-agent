@@ -20,6 +20,7 @@ import {
   type ContentBlock,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
+  type SessionConfigOption,
   type SessionUpdate,
   type ToolCallLocation,
   type ToolKind as WireToolKind,
@@ -30,6 +31,7 @@ import type { Logger } from '../log.js';
 import {
   PERMISSION_CANCELLED,
   TOOL_KINDS,
+  type AgentConfigOption,
   type AgentInfo,
   type AgentSession,
   type AgentSessionOptions,
@@ -162,10 +164,28 @@ export function normalisePermission(req: RequestPermissionRequest): PermissionRe
   };
 }
 
+/** `configOptions` as the runner sees them (`acp-types.ts`). Exported for tests. */
+export function normaliseConfigOptions(
+  options: readonly SessionConfigOption[] | null | undefined,
+): AgentConfigOption[] {
+  return (options ?? []).map((o) => ({
+    id: o.id,
+    name: o.name,
+    category: o.category ?? undefined,
+    type: o.type,
+    currentValue: o.currentValue,
+    values:
+      o.type === 'select'
+        ? o.options.flatMap((v) => ('group' in v ? v.options.map((g) => g.value) : [v.value]))
+        : [],
+  }));
+}
+
 const CANCELLED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
 
 class AcpSession implements AgentSession {
   readonly sessionId: string;
+  configOptions: readonly AgentConfigOption[];
   private closed = false;
 
   constructor(
@@ -174,6 +194,20 @@ class AcpSession implements AgentSession {
     private readonly unregister: () => void,
   ) {
     this.sessionId = active.sessionId;
+    this.configOptions = normaliseConfigOptions(active.newSessionResponse.configOptions);
+  }
+
+  async setConfigOption(id: string, value: string): Promise<readonly AgentConfigOption[]> {
+    if (this.closed) {
+      throw new Error('session is closed');
+    }
+    const res = await this.conn.agent.request(methods.agent.session.setConfigOption, {
+      sessionId: this.sessionId,
+      configId: id,
+      value,
+    });
+    this.configOptions = normaliseConfigOptions(res.configOptions);
+    return this.configOptions;
   }
 
   async *prompt(text: string): AsyncGenerator<AgentUpdate, AgentStop, undefined> {
@@ -193,6 +227,9 @@ class AcpSession implements AgentSession {
               ? undefined
               : { input: usage.inputTokens, output: usage.outputTokens },
         };
+      }
+      if (message.update.sessionUpdate === 'config_option_update') {
+        this.configOptions = normaliseConfigOptions(message.update.configOptions);
       }
       yield normaliseUpdate(message.update);
     }

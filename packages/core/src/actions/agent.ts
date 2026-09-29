@@ -22,6 +22,7 @@ import {
   resultInstructions,
   type AgentResult,
 } from './agent-result.js';
+import { applySessionSettings } from './agent-session-config.js';
 import { TranscriptWriter } from './agent-transcript.js';
 import { createWorkspace, Workspace } from './agent-workspace.js';
 import { runShell, ShellError } from './shell.js';
@@ -72,8 +73,14 @@ export const AgentAction = z
     kind: z.literal('agent'),
     /** An acp connector; default `defaults.agent.connector`. */
     connector: z.string().regex(NAME, 'connector names are [a-z][a-z0-9_-]*').optional(),
-    /** Prices the reported tokens when the agent reports no cost; informational otherwise. */
+    /**
+     * The session's model, set through the agent's `model` config option (an alias the
+     * agent resolves is fine); also prices the reported tokens when the agent reports no
+     * cost. Unset: the agent program's own default.
+     */
     model: z.string().min(1).optional(),
+    /** The session's effort, set through the agent's `thought_level` config option (`low`, `high`, …). */
+    effort: z.string().min(1).optional(),
     /** Tool calls allowed in one run before the session is cancelled; default `defaults.agent`. */
     max_tool_calls: z.number().int().positive().optional(),
     budget: Budget.optional(),
@@ -520,6 +527,12 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       return out.stop;
     };
     try {
+      await applySessionSettings(
+        session,
+        { model: cfg.model, effort: cfg.effort },
+        connector,
+        ctx.log,
+      );
       await turn(prompt);
       let read = readAgentResult(ws.path, cfg.result.path, schema);
       if (!read.ok && read.missing) {

@@ -106,9 +106,28 @@ export interface AgentSessionOptions {
   log: Logger;
 }
 
+/**
+ * One ACP session config option (`configOptions` of `session/new`), reduced to what the
+ * runner selects by. `category` is the protocol's semantic hint (`model`, `thought_level`,
+ * `mode`, …), which is how the runner finds an option whatever id the agent gives it.
+ */
+export interface AgentConfigOption {
+  id: string;
+  name: string;
+  category: string | undefined;
+  type: 'select' | 'boolean';
+  currentValue: string | boolean;
+  /** The selectable values (groups flattened); empty for a boolean. */
+  values: string[];
+}
+
 /** One ACP session on a live agent, as the runner drives it. */
 export interface AgentSession {
   readonly sessionId: string;
+  /** The session's config options as last reported (`session/new`, a set, or an update). */
+  readonly configOptions: readonly AgentConfigOption[];
+  /** `session/set_config_option` for a select option; resolves with the full set after it. */
+  setConfigOption(id: string, value: string): Promise<readonly AgentConfigOption[]>;
   /** Yields the turn's updates, returns its stop. One turn at a time. */
   prompt(text: string): AsyncGenerator<AgentUpdate, AgentStop, undefined>;
   /** `session/cancel`; the running `prompt` then ends with `cancelled`. */

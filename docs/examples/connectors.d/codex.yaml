@@ -9,9 +9,10 @@
 # `unasked_execute: sandboxed`: unasked commands are trusted to that sandbox, every escape
 # is judged against the task's `tools`/`bash_allow`, and every reported tool kind and
 # path is still judged. `CODEX_CONFIG` is JSON merged into every session's Codex config
-# (model, reasoning effort, approval policy). codex-acp reports tokens but no cost, so the
-# action names `model:` and agent.yaml prices it under `pricing:` unless the built-in
-# table knows it. Codex runs commands in a login shell: put the node/npm the build needs on
+# (model, reasoning effort, approval policy); an action's `model:` and `effort:` override
+# the first two per session (ACP config options `model` and `reasoning_effort`). codex-acp
+# reports tokens but no cost, so the action names `model:` and agent.yaml prices it under
+# `pricing:` unless the built-in table knows it. Codex runs commands in a login shell: put the node/npm the build needs on
 # PATH here if the daemon's PATH would not reach it.
 #
 # Codex's sandbox confines what the agent runs, not the agent program itself, which still
