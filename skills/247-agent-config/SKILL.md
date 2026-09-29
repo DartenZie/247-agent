@@ -28,7 +28,7 @@ defaults:
   agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # agent actions; work_dir defaults to work/ next to db
 secrets: { backend: systemd-credentials }
 budgets: { daily_usd: 10 }          # accepted, applied once the ledger exists
-retention: { events: 90d, runs: 90d, workspaces: 7d }   # accepted, no GC yet
+retention: { events: 90d, runs: 90d, workspaces: 7d, interval: 1h }   # + ledger (defaults to runs); `never` keeps a kind forever
 ```
 
 Relative `db`, `socket`, `tasks` and `connectors` paths resolve against the directory
@@ -63,8 +63,8 @@ names across all manifests. `docs/examples/agent.yaml` is the annotated referenc
 
 | change | how it takes effect |
 |---|---|
-| tasks files | `systemctl reload 247-agent` (SIGHUP); running runs finish under the old config; an invalid file is logged and ignored |
-| connector manifests, `agent.yaml` | restart the service |
+| tasks files, connector manifests, `agent.yaml` | `oa reload` or `systemctl reload 247-agent` (SIGHUP): all three re-read and applied together; running runs finish under the old config; if any file is invalid nothing changes (`oa reload` prints the issues, exit 1). Connectors whose manifest changed are respawned, new ones spawned, removed ones stopped |
+| `db`, `socket`, `secrets` in `agent.yaml` | restart the service (`oa reload` reports them as `restart required`) |
 | secrets (`file` backend) | re-read on every resolve for actions and pollers; `oa connector restart <name>` for a connector that holds the old value |
 | secrets (`env`, `systemd-credentials`) | restart the service (systemd re-loads credentials at start) |
 

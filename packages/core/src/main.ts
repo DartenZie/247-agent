@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * `247-agent-core --config /etc/247-agent/agent.yaml` (ARCHITECTURE §12).
- * SIGTERM/SIGINT stop the daemon; SIGHUP reloads the tasks file. Logs are JSON lines on
- * stdout for journald.
+ * SIGTERM/SIGINT stop the daemon; SIGHUP reloads agent.yaml, the connector manifests and
+ * the tasks files. Logs are JSON lines on stdout for journald.
  */
 import { parseArgs } from 'node:util';
 
@@ -98,7 +98,7 @@ async function main(argv: string[]): Promise<number> {
     });
     process.on('SIGHUP', () => {
       log.info('daemon.signal', { signal: 'SIGHUP' });
-      daemon.reload();
+      void daemon.reload();
     });
     const crash = (kind: string, err: unknown): void => {
       log.error('daemon.crashed', {

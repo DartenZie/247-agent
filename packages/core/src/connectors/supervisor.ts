@@ -15,6 +15,7 @@ import type { ConnectorConfig, Transport } from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
@@ -33,9 +34,19 @@ export interface SupervisorOptions {
   callTimeoutMs?: number;
   /** `defaults.agent` and the workspace root for `agent` runs on acp connectors. */
   agents?: { defaults: AgentDefaultsConfig; workDir: string } | undefined;
+  metrics?: Metrics | undefined;
 }
 
 export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped';
+
+/** The last health check of a connector with `health:` in its manifest. */
+export interface ConnectorHealth {
+  /** `null` until the first check after a (re)start. */
+  ok: boolean | null;
+  checked_at: string | null;
+  /** Consecutive failures so far; `health.failures` of them respawn the process. */
+  failures: number;
+}
 
 export interface ConnectorStatus {
   name: string;
@@ -45,6 +56,15 @@ export interface ConnectorStatus {
   restarts: number;
   /** Last spawn or transport error, if any. */
   error: string | null;
+  /** `null` when the manifest has no `health:`. */
+  health: ConnectorHealth | null;
+}
+
+/** What `apply` did to the set of connectors on a reload. */
+export interface ApplyResult {
+  added: string[];
+  removed: string[];
+  changed: string[];
 }
 
 /** The connector reported the op failed (`isError`), or the op is unknown to it. */
@@ -94,6 +114,34 @@ interface Managed {
   error: string | null;
   upSince: number;
   restartTimer: NodeJS.Timeout | undefined;
+  healthTimer: NodeJS.Timeout | undefined;
+  health: ConnectorHealth | null;
+  /** Bumped by every `kill`, so a spawn still starting knows it was superseded. */
+  epoch: number;
+}
+
+/** The manifest without its origin: two manifests that differ only in `file` are the same connector. */
+export function manifestKey(m: ConnectorConfig): string {
+  const { file: _file, ...rest } = m;
+  return JSON.stringify(rest);
+}
+
+function newManaged(manifest: ConnectorConfig): Managed {
+  return {
+    manifest,
+    state: 'stopped',
+    client: undefined,
+    transport: undefined,
+    process: undefined,
+    acp: undefined,
+    restarts: 0,
+    error: null,
+    upSince: 0,
+    restartTimer: undefined,
+    healthTimer: undefined,
+    health: manifest.health === undefined ? null : { ok: null, checked_at: null, failures: 0 },
+    epoch: 0,
+  };
 }
 
 /**
@@ -104,12 +152,13 @@ interface Managed {
  * and reach the child only through its environment.
  */
 export class ConnectorSupervisor implements ConnectorClients, AgentClients {
-  readonly defaults: AgentDefaultsConfig;
-  readonly workDir: string;
+  private agentDefaults: AgentDefaultsConfig;
+  private agentWorkDir: string;
   private readonly managed = new Map<string, Managed>();
   private readonly socketPath: string;
   private readonly secrets: SecretsBackend;
   private readonly log: Logger;
+  private readonly metrics: Metrics;
   private readonly baseEnv: Record<string, string>;
   private readonly callTimeoutMs: number;
   private stopping = false;
@@ -118,24 +167,33 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     this.socketPath = opts.socketPath;
     this.secrets = opts.secrets;
     this.log = opts.log;
+    this.metrics = opts.metrics ?? new Metrics();
     this.baseEnv = opts.env ?? getDefaultEnvironment();
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
-    this.defaults = opts.agents?.defaults ?? AgentDefaults.parse({});
-    this.workDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
+    this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
+    this.agentWorkDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
     for (const manifest of opts.manifests) {
-      this.managed.set(manifest.name, {
-        manifest,
-        state: 'stopped',
-        client: undefined,
-        transport: undefined,
-        process: undefined,
-        acp: undefined,
-        restarts: 0,
-        error: null,
-        upSince: 0,
-        restartTimer: undefined,
-      });
+      this.managed.set(manifest.name, newManaged(manifest));
     }
+  }
+
+  get defaults(): AgentDefaultsConfig {
+    return this.agentDefaults;
+  }
+
+  get workDir(): string {
+    return this.agentWorkDir;
+  }
+
+  /** Reload seam: `defaults.agent` and `work_dir` for runs that start from now on. */
+  configure(agents: { defaults: AgentDefaultsConfig; workDir: string }): void {
+    this.agentDefaults = agents.defaults;
+    this.agentWorkDir = agents.workDir;
+  }
+
+  /** The manifests currently supervised. */
+  manifests(): ConnectorConfig[] {
+    return [...this.managed.values()].map((m) => m.manifest);
   }
 
   names(): string[] {
@@ -160,6 +218,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
       error: m.error,
+      health: m.health === null ? null : { ...m.health },
     }));
   }
 
@@ -192,6 +251,51 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   }
 
   /**
+   * Reload seam (ARCHITECTURE §4): makes the supervised set match `manifests`. A connector
+   * whose manifest is unchanged keeps running; a changed one is killed and respawned with
+   * its new manifest and freshly resolved secrets; a removed one is stopped; a new one is
+   * spawned. Ops on a connector being replaced fail as "not running" meanwhile.
+   */
+  async apply(manifests: readonly ConnectorConfig[]): Promise<ApplyResult> {
+    const result: ApplyResult = { added: [], removed: [], changed: [] };
+    const next = new Map(manifests.map((m) => [m.name, m]));
+    const work: Promise<void>[] = [];
+    for (const [name, m] of this.managed) {
+      if (!next.has(name)) {
+        result.removed.push(name);
+        this.managed.delete(name);
+        work.push(this.kill(m));
+      }
+    }
+    for (const [name, manifest] of next) {
+      const current = this.managed.get(name);
+      if (current === undefined) {
+        result.added.push(name);
+        const m = newManaged(manifest);
+        this.managed.set(name, m);
+        work.push(this.spawn(m));
+        continue;
+      }
+      if (manifestKey(current.manifest) === manifestKey(manifest)) {
+        continue;
+      }
+      result.changed.push(name);
+      const replacement = newManaged(manifest);
+      this.managed.set(name, replacement);
+      work.push(this.kill(current).then(() => this.spawn(replacement)));
+    }
+    await Promise.all(work);
+    if (result.added.length + result.removed.length + result.changed.length > 0) {
+      this.log.info('connector.set_applied', {
+        added: result.added.length === 0 ? null : result.added.join(','),
+        removed: result.removed.length === 0 ? null : result.removed.join(','),
+        changed: result.changed.length === 0 ? null : result.changed.join(','),
+      });
+    }
+    return result;
+  }
+
+  /**
    * Kills one connector and spawns it again, re-resolving its secrets: how a rotated
    * secret reaches a running connector (ARCHITECTURE §6). Deliberate, so the backoff
    * counter resets. Throws for an unknown name.
@@ -205,12 +309,12 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     log.info('connector.restart_requested', {});
     await this.kill(m);
     m.restarts = 0;
-    if (!this.stopping) {
+    if (!this.stopping && this.current(m)) {
       await this.spawn(m);
     }
     const status = this.status().find((s) => s.name === name);
     if (status === undefined) {
-      throw new Error(`connector "${name}" vanished`); // unreachable: managed never shrinks
+      throw new Error(`connector "${name}" was removed by a reload while restarting`);
     }
     return status;
   }
@@ -234,11 +338,21 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     if (m.client === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
-    const result = await m.client.callTool({ name: op, arguments: args }, undefined, {
-      signal: opts.signal,
-      timeout: opts.timeoutMs ?? this.callTimeoutMs,
-    });
-    return toolResultToJson(connector, op, result);
+    const startedAt = Date.now();
+    try {
+      const result = await m.client.callTool({ name: op, arguments: args }, undefined, {
+        signal: opts.signal,
+        timeout: opts.timeoutMs ?? this.callTimeoutMs,
+      });
+      const value = toolResultToJson(connector, op, result);
+      this.metrics.connectorOps.inc({ connector, op, result: 'ok' });
+      return value;
+    } catch (err) {
+      this.metrics.connectorOps.inc({ connector, op, result: 'error' });
+      throw err;
+    } finally {
+      this.metrics.connectorOpDuration.observe({ connector, op }, (Date.now() - startedAt) / 1000);
+    }
   }
 
   private childEnv(m: Managed): Record<string, string> {
@@ -256,11 +370,26 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     };
   }
 
+  /** Whether `m` is still the supervised entry for its name (a reload may have replaced it). */
+  private current(m: Managed): boolean {
+    return this.managed.get(m.manifest.name) === m;
+  }
+
+  /**
+   * Whether a spawn begun at `epoch` may still attach its process: not when the core is
+   * stopping, `m` was killed meanwhile (stop, restart, a failed health check) or a reload
+   * replaced or removed it.
+   */
+  private stillWanted(m: Managed, epoch: number): boolean {
+    return !this.stopping && m.epoch === epoch && this.current(m);
+  }
+
   private async spawn(m: Managed): Promise<void> {
-    if (this.stopping) {
+    if (this.stopping || !this.current(m)) {
       return;
     }
     const log = this.log.child({ connector: m.manifest.name });
+    const epoch = m.epoch;
     m.state = 'starting';
     m.error = null;
     let env: Record<string, string>;
@@ -323,7 +452,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       try {
         agent = await AcpAgent.spawn({ exec: [command, ...args], cwd, env, log });
       } catch (err) {
-        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        if (this.stillWanted(m, epoch)) {
+          this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+        }
+        return;
+      }
+      if (!this.stillWanted(m, epoch)) {
+        agent.kill('SIGTERM');
         return;
       }
       m.acp = agent;
@@ -355,7 +490,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       await client.connect(transport);
     } catch (err) {
       await transport.close().catch(() => undefined);
-      this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      if (this.stillWanted(m, epoch)) {
+        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
+      }
+      return;
+    }
+    if (!this.stillWanted(m, epoch)) {
+      await transport.close().catch(() => undefined);
       return;
     }
     m.client = client;
@@ -378,6 +519,66 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
       pid: m.transport?.pid ?? m.process?.pid ?? null,
       restarts: m.restarts,
     });
+    if (m.health !== null) {
+      m.health = { ok: null, checked_at: null, failures: 0 };
+    }
+    this.armHealth(m, log);
+  }
+
+  /** Schedules the next `ping` of a stdio connector with `health:`; checks never overlap. */
+  private armHealth(m: Managed, log: Logger): void {
+    const health = m.manifest.health;
+    if (health === undefined || m.client === undefined || this.stopping) {
+      return;
+    }
+    const client = m.client;
+    m.healthTimer = setTimeout(() => {
+      m.healthTimer = undefined;
+      void this.checkHealth(m, client, log).then(() => {
+        if (m.client === client && m.state === 'up') {
+          this.armHealth(m, log);
+        }
+      });
+    }, parseDuration(health.interval));
+    m.healthTimer.unref();
+  }
+
+  private async checkHealth(m: Managed, client: Client, log: Logger): Promise<void> {
+    const health = m.manifest.health;
+    if (health === undefined || m.health === null) {
+      return;
+    }
+    const startedAt = Date.now();
+    let error: string | undefined;
+    try {
+      await client.ping({ timeout: parseDuration(health.timeout) });
+    } catch (err) {
+      error = errorMessage(err);
+    }
+    if (m.client !== client) {
+      return; // the process changed under us; the new one has its own checks
+    }
+    const now = new Date().toISOString();
+    if (error === undefined) {
+      m.health = { ok: true, checked_at: now, failures: 0 };
+      this.metrics.healthChecks.inc({ connector: m.manifest.name, result: 'ok' });
+      log.debug('connector.health_ok', { duration_ms: Date.now() - startedAt });
+      return;
+    }
+    const failures = m.health.failures + 1;
+    m.health = { ok: false, checked_at: now, failures };
+    this.metrics.healthChecks.inc({ connector: m.manifest.name, result: 'failed' });
+    log.warn('connector.unhealthy', { error, failures, max_failures: health.failures });
+    if (failures < health.failures) {
+      return;
+    }
+    log.error('connector.health_failed', { failures });
+    const epoch = m.epoch + 1; // the one this kill sets
+    await this.kill(m);
+    if (!this.current(m) || m.epoch !== epoch) {
+      return; // a restart, a stop or a reload took over while the process was being killed
+    }
+    this.exited(m, `health checks failed ${String(failures)} times (${error})`, log);
   }
 
   private failed(m: Managed, error: string, log: Logger): void {
@@ -409,6 +610,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
     const max = parseDuration(m.manifest.restart.max);
     const delay = Math.min(base * 2 ** m.restarts, max);
     m.restarts++;
+    this.metrics.connectorRestarts.inc({ connector: m.manifest.name });
     log.info('connector.restart_scheduled', { delay_ms: delay, restarts: m.restarts });
     m.restartTimer = setTimeout(() => {
       m.restartTimer = undefined;
@@ -418,9 +620,14 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients {
   }
 
   private async kill(m: Managed): Promise<void> {
+    m.epoch++;
     if (m.restartTimer !== undefined) {
       clearTimeout(m.restartTimer);
       m.restartTimer = undefined;
+    }
+    if (m.healthTimer !== undefined) {
+      clearTimeout(m.healthTimer);
+      m.healthTimer = undefined;
     }
     m.state = 'stopped';
     const transport = m.transport;

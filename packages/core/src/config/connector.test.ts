@@ -235,3 +235,29 @@ describe('loadConnectors with pollers', () => {
     ]);
   });
 });
+
+describe('health checks in a manifest', () => {
+  const parse = (doc: Record<string, unknown>) =>
+    parseManifest({ name: 'c', exec: ['x'], ...doc }, '/x/c.yaml');
+
+  it('fills the defaults, requires an interval and rejects health on non-stdio connectors', () => {
+    const ok = parse({ health: { interval: '30s' } });
+    expect(ok.ok && ok.config.health).toEqual({ interval: '30s', timeout: '10s', failures: 3 });
+    const noInterval = parse({ health: {} });
+    expect(!noInterval.ok && noInterval.issues.map((i) => i.path)).toEqual(['health.interval']);
+    for (const transport of ['none', 'acp']) {
+      const r = parse({ transport, health: { interval: '30s' } });
+      expect(!r.ok && r.issues).toEqual([
+        expect.objectContaining({
+          path: 'health',
+          message: expect.stringMatching(/MCP server/) as unknown,
+        }),
+      ]);
+    }
+    const bad = parse({ health: { interval: 'soon', failures: 0 } });
+    expect(!bad.ok && bad.issues.map((i) => i.path).sort()).toEqual([
+      'health.failures',
+      'health.interval',
+    ]);
+  });
+});

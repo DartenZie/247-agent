@@ -29,6 +29,7 @@ import {
 } from '../expr/template.js';
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
 import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
@@ -59,6 +60,15 @@ export interface ExecutorOptions {
   llm?: LlmPort;
   /** ACP sessions for `agent` actions; its `workDir` names `${run.workspace}`. */
   agents?: AgentClients;
+  metrics?: Metrics | undefined;
+}
+
+/** What a reload may change on a running executor; applies to runs not yet started. */
+export interface ExecutorSettings {
+  workers?: number | undefined;
+  defaultTimeout?: string | undefined;
+  defaultRetry?: RetryConfig | undefined;
+  defaultSandbox?: SandboxConfig | undefined;
 }
 
 export interface RecoveryResult {
@@ -229,10 +239,11 @@ export class Executor {
   private readonly log: Logger;
   private readonly config: () => CompiledConfig;
   private readonly runners: ActionRunners;
-  private readonly workers: number;
-  private readonly defaultTimeout: string;
-  private readonly defaultSandbox: SandboxConfig | undefined;
-  private readonly defaultRetry: RetryConfig;
+  private readonly metrics: Metrics;
+  private workers: number;
+  private defaultTimeout: string;
+  private defaultSandbox: SandboxConfig | undefined;
+  private defaultRetry: RetryConfig;
   private readonly secrets: SecretsBackend;
   private readonly connectors: ConnectorClients | undefined;
   private readonly llm: LlmPort | undefined;
@@ -263,7 +274,26 @@ export class Executor {
     this.llm = opts.llm;
     this.agents = opts.agents;
     this.env = opts.env ?? {};
+    this.metrics = opts.metrics ?? new Metrics();
     parseDuration(this.defaultTimeout); // fail fast on a bad default
+  }
+
+  /** Reload seam: new defaults for runs that start from now on; a bigger pool is used at once. */
+  configure(settings: ExecutorSettings): void {
+    if (settings.defaultTimeout !== undefined) {
+      parseDuration(settings.defaultTimeout);
+      this.defaultTimeout = settings.defaultTimeout;
+    }
+    if (settings.workers !== undefined) {
+      this.workers = settings.workers;
+    }
+    if (settings.defaultRetry !== undefined) {
+      this.defaultRetry = settings.defaultRetry;
+    }
+    if ('defaultSandbox' in settings) {
+      this.defaultSandbox = settings.defaultSandbox;
+    }
+    this.pump();
   }
 
   /** Subscribes to the dispatcher, recovers store state, starts running. Idempotent. */
@@ -404,6 +434,9 @@ export class Executor {
           attempt,
         });
         log.info(resuming ? 'run.resumed' : 'run.started', { attempt, event_id: run.event_id });
+        if (!resuming) {
+          this.metrics.runAttempts.inc({ task: run.task });
+        }
         const resumeInfo: ResumeInfo | undefined =
           resume === undefined
             ? undefined
@@ -622,6 +655,14 @@ export class Executor {
       }
     }
     const finishedAt = this.clock.now().toISOString();
+    this.metrics.runsFinished.inc({ task: run.task, status: final.ok ? 'succeeded' : 'failed' });
+    const queuedAt = Date.parse(run.created_at);
+    if (!Number.isNaN(queuedAt)) {
+      this.metrics.runDuration.observe(
+        { task: run.task },
+        Math.max(0, (Date.parse(finishedAt) - queuedAt) / 1000),
+      );
+    }
     this.store.transaction(() => {
       this.store.waits.delete(run.id);
       if (final.ok) {

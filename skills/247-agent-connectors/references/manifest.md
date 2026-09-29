@@ -17,7 +17,7 @@ config:                                       # passed as OA_CONFIG_JSON, secret
   outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment for the process
 restart: { base: 1s, max: 60s }               # crash backoff, doubling; reset after 30s up
-health: { interval: 60s }                     # accepted, not used yet
+health: { interval: 60s, timeout: 10s, failures: 3 }   # stdio only: MCP ping every interval; 3 misses in a row = crash, respawn
 ```
 
 - `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only.
@@ -27,6 +27,9 @@ health: { interval: 60s }                     # accepted, not used yet
 - The `emits` list is documentation and shape-checking, not a filter.
 - Use `transport: none` for a pure emitter (a webhook receiver, a bot that only
   forwards messages).
+- `health` pings the MCP server; `none` and `acp` connectors have none and reject it
+  (their process exit is watched anyway). `oa connector list` shows `health=ok`,
+  `failing(n)` or `unchecked`; `connector.unhealthy` / `connector.health_failed` in the log.
 
 ## An ACP agent as a connector
 

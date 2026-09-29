@@ -348,3 +348,86 @@ describe('toolResultToJson', () => {
     ).toThrow('c.o: bad');
   });
 });
+
+describe('ConnectorSupervisor health checks', () => {
+  it('pings a stdio connector on its interval and respawns it after `failures` misses', async () => {
+    const s = make([manifest({ health: { interval: '40ms', timeout: '60ms', failures: 2 } })]);
+    await s.start();
+    expect(s.status()[0]?.health).toEqual({ ok: null, checked_at: null, failures: 0 });
+    await until(() => s.status()[0]?.health?.ok === true);
+    expect(s.status()[0]?.health).toMatchObject({ ok: true, failures: 0 });
+    const pid = s.status()[0]?.pid;
+
+    // Block the connector's event loop: two pings in a row go unanswered.
+    await expect(s.call('fake', 'freeze', { ms: 1500 }, { signal: signal() })).resolves.toEqual({
+      freezing: 1500,
+    });
+    await until(() => s.status()[0]?.state === 'down', 3000);
+    expect(s.status()[0]?.error).toMatch(/health checks failed 2 times/);
+    await until(() => s.status()[0]?.state === 'up' && s.status()[0]?.pid !== pid, 5000);
+    expect(s.status()[0]).toMatchObject({ restarts: 1, health: { ok: null, failures: 0 } });
+    await expect(s.call('fake', 'echo', { value: 1 }, { signal: signal() })).resolves.toEqual({
+      echoed: 1,
+    });
+    const msgs = lines.map((l) => l.msg);
+    expect(msgs).toContain('connector.unhealthy');
+    expect(msgs).toContain('connector.health_failed');
+    expect(msgs.filter((m) => m === 'connector.health_ok').length).toBeGreaterThan(0);
+  });
+
+  it('reports no health for a manifest without it', async () => {
+    const s = make([manifest()]);
+    await s.start();
+    expect(s.status()[0]?.health).toBeNull();
+  });
+});
+
+describe('ConnectorSupervisor.apply', () => {
+  it('adds, removes and respawns connectors to match a new manifest set', async () => {
+    const secrets = { tok: 'v1' };
+    const a = manifest({ name: 'a', config: { token: '${secrets.tok}' } });
+    const b = manifest({ name: 'b' });
+    const s = make([a, b], secrets);
+    await s.start();
+    const pidA = s.status().find((c) => c.name === 'a')?.pid;
+    const pidB = s.status().find((c) => c.name === 'b')?.pid;
+
+    // Same content, different file: unchanged. `b` goes, `c` arrives, `a` changes.
+    const aMoved = { ...a, file: '/elsewhere/a.yaml' };
+    expect(await s.apply([aMoved, manifest({ name: 'c' })])).toEqual({
+      added: ['c'],
+      removed: ['b'],
+      changed: [],
+    });
+    expect(s.names().sort()).toEqual(['a', 'c']);
+    expect(s.status().find((c) => c.name === 'a')?.pid).toBe(pidA);
+    expect(s.status().find((c) => c.name === 'c')).toMatchObject({ state: 'up' });
+    await expect(s.call('b', 'echo', {}, { signal: signal() })).rejects.toThrow(
+      'unknown connector',
+    );
+
+    secrets.tok = 'v2';
+    const aChanged = manifest({ name: 'a', config: { token: '${secrets.tok}', n: 2 } });
+    expect(await s.apply([aChanged, manifest({ name: 'c' })])).toEqual({
+      added: [],
+      removed: [],
+      changed: ['a'],
+    });
+    expect(s.status().find((c) => c.name === 'a')?.pid).not.toBe(pidA);
+    await expect(s.call('a', 'env', {}, { signal: signal() })).resolves.toMatchObject({
+      config: { token: 'v2', n: 2 },
+    });
+    expect(
+      s
+        .manifests()
+        .map((m) => m.name)
+        .sort(),
+    ).toEqual(['a', 'c']);
+    expect(pidB).toEqual(expect.any(Number));
+    expect(lines.find((l) => l.msg === 'connector.set_applied')).toMatchObject({
+      added: 'c',
+      removed: 'b',
+    });
+    expect(JSON.stringify(lines)).not.toMatch(/v1|v2/);
+  });
+});

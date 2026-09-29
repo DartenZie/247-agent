@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,8 @@ const TASKS = `tasks:
     trigger: { kind: event, type: ping, filter: "payload.n > \`1\`" }
     action: { kind: shell, cmd: ["true"] }
 `;
+
+const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
 
 let dir: string;
 let daemon: Daemon;
@@ -141,12 +143,131 @@ describe('startDaemon', () => {
     await expect(api.health()).rejects.toBeInstanceOf(ApiConnectionError);
   });
 
-  it('reloads the tasks file and keeps the old one when the new one is invalid', () => {
+  it('reloads agent.yaml and manifests atomically, reports fixed keys and serves POST /v1/reload', async () => {
+    // Add a connector, change workers and the log level, all in one reload.
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      [
+        'db: state.db',
+        'socket: core.sock',
+        'log: { level: warn }',
+        'workers: 9',
+        'connectors:',
+        `  - { name: fake, exec: [node, "${FIXTURES}fake-mcp.ts"] }`,
+        '',
+      ].join('\n'),
+    );
+    const report = await api.reload();
+    expect(report).toMatchObject({
+      ok: true,
+      restart_required: [],
+      connectors: { added: ['fake'], removed: [], changed: [] },
+      tasks: 3,
+    });
+    expect(report.files.map((f) => [f.file, f.ok])).toEqual([
+      [join(dir, 'agent.yaml'), true],
+      [join(dir, 'tasks.yaml'), true],
+    ]);
+    expect(daemon.config.workers).toBe(9);
+    expect(daemon.config.log.level).toBe('warn');
+    const sup = daemon.core.supervisor;
+    if (sup === undefined) {
+      throw new Error('no supervisor');
+    }
+    expect(sup.names()).toEqual(['fake']);
+    while (sup.status()[0]?.state !== 'up') {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect((await api.listConnectors()).map((c) => c.name)).toEqual(['fake']);
+    // The level change took: debug lines stop, warn lines still come.
+    const before = lines.length;
+    daemon.core.bus.publish({ type: 'ping', source: 'test', payload: { n: 2 } });
+    await daemon.core.executor.idle();
+    expect(lines.slice(before).filter((l) => l.level === 'debug' || l.level === 'info')).toEqual(
+      [],
+    );
+
+    // An invalid manifest refuses the whole reload: the connector set and workers stay.
+    mkdirSync(join(dir, 'connectors.d'));
+    writeFileSync(join(dir, 'connectors.d', 'bad.yaml'), 'name: Bad Name\nexec: [x]\n');
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      ['db: other.db', 'socket: core.sock', 'workers: 2', 'connectors: [connectors.d]', ''].join(
+        '\n',
+      ),
+    );
+    const refused = await daemon.reload();
+    expect(refused).toMatchObject({ ok: false, restart_required: ['db'], tasks: 3 });
+    expect(refused.files).toEqual([
+      { file: join(dir, 'agent.yaml'), ok: true },
+      {
+        file: join(dir, 'connectors.d', 'bad.yaml'),
+        ok: false,
+        issues: [expect.objectContaining({ path: 'name' })],
+      },
+    ]);
+    rmSync(join(dir, 'connectors.d'), { recursive: true });
+    expect(daemon.config.workers).toBe(9);
+    expect(sup.names()).toEqual(['fake']);
+
+    // Removing the connector stops it; a bad agent.yaml is reported as such.
+    writeFileSync(join(dir, 'agent.yaml'), 'db: state.db\nsocket: core.sock\n');
+    expect(await daemon.reload()).toMatchObject({
+      ok: true,
+      connectors: { added: [], removed: ['fake'], changed: [] },
+    });
+    expect(sup.names()).toEqual([]);
+    writeFileSync(join(dir, 'agent.yaml'), 'workers: many\n');
+    const bad = await daemon.reload();
+    expect(bad.ok).toBe(false);
+    expect(bad.files[0]?.issues?.[0]?.path).toBe('workers');
+    expect(lines.filter((l) => l.msg === 'daemon.reload_needs_restart')).toHaveLength(1);
+    await expect(raw('GET', '/v1/reload')).resolves.toMatchObject({ status: 405 });
+  });
+
+  it('serves Prometheus metrics on /metrics', async () => {
+    const { run } = await api.run('ok');
+    await settled(run.id);
+    const text = await api.metrics();
+    expect(text).toContain('# TYPE oa_runs_finished_total counter');
+    expect(text).toContain('oa_runs_finished_total{task="ok",status="succeeded"} 1');
+    expect(text).toContain('oa_run_attempts_total{task="ok"} 1');
+    expect(text).toContain('oa_runs_queued_total{task="ok"} 1');
+    expect(text).toContain('oa_events_published_total{type="manual.run",result="inserted"} 1');
+    expect(text).toContain('oa_config_tasks 3');
+    expect(text).toMatch(/oa_build_info\{version="[^"]+"\} 1/);
+    expect(text).toMatch(/oa_db_size_bytes \d+/);
+    expect(text).toMatch(/oa_api_requests_total\{method="POST",status="201"\} 1/);
+    const res = await new Promise<{ status: number; type: string | undefined }>(
+      (resolve, reject) => {
+        const req = request(
+          { socketPath: daemon.config.socket, method: 'GET', path: '/metrics' },
+          (r) => {
+            r.resume();
+            resolve({ status: r.statusCode ?? 0, type: r.headers['content-type'] });
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      },
+    );
+    expect(res).toEqual({ status: 200, type: 'text/plain; version=0.0.4; charset=utf-8' });
+    await expect(raw('POST', '/metrics')).resolves.toMatchObject({ status: 405 });
+  });
+
+  it('runs the retention pass on start and exposes it', async () => {
+    expect(daemon.core.retention).toBeDefined();
+    const report = await daemon.core.retention?.run();
+    expect(report).toMatchObject({ runs: 0, ledger: 0, events: 0, workspaces: 0 });
+    expect(lines.some((l) => l.msg === 'retention.purged')).toBe(true);
+  });
+
+  it('reloads the tasks file and keeps the old one when the new one is invalid', async () => {
     writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
-    expect(daemon.reload().ok).toBe(false);
+    expect((await daemon.reload()).ok).toBe(false);
     expect(daemon.core.config().tasks).toHaveLength(3);
     writeFileSync(join(dir, 'tasks.yaml'), TASKS.split('  - name: bad')[0] ?? '');
-    expect(daemon.reload().ok).toBe(true);
+    expect((await daemon.reload()).ok).toBe(true);
     expect(daemon.core.config().tasks.map((t) => t.name)).toEqual(['ok']);
   });
 });
@@ -288,8 +409,6 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 });
 
 describe('/v1/connectors', () => {
-  const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
-
   it('lists nothing and answers 404 for a restart when no connector is configured', async () => {
     await expect(api.listConnectors()).resolves.toEqual([]);
     await expect(api.restartConnector('fake')).rejects.toMatchObject({ status: 404 });
@@ -380,7 +499,7 @@ describe('/v1/state', () => {
     state_updates: { email.last_uid: "\${event.payload.uid}" }
 `,
     );
-    daemon.reload();
+    await daemon.reload();
     await api.putState('email', 'last_uid', 1);
     const { run } = await api.run('cursor', { payload: { uid: 9 } });
     expect(await settled(run.id)).toMatchObject({ status: 'succeeded', result: 'since=1' });

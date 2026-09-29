@@ -15,6 +15,11 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 | `GET /v1/state/{ns}/{key}` | `{namespace, key, value, updated_at}` |
 | `PUT /v1/state/{ns}/{key}` | Body `{"value": …}` |
 | `DELETE /v1/state/{ns}/{key}` | Remove a key |
+| `GET /v1/cost?since=&by=` | The ledger summed since a duration or timestamp, grouped by `task`, `model`, `provider` or `day` |
+| `GET /v1/connectors` | Connectors with `state`, `pid`, `restarts`, `error`, `health` (`{ok, checked_at, failures}` or null) |
+| `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn (409 for a built-in) |
+| `POST /v1/reload` | Re-read and apply agent.yaml, manifests and tasks together → `{ok, files, restart_required, connectors?, tasks}` (200 even when refused; `ok: false` = nothing changed) |
+| `GET /metrics` | Prometheus text exposition (`oa_*`) |
 
 curl form:
 
@@ -29,4 +34,4 @@ Resetting a cursor (the `PUT` above) is the normal way to make a poll re-fetch;
 remember `dedup_key`s on already-seen items still drop them.
 
 Not yet implemented, though listed in the architecture: `oa events tail`,
-`oa runs ls|show|logs`, `oa cost`, `oa connectors status`, `/metrics`.
+`oa runs ls|show|logs`.

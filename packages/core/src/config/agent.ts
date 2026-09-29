@@ -11,6 +11,7 @@ import { parseManifest, type ConnectorConfig } from './connector.js';
 import { Budgets, DecideDefaults, LlmDefaults, Pricing, Providers } from '../llm/config.js';
 import { DURATION } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
+import { Retention } from './retention.js';
 import { Retry } from './schema.js';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -19,8 +20,7 @@ const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
 
 /**
  * `agent.yaml` (ARCHITECTURE §7). Relative paths are resolved against the file's own
- * directory. `retention` is accepted so a full config validates, but nothing reads it
- * until retention GC exists.
+ * directory.
  */
 export const AgentFile = z.strictObject({
   db: z.string().min(1).default('/var/lib/247-agent/state.db'),
@@ -52,7 +52,8 @@ export const AgentFile = z.strictObject({
   /** Per-model USD per Mtok, merged over the built-in table (`llm/pricing.ts`). */
   pricing: Pricing,
   budgets: Budgets,
-  retention: z.unknown().optional(),
+  /** How long runs, ledger rows, events and agent workspaces are kept (`config/retention.ts`). */
+  retention: Retention,
 });
 
 export type AgentFileConfig = z.infer<typeof AgentFile>;

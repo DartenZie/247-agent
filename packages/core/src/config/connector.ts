@@ -47,7 +47,18 @@ const ManifestFields = z.strictObject({
       max: z.string().regex(DURATION, 'durations look like 1s, 30s').default('60s'),
     })
     .prefault({}),
-  health: z.strictObject({ interval: z.string().regex(DURATION).optional() }).optional(),
+  /**
+   * Liveness checks for a `stdio` connector: every `interval` the core sends an MCP `ping`;
+   * `failures` consecutive misses (no answer within `timeout`, or an error) count as a
+   * crash: the process is killed and respawned with the usual backoff.
+   */
+  health: z
+    .strictObject({
+      interval: z.string().regex(DURATION, 'durations look like 30s, 1m'),
+      timeout: z.string().regex(DURATION, 'durations look like 5s, 30s').default('10s'),
+      failures: z.number().int().positive().default(3),
+    })
+    .optional(),
 });
 
 type ManifestValues = z.infer<typeof ManifestFields>;
@@ -118,6 +129,13 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
       code: 'custom',
       path: ['config'],
       message: `reference secrets by name (secrets.<name>), not as a whole (in "${t}")`,
+    });
+  }
+  if (m.health !== undefined && effectiveTransport(m) !== 'stdio' && m.builtin === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['health'],
+      message: `health checks ping the connector's MCP server; a "${effectiveTransport(m)}" connector has none (its process exit is watched instead)`,
     });
   }
   if (effectiveTransport(m) === 'none' && m.ops.length > 0) {
