@@ -62,6 +62,23 @@ export {
 } from './secrets/secrets.js';
 export { formatLoadResult } from './config/format.js';
 export { parseDuration, DURATION } from './config/duration.js';
+export {
+  Retention,
+  retentionPolicy,
+  type RetentionConfig,
+  type RetentionPolicy,
+} from './config/retention.js';
+export {
+  Metrics,
+  Registry,
+  DURATION_BUCKETS,
+  type Counter,
+  type Gauge,
+  type Histogram,
+  type Labels,
+} from './metrics.js';
+export { RetentionJob, type RetentionOptions, type RetentionReport } from './retention.js';
+export { purgeStore, type PurgeCounts } from './store/retention.js';
 
 export { openStore, type Store } from './store/store.js';
 export {
@@ -117,9 +134,12 @@ export {
 } from './actions/agent-result.js';
 export {
   createWorkspace,
+  listWorkspaces,
+  removeWorkspaceDir,
   Workspace,
   workspacePath,
   type WorkspaceConfig,
+  type WorkspaceEntry,
   type WorkspaceHandle,
 } from './actions/agent-workspace.js';
 export {
@@ -186,7 +206,12 @@ export {
   type PricingTable,
 } from './llm/pricing.js';
 export { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './llm/errors.js';
-export { LlmService, BUDGET_EXCEEDED, type LlmServiceOptions } from './llm/service.js';
+export {
+  LlmService,
+  BUDGET_EXCEEDED,
+  type LlmServiceOptions,
+  type LlmServiceSettings,
+} from './llm/service.js';
 export {
   anthropicProvider,
   createAnthropicProvider,
@@ -247,13 +272,17 @@ export {
   renderEmits,
   renderStateUpdates,
   type ExecutorOptions,
+  type ExecutorSettings,
   type RecoveryResult,
 } from './executor/executor.js';
 export {
   ConnectorSupervisor,
   ConnectorDownError,
   ConnectorOpError,
+  manifestKey,
   toolResultToJson,
+  type ApplyResult,
+  type ConnectorHealth,
   type ConnectorStatus,
   type SupervisorOptions,
 } from './connectors/supervisor.js';
@@ -277,6 +306,8 @@ export {
   type Core,
   type CoreLlmOptions,
   type CoreOptions,
+  type CoreReloadOptions,
+  type ReloadResult,
 } from './core.js';
 export {
   AgentFile,
@@ -318,6 +349,8 @@ export {
   ConnectorConfigError,
   type Daemon,
   type DaemonOptions,
+  type ReloadFile,
+  type ReloadReport,
 } from './daemon.js';
 export { VERSION } from './version.js';
 export { findHome, homeEnv, HOME_ENV } from './home.js';

@@ -322,3 +322,39 @@ describe('checkConfigFile', () => {
     expect(checkConfigFile(agent)[1]).toMatchObject({ ok: false, kind: 'tasks' });
   });
 });
+
+describe('retention in agent.yaml', () => {
+  it('defaults to 90d/90d/7d hourly, takes never, and refuses a ledger outliving its runs', () => {
+    const d = parseAgent('', '/x/agent.yaml');
+    expect(d.ok && d.config.retention).toEqual({
+      events: '90d',
+      runs: '90d',
+      workspaces: '7d',
+      interval: '1h',
+    });
+    const r = parseAgent(
+      'retention: { events: never, runs: 30d, ledger: 7d, workspaces: 1d, interval: 30m }\n',
+      '/x/agent.yaml',
+    );
+    expect(r.ok && r.config.retention).toEqual({
+      events: 'never',
+      runs: '30d',
+      ledger: '7d',
+      workspaces: '1d',
+      interval: '30m',
+    });
+    const bad = parseAgent('retention: { runs: 30d, ledger: 60d }\n', '/x/agent.yaml');
+    expect(!bad.ok && bad.issues).toEqual([
+      expect.objectContaining({
+        path: 'retention.ledger',
+        message: expect.stringMatching(/outlive/) as unknown,
+      }),
+    ]);
+    const badNever = parseAgent('retention: { runs: 30d, ledger: never }\n', '/x/agent.yaml');
+    expect(badNever.ok).toBe(false);
+    const okNever = parseAgent('retention: { runs: never, ledger: never }\n', '/x/agent.yaml');
+    expect(okNever.ok).toBe(true);
+    const typo = parseAgent('retention: { runs: 30 }\n', '/x/agent.yaml');
+    expect(!typo.ok && typo.issues[0]?.path).toBe('retention.runs');
+  });
+});

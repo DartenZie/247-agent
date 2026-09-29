@@ -7,6 +7,7 @@ import type { Clock } from '../clock.js';
 import { isInside } from '../config/crosscheck.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import { SecretError, type SecretsBackend } from '../secrets/secrets.js';
 import type { PricedBy } from '../store/ledger.js';
 import type { Store } from '../store/store.js';
@@ -58,7 +59,14 @@ export interface LlmServiceOptions {
   decideDefaults?: DecideDefaultsConfig | undefined;
   budgets: BudgetsConfig;
   factories: ProviderFactories;
+  metrics?: Metrics | undefined;
 }
+
+/** What a reload may change: everything from agent.yaml the service reads. */
+export type LlmServiceSettings = Pick<
+  LlmServiceOptions,
+  'providers' | 'pricing' | 'defaults' | 'decideDefaults' | 'budgets' | 'configDir'
+>;
 
 /** The event the daily circuit breaker emits, once per UTC day (ARCHITECTURE §9). */
 export const BUDGET_EXCEEDED = 'budget.exceeded';
@@ -85,14 +93,25 @@ interface ExecuteSpec {
  * there is no adapter, no estimate and no provider lookup: the row names the connector.
  */
 export class LlmService implements LlmPort {
-  readonly defaults: LlmDefaultsConfig;
-  readonly decideDefaults: DecideDefaultsConfig;
-  private readonly o: LlmServiceOptions;
+  private o: LlmServiceOptions;
+  private readonly metrics: Metrics;
 
   constructor(opts: LlmServiceOptions) {
     this.o = opts;
-    this.defaults = opts.defaults;
-    this.decideDefaults = opts.decideDefaults ?? DecideDefaults.parse({});
+    this.metrics = opts.metrics ?? new Metrics();
+  }
+
+  get defaults(): LlmDefaultsConfig {
+    return this.o.defaults;
+  }
+
+  get decideDefaults(): DecideDefaultsConfig {
+    return this.o.decideDefaults ?? DecideDefaults.parse({});
+  }
+
+  /** Reload seam: calls from now on use the new providers, prices, defaults and budgets. */
+  configure(settings: LlmServiceSettings): void {
+    this.o = { ...this.o, ...settings };
   }
 
   providers(): string[] {
@@ -268,6 +287,7 @@ export class LlmService implements LlmPort {
     const spentToday = this.o.store.ledger.sumSince(startOfUtcDay(now));
     if (dailyCap !== undefined && spentToday >= dailyCap) {
       this.tripBreaker(day, dailyCap, spentToday, cctx);
+      this.metrics.budgetExceeded.inc({ scope: 'daily' });
       throw new BudgetExceededError(
         'daily',
         `daily budget of $${String(dailyCap)} reached ($${spentToday.toFixed(4)} spent today); model-backed tasks resume at 00:00 UTC`,
@@ -276,12 +296,14 @@ export class LlmService implements LlmPort {
     const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
     if (req.maxUsd !== undefined) {
       if (spentRun >= req.maxUsd) {
+        this.metrics.budgetExceeded.inc({ scope: 'task' });
         throw new BudgetExceededError(
           'task',
           `run budget of $${String(req.maxUsd)} already spent ($${spentRun.toFixed(4)})`,
         );
       }
       if (req.estimate !== undefined && spentRun + req.estimate > req.maxUsd) {
+        this.metrics.budgetExceeded.inc({ scope: 'task' });
         throw new BudgetExceededError(
           'task',
           `worst case $${req.estimate.toFixed(4)} would exceed the run budget of $${String(req.maxUsd)}; shorten the input, lower max_tokens or raise budget.max_usd`,
@@ -335,6 +357,13 @@ export class LlmService implements LlmPort {
       }
       return id;
     });
+    const labels = { provider: spec.provider, model: spec.model };
+    this.metrics.modelCalls.inc({ ...labels, task: cctx.task });
+    this.metrics.modelCost.inc({ ...labels, task: cctx.task }, usd);
+    this.metrics.modelTokens.inc({ ...labels, direction: 'input' }, usage.input);
+    this.metrics.modelTokens.inc({ ...labels, direction: 'output' }, usage.output);
+    this.metrics.modelTokens.inc({ ...labels, direction: 'cache_read' }, usage.cacheRead);
+    this.metrics.modelTokens.inc({ ...labels, direction: 'cache_write' }, usage.cacheWrite);
     cctx.log.info(spec.msg, {
       provider: spec.provider,
       model: spec.model,
@@ -352,6 +381,7 @@ export class LlmService implements LlmPort {
 
   private overrun(maxUsd: number | undefined, spentRun: number, usd: number): void {
     if (maxUsd !== undefined && spentRun + usd > maxUsd) {
+      this.metrics.budgetExceeded.inc({ scope: 'task' });
       throw new BudgetExceededError(
         'task',
         `run spent $${(spentRun + usd).toFixed(4)}, over its budget of $${String(maxUsd)}`,

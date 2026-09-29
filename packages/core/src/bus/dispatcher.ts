@@ -3,6 +3,7 @@ import { compileTypePattern, type TypeMatcher } from '../expr/glob.js';
 import { compileFilter, type Filter } from '../expr/jmespath.js';
 import { newId } from '../ids.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import type { Store } from '../store/store.js';
 import type { EventRecord, RunRecord } from '../store/types.js';
 import type { WaitRecord } from '../store/waits.js';
@@ -16,6 +17,7 @@ export interface DispatcherOptions {
   batchSize?: number;
   /** Events deeper than this in a causal chain are dropped (runaway loop guard). */
   maxDepth?: number;
+  metrics?: Metrics | undefined;
 }
 
 export interface DispatchResult {
@@ -53,7 +55,8 @@ export class Dispatcher {
   private readonly clock: Clock;
   private readonly log: Logger;
   private readonly batchSize: number;
-  private readonly maxDepth: number;
+  private readonly metrics: Metrics;
+  private maxDepth: number;
   private config: CompiledConfig = EMPTY_CONFIG;
   private readonly listeners = new Set<QueuedListener>();
   private wakePending = false;
@@ -66,10 +69,16 @@ export class Dispatcher {
     this.log = opts.log;
     this.batchSize = opts.batchSize ?? 100;
     this.maxDepth = opts.maxDepth ?? 32;
+    this.metrics = opts.metrics ?? new Metrics();
   }
 
   setConfig(config: CompiledConfig): void {
     this.config = config;
+  }
+
+  /** Reload seam: `limits.max_event_depth`. */
+  configure(opts: { maxDepth: number }): void {
+    this.maxDepth = opts.maxDepth;
   }
 
   /** Executor hand-off: called once per batch with the runs it created. */
@@ -131,6 +140,7 @@ export class Dispatcher {
     }
     this.store.runs.setStatus(wait.run_id, 'queued');
     const run = this.store.runs.getById(wait.run_id);
+    this.metrics.waitsEnded.inc({ task: wait.task, outcome });
     this.log.info(outcome === 'matched' ? 'wait.matched' : 'wait.timeout', {
       run_id: wait.run_id,
       task: wait.task,
@@ -213,6 +223,7 @@ export class Dispatcher {
       let waits = this.compileWaits();
       for (const event of events) {
         if (event.depth > this.maxDepth) {
+          this.metrics.eventsDropped.inc({ reason: 'depth' });
           this.log.warn('event.depth_exceeded', {
             event_id: event.id,
             event_type: event.type,
@@ -265,6 +276,7 @@ export class Dispatcher {
             continue; // replay of an already dispatched event
           }
           queued.push(run);
+          this.metrics.runsQueued.inc({ task: task.name });
           this.log.info('run.queued', {
             run_id: run.id,
             task: run.task,

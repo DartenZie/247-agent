@@ -8,9 +8,9 @@ Status of the code today: everything that does not call a model works end to end
 (`shell`, `connector`, `wait`, `sequence`, cron/event/manual triggers, routing, state,
 secrets, retries, connectors, the CLI), and so do the two single-call model actions:
 `llm` (Anthropic, OpenAI, OpenRouter) and `decide` (TypeSafe's Jev classifier through
-OpenRouter), with the cost ledger and budgets. The `agent` action validates but has no
-runner yet, so a run of one fails with "no runner". Retention is accepted in config but
-not applied. Section 10 lists the gaps.
+OpenRouter), with the cost ledger and budgets, and the `agent` action over ACP. Retention,
+`/metrics`, connector health checks and a full config reload are in. Section 10 lists the
+gaps.
 
 ## 1. What it does
 
@@ -210,7 +210,8 @@ The global file. Every key has a default; the full reference is
 | `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{ provider, model }` for `decide` actions without their own; the provider must be an `openrouter` one (see 5.6) | `model: typesafe/jev-1.13` |
 | `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
-| `defaults.agent`, `retention` | Accepted, not applied yet | |
+| `defaults.agent` | `{ connector, max_tool_calls, budget, work_dir }` for `agent` actions | `max_tool_calls: 40`, `work_dir` = `work/` next to `db` |
+| `retention` | `{ events, runs, ledger, workspaces, interval }`: how long to keep events, finished runs (with their ledger rows), ledger rows, and `work/<run_id>` directories; durations or `never`. `ledger` defaults to `runs` and cannot exceed it. A pass runs at start and every `interval`; active runs are never touched (see 9.4) | `90d`, `90d`, `90d`, `7d`, `1h` |
 
 Relative `db`, `socket`, `tasks` and `connectors` paths resolve against the directory of
 `agent.yaml`. On macOS keep the socket path short: Unix socket paths are limited to 104
@@ -595,9 +596,23 @@ top of a minimal one (`PATH`, `HOME`, …):
 
 `connectorEnv()` deletes `OA_CONFIG_JSON` from the environment after reading it, so
 subprocesses the connector starts do not inherit the rendered secrets. Anything the
-connector writes to stderr is logged by the daemon as `connector.output`. Changing a
-manifest needs a daemon restart; SIGHUP reloads tasks files only. `oa connector restart
-<name>` respawns one connector with freshly resolved secrets (section 7).
+connector writes to stderr is logged by the daemon as `connector.output`. A changed
+manifest takes effect on `oa reload` (or SIGHUP): the connector is respawned with the new
+manifest and freshly resolved secrets, new manifests are spawned, removed ones stopped.
+`oa connector restart <name>` respawns one connector with freshly resolved secrets without
+touching the config (section 7).
+
+A `stdio` manifest may ask for health checks:
+
+```yaml
+health: { interval: 60s, timeout: 10s, failures: 3 }
+```
+
+Every `interval` the daemon sends an MCP `ping`; `failures` misses in a row (no answer
+within `timeout`, or an error) are treated like a crash: the process is killed and
+respawned with the restart backoff. `oa connector list` shows the last check
+(`health=ok`, `failing(n)`, `unchecked`). `none` and `acp` connectors have no MCP server
+to ping and reject `health`; their process exit is watched instead.
 
 ### 6.3 Writing one in TypeScript
 
@@ -740,6 +755,22 @@ Sums the model-call ledger since a duration back (default `24h`) or a timestamp,
 line per task (or model, provider, UTC day) with calls, tokens and USD.
 
 ```
+oa reload [--json]
+```
+
+Asks the daemon to re-read `agent.yaml`, the connector manifests and the tasks files and
+apply them together, exactly like `systemctl reload 247-agent` (SIGHUP) but with the
+outcome printed: one `ok` line per file, the issues of any invalid file, and what happened
+to the connectors. Nothing changes when any file is invalid (exit 1). A change to `db`,
+`socket` or `secrets` is applied on the next restart only and is reported as such.
+
+```
+oa metrics
+```
+
+Prints `GET /metrics`, the Prometheus text exposition (section 8).
+
+```
 oa help [command]
 ```
 
@@ -762,8 +793,10 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
 | `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
-| `GET /v1/connectors` | `{connectors: [{name, state, pid, restarts, error, builtin}]}` |
+| `GET /v1/connectors` | `{connectors: [{name, transport, state, pid, restarts, error, health, builtin}]}`; `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
+| `POST /v1/reload` | Re-read and apply `agent.yaml`, manifests and tasks files together (9.3). Always 200: `{ok, files: [{file, ok, issues?}], restart_required, connectors?: {added, removed, changed}, tasks}`; `ok: false` means nothing changed |
+| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}`, `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
 
 Errors are `{error, issues?}` with status 400, 404, 405, 409 or 413.
 
@@ -854,7 +887,7 @@ flight). Logs are JSON lines on stdout, so `journalctl -u 247-agent
 
 | Signal | Effect |
 |---|---|
-| `SIGHUP` | Re-reads the tasks files. Running runs finish under the old config. An invalid file is logged and the previous config stays active. Connector changes need a restart |
+| `SIGHUP` (`systemctl reload 247-agent`, `oa reload`) | Re-reads `agent.yaml`, the connector manifests and the tasks files and applies them together. Everything but `db`, `socket` and `secrets` applies live: workers, defaults, providers, pricing, budgets, retention, `log.level`, limits, tasks; connectors whose manifest changed are respawned, new ones spawned, removed ones stopped. Running runs finish under the config they started with. If any file is invalid, nothing changes and the issues are logged (`daemon.reload_invalid`) |
 | `oa connector restart <name>` | Not a signal, but the way to make one connector pick up a rotated secret without restarting the daemon |
 | `SIGTERM`, `SIGINT` | Stops the daemon. Runs in flight are aborted |
 
@@ -863,7 +896,26 @@ another attempt, otherwise marked failed as interrupted. `waiting` runs stay wai
 resume when their event arrives; a wait whose timeout already passed ends immediately. A
 stale socket file left by a dead daemon is replaced; a live one refuses the start.
 
-### 9.4 Daemon flags
+### 9.4 Retention
+
+The database and `work/` would otherwise grow forever. Once at start and then every
+`retention.interval` (default hourly) the daemon deletes, in this order and only for
+finished runs:
+
+1. runs whose `finished_at` is older than `retention.runs`, with their ledger rows;
+2. ledger rows older than `retention.ledger` (default: same as `runs`) of finished runs;
+3. events older than `retention.events` that the dispatcher has passed and that no
+   remaining run or wait references (a kept run always keeps its trigger event);
+4. `work/<run_id>` directories of runs finished longer ago than `retention.workspaces`,
+   and directories with no run at all whose last modification is that old. A git worktree
+   is detached from its repository and its `agent/<run_id>` branch deleted.
+
+`never` keeps a kind forever. Every pass logs `retention.purged` with the counts and
+updates the `oa_retention_*` metrics. Note that `dedup_key` uniqueness only spans the
+events still kept, so an item older than `retention.events` could be emitted again by a
+connector that does not remember it itself (the built-in poller does).
+
+### 9.5 Daemon flags
 
 ```
 247-agent-core [--config <agent.yaml>] [--log-level debug|info|warn|error] [--version]
@@ -893,9 +945,11 @@ Done since: the `llm` action with the Anthropic, OpenAI and OpenRouter adapters,
 `ftp` ([`connectors/ftp/README.md`](../connectors/ftp/README.md)) and `chat` (a Telegram
 bot for the approval gate, [`connectors/chat/README.md`](../connectors/chat/README.md)).
 
-Not implemented yet: retention GC, `/metrics`, `oa runs|events`, SIGHUP reload of
-connectors, `health.interval` in manifests, `batch: true` for `llm`, a Matrix backend for
-`chat`.
+Done since as well: retention (9.4), `/metrics` and `oa metrics`, connector health
+checks (6.2), and the full config reload (`oa reload`, 9.3).
+
+Not implemented yet: `oa runs|events`, `batch: true` for `llm`, a Matrix backend for
+`chat`, sandboxing of the agent program by the core.
 
 ## 11. Troubleshooting
 

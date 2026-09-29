@@ -114,15 +114,16 @@ One daemon, `247-agent-core`, with these internal modules:
 
 | Module | Responsibility |
 |---|---|
-| **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP (running runs finish under the old config). An invalid file on reload is logged and the previous config stays active. |
+| **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP or `POST /v1/reload` (`oa reload`): all three together or nothing. Everything in `agent.yaml` but `db`, `socket` and `secrets` applies live (workers, defaults, providers, pricing, budgets, retention, log level, limits); those three are reported as `restart_required`. Connectors whose manifest changed are respawned, new ones spawned, removed ones stopped, unchanged ones untouched; running runs finish under the config they started with. An invalid file on reload is logged and the previous config stays active. |
 | **Scheduler** | Cron → `cron.tick` events (with task name in payload). |
 | **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` are dropped. The same loop ends `wait`s: an event matching a waiting run's wait, or a wait past its timeout (checked on every dispatch, so within the 1s safety-net interval), re-queues the run. |
 | **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). A filter that throws at run time counts as no match and is logged. |
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
-| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
-| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. Deferring to systemd units is not implemented. |
+| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events, waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env. A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
+| **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
 store's dispatch loop is the only seam to replace (e.g. with NATS/Redis Streams).
@@ -386,8 +387,8 @@ or invalid fails the run, which `retry` then repeats in a fresh workspace.
 database), available as `${run.workspace}`. `git-worktree` runs `git worktree add -B
 agent/<run_id> <path> <branch>` from `repo`; `temp` is an empty directory. It is removed
 (worktree, branch and all) when the run fails and kept when it succeeds, `blocked`
-included, for the gates, for a later publishing task and for inspection. Retention GC of
-`work/` is not implemented yet.
+included, for the gates, for a later publishing task and for inspection, until the
+retention pass removes it `retention.workspaces` after the run finished (§7).
 
 Notes
 
@@ -499,7 +500,7 @@ config:                                              # free-form, the connector'
   incoming: { protocol: imap, host: imap.example.com, folder: INBOX }
   outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nExample Team office" }
 restart: { base: 1s, max: 60s }                      # crash backoff
-health: { interval: 60s }                            # accepted, not used yet
+health: { interval: 60s, timeout: 10s, failures: 3 } # MCP ping; 3 misses in a row = crash (stdio only)
 ```
 
 `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only. `cwd` is
@@ -630,9 +631,14 @@ defaults:
   retry: { attempts: 3, backoff: exponential, base: 30s }
 budgets:
   daily_usd: 10          # global circuit breaker → all llm/decide/agent tasks fail fast until 00:00 UTC, alert emitted
-retention: { events: 90d, runs: 90d, workspaces: 7d }
+retention: { events: 90d, runs: 90d, ledger: 90d, workspaces: 7d, interval: 1h }   # durations or `never`; ledger defaults to runs and cannot exceed it
 limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
+
+Retention deletes in dependency order: a finished run's ledger rows go with the run, an
+event only once no kept run references it (so a run older than `events` keeps its
+trigger event), and `dedup_key` uniqueness only spans the events kept. Active runs, their
+events and their workspaces are never touched, whatever the durations.
 
 The whole `/etc/247-agent` tree is meant to live in a git repo; `oa validate` checks
 it in CI. `oa validate` takes tasks files, connector manifests and `agent.yaml` files alike
@@ -808,19 +814,24 @@ scripts (`packaging/scripts/`) create the user, enable and start on install, res
 upgrade, stop on removal and clean up on purge. Both are attached to every release.
 
 `247-agent-core` loads `agent.yaml`, opens the store, dispatches the backlog, arms cron,
-then binds the socket; SIGHUP re-reads the tasks file, SIGTERM/SIGINT stop it (runs in
-flight are aborted and recovered as interrupted on the next start). Logs go to journald as
-structured JSON (`run_id`, `task`, `correlation_id` on every line). Optional Prometheus
-`/metrics` on the socket. CLI (`--socket`, else `$OA_CORE_SOCKET`, else the path above):
+then binds the socket; SIGHUP (or `oa reload`) re-reads agent.yaml, the manifests and the
+tasks files (§4, Config loader), SIGTERM/SIGINT stop it (runs in flight are aborted and
+recovered as interrupted on the next start). Logs go to journald as structured JSON
+(`run_id`, `task`, `correlation_id` on every line). Prometheus `/metrics` on the socket
+(Prometheus cannot scrape a Unix socket itself: `oa metrics` into a node_exporter
+textfile on a timer, or a small HTTP proxy in front of the socket). CLI (`--socket`, else
+`$OA_CORE_SOCKET`, else the path above):
 
 ```
 oa validate <file>...           # tasks files and agent.yaml, schema + semantic checks
 oa run <task> [--event f.json]  # manual trigger; --wait blocks and exits 1 on failure
 oa emit <type> [payload.json|-] # inject an event (--source, --dedup-key, --parent)
-oa events tail [--type …]
-oa runs ls|show <id>|logs <id>
+oa connector list|restart <name>
 oa cost --by task --since 7d
-oa connectors status
+oa reload                       # like SIGHUP; exits 1 and prints the issues when refused
+oa metrics                      # GET /metrics
+oa events tail [--type …]       # not built yet
+oa runs ls|show <id>|logs <id>  # not built yet
 ```
 
 ## 13. Repository layout
@@ -832,7 +843,8 @@ scripts/                     # bundle.mjs (esbuild, one .mjs per program), build
 packaging/                   # 247-agent.service, etc/ (the starter config), nfpm.yaml + scripts/ (the .deb/.rpm)
 .github/workflows/           # ci (build, lint, test, tarball smoke), release (tarballs on v* tags)
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
-  src/config/                # zod schemas for agent.yaml, tasks, connectors; loader + hot reload
+  src/config/                # zod schemas for agent.yaml (incl. retention.ts), tasks, connectors; loader
+  metrics.ts, retention.ts   # the Prometheus registry and the daemon's metrics; the retention pass (store/retention.ts does the SQL)
   src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
@@ -913,14 +925,17 @@ Step 4 is done over ACP (§5.4): `transport: acp` manifests, the ACP client
 cancellation, the ledger's `checkBudget`/`record`, the RESULT.json contract, post gates,
 `defaults.agent`, the cross-checks, `docs/examples/connectors.d/claude.yaml` and the
 `blocked` routing in the reference workflow; tested against a fake ACP agent.
+Step 6 is done except the sandbox wrapper: the retention pass (`retention.ts`,
+`store/retention.ts`, the workspace sweep in `actions/agent-workspace.ts`), `/metrics`
+(`metrics.ts`, counters recorded in the bus, dispatcher, executor, scheduler, llm service
+and supervisor, gauges collected at scrape time in `core.ts`), connector health checks in
+the supervisor, and the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reload`,
+`oa reload`).
 Where the code is behind this document:
 `batch: true` is rejected; `mcp_servers` on an `agent` action must be empty (the MCP
 proxy is not built); agent transcripts are not persisted; the agent program is not
-sandboxed by the core; ACP config options (model, mode) are not exposed; `retention`
-validates but is not applied; there is no retention GC (including `work/`), no metrics, no
-sandbox wrapper;
-`SIGHUP` reloads tasks files only (connector changes need a restart); `shell.user` is
-rejected; `health.interval` in manifests is accepted but unused.
+sandboxed by the core and there is no sandbox wrapper; ACP config options (model, mode)
+are not exposed; `shell.user` is rejected; `oa events` and `oa runs` do not exist.
 
 ## 15. Open decisions
 

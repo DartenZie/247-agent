@@ -120,8 +120,11 @@ interrupted runs are retried per policy or failed as interrupted.
   invoking user needs write access to the socket (add them to the `247-agent` group and
   set the socket mode accordingly, or run `oa` as that user).
 - Logs: JSON lines; `journalctl -u 247-agent -o cat | jq 'select(.run_id=="…")'`.
-- Reload tasks: `systemctl reload 247-agent`. Connector or `agent.yaml` changes:
+- Reload config (tasks, manifests, `agent.yaml`): `oa reload` (prints the outcome) or
+  `systemctl reload 247-agent`. Only `db`, `socket` and `secrets` need
   `systemctl restart 247-agent`.
+- Metrics: `oa metrics` prints `GET /metrics`; Prometheus cannot scrape the socket, so
+  write it to a node_exporter textfile on a timer or proxy the socket over HTTP.
 - Backups: `state.db` (with its `-wal` file, or via `sqlite3 .backup`) and
   `/etc/247-agent` in git.
 

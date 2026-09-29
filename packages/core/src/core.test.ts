@@ -138,9 +138,9 @@ describe('createCore with the reference workflow', () => {
     expect(() => core.runTask('nope')).toThrow(/unknown task/);
   });
 
-  it('keeps the old config when a reload fails and applies a valid one', () => {
+  it('keeps the old config when a reload fails and applies a valid one', async () => {
     writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
-    const bad = core.reload();
+    const bad = await core.reload();
     expect(bad.ok).toBe(false);
     expect(core.config().tasks).toHaveLength(8);
     expect(lines.find((l) => l.msg === 'core.config_invalid')).toBeDefined();
@@ -149,7 +149,7 @@ describe('createCore with the reference workflow', () => {
       join(dir, 'tasks.yaml'),
       'tasks:\n  - name: only\n    trigger: { kind: cron, schedule: "0 * * * *" }\n    action: { kind: shell, cmd: ["true"] }\n',
     );
-    expect(core.reload().ok).toBe(true);
+    expect((await core.reload()).ok).toBe(true);
     expect(core.config().tasks.map((t) => t.name)).toEqual(['only']);
     expect(core.scheduler.list().map((j) => j.task)).toEqual(['only']);
   });

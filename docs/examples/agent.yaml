@@ -26,4 +26,4 @@ providers:
 # models need none.
 pricing: {}                       # e.g. { claude-sonnet-5: { output: 12 }, gpt-4.1-mini: { input: 0.4, output: 1.6 } }
 budgets: { daily_usd: 10 }        # global circuit breaker: over it, llm tasks fail fast until 00:00 UTC
-retention: { events: 90d, runs: 90d, workspaces: 7d }
+retention: { events: 90d, runs: 90d, workspaces: 7d }   # + ledger (defaults to runs), interval (1h); durations or `never` (USER-GUIDE §9.4)

@@ -3,6 +3,8 @@ import { VERSION } from '@247-agent/core';
 import { connector, CONNECTOR_USAGE } from './commands/connector.js';
 import { cost, COST_USAGE } from './commands/cost.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
+import { metrics, METRICS_USAGE } from './commands/metrics.js';
+import { reload, RELOAD_USAGE } from './commands/reload.js';
 import { run, RUN_USAGE } from './commands/run.js';
 import { validate, VALIDATE_USAGE } from './commands/validate.js';
 import { EXIT, processIo, UsageError, type Io } from './io.js';
@@ -15,6 +17,8 @@ commands:
   emit <type> [payload.json|-]       inject an event
   connector list|restart <name>      show connectors / respawn one (re-reads its secrets)
   cost [--by task|model|provider|day] [--since 7d]   sum the model-call ledger
+  reload                             re-read agent.yaml, manifests and tasks files (like SIGHUP)
+  metrics                            print the daemon's Prometheus metrics
   help [command]
   version                            print the version
 
@@ -27,6 +31,8 @@ const COMMAND_USAGE: Record<string, string> = {
   emit: EMIT_USAGE,
   connector: CONNECTOR_USAGE,
   cost: COST_USAGE,
+  reload: RELOAD_USAGE,
+  metrics: METRICS_USAGE,
 };
 
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
@@ -43,6 +49,10 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return await connector(rest, io);
       case 'cost':
         return await cost(rest, io);
+      case 'reload':
+        return await reload(rest, io);
+      case 'metrics':
+        return await metrics(rest, io);
       case 'version':
       case '--version':
       case '-V':

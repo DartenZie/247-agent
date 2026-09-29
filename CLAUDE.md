@@ -62,6 +62,12 @@ skills/                      agent skills for working with 247-agent (linked fro
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and
   `docs/examples/connectors.d/*.yaml`.
+- Anything worth graphing is a metric on the shared `Metrics` registry
+  (`packages/core/src/metrics.ts`): counters where the thing happens, gauges from a
+  `collect` callback in `core.ts`. Labels stay bounded (task, connector, model), never ids.
+- Settings from `agent.yaml` must survive a reload: a component reads them through a
+  `configure()` seam (executor, dispatcher, llm service, supervisor, retention), never a
+  constructor-only copy. Only `db`, `socket` and `secrets` are fixed for the process.
 - Manifests name the bundled connectors by launcher (`exec: ["247-agent-connector-email"]`),
   never by a `dist/` path: the daemon puts `<install root>/bin` and its own Node first on
   `PATH` for every child (`packages/core/src/home.ts`). New bundled connectors need a
@@ -92,6 +98,8 @@ node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_C
 node packages/cli/dist/main.js emit <type> [payload.json|-]
 node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
 node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
+node packages/cli/dist/main.js reload                                   # like SIGHUP: agent.yaml + manifests + tasks, all or nothing
+node packages/cli/dist/main.js metrics                                  # GET /metrics (Prometheus text)
 bin/oa …, bin/247-agent-core …                                         # the launchers; same commands, in a checkout or /opt/247-agent
 ```
 

@@ -22,7 +22,7 @@ strict; unknown keys are rejected.
 | `providers` | `name: {type: anthropic\|openai\|openrouter, api_key: "${secrets.x}", base_url?, headers?}`; `llm` and `decide` actions pick one with `provider:` | none |
 | `pricing` | `model: {input, output, cache_read?, cache_write?}` USD per Mtok, merged over the built-in table (Claude, current OpenAI, Jev); a model without a price fails validation unless its provider reports cost | `{}` |
 | `budgets.daily_usd` | Global cap per UTC day; once crossed, model calls fail fast until midnight and `budget.exceeded` is emitted once | none |
-| `retention` | `{events, runs, workspaces}` durations for GC | accepted, no GC yet |
+| `retention` | `{events, runs, ledger, workspaces, interval}`: how long events, finished runs (with their ledger rows), ledger rows and `work/<run_id>` directories are kept; durations or `never`; `ledger` defaults to `runs` and cannot exceed it; a pass runs at start and every `interval`; active runs are never touched | `90d`, `90d`, `90d`, `7d`, `1h` |
 
 Durations: `500ms`, `30s`, `15m`, `24h`, `7d`.
 

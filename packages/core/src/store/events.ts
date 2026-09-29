@@ -26,6 +26,7 @@ export class EventStore {
   private readonly insertStmt: Statement;
   private readonly byIdStmt: Statement;
   private readonly afterStmt: Statement;
+  private readonly purgeStmt: Statement;
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
@@ -35,6 +36,15 @@ export class EventStore {
     );
     this.byIdStmt = db.prepare('SELECT * FROM events WHERE id = ?');
     this.afterStmt = db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?');
+    // Only events the dispatcher has passed, and none a run or an unresumed wait still points at.
+    this.purgeStmt = db.prepare(
+      `DELETE FROM events WHERE seq IN (
+         SELECT e.seq FROM events e
+         WHERE e.seq <= @max_seq AND e.ts < @before
+           AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.event_id = e.id)
+           AND NOT EXISTS (SELECT 1 FROM waits w WHERE w.event_id = e.id)
+         ORDER BY e.seq LIMIT @limit)`,
+    );
   }
 
   /** Appends an event. A `dedup_key` collision is not an error: the event is dropped. */
@@ -53,5 +63,13 @@ export class EventStore {
 
   listAfter(seq: number, limit: number): EventRecord[] {
     return this.afterStmt.all(seq, limit).map(rowToEvent);
+  }
+
+  /**
+   * Retention: deletes up to `limit` events with `ts < beforeIso` that are already
+   * dispatched (`seq <= maxSeq`) and referenced by no run or wait. Returns how many went.
+   */
+  deleteUnreferencedBefore(beforeIso: string, maxSeq: number, limit: number): number {
+    return this.purgeStmt.run({ before: beforeIso, max_seq: maxSeq, limit }).changes;
   }
 }

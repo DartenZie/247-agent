@@ -64,7 +64,7 @@ describe('createCore with providers', () => {
       join(dir2, 'tasks.yaml'),
       readFileSync(EXAMPLE, 'utf8').replace('provider: anthropic', 'provider: missing'),
     );
-    const reload = core2.reload();
+    const reload = await core2.reload();
     expect(reload.ok).toBe(false);
     expect(reload.files[0]).toMatchObject({
       ok: false,

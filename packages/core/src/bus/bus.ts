@@ -4,6 +4,7 @@
  */
 import type { Clock } from '../clock.js';
 import type { Logger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import type { Store } from '../store/store.js';
 import type { NewEvent } from '../store/types.js';
 import { Dispatcher, type DispatcherOptions, type QueuedListener } from './dispatcher.js';
@@ -19,14 +20,17 @@ export interface BusOptions extends Pick<DispatcherOptions, 'batchSize' | 'maxDe
   store: Store;
   clock: Clock;
   log: Logger;
+  metrics?: Metrics | undefined;
 }
 
 export function createBus(opts: BusOptions): EventBus {
-  const dispatcher = new Dispatcher(opts);
+  const metrics = opts.metrics ?? new Metrics();
+  const dispatcher = new Dispatcher({ ...opts, metrics });
   return {
     dispatcher,
     publish: (input) => {
       const result = publishEvent(opts.store, opts.clock, opts.log, input);
+      metrics.eventsPublished.inc({ type: input.type, result: result.status });
       if (result.status === 'inserted') {
         dispatcher.wake();
       }
