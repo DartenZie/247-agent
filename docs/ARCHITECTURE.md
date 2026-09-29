@@ -169,7 +169,9 @@ tools, `node`, `npx`), a private `/tmp`, `cwd` as the only writable path (withou
 the command runs in that `/tmp`), and an environment cleared down to the action's `env`
 plus `PATH`, `HOME` and `LANG`. The directories of `agent.yaml`, the database, the socket
 and a `file` secrets backend are replaced by an empty tmpfs, so the daemon's own files do
-not show through the read-only `/etc`; the runtime directory with the core socket, the
+not show through the read-only `/etc` (a file whose directory cannot be masked, `/etc`
+itself or the install root, is bound to `/dev/null` instead); `oa validate` refuses a
+`cwd` or a bind that would show one of them. The runtime directory with the core socket, the
 state directory and other processes are not visible. The long form
 `sandbox: { backend: bwrap, ro_binds: [/srv/data], rw_binds: [], extra_args: [] }`
 adds mounts and raw bwrap flags (`--unshare-net` for offline steps). Use it for every

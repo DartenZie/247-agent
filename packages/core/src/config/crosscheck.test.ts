@@ -229,6 +229,66 @@ describe('checkSandboxes', () => {
     ).toEqual([]);
   });
 
+  it('refuses a sandboxed shell action whose cwd or binds hold a protected file', () => {
+    const shellTask = (action: Record<string, unknown>) =>
+      Task.parse({ name: 'sh', trigger: { kind: 'manual' }, action: { kind: 'shell', ...action } });
+    const ctx = sctx({ manifests: [] });
+    // Its own sandbox: cwd is bound read-write, the binds as listed; a templated cwd is left alone.
+    const r = checkSandboxes(
+      [
+        shellTask({
+          cmd: ['true'],
+          cwd: '/var/lib/247-agent',
+          sandbox: { backend: 'bwrap', ro_binds: ['/etc/247-agent'] },
+        }),
+        shellTask({ cmd: ['true'], cwd: '${event.payload.dir}', sandbox: 'bwrap' }),
+        shellTask({ cmd: ['true'], cwd: '/var/lib/247-agent' }),
+        Task.parse({
+          name: 'seq',
+          trigger: { kind: 'manual' },
+          action: {
+            kind: 'sequence',
+            steps: [{ kind: 'shell', cmd: ['true'], cwd: '/run/247-agent', sandbox: 'bwrap' }],
+          },
+        }),
+      ],
+      ctx,
+    );
+    expect(r.tasks).toEqual([
+      {
+        path: 'tasks[0].action.cwd',
+        message:
+          '/var/lib/247-agent would expose the database /var/lib/247-agent/state.db to the sandboxed command',
+      },
+      {
+        path: 'tasks[0].action.sandbox.ro_binds[0]',
+        message:
+          '/etc/247-agent would expose the config file /etc/247-agent/agent.yaml to the sandboxed command',
+      },
+      {
+        path: 'tasks[3].action.steps[0].cwd',
+        message:
+          '/run/247-agent would expose the socket /run/247-agent/core.sock to the sandboxed command',
+      },
+    ]);
+    // `defaults.sandbox` applies to the unsandboxed action (tasks[2]) and its binds to all of them.
+    const withDefault = checkSandboxes(
+      [shellTask({ cmd: ['true'], cwd: '/var/lib/247-agent' })],
+      sctx({
+        manifests: [],
+        defaultSandbox: { backend: 'bwrap', extra_args: [], ro_binds: ['/etc'], rw_binds: [] },
+      }),
+    );
+    expect(withDefault.tasks.map((i) => i.path)).toEqual(['tasks[0].action.cwd']);
+    expect(withDefault.agent).toEqual([
+      {
+        path: 'defaults.sandbox.ro_binds[0]',
+        message:
+          '/etc would expose the config file /etc/247-agent/agent.yaml to every sandboxed shell action',
+      },
+    ]);
+  });
+
   it('refuses binds and a work_dir that would show the daemon its own files, and an invisible cwd', () => {
     const r = checkSandboxes(
       [],

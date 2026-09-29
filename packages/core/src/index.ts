@@ -165,6 +165,7 @@ export {
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
 export {
   buildSandboxArgv,
+  canonicalPath,
   isInsidePath,
   NO_HOST,
   Sandbox,

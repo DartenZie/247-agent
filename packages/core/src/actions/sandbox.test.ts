@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSandboxArgv,
+  canonicalPath,
   type PathProbe,
   Sandbox,
   SANDBOX_DEFAULT_CWD,
@@ -16,8 +17,13 @@ const probe: PathProbe = (path) => {
     case '/etc/247-agent':
     case '/var/lib/247-agent':
     case '/opt/247-agent':
+    case '/srv/oa/checkout':
     case '/home/dev/.nvm/versions/node/v22.0.0':
       return { kind: 'dir' };
+    case '/etc/agent.yaml':
+    case '/etc/247-agent/agent.yaml':
+    case '/srv/oa/checkout/state.db':
+      return { kind: 'file' };
     case '/bin':
       return { kind: 'symlink', target: 'usr/bin' };
     case '/lib':
@@ -177,6 +183,37 @@ describe('buildSandboxArgv', () => {
   });
 });
 
+describe('buildSandboxArgv with protected files a mount would show', () => {
+  it('binds /dev/null over them unless a mask already hides them', () => {
+    const argv = buildSandboxArgv({
+      sandbox: Sandbox.parse('bwrap'),
+      cmd: ['true'],
+      writable: undefined,
+      env: {},
+      host: {
+        protected: [
+          { path: '/etc/agent.yaml', what: 'config file' },
+          { path: '/etc/247-agent/agent.yaml', what: 'config file' },
+          { path: '/srv/oa/checkout/state.db', what: 'database' },
+          { path: '/srv/oa/state.db', what: 'database' },
+          { path: '/run/oa/core.sock', what: 'socket' },
+        ],
+        masks: ['/etc/247-agent'],
+        ro_binds: ['/srv/oa/checkout'],
+      },
+      hostEnv: {},
+      probe,
+    });
+    const hidden = argv.flatMap((a, i) =>
+      a === '--ro-bind' && argv[i + 1] === '/dev/null' ? [argv[i + 2]] : [],
+    );
+    // Under `/etc` and under the install: hidden. Under a mask, under nothing, or absent: not needed.
+    expect(hidden).toEqual(['/etc/agent.yaml', '/srv/oa/checkout/state.db']);
+    // The mask comes before the /dev/null binds, both before the command's own mounts.
+    expect(argv.indexOf('/etc/247-agent')).toBeLessThan(argv.indexOf('/dev/null'));
+  });
+});
+
 describe('sandboxHost', () => {
   it('masks the directories of the protected files and binds the install root and Node prefix', () => {
     const host = sandboxHost({
@@ -189,9 +226,11 @@ describe('sandboxHost', () => {
       env: { OA_HOME: '/opt/247-agent' },
       execPath: '/opt/247-agent/node/bin/node',
     });
-    expect(host.masks).toEqual(['/var/lib/247-agent', '/run/247-agent', '/etc/247-agent']);
+    expect(host.masks).toEqual(
+      ['/var/lib/247-agent', '/run/247-agent', '/etc/247-agent'].map(canonicalPath),
+    );
     // The vendored Node lives inside the install root: one bind.
-    expect(host.ro_binds).toEqual(['/opt/247-agent']);
+    expect(host.ro_binds).toEqual(['/opt/247-agent'].map(canonicalPath));
     expect(host.protected.map((p) => p.what)).toEqual([
       'database',
       'socket',
@@ -205,14 +244,17 @@ describe('sandboxHost', () => {
       protected: [
         { path: '/state.db', what: 'database' },
         { path: '/etc/agent.yaml', what: 'config file' },
+        { path: '/srv/oa/data/state.db', what: 'database' },
         { path: '/srv/oa/state.db', what: 'database' },
       ],
       env: { OA_HOME: '/srv/oa/checkout' },
       execPath: '/home/dev/.nvm/versions/node/v22.0.0/bin/node',
     });
-    // `/` and `/etc` are never masked; `/srv/oa` is.
-    expect(host.masks).toEqual(['/srv/oa']);
-    expect(host.ro_binds).toEqual(['/srv/oa/checkout', '/home/dev/.nvm/versions/node/v22.0.0']);
+    // `/` and `/etc` are never masked, nor `/srv/oa`, which holds the install; `/srv/oa/data` is.
+    expect(host.masks).toEqual(['/srv/oa/data'].map(canonicalPath));
+    expect(host.ro_binds).toEqual(
+      ['/srv/oa/checkout', '/home/dev/.nvm/versions/node/v22.0.0'].map(canonicalPath),
+    );
     expect(sandboxHost({ protected: [], env: {}, execPath: '/usr/bin/node' }).ro_binds).toEqual([]);
   });
 });

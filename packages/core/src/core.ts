@@ -14,7 +14,7 @@ import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
 import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './config/crosscheck.js';
-import { loadTasks, type TasksLoadResult } from './config/load.js';
+import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
@@ -228,6 +228,7 @@ export function createCore(opts: CoreOptions): Core {
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
   let tasksFiles = opts.tasksFiles;
   let llmOptions = opts.llm;
+  let defaultSandbox = opts.defaultSandbox;
   let startedAt: Date | undefined;
 
   let supervisor: ConnectorSupervisor | undefined;
@@ -369,6 +370,7 @@ export function createCore(opts: CoreOptions): Core {
   const sandboxContext = (
     ms: readonly ConnectorConfig[],
     ag: { defaults: AgentDefaultsConfig; workDir: string } | undefined,
+    shellSandbox: SandboxConfig | undefined,
   ): SandboxCheckContext | undefined =>
     ag === undefined
       ? undefined
@@ -377,6 +379,7 @@ export function createCore(opts: CoreOptions): Core {
           defaultConnector: ag.defaults.connector,
           workDir: ag.workDir,
           protected: opts.sandboxHost?.protected ?? [],
+          defaultSandbox: shellSandbox,
         };
 
   /** Loads and cross-checks the tasks files without applying anything. */
@@ -444,12 +447,14 @@ export function createCore(opts: CoreOptions): Core {
   const reload = async (next: CoreReloadOptions = {}): Promise<ReloadResult> => {
     const files = next.tasksFiles ?? tasksFiles;
     const nextLlm = next.llm ?? llmOptions;
+    const nextSandbox = 'defaultSandbox' in next ? next.defaultSandbox : defaultSandbox;
     const result = load(
       files,
       nextLlm,
       sandboxContext(
         next.connectors !== undefined && supervisor !== undefined ? next.connectors : manifests,
         next.agents ?? agents,
+        nextSandbox,
       ),
     );
     if (!result.ok) {
@@ -463,6 +468,7 @@ export function createCore(opts: CoreOptions): Core {
       return result;
     }
     tasksFiles = files;
+    defaultSandbox = nextSandbox;
     if (next.llm !== undefined && llm !== undefined) {
       llmOptions = next.llm;
       llm.configure({
@@ -520,7 +526,11 @@ export function createCore(opts: CoreOptions): Core {
     retention,
     config: () => compiled,
     start: async () => {
-      const result = load(tasksFiles, llmOptions, sandboxContext(manifests, agents));
+      const result = load(
+        tasksFiles,
+        llmOptions,
+        sandboxContext(manifests, agents, defaultSandbox),
+      );
       if (!result.ok) {
         throw new ConfigLoadError(result);
       }
@@ -586,12 +596,22 @@ function crossCheck(
   const issues = llm === undefined ? [] : checkLlmTasks(tasks, llm);
   const sb = sandboxes === undefined ? undefined : checkSandboxes(tasks, sandboxes);
   issues.push(...(sb?.tasks ?? []));
-  const extra: TasksLoadResult['files'] = [
-    ...(sb?.manifests ?? []).map((m) => ({ ok: false as const, file: m.file, issues: m.issues })),
-    ...((sb?.agent.length ?? 0) > 0 && sb !== undefined
-      ? [{ ok: false as const, file: configFile ?? 'agent.yaml', issues: sb.agent }]
-      : []),
-  ];
+  // One entry per file: an inline manifest's issues and agent.yaml's own share a file.
+  const byFile = new Map<string, ConfigIssue[]>();
+  const under = (file: string, list: ConfigIssue[]): void => {
+    if (list.length > 0) {
+      byFile.set(file, [...(byFile.get(file) ?? []), ...list]);
+    }
+  };
+  for (const m of sb?.manifests ?? []) {
+    under(m.file, m.issues);
+  }
+  under(configFile ?? 'agent.yaml', sb?.agent ?? []);
+  const extra: TasksLoadResult['files'] = [...byFile].map(([file, list]) => ({
+    ok: false as const,
+    file,
+    issues: list,
+  }));
   if (issues.length === 0 && extra.length === 0) {
     return result;
   }

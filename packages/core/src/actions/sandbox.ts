@@ -1,5 +1,5 @@
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
-import { dirname, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
 
@@ -49,11 +49,26 @@ export function isInsidePath(dir: string, target: string): boolean {
   return t === base || t.startsWith(base + sep);
 }
 
-function canonical(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
+/**
+ * The path with every symlink resolved, like `realpath -m`: the longest existing prefix
+ * is resolved and the rest appended as spelled, so a file that does not exist yet (the
+ * socket, a first start's database) still lands next to its real neighbours. Every
+ * comparison of a bind against a protected path goes through this on both sides.
+ */
+export function canonicalPath(path: string): string {
+  let dir = resolve(path);
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync(dir), ...rest);
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) {
+        return join(dir, ...rest);
+      }
+      rest.unshift(basename(dir));
+      dir = parent;
+    }
   }
 }
 
@@ -61,14 +76,22 @@ function unique(paths: readonly string[]): string[] {
   return [...new Set(paths)];
 }
 
+let bases: string[] | undefined;
+
+/** The base read-only paths as spelled and as they really are (`/etc` may be a symlink). */
+function basePaths(): string[] {
+  bases ??= unique([...BASE_RO_PATHS, ...BASE_RO_PATHS.map(canonicalPath)]);
+  return bases;
+}
+
 /** Inside one of the base read-only paths, so already visible; or one of them. */
 function underBase(path: string): boolean {
-  return BASE_RO_PATHS.some((b) => isInsidePath(b, path));
+  return basePaths().some((b) => isInsidePath(b, path));
 }
 
 /** A directory that can be replaced by an empty tmpfs without taking the OS with it. */
 function maskable(path: string): boolean {
-  return path !== '/' && !BASE_RO_PATHS.some((b) => isInsidePath(path, b));
+  return path !== '/' && !basePaths().some((b) => isInsidePath(path, b));
 }
 
 /**
@@ -79,7 +102,10 @@ function maskable(path: string): boolean {
  * the socket. `ro_binds` are what a child needs to run at all: the install root
  * (`OA_HOME`: `bin/` and the bundled connectors) and the prefix of the daemon's Node
  * (`node`, `npm`, `npx`), since both are first on the `PATH` every child gets. Both lists
- * hold canonical paths; a mask is skipped when it is `/` or would cover an OS directory.
+ * hold canonical paths; a mask is skipped when it is `/`, would cover an OS directory or
+ * the install itself. A protected file left uncovered that way but shown by an OS or
+ * install mount (`/etc/agent.yaml`, a database beside a checkout) is bound to `/dev/null`
+ * by `buildSandboxArgv` instead.
  */
 export interface SandboxHost {
   /** Files that must stay out of every sandbox: the db, the socket, `agent.yaml`, the secrets file. */
@@ -106,26 +132,32 @@ export interface SandboxHostOptions {
 
 export function sandboxHost(opts: SandboxHostOptions): SandboxHost {
   const env = opts.env ?? process.env;
-  const protectedPaths = opts.protected.map((p) => ({ ...p, path: canonical(p.path) }));
-  const masks = unique(protectedPaths.map((p) => dirname(p.path))).filter(maskable);
+  const protectedPaths = opts.protected.map((p) => ({ ...p, path: canonicalPath(p.path) }));
   const home = env.OA_HOME;
-  const nodePrefix = dirname(dirname(canonical(opts.execPath ?? process.execPath)));
+  const nodePrefix = dirname(dirname(canonicalPath(opts.execPath ?? process.execPath)));
   const wanted = unique([
-    ...(home === undefined || home === '' ? [] : [canonical(home)]),
+    ...(home === undefined || home === '' ? [] : [canonicalPath(home)]),
     nodePrefix,
   ]).filter((p) => p !== '/' && !underBase(p));
   // The Node prefix of a release tree lives inside the install root: one bind is enough.
   const ro_binds = wanted.filter((p, i) => !wanted.some((q, j) => j !== i && isInsidePath(q, p)));
+  // A mask over the install would hide `bin/` and Node from every child: hide the file instead.
+  const masks = unique(protectedPaths.map((p) => dirname(p.path))).filter(
+    (d) => maskable(d) && !ro_binds.some((b) => isInsidePath(d, b)),
+  );
   return { protected: protectedPaths, masks, ro_binds };
 }
 
 /** A host that hides and adds nothing (tests, a core built without a daemon). */
 export const NO_HOST: SandboxHost = { protected: [], masks: [], ro_binds: [] };
 
-/** What a host path is, for the argv builder: absent, a symlink (with its target) or a directory. */
+/**
+ * What a host path is, for the argv builder: absent, a symlink (with its target), a
+ * directory or anything else that exists (`file`: a regular file, a socket).
+ */
 export type PathProbe = (
   path: string,
-) => { kind: 'symlink'; target: string } | { kind: 'dir' } | undefined;
+) => { kind: 'symlink'; target: string } | { kind: 'dir' } | { kind: 'file' } | undefined;
 
 export const probePath: PathProbe = (path) => {
   try {
@@ -133,7 +165,7 @@ export const probePath: PathProbe = (path) => {
     if (st.isSymbolicLink()) {
       return { kind: 'symlink', target: readlinkSync(path) };
     }
-    return st.isDirectory() ? { kind: 'dir' } : undefined;
+    return st.isDirectory() ? { kind: 'dir' } : { kind: 'file' };
   } catch {
     return undefined;
   }
@@ -167,8 +199,9 @@ export interface SandboxArgvOptions {
  * Pure: it never touches the filesystem beyond `probe`. On a merged-`/usr` system `/bin`
  * and `/lib` are symlinks and are recreated as such rather than bind-mounted. Mount order
  * matters to bwrap (a later mount on an ancestor shadows an earlier one on a descendant):
- * the OS and the install first, then the host's masks over them, then the writable
- * directory and the config's own binds, which may lie inside a mask but, by `oa validate`,
+ * the OS and the install first, then the host's masks over them and `/dev/null` over any
+ * protected file those mounts would still show, then the writable directory and the
+ * config's own binds, which may lie inside a mask but, by `oa validate` (`checkSandboxes`),
  * never contain a protected path.
  */
 export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
@@ -204,6 +237,16 @@ export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
   for (const path of host.masks) {
     if (probe(path)?.kind === 'dir') {
       argv.push('--tmpfs', path);
+    }
+  }
+  for (const p of host.protected) {
+    const shown = underBase(p.path) || host.ro_binds.some((b) => isInsidePath(b, p.path));
+    if (
+      shown &&
+      !host.masks.some((m) => isInsidePath(m, p.path)) &&
+      probe(p.path)?.kind === 'file'
+    ) {
+      argv.push('--ro-bind', '/dev/null', p.path);
     }
   }
   if (opts.writable !== undefined) {

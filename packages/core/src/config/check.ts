@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 
 import { PricingError, resolvePricing } from '../llm/pricing.js';
-import { parseAgent } from './agent.js';
+import { parseAgent, protectedPaths } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
 import { checkLlmTasks, checkSandboxes, type SandboxCheckContext } from './crosscheck.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
@@ -90,19 +90,8 @@ export function checkConfigFile(path: string): FileCheck[] {
     manifests: connectors.connectors ?? [],
     defaultConnector: r.config.defaults.agent.connector,
     workDir: r.config.workDir,
-    protected: [
-      { path: r.config.db, what: 'database' },
-      { path: r.config.socket, what: 'socket' },
-      { path: r.config.file, what: 'config file' },
-      ...(r.config.secrets.backend === 'file'
-        ? [
-            {
-              path: resolve(dirname(r.config.file), r.config.secrets.path),
-              what: 'secrets file',
-            },
-          ]
-        : []),
-    ],
+    protected: protectedPaths(r.config),
+    defaultSandbox: r.config.defaults.sandbox,
   };
   const hostIssues = checkSandboxes([], sandboxes);
   if (hostIssues.agent.length > 0) {

@@ -1,9 +1,14 @@
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
 import { createApiServer, type ApiServer } from './api/server.js';
 import { systemClock, type Clock } from './clock.js';
-import { loadAgentFile, type AgentConfig, type AgentLoadResult } from './config/agent.js';
+import {
+  loadAgentFile,
+  protectedPaths,
+  type AgentConfig,
+  type AgentLoadResult,
+} from './config/agent.js';
 import { loadConnectors, type ConfigIssue } from './config/load.js';
 import { retentionPolicy } from './config/retention.js';
 import type { ApplyResult } from './connectors/supervisor.js';
@@ -206,17 +211,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const metrics = new Metrics();
 
   // What no sandbox may see, and what every one needs: fixed like `db` and `secrets`.
-  const host = sandboxHost({
-    protected: [
-      { path: config.db, what: 'database' },
-      { path: config.socket, what: 'socket' },
-      { path: config.file, what: 'config file' },
-      ...(config.secrets.backend === 'file'
-        ? [{ path: resolve(dirname(config.file), config.secrets.path), what: 'secrets file' }]
-        : []),
-    ],
-    env,
-  });
+  const host = sandboxHost({ protected: protectedPaths(config), env });
 
   const core = createCore({
     ...coreSettings(config, read.pricing, opts.llmFactories),
