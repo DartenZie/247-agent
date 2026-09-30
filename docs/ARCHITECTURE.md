@@ -121,6 +121,7 @@ One daemon, `247-agent-core`, with these internal modules:
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
+| **Batch poller** | Once at start and every `batches.poll` (default 1m): polls every Message Batches request of a `batch: true` `llm` action still in flight (the `llm_batches` table) and, once one ended, writes its ledger row and publishes `llm.batch.ended` in one transaction, which resumes the waiting run (§5.2). |
 | **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events?type=&after=&limit=` (the newest `limit` in `seq` order, or those after a `seq`; `type` is an exact type or a trigger pattern), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/runs/{id}/transcript?after=&limit=` (the agent transcript, §5.4), `GET /v1/runs/{id}/ledger` (its model calls and their total), `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
 | **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env (an `acp` agent gets its `env` and name only, and runs inside `bwrap` when its manifest says `sandbox: bwrap`, §6). A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
 | **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows and transcript, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
@@ -195,6 +196,7 @@ action:
     Subject: ${event.payload.subject}
 
     ${event.payload.body}
+  batch: false                     # true: Message Batches at half price, the run waits for the result (below)
   output_schema:                   # → output_config.format (structured outputs)
     type: object
     required: [kind, summary]
@@ -224,8 +226,44 @@ Messages API, `openai` the Responses API (`instructions` + `text.format`, `store
 per-response `usage.cost` is what the ledger records. The two OpenAI-style adapters send
 the schema in strict mode, which the vendor only accepts when every property is listed in
 `required` and every object has `additionalProperties: false`; a schema that does not
-fails the call non-retryably with the vendor's message. A `batch: true` mode (Message
-Batches at half price, results arriving async as events) is planned, not implemented.
+fails the call non-retryably with the vendor's message.
+
+**`batch: true`** sends the call through Anthropic's Message Batches API at half price, for
+anything that can wait (most batches end within the hour, all within 24h). Only
+`anthropic` providers have a batch API; `oa validate` refuses the flag on any other. The
+run goes through two entries, like a `wait`:
+
+1. `ctx.llm.submitBatch` applies the usual checks, with the worst case at the batch price,
+   submits a batch of one request (`custom_id` = the run id, the same params as the
+   synchronous call: cached system block, structured output, effort) and records it in
+   `llm_batches`. Nothing is ledgered yet. The runner then parks the run (`ctx.suspend`)
+   on `llm.batch.ended` with `payload.batch_id == '<id>'`, timing out after 25h; the run
+   holds no worker slot and no timer while it waits.
+2. The **batch poller** (§4) retrieves each batch in flight every `batches.poll`. Once it
+   ended, the service reads its one result and, in one transaction: writes the ledger row
+   (a billed result at half the table price; errored, expired and canceled requests are
+   not billed), trips the daily breaker if due, publishes `llm.batch.ended` (`source:
+   core`, `dedup_key: llm.batch:<id>`, parented to the run's trigger event so it keeps the
+   correlation id) and deletes the row. The payload is `{batch_id, run_id, task,
+   provider, model, status}` plus, when `succeeded`, `stop_reason`, `output` or `text`,
+   `usage`, `usd`, `priced_by`, `ledger_id`, and otherwise `error` and `retryable`.
+3. The event ends the wait and the run resumes: `ctx.llm.batchResult` reads the payload
+   and applies the post-hoc run budget; the result, `max_tokens` and refusal handling are
+   the synchronous call's, and `emit` routes as usual. Other tasks may trigger on
+   `llm.batch.ended` too (dashboards, alerts); it is an ordinary event.
+
+Failures: an `errored` (other than `invalid_request_error`), `expired` or `canceled`
+batch, or a billed structured output that is not JSON, fails the attempt retryably, and
+the retry submits a new batch; an invalid request or a wait timeout fails the run for
+good. A daemon stopped between submitting and parking finds the run's batch in
+`llm_batches` on the retry and waits for it instead of paying twice; a restart after the
+result arrived reads it from the event again. The provider bills a batch however the run
+ended, so the poller settles every batch, and retention keeps a run while one of its
+batches is in flight. A batch the poller cannot reach for 7 days (provider removed from
+`agent.yaml`, key revoked) is dropped with an `llm.batch_abandoned` error and nothing
+ledgered. One batch per run keeps the bookkeeping per run; the poller's requests are one
+retrieve per batch per pass. `oa_llm_batches_total{provider,status}` and
+`oa_llm_batches_pending` are on `/metrics`.
 
 ### 5.3 `decide` — classification only, typed answers with probabilities
 
@@ -719,6 +757,7 @@ defaults:
   retry: { attempts: 3, backoff: exponential, base: 30s }
 budgets:
   daily_usd: 10          # global circuit breaker → all llm/decide/agent tasks fail fast until 00:00 UTC, alert emitted
+batches: { poll: 1m }    # how often `batch: true` llm requests are checked for their result (§5.2)
 retention: { events: 90d, runs: 90d, ledger: 90d, workspaces: 7d, interval: 1h }   # durations or `never`; ledger defaults to runs and cannot exceed it; runs and ledger keep at least 1d (the daily cap sums today's rows)
 limits: { max_event_depth: 32 }   # drop events deeper than this in a causal chain (loop guard)
 ```
@@ -771,7 +810,9 @@ sender with what is missing, a failure (refusal, over budget, no RESULT.json) re
   event payload is last. The ledger reports `cache_read_input_tokens` per task so a
   silently-invalidated cache is visible.
 - **Dedup and filters** guarantee a model call is made at most once per real-world event.
-- **Batch API** for anything that can wait (`batch: true`) — planned.
+- **Batch API** for anything that can wait (`batch: true` on an `llm` action, §5.2): half
+  the price of every token, the result arriving as an `llm.batch.ended` event that resumes
+  the run. The ledger row is written at the batch price when the result arrives.
 - **Classification is cheaper than generation.** A `decide` task (§5.3) answers typed
   questions with probabilities at a fraction of an `llm` call's price and latency; use it
   wherever the step needs a label, a yes/no or a level and no text.
@@ -947,11 +988,11 @@ packaging/                   # 247-agent.service, etc/ (the starter config), nfp
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml (incl. retention.ts), tasks, connectors; loader
   metrics.ts, retention.ts   # the Prometheus registry and the daemon's metrics; the retention pass (store/retention.ts does the SQL)
-  src/store/                 # better-sqlite3: events, runs, state, ledger; migrations
+  src/store/                 # better-sqlite3: events, runs, state, ledger, transcripts, llm_batches; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
   src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); types.ts = ActionContext
-  src/llm/                   # config.ts (providers, pricing, budgets), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call` and `decide`), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API)
+  src/llm/                   # config.ts (providers, pricing, budgets, batches), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call`, `decide` and batches), batches.ts (the `llm.batch.ended` payload and the poller's timer), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API, anthropic.ts Message Batches)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
   src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); poller.ts: the built-in poller
   src/secrets/               # env | file | systemd-credentials backends
@@ -1037,10 +1078,12 @@ manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-che
 Connector ops as agent tools are done: `mcp_servers` on the `agent` action, the tool
 bridge (`connectors/mcp-bridge.ts`) opened by the supervisor per session, and the
 `checkAgentTools` cross-check. An agent's `model` and `effort` are set as ACP session
-config options by category (`actions/agent-session-config.ts`).
+config options by category (`actions/agent-session-config.ts`). `batch: true` on `llm`
+is done (§5.2): the Anthropic adapter's `submitBatch`/`pollBatch`, the service's
+`submitBatch`/`batchResult`/`pollBatches`, the `llm_batches` table, the `BatchPoller`
+(`llm/batches.ts`) and `batches.poll` in agent.yaml.
 Where the code is behind this document:
-`batch: true` is rejected; the agent sandbox has no network allowlist; `shell.user` is
-rejected.
+the agent sandbox has no network allowlist; `shell.user` is rejected.
 
 ## 15. Open decisions
 

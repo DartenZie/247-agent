@@ -9,6 +9,8 @@ export const CRON_TICK = 'cron.tick';
 export const MANUAL_RUN = 'manual.run';
 /** Published by the llm service when a call would cross a task budget or the daily cap. */
 export const BUDGET_EXCEEDED = 'budget.exceeded';
+/** Published by the llm service when a `batch: true` request has ended (ARCHITECTURE §5.2). */
+export const LLM_BATCH_ENDED = 'llm.batch.ended';
 
 /** The `type` label of events no task names exactly (see `labelledEventTypes`). */
 export const OTHER_EVENT_TYPE = 'other';
@@ -115,13 +117,13 @@ export function compileConfig(file: TasksFileConfig): CompiledConfig {
 
 /**
  * Event types that get their own `type` label on `oa_events_published_total`: the core's
- * own (`cron.tick`, `manual.run`, `budget.exceeded`, `task.<name>.succeeded|failed`) and
+ * own (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`, `task.<name>.succeeded|failed`) and
  * every type a task names exactly in a trigger, a `wait` or an `emit` rule. Connectors and
  * `POST /v1/events` can publish any type, so everything else (including types only a
  * wildcard matches) is counted as `other` and the label stays bounded by the config.
  */
 export function labelledEventTypes(config: CompiledConfig): ReadonlySet<string> {
-  const types = new Set<string>([CRON_TICK, MANUAL_RUN, BUDGET_EXCEEDED]);
+  const types = new Set<string>([CRON_TICK, MANUAL_RUN, BUDGET_EXCEEDED, LLM_BATCH_ENDED]);
   const add = (type: string | undefined): void => {
     if (type !== undefined && !isTypePattern(type)) {
       types.add(type);

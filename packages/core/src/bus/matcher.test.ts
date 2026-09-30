@@ -122,6 +122,7 @@ describe('labelledEventTypes', () => {
       'budget.exceeded',
       'cron.tick',
       'email.received',
+      'llm.batch.ended',
       'mail.triaged',
       'manual.run',
       'task.poll.failed',

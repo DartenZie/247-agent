@@ -8,7 +8,14 @@ import { AgentDefaults } from '../actions/agent-config.js';
 import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
-import { Budgets, DecideDefaults, LlmDefaults, Pricing, Providers } from '../llm/config.js';
+import {
+  Batches,
+  Budgets,
+  DecideDefaults,
+  LlmDefaults,
+  Pricing,
+  Providers,
+} from '../llm/config.js';
 import { DURATION } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
 import { Retention } from './retention.js';
@@ -52,6 +59,8 @@ export const AgentFile = z.strictObject({
   /** Per-model USD per Mtok, merged over the built-in table (`llm/pricing.ts`). */
   pricing: Pricing,
   budgets: Budgets,
+  /** How often `batch: true` llm requests are polled for their result. */
+  batches: Batches,
   /** How long runs, ledger rows, events and agent workspaces are kept (`config/retention.ts`). */
   retention: Retention,
 });

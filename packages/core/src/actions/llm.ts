@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
+import { LLM_BATCH_ENDED } from '../bus/matcher.js';
+import { BATCH_WAIT_MS } from '../llm/batches.js';
 import { Budget, EFFORTS } from '../llm/config.js';
+import type { LlmCall, LlmCallContext, LlmCallResult, LlmPort } from '../llm/types.js';
 import type { JsonValue } from '../store/types.js';
 import { NonRetryableError, type ActionContext } from './types.js';
 
@@ -9,7 +12,9 @@ const NAME = /^[a-z][a-z0-9_]*$/;
 /**
  * ARCHITECTURE §5.2: one model call, optional structured output, no loop. `provider` and
  * `model` fall back to `defaults.llm`. The system prompt is static (it is prompt-cached);
- * everything volatile goes in `input`, which is rendered last.
+ * everything volatile goes in `input`, which is rendered last. `batch: true` sends the call
+ * through the provider's Message Batches API at half price and parks the run until the
+ * result arrives as an `llm.batch.ended` event.
  */
 export const LlmAction = z
   .strictObject({
@@ -27,6 +32,8 @@ export const LlmAction = z
     /** A JSON Schema object; with it the result is the parsed object, without it `{text}`. */
     output_schema: z.looseObject({ type: z.literal('object') }).optional(),
     budget: Budget.optional(),
+    /** Message Batches (anthropic providers): half price, the run waits up to 25h for the result. */
+    batch: z.boolean().optional(),
   })
   .superRefine((a, ctx) => {
     if (a.system !== undefined && a.system_file !== undefined) {
@@ -69,19 +76,77 @@ export async function runLlm(action: unknown, ctx: ActionContext): Promise<JsonV
   const input = ctx.renderText(cfg.input);
   const caps = [cfg.budget?.max_usd, ctx.task.budget?.max_usd].filter((x) => x !== undefined);
   const maxUsd = caps.length === 0 ? undefined : Math.min(...caps);
-  const res = await llm.call(
+  const call: LlmCall = {
+    provider,
+    model,
+    system,
+    input,
+    outputSchema: cfg.output_schema,
+    maxTokens,
+    effort: cfg.effort ?? llm.defaults.effort,
+    maxUsd,
+  };
+  const cctx: LlmCallContext = {
+    run: ctx.run,
+    task: ctx.task.name,
+    signal: ctx.signal,
+    log: ctx.log,
+  };
+  const res =
+    cfg.batch === true ? await runBatched(llm, call, cctx, ctx) : await llm.call(call, cctx);
+  return resultOf(res, cfg, maxTokens);
+}
+
+/** What the run waited for: the batch and the attempt that submitted it. */
+const BatchResume = z.object({ batch_id: z.string(), attempt: z.number().int() });
+
+/**
+ * `batch: true`: the first entry submits and parks the run on `llm.batch.ended` for its
+ * batch; the service's poller publishes that event once the batch ended, which resumes the
+ * run here with the result. A batch that errored, expired or was canceled fails this
+ * attempt (retryably unless the provider rejected the request); the retry sees the same
+ * resume and submits again. A restart after a succeeded batch reads the result again
+ * instead of paying twice.
+ */
+async function runBatched(
+  llm: LlmPort,
+  call: LlmCall,
+  cctx: LlmCallContext,
+  ctx: ActionContext,
+): Promise<LlmCallResult> {
+  const resume = ctx.resume;
+  const waited = BatchResume.safeParse(resume?.resume);
+  if (resume !== undefined && waited.success) {
+    const batchId = waited.data.batch_id;
+    if (resume.outcome === 'timeout') {
+      throw new NonRetryableError(
+        `batch ${batchId} did not end within ${String(BATCH_WAIT_MS / 3_600_000)}h`,
+      );
+    }
+    const out = llm.batchResult(resume.event?.payload ?? null, { maxUsd: call.maxUsd }, cctx);
+    if (out.status === 'succeeded') {
+      return out.result;
+    }
+    if (waited.data.attempt === ctx.run.attempt) {
+      const message = `batch ${batchId} ${out.status}: ${out.error}`;
+      throw out.retryable ? new Error(message) : new NonRetryableError(message);
+    }
+    // A retry of that failed attempt: submit a new batch.
+  }
+  const { batchId } = await llm.submitBatch(call, cctx);
+  return ctx.suspend(
     {
-      provider,
-      model,
-      system,
-      input,
-      outputSchema: cfg.output_schema,
-      maxTokens,
-      effort: cfg.effort ?? llm.defaults.effort,
-      maxUsd,
+      type: LLM_BATCH_ENDED,
+      filter: `payload.batch_id == '${batchId}'`,
+      timeoutMs: BATCH_WAIT_MS,
+      on_timeout: 'fail',
     },
-    { run: ctx.run, task: ctx.task.name, signal: ctx.signal, log: ctx.log },
+    { batch_id: batchId, attempt: ctx.run.attempt },
   );
+}
+
+/** The run's result, or the non-retryable failure a truncated or refused response is. */
+function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): JsonValue {
   if (res.stopReason === 'max_tokens') {
     throw new NonRetryableError(
       `output truncated at max_tokens ${String(maxTokens)}; raise it or shorten the task`,

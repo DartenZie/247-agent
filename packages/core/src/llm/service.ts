@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { NonRetryableError } from '../actions/types.js';
 import type { EventBus } from '../bus/bus.js';
-import { BUDGET_EXCEEDED } from '../bus/matcher.js';
+import { BUDGET_EXCEEDED, LLM_BATCH_ENDED } from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import { isInside } from '../config/crosscheck.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
@@ -11,7 +11,15 @@ import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import { SecretError, type SecretsBackend } from '../secrets/secrets.js';
 import type { PricedBy } from '../store/ledger.js';
+import type { BatchRecord } from '../store/batches.js';
 import type { Store } from '../store/store.js';
+import type { JsonValue } from '../store/types.js';
+import {
+  BATCH_ABANDON_MS,
+  BatchEndedPayload,
+  type BatchPollReport,
+  type BatchSource,
+} from './batches.js';
 import {
   DecideDefaults,
   type BudgetsConfig,
@@ -21,6 +29,7 @@ import {
 } from './config.js';
 import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './errors.js';
 import {
+  batchPrice,
   costUsd,
   estimateInputTokens,
   startOfUtcDay,
@@ -31,6 +40,9 @@ import {
 import type {
   AgentTurn,
   AgentTurnResult,
+  BatchCallResult,
+  BatchOutcome,
+  BatchSubmitResult,
   DecideCall,
   DecideCallResult,
   LlmCall,
@@ -40,6 +52,7 @@ import type {
   LlmProvider,
   LlmUsage,
   ProviderFactories,
+  ProviderFactory,
   ResolvedProvider,
 } from './types.js';
 
@@ -92,8 +105,11 @@ interface ExecuteSpec {
  * worst-case estimate; everything else is `execute`. An agent turn (`checkBudget` before,
  * `record` after) is the same path with the model call made by the ACP agent itself, so
  * there is no adapter, no estimate and no provider lookup: the row names the connector.
+ * A `batch: true` call is split in two: `submitBatch` does the checks and submits, and
+ * `pollBatches` (driven by the `BatchPoller`) settles the batch once it ended: the ledger
+ * row at the batch price and the `llm.batch.ended` event, in one transaction.
  */
-export class LlmService implements LlmPort {
+export class LlmService implements LlmPort, BatchSource {
   private o: LlmServiceOptions;
   private readonly metrics: Metrics;
 
@@ -197,6 +213,277 @@ export class LlmService implements LlmPort {
     );
   }
 
+  async submitBatch(req: LlmCall, cctx: LlmCallContext): Promise<BatchSubmitResult> {
+    const inFlight = this.o.store.batches.forRun(cctx.run.id);
+    if (inFlight !== undefined) {
+      // The daemon stopped between submitting and parking the run: wait for that batch.
+      cctx.log.info('llm.batch_reused', {
+        provider: inFlight.provider,
+        batch_id: inFlight.batch_id,
+      });
+      return { batchId: inFlight.batch_id, reused: true };
+    }
+    const { cfg, factory, price } = this.lookup(req.provider, req.model);
+    this.precheck(
+      {
+        maxUsd: req.maxUsd,
+        estimate:
+          price === undefined
+            ? undefined
+            : costUsd(batchPrice(price), {
+                input: estimateInputTokens((req.system ?? '') + req.input),
+                output: req.maxTokens,
+                cacheRead: 0,
+                cacheWrite: 0,
+              }),
+      },
+      cctx,
+    );
+    const adapter = factory(this.resolveProvider(req.provider, cfg));
+    if (adapter.submitBatch === undefined || adapter.pollBatch === undefined) {
+      throw new ProviderUnavailableError(
+        `provider "${req.provider}" (type ${adapter.type}) has no batch API: batch: true needs an anthropic provider`,
+      );
+    }
+    const { batchId } = await adapter.submitBatch({
+      model: req.model,
+      system: req.system,
+      input: req.input,
+      outputSchema: req.outputSchema,
+      maxTokens: req.maxTokens,
+      effort: req.effort,
+      signal: cctx.signal,
+      customId: cctx.run.id,
+    });
+    this.o.store.batches.insert({
+      batch_id: batchId,
+      run_id: cctx.run.id,
+      task: cctx.task,
+      attempt: cctx.run.attempt,
+      provider: req.provider,
+      model: req.model,
+      structured: req.outputSchema !== undefined,
+      submitted_at: this.o.clock.now().toISOString(),
+    });
+    this.metrics.llmBatches.inc({ provider: req.provider, status: 'submitted' });
+    cctx.log.info('llm.batch_submitted', {
+      provider: req.provider,
+      model: req.model,
+      batch_id: batchId,
+    });
+    return { batchId, reused: false };
+  }
+
+  batchResult(
+    payload: JsonValue,
+    req: { maxUsd?: number | undefined },
+    cctx: LlmCallContext,
+  ): BatchCallResult {
+    const parsed = BatchEndedPayload.safeParse(payload);
+    if (!parsed.success) {
+      throw new NonRetryableError(`${LLM_BATCH_ENDED}: unexpected payload`);
+    }
+    const p = parsed.data;
+    if (p.status !== 'succeeded') {
+      return {
+        status: p.status,
+        error: p.error ?? `batch ${p.status}`,
+        retryable: p.retryable ?? true,
+      };
+    }
+    if (
+      p.usage === undefined ||
+      p.usd === undefined ||
+      p.priced_by === undefined ||
+      p.ledger_id === undefined ||
+      p.stop_reason === undefined
+    ) {
+      throw new NonRetryableError(`${LLM_BATCH_ENDED}: succeeded without its usage`);
+    }
+    if (p.priced_by === 'unpriced') {
+      throw new UnpricedModelError(
+        `provider "${p.provider}" reported no cost for model "${p.model}" and it has no pricing entry; the tokens are in the ledger at $0`,
+      );
+    }
+    // The row is already in the ledger: the run is over budget if its total now is.
+    this.overrun(req.maxUsd, this.o.store.ledger.sumForRun(cctx.run.id), 0);
+    return {
+      status: 'succeeded',
+      result: {
+        output: p.output ?? null,
+        text: p.text,
+        usage: {
+          input: p.usage.input,
+          output: p.usage.output,
+          cacheRead: p.usage.cache_read,
+          cacheWrite: p.usage.cache_write,
+        },
+        stopReason: p.stop_reason,
+        usd: p.usd,
+        priced_by: p.priced_by,
+        ledgerId: p.ledger_id,
+      },
+    };
+  }
+
+  /**
+   * One pass over the batches in flight: each is polled once; an ended one is settled.
+   * A batch whose poll fails is tried again next pass, and dropped (logged as an error)
+   * once it is older than `BATCH_ABANDON_MS`. Never throws for one batch.
+   */
+  async pollBatches(signal: AbortSignal): Promise<BatchPollReport> {
+    const report: BatchPollReport = { ended: 0, pending: 0, failed: 0, abandoned: 0 };
+    // A function, not `signal.aborted` twice: the second read must not be narrowed away.
+    const stopping = (): boolean => signal.aborted;
+    for (const row of this.o.store.batches.list()) {
+      if (stopping()) {
+        break;
+      }
+      let outcome: Awaited<ReturnType<LlmService['pollBatch']>>;
+      try {
+        outcome = await this.pollBatch(row, signal);
+      } catch (err) {
+        if (stopping()) {
+          break; // the daemon is stopping: not a failure of this batch
+        }
+        report.failed++;
+        this.metrics.llmBatches.inc({ provider: row.provider, status: 'poll_failed' });
+        this.batchLog(row).warn('llm.batch_poll_failed', {
+          batch_id: row.batch_id,
+          provider: row.provider,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        outcome = undefined;
+      }
+      if (outcome !== undefined) {
+        this.settleBatch(row, outcome);
+        report.ended++;
+        continue;
+      }
+      const age = this.o.clock.now().getTime() - Date.parse(row.submitted_at);
+      if (age > BATCH_ABANDON_MS) {
+        this.o.store.batches.delete(row.batch_id);
+        report.abandoned++;
+        this.metrics.llmBatches.inc({ provider: row.provider, status: 'abandoned' });
+        this.batchLog(row).error('llm.batch_abandoned', {
+          batch_id: row.batch_id,
+          provider: row.provider,
+          submitted_at: row.submitted_at,
+        });
+      } else {
+        report.pending++;
+      }
+    }
+    return report;
+  }
+
+  /** The batch's outcome once it ended, `undefined` while it is in progress. */
+  private async pollBatch(
+    row: BatchRecord,
+    signal: AbortSignal,
+  ): Promise<BatchOutcome | undefined> {
+    const cfg = this.o.providers[row.provider];
+    if (cfg === undefined) {
+      throw new ProviderUnavailableError(`unknown provider "${row.provider}"`);
+    }
+    const factory = this.o.factories[cfg.type];
+    const adapter = factory?.(this.resolveProvider(row.provider, cfg));
+    if (adapter?.pollBatch === undefined) {
+      throw new ProviderUnavailableError(
+        `provider "${row.provider}" (type ${cfg.type}) has no batch API in this build`,
+      );
+    }
+    const status = await adapter.pollBatch({
+      batchId: row.batch_id,
+      customId: row.run_id,
+      structured: row.structured,
+      signal,
+    });
+    return status.status === 'in_progress' ? undefined : status;
+  }
+
+  /**
+   * Ledgers a billed batch at the batch price and publishes `llm.batch.ended` (parented to
+   * the run's trigger event, so it shares its correlation) in the transaction that drops
+   * the row: a crash before it commits polls the batch again, never ledgers it twice.
+   */
+  private settleBatch(row: BatchRecord, outcome: BatchOutcome): void {
+    const run = this.o.store.runs.getById(row.run_id);
+    const log = this.batchLog(row, run?.correlation_id);
+    const base = {
+      batch_id: row.batch_id,
+      run_id: row.run_id,
+      task: row.task,
+      provider: row.provider,
+      model: row.model,
+    };
+    let status: BatchEndedPayload['status'] = outcome.status;
+    this.o.store.transaction(() => {
+      let payload: BatchEndedPayload;
+      if (outcome.status === 'succeeded') {
+        const res = outcome.response;
+        let billed: Pick<BatchEndedPayload, 'usd' | 'priced_by' | 'ledger_id'> = {};
+        if (run === undefined) {
+          // Retention keeps a run while its batch is in flight; only a hand-edited store gets here.
+          log.error('llm.batch_orphaned', { batch_id: row.batch_id, in_tok: res.usage.input });
+        } else {
+          const price = this.o.pricing.get(row.model);
+          const settled = this.settle(
+            { provider: row.provider, model: row.model, msg: 'llm.call' },
+            res.usage,
+            price === undefined ? undefined : batchPrice(price),
+            this.o.store.ledger.sumForRun(run.id),
+            this.o.clock.now(),
+            { run, task: row.task, signal: new AbortController().signal, log },
+            { batch_id: row.batch_id, stop_reason: res.stopReason },
+          );
+          billed = { usd: settled.usd, priced_by: settled.pricedBy, ledger_id: settled.ledgerId };
+        }
+        const usage = {
+          input: res.usage.input,
+          output: res.usage.output,
+          cache_read: res.usage.cacheRead,
+          cache_write: res.usage.cacheWrite,
+        };
+        if (outcome.error !== undefined) {
+          status = 'errored';
+          payload = { ...base, status, usage, ...billed, error: outcome.error, retryable: true };
+        } else {
+          payload = {
+            ...base,
+            status,
+            stop_reason: res.stopReason,
+            ...(res.output === null ? {} : { output: res.output }),
+            ...(res.text === undefined ? {} : { text: res.text }),
+            usage,
+            ...billed,
+          };
+        }
+      } else {
+        payload = { ...base, status, error: outcome.error, retryable: outcome.retryable };
+      }
+      this.o.bus.publish({
+        type: LLM_BATCH_ENDED,
+        source: 'core',
+        dedup_key: `llm.batch:${row.batch_id}`,
+        ...(run === undefined ? {} : { parent_id: run.event_id }),
+        payload: payload as JsonValue,
+      });
+      this.o.store.batches.delete(row.batch_id);
+    });
+    this.metrics.llmBatches.inc({ provider: row.provider, status });
+    log.info('llm.batch_ended', { batch_id: row.batch_id, provider: row.provider, status });
+  }
+
+  /** The run's log fields, as the executor sets them, for lines about its batch. */
+  private batchLog(row: BatchRecord, correlationId?: string): Logger {
+    return this.o.log.child({
+      run_id: row.run_id,
+      task: row.task,
+      ...(correlationId === undefined ? {} : { correlation_id: correlationId }),
+    });
+  }
+
   checkBudget(req: { maxUsd?: number | undefined }, cctx: LlmCallContext): void {
     this.precheck({ maxUsd: req.maxUsd }, cctx);
   }
@@ -233,22 +520,7 @@ export class LlmService implements LlmPort {
     invoke: (adapter: LlmProvider) => Promise<T>,
     logFields: (res: T) => Record<string, unknown>,
   ): Promise<T & { usd: number; priced_by: PricedBy; ledgerId: number }> {
-    const cfg = this.o.providers[spec.provider];
-    if (cfg === undefined) {
-      throw new ProviderUnavailableError(`unknown provider "${spec.provider}"`);
-    }
-    const factory = this.o.factories[cfg.type];
-    if (factory === undefined) {
-      throw new ProviderUnavailableError(
-        `provider type "${cfg.type}" has no adapter in this build`,
-      );
-    }
-    const price = this.o.pricing.get(spec.model);
-    if (price === undefined && cfg.type !== 'openrouter') {
-      throw new UnpricedModelError(
-        `no price for model "${spec.model}" on provider "${spec.provider}": add a pricing entry in agent.yaml`,
-      );
-    }
+    const { cfg, factory, price } = this.lookup(spec.provider, spec.model);
     const { now, spentRun } = this.precheck(
       {
         maxUsd: spec.maxUsd,
@@ -272,6 +544,30 @@ export class LlmService implements LlmPort {
     }
     this.overrun(spec.maxUsd, spentRun, settled.usd);
     return { ...res, usd: settled.usd, priced_by: settled.pricedBy, ledgerId: settled.ledgerId };
+  }
+
+  /** The provider's config, its adapter factory and the model's price (required unless the provider reports cost). */
+  private lookup(
+    provider: string,
+    model: string,
+  ): { cfg: ProviderConfigParsed; factory: ProviderFactory; price: ModelPrice | undefined } {
+    const cfg = this.o.providers[provider];
+    if (cfg === undefined) {
+      throw new ProviderUnavailableError(`unknown provider "${provider}"`);
+    }
+    const factory = this.o.factories[cfg.type];
+    if (factory === undefined) {
+      throw new ProviderUnavailableError(
+        `provider type "${cfg.type}" has no adapter in this build`,
+      );
+    }
+    const price = this.o.pricing.get(model);
+    if (price === undefined && cfg.type !== 'openrouter') {
+      throw new UnpricedModelError(
+        `no price for model "${model}" on provider "${provider}": add a pricing entry in agent.yaml`,
+      );
+    }
+    return { cfg, factory, price };
   }
 
   /**

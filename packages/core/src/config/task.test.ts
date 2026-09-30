@@ -30,8 +30,9 @@ describe('Task schema: budget and llm actions', () => {
     expect(issues({ ...base, budget: { max_usd: 0 } })).toEqual([
       'budget.max_usd: Too small: expected number to be >0',
     ]);
-    expect(issues({ ...base, action: { kind: 'llm', input: 'x', batch: true } })).toEqual([
-      'action: Unrecognized key: "batch"',
+    expect(issues({ ...base, action: { kind: 'llm', input: 'x', batch: true } })).toEqual([]);
+    expect(issues({ ...base, action: { kind: 'llm', input: 'x', batch: 'yes' } })).toEqual([
+      'action.batch: Invalid input: expected boolean, received string',
     ]);
     expect(issues({ ...base, action: { kind: 'llm', input: '${secrets.x}' } })).toEqual([]);
     const agent = {

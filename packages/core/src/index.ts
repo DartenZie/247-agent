@@ -98,6 +98,7 @@ export {
   taskSource,
   CRON_TICK,
   MANUAL_RUN,
+  LLM_BATCH_ENDED,
   type CompiledConfig,
   type CompiledTask,
 } from './bus/matcher.js';
@@ -185,6 +186,7 @@ export {
   type DecideActionConfig,
 } from './actions/decide.js';
 export {
+  Batches,
   Budget,
   Budgets,
   DecideDefaults,
@@ -196,6 +198,7 @@ export {
   PROVIDER_TYPES,
   ProviderConfig,
   Providers,
+  type BatchesConfig,
   type BudgetConfig,
   type BudgetsConfig,
   type DecideDefaultsConfig,
@@ -208,8 +211,10 @@ export {
   type ProvidersConfig,
 } from './llm/config.js';
 export {
+  BATCH_PRICE_FACTOR,
   BUILTIN_PRICES,
   PricingError,
+  batchPrice,
   costUsd,
   estimateInputTokens,
   resolvePricing,
@@ -219,6 +224,13 @@ export {
   type PricingTable,
 } from './llm/pricing.js';
 export { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './llm/errors.js';
+export {
+  BATCH_ABANDON_MS,
+  BATCH_WAIT_MS,
+  BatchEndedPayload,
+  BatchPoller,
+  type BatchPollReport,
+} from './llm/batches.js';
 export {
   LlmService,
   BUDGET_EXCEEDED,
@@ -237,6 +249,12 @@ export { isReasoningModel, supportsEffort } from './llm/models.js';
 export type {
   AgentTurn,
   AgentTurnResult,
+  BatchCallResult,
+  BatchOutcome,
+  BatchPollRequest,
+  BatchStatus,
+  BatchSubmitRequest,
+  BatchSubmitResult,
   DecideAnswer,
   DecideCall,
   DecideCallResult,

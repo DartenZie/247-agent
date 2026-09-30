@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DURATION } from '../config/duration.js';
 import { collectTemplateRefs, isTemplate } from '../expr/template.js';
 
 const NAME = /^[a-z][a-z0-9_]*$/;
@@ -124,3 +125,11 @@ export type BudgetConfig = z.infer<typeof Budget>;
 /** `budgets:` in agent.yaml: the global circuit breaker (ARCHITECTURE §9). */
 export const Budgets = z.strictObject({ daily_usd: z.number().positive().optional() }).prefault({});
 export type BudgetsConfig = z.infer<typeof Budgets>;
+
+/** `batches:` in agent.yaml: how often the batches of `batch: true` llm actions are polled (ARCHITECTURE §5.2). */
+export const Batches = z
+  .strictObject({
+    poll: z.string().regex(DURATION, 'durations look like 30s, 1m, 5m').default('1m'),
+  })
+  .prefault({});
+export type BatchesConfig = z.infer<typeof Batches>;

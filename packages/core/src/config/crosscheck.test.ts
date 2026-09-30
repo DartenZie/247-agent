@@ -64,6 +64,19 @@ describe('checkLlmTasks', () => {
     ).toEqual([]);
   });
 
+  it('takes batch: true on an anthropic provider only', () => {
+    expect(checkLlmTasks([task({ batch: true })], ctx())).toEqual([]);
+    expect(
+      checkLlmTasks([task({ batch: true, provider: 'router', model: 'vendor/x' })], ctx()),
+    ).toEqual([
+      {
+        path: 'tasks[0].action.batch',
+        message:
+          'batch: true needs an anthropic provider (Message Batches); "router" is type openrouter',
+      },
+    ]);
+  });
+
   it('reports missing defaults, unknown providers, unpriced models and bad system files with task paths', () => {
     const issues = checkLlmTasks(
       [

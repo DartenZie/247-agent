@@ -80,6 +80,19 @@ export function resolvePricing(overrides: PricingConfig): PricingTable {
   return out;
 }
 
+/** Message Batches bill every token at half the listed price (cache prices included). */
+export const BATCH_PRICE_FACTOR = 0.5;
+
+/** `price` with every component at the batch rate. */
+export function batchPrice(price: ModelPrice): ModelPrice {
+  return {
+    input: price.input * BATCH_PRICE_FACTOR,
+    output: price.output * BATCH_PRICE_FACTOR,
+    cache_read: price.cache_read * BATCH_PRICE_FACTOR,
+    cache_write: price.cache_write * BATCH_PRICE_FACTOR,
+  };
+}
+
 export function costUsd(price: ModelPrice, usage: LlmUsage): number {
   return (
     (usage.input * price.input +

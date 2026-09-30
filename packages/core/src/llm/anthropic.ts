@@ -3,7 +3,16 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NonRetryableError } from '../actions/types.js';
 import type { JsonValue } from '../store/types.js';
 import { supportsEffort } from './models.js';
-import type { LlmProvider, LlmRequest, LlmResponse, ProviderFactory, StopReason } from './types.js';
+import type {
+  BatchPollRequest,
+  BatchStatus,
+  BatchSubmitRequest,
+  LlmProvider,
+  LlmRequest,
+  LlmResponse,
+  ProviderFactory,
+  StopReason,
+} from './types.js';
 
 type ClientOptions = NonNullable<ConstructorParameters<typeof Anthropic>[0]>;
 export type FetchLike = NonNullable<ClientOptions['fetch']>;
@@ -26,7 +35,9 @@ const HTTP_TIMEOUT_MS = 60 * 60 * 1000;
  * system prompt as a cached block, the input as the single user turn, adaptive thinking and
  * `output_config.effort` on Sonnet/Opus 5 only. No prefill, no SDK-level retries: whether to
  * try again is the task's `retry` policy, so 429/5xx/network errors surface as plain
- * `Error`s and 4xx client errors as `NonRetryableError`.
+ * `Error`s and 4xx client errors as `NonRetryableError`. `batch: true` sends the same
+ * request as the one entry of a Message Batch (`submitBatch`) and reads it back once the
+ * batch has ended (`pollBatch`).
  */
 export function createAnthropicProvider(opts: AnthropicAdapterOptions = {}): ProviderFactory {
   return (provider) => {
@@ -41,6 +52,8 @@ export function createAnthropicProvider(opts: AnthropicAdapterOptions = {}): Pro
       name: provider.name,
       type: provider.type,
       complete: (req) => complete(client, req),
+      submitBatch: (req) => submitBatch(client, req),
+      pollBatch: (req) => pollBatch(client, req),
     };
     return adapter;
   };
@@ -48,10 +61,9 @@ export function createAnthropicProvider(opts: AnthropicAdapterOptions = {}): Pro
 
 export const anthropicProvider: ProviderFactory = createAnthropicProvider();
 
-async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse> {
-  const effortOk = supportsEffort(req.model);
-  const effort = effortOk ? req.effort : undefined;
-  const base: Anthropic.MessageCreateParamsNonStreaming = {
+/** Everything but `output_config`, which `messages.parse()` wants with its own `parse`. */
+function baseParams(req: LlmRequest): Anthropic.MessageCreateParamsNonStreaming {
+  return {
     model: req.model,
     max_tokens: req.maxTokens,
     messages: [{ role: 'user', content: req.input }],
@@ -60,8 +72,17 @@ async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse
       : {
           system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
         }),
-    ...(effortOk ? { thinking: { type: 'adaptive' } } : {}),
+    ...(supportsEffort(req.model) ? { thinking: { type: 'adaptive' } } : {}),
   };
+}
+
+function effortOf(req: LlmRequest): LlmRequest['effort'] {
+  return supportsEffort(req.model) ? req.effort : undefined;
+}
+
+async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse> {
+  const effort = effortOf(req);
+  const base = baseParams(req);
   const options = { signal: req.signal, timeout: HTTP_TIMEOUT_MS };
 
   try {
@@ -88,6 +109,114 @@ async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse
     return { output: msg.parsed_output, usage: usageOf(msg), stopReason };
   } catch (err) {
     throw mapError(err);
+  }
+}
+
+/** `custom_id`s and batch ids go into URLs and a wait filter: nothing but these characters. */
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+async function submitBatch(
+  client: Anthropic,
+  req: BatchSubmitRequest,
+): Promise<{ batchId: string }> {
+  if (!ID.test(req.customId)) {
+    throw new NonRetryableError(`anthropic: invalid batch custom_id "${req.customId}"`);
+  }
+  const effort = effortOf(req);
+  const outputConfig: Anthropic.OutputConfig = {
+    ...(effort === undefined ? {} : { effort }),
+    ...(req.outputSchema === undefined
+      ? {}
+      : { format: { type: 'json_schema', schema: req.outputSchema } }),
+  };
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    ...baseParams(req),
+    ...(Object.keys(outputConfig).length === 0 ? {} : { output_config: outputConfig }),
+  };
+  try {
+    const batch = await client.messages.batches.create(
+      { requests: [{ custom_id: req.customId, params }] },
+      { signal: req.signal, timeout: HTTP_TIMEOUT_MS },
+    );
+    if (!ID.test(batch.id)) {
+      throw new Error(`anthropic: unexpected batch id "${batch.id}"`);
+    }
+    return { batchId: batch.id };
+  } catch (err) {
+    throw mapError(err);
+  }
+}
+
+async function pollBatch(client: Anthropic, req: BatchPollRequest): Promise<BatchStatus> {
+  const options = { signal: req.signal, timeout: HTTP_TIMEOUT_MS };
+  try {
+    const batch = await client.messages.batches.retrieve(req.batchId, {}, options);
+    if (batch.processing_status !== 'ended') {
+      return { status: 'in_progress' };
+    }
+    const results = await client.messages.batches.results(req.batchId, {}, options);
+    for await (const entry of results) {
+      if (entry.custom_id === req.customId) {
+        return outcomeOf(entry.result, req.structured);
+      }
+    }
+    throw new NonRetryableError(
+      `anthropic: batch ${req.batchId} ended without a result for ${req.customId}`,
+    );
+  } catch (err) {
+    throw mapError(err);
+  }
+}
+
+function outcomeOf(
+  result: Anthropic.Messages.MessageBatchResult,
+  structured: boolean,
+): BatchStatus {
+  switch (result.type) {
+    case 'succeeded': {
+      const msg = result.message;
+      const stopReason = stopOf(msg);
+      const text = textOf(msg);
+      const usage = usageOf(msg);
+      if (!structured) {
+        return { status: 'succeeded', response: { output: null, text, usage, stopReason } };
+      }
+      if (stopReason !== 'end') {
+        return { status: 'succeeded', response: { output: null, usage, stopReason } };
+      }
+      try {
+        return {
+          status: 'succeeded',
+          response: { output: JSON.parse(text) as JsonValue, usage, stopReason },
+        };
+      } catch {
+        return {
+          status: 'succeeded',
+          response: { output: null, usage, stopReason },
+          error: 'anthropic: the batch response ended without a structured output',
+        };
+      }
+    }
+    case 'errored': {
+      const e = result.error.error;
+      return {
+        status: 'errored',
+        error: `anthropic: ${e.type}: ${e.message}`,
+        retryable: e.type !== 'invalid_request_error',
+      };
+    }
+    case 'expired':
+      return {
+        status: 'expired',
+        error: 'anthropic: the batch expired before the request was processed',
+        retryable: true,
+      };
+    case 'canceled':
+      return {
+        status: 'canceled',
+        error: 'anthropic: the batch was canceled',
+        retryable: true,
+      };
   }
 }
 

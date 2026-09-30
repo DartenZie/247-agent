@@ -1,5 +1,6 @@
 import type { Database } from 'better-sqlite3';
 
+import { BatchStore } from './batches.js';
 import { CursorStore } from './cursors.js';
 import { openDatabase } from './db.js';
 import { EventStore } from './events.js';
@@ -18,6 +19,8 @@ export interface Store {
   readonly waits: WaitStore;
   readonly ledger: LedgerStore;
   readonly transcripts: TranscriptStore;
+  /** `llm` requests submitted to a Message Batches API and not settled yet. */
+  readonly batches: BatchStore;
   /** Runs `fn` in a `BEGIN IMMEDIATE` transaction (nested calls become savepoints). */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -34,6 +37,7 @@ export function openStore(path: string): Store {
     waits: new WaitStore(db),
     ledger: new LedgerStore(db),
     transcripts: new TranscriptStore(db),
+    batches: new BatchStore(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
     close: () => {
       db.close();

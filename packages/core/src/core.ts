@@ -25,7 +25,9 @@ import type { RetryConfig } from './config/schema.js';
 import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor, manifestKey, type ApplyResult } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
+import { BatchPoller } from './llm/batches.js';
 import type {
+  BatchesConfig,
   BudgetsConfig,
   DecideDefaultsConfig,
   LlmDefaultsConfig,
@@ -41,6 +43,7 @@ import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger } from './log.js';
 import { Metrics } from './metrics.js';
 import { RetentionJob } from './retention.js';
+import { parseDuration } from './config/duration.js';
 import { CronScheduler } from './scheduler/cron.js';
 import { staticSecrets, type SecretsBackend } from './secrets/secrets.js';
 import { openStore, type Store } from './store/store.js';
@@ -110,6 +113,8 @@ export interface CoreLlmOptions {
   budgets: BudgetsConfig;
   /** The agent.yaml directory (`system_file` paths). */
   configDir: string;
+  /** `batches:`; polled every minute when omitted. */
+  batches?: BatchesConfig | undefined;
   /** Adapters by provider type; defaults to the built-in ones. */
   factories?: ProviderFactories;
 }
@@ -149,6 +154,8 @@ export interface Core {
   readonly pollers: readonly Poller[];
   /** The retention pass, when a policy was given. */
   readonly retention: RetentionJob | undefined;
+  /** Polls the batches of `batch: true` llm actions, when providers are configured. */
+  readonly batchPoller: BatchPoller | undefined;
   config(): CompiledConfig;
   /**
    * Loads config, opens the store, recovers runs, dispatches any backlog, arms cron jobs
@@ -302,6 +309,12 @@ export function createCore(opts: CoreOptions): Core {
           factories: llmOptions.factories ?? defaultProviderFactories,
         });
 
+  const batchPollMs = (o: CoreLlmOptions): number => parseDuration(o.batches?.poll ?? '1m');
+  const batchPoller =
+    llm === undefined || llmOptions === undefined
+      ? undefined
+      : new BatchPoller({ source: llm, log, intervalMs: batchPollMs(llmOptions) });
+
   const executor = new Executor({
     store,
     bus,
@@ -345,6 +358,7 @@ export function createCore(opts: CoreOptions): Core {
     metrics.runsPending.set(undefined, stats.pending);
     metrics.runsInFlight.set(undefined, stats.in_flight);
     metrics.runsWaiting.set(undefined, store.waits.countPending());
+    metrics.llmBatchesPending.set(undefined, store.batches.count());
     metrics.cronNextRun.reset();
     for (const job of scheduler.list()) {
       if (job.nextRun !== null) {
@@ -484,6 +498,7 @@ export function createCore(opts: CoreOptions): Core {
         budgets: next.llm.budgets,
         configDir: next.llm.configDir,
       });
+      batchPoller?.configure(batchPollMs(next.llm));
     }
     executor.configure({
       workers: next.workers,
@@ -529,6 +544,7 @@ export function createCore(opts: CoreOptions): Core {
       return pollers.map((p) => p.poller);
     },
     retention,
+    batchPoller,
     config: () => compiled,
     start: async () => {
       const result = load(
@@ -561,6 +577,7 @@ export function createCore(opts: CoreOptions): Core {
         poller.start();
       }
       retention?.start();
+      batchPoller?.start();
     },
     reload: (next) => {
       // Reloads are serialised: two SIGHUPs in a row apply in order, never interleaved.
@@ -573,6 +590,7 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.stop();
       bus.dispatcher.stop();
       await retention?.stop();
+      await batchPoller?.stop();
       await executor.stop();
       await Promise.all(pollers.map((p) => p.poller.stop()));
       await supervisor?.stop();

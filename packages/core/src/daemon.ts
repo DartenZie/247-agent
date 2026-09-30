@@ -179,6 +179,7 @@ function coreSettings(
       defaults: config.defaults.llm,
       decideDefaults: config.defaults.decide,
       budgets: config.budgets,
+      batches: config.batches,
       configDir: dirname(config.file),
       ...(factories === undefined ? {} : { factories }),
     },

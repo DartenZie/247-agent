@@ -3,9 +3,15 @@ import {
   type DecideDefaultsConfig,
   type LlmDefaultsConfig,
 } from './config.js';
+import type { JsonValue } from '../store/types.js';
 import type {
   AgentTurn,
   AgentTurnResult,
+  BatchCallResult,
+  BatchPollRequest,
+  BatchStatus,
+  BatchSubmitRequest,
+  BatchSubmitResult,
   DecideCall,
   DecideCallResult,
   DecideRequest,
@@ -27,12 +33,16 @@ export interface FakeProvider {
   requests: { provider: ResolvedProvider; req: LlmRequest }[];
   /** What each `decide` received. */
   decides: { provider: ResolvedProvider; req: DecideRequest }[];
+  /** What each `submitBatch` received; batch ids are `msgbatch_<n>` from 1. */
+  batches: { provider: ResolvedProvider; req: BatchSubmitRequest }[];
+  /** What each `pollBatch` received. */
+  polls: BatchPollRequest[];
 }
 
 /**
  * A provider adapter that records requests and answers with `respond` (or a canned response).
  * It has a `decide` method only when `decide` is given, so a provider type that cannot reach
- * the Decisions API is the default.
+ * the Decisions API is the default; likewise `submitBatch`/`pollBatch` only with `poll`.
  */
 export function fakeProviderFactory(
   respond: ((req: LlmRequest) => LlmResponse | Promise<LlmResponse>) | LlmResponse = {
@@ -42,9 +52,12 @@ export function fakeProviderFactory(
     stopReason: 'end',
   },
   decide?: ((req: DecideRequest) => DecideResponse | Promise<DecideResponse>) | DecideResponse,
+  poll?: (req: BatchPollRequest) => BatchStatus | Promise<BatchStatus>,
 ): FakeProvider {
   const requests: FakeProvider['requests'] = [];
   const decides: FakeProvider['decides'] = [];
+  const batches: FakeProvider['batches'] = [];
+  const polls: FakeProvider['polls'] = [];
   const factory: ProviderFactory = (provider) => {
     const adapter: LlmProvider = {
       name: provider.name,
@@ -60,9 +73,19 @@ export function fakeProviderFactory(
         return typeof decide === 'function' ? decide(req) : decide;
       };
     }
+    if (poll !== undefined) {
+      adapter.submitBatch = (req) => {
+        batches.push({ provider, req });
+        return Promise.resolve({ batchId: `msgbatch_${String(batches.length)}` });
+      };
+      adapter.pollBatch = async (req) => {
+        polls.push(req);
+        return poll(req);
+      };
+    }
     return adapter;
   };
-  return { factory, requests, decides };
+  return { factory, requests, decides, batches, polls };
 }
 
 export interface FakePort extends LlmPort {
@@ -70,6 +93,10 @@ export interface FakePort extends LlmPort {
   decides: { req: DecideCall; ctx: LlmCallContext }[];
   /** What `record` received (agent turns). */
   turns: { turn: AgentTurn; ctx: LlmCallContext }[];
+  /** What `submitBatch` received. */
+  batches: { req: LlmCall; ctx: LlmCallContext }[];
+  /** What `batchResult` received. */
+  batchResults: { payload: JsonValue; maxUsd: number | undefined }[];
   systemFiles: Record<string, string>;
 }
 
@@ -85,11 +112,17 @@ export function fakeLlmPort(
     checkBudget?: (req: { maxUsd?: number | undefined }) => void;
     /** Prices an agent turn; defaults to the reported cost or $0.001. */
     record?: (turn: AgentTurn) => AgentTurnResult;
+    /** Answers `submitBatch`; defaults to a new `msgbatch_<n>`. */
+    submitBatch?: (req: LlmCall) => BatchSubmitResult | Promise<BatchSubmitResult>;
+    /** Answers `batchResult`; defaults to a succeeded `{ok: true}`. */
+    batchResult?: (payload: JsonValue) => BatchCallResult;
   } = {},
 ): FakePort {
   const calls: FakePort['calls'] = [];
   const decides: FakePort['decides'] = [];
   const turns: FakePort['turns'] = [];
+  const batches: FakePort['batches'] = [];
+  const batchResults: FakePort['batchResults'] = [];
   const systemFiles = over.systemFiles ?? {};
   const respond =
     over.respond ??
@@ -117,6 +150,8 @@ export function fakeLlmPort(
     calls,
     decides,
     turns,
+    batches,
+    batchResults,
     systemFiles,
     providers: () => ['fake'],
     readSystemFile: (rel) => {
@@ -133,6 +168,31 @@ export function fakeLlmPort(
     decide: async (req, ctx) => {
       decides.push({ req, ctx });
       return respondDecide(req);
+    },
+    submitBatch: async (req, ctx) => {
+      batches.push({ req, ctx });
+      if (over.submitBatch !== undefined) {
+        return over.submitBatch(req);
+      }
+      return { batchId: `msgbatch_${String(batches.length)}`, reused: false };
+    },
+    batchResult: (payload, req) => {
+      batchResults.push({ payload, maxUsd: req.maxUsd });
+      if (over.batchResult !== undefined) {
+        return over.batchResult(payload);
+      }
+      return {
+        status: 'succeeded',
+        result: {
+          output: { ok: true },
+          text: 'ok',
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+          stopReason: 'end',
+          usd: 0.0005,
+          priced_by: 'table',
+          ledgerId: 1,
+        },
+      };
     },
     checkBudget: (req) => {
       over.checkBudget?.(req);

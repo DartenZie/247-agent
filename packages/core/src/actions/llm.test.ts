@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { fakeLlmPort } from '../llm/testing.js';
 import type { LlmCallResult } from '../llm/types.js';
+import type { EventRecord, JsonValue } from '../store/types.js';
 import { LlmAction, runLlm } from './llm.js';
 import { testContext } from './testing.js';
-import { NonRetryableError } from './types.js';
+import { isRetryable, NonRetryableError, type ResumeInfo, type WaitSpec } from './types.js';
 
 const result = (over: Partial<LlmCallResult> = {}): LlmCallResult => ({
   output: { kind: 'general_change', summary: 's' },
@@ -25,11 +26,11 @@ const action = {
 };
 
 describe('LlmAction schema', () => {
-  it('accepts the documented shape and rejects batch, two system prompts and templated system', () => {
+  it('accepts the documented shape and rejects two system prompts and templated system', () => {
     expect(LlmAction.safeParse({ ...action, provider: 'anthropic', effort: 'low' }).success).toBe(
       true,
     );
-    expect(LlmAction.safeParse({ ...action, batch: true }).success).toBe(false);
+    expect(LlmAction.safeParse({ ...action, batch: true }).success).toBe(true);
     expect(LlmAction.safeParse({ ...action, system: 'x' }).success).toBe(false);
     expect(LlmAction.safeParse({ kind: 'llm', input: 'x', system: 'hi ${event.x}' }).success).toBe(
       false,
@@ -119,5 +120,96 @@ describe('runLlm', () => {
     await expect(
       runLlm({ kind: 'llm', input: 'x' }, testContext({ llm: refused })),
     ).rejects.toThrow(NonRetryableError);
+  });
+});
+
+describe('runLlm with batch: true', () => {
+  const batched = { kind: 'llm', input: 'x', batch: true, output_schema: { type: 'object' } };
+  const SUSPENDED = new Error('suspended');
+  const suspended: { spec: WaitSpec; resume: JsonValue }[] = [];
+  const suspend = (spec: WaitSpec, resume: JsonValue): Promise<never> => {
+    suspended.push({ spec, resume });
+    return Promise.reject(SUSPENDED);
+  };
+  const ended = (payload: JsonValue, outcome: 'matched' | 'timeout' = 'matched'): ResumeInfo => ({
+    resume: { batch_id: 'msgbatch_1', attempt: 1 },
+    outcome,
+    event: { payload } as EventRecord,
+  });
+
+  beforeEach(() => {
+    suspended.length = 0;
+  });
+
+  it('submits the call and parks the run on llm.batch.ended for its batch', async () => {
+    const llm = fakeLlmPort({ defaults: { provider: 'anthropic', model: 'claude-haiku-4-5' } });
+    const ctx = testContext({
+      llm,
+      suspend,
+      task: { name: 't', budget: { max_usd: 0.1 } } as never,
+    });
+    await expect(runLlm(batched, ctx)).rejects.toBe(SUSPENDED);
+    expect(llm.calls).toEqual([]);
+    expect(llm.batches[0]?.req).toMatchObject({ provider: 'anthropic', input: 'x', maxUsd: 0.1 });
+    expect(suspended).toEqual([
+      {
+        spec: {
+          type: 'llm.batch.ended',
+          filter: "payload.batch_id == 'msgbatch_1'",
+          timeoutMs: 25 * 3_600_000,
+          on_timeout: 'fail',
+        },
+        resume: { batch_id: 'msgbatch_1', attempt: 1 },
+      },
+    ]);
+  });
+
+  it('returns the result when resumed with a succeeded batch', async () => {
+    const llm = fakeLlmPort({
+      defaults: { provider: 'anthropic', model: 'm' },
+      batchResult: () => ({ status: 'succeeded', result: result() }),
+    });
+    const ctx = testContext({ llm, suspend, resume: ended({ status: 'succeeded' }) });
+    await expect(runLlm(batched, ctx)).resolves.toEqual({ kind: 'general_change', summary: 's' });
+    expect(llm.batchResults).toEqual([{ payload: { status: 'succeeded' }, maxUsd: undefined }]);
+    expect(llm.batches).toEqual([]);
+    const cut = fakeLlmPort({
+      defaults: { provider: 'anthropic', model: 'm' },
+      batchResult: () => ({ status: 'succeeded', result: result({ stopReason: 'max_tokens' }) }),
+    });
+    await expect(
+      runLlm(batched, testContext({ llm: cut, suspend, resume: ended({}) })),
+    ).rejects.toThrow(/truncated at max_tokens/);
+  });
+
+  it('fails the attempt that submitted a failed batch, and resubmits on the retry', async () => {
+    const failed = (retryable: boolean) =>
+      fakeLlmPort({
+        defaults: { provider: 'anthropic', model: 'm' },
+        batchResult: () => ({ status: 'expired', error: 'too slow', retryable }),
+      });
+    const retryable = runLlm(
+      batched,
+      testContext({ llm: failed(true), suspend, resume: ended({}) }),
+    );
+    await expect(retryable).rejects.toThrow('batch msgbatch_1 expired: too slow');
+    await expect(retryable.catch((e: unknown) => isRetryable(e))).resolves.toBe(true);
+    await expect(
+      runLlm(batched, testContext({ llm: failed(false), suspend, resume: ended({}) })),
+    ).rejects.toBeInstanceOf(NonRetryableError);
+
+    const llm = failed(true);
+    const retry = testContext({ llm, suspend, resume: ended({}) });
+    const nextAttempt = { ...retry, run: { ...retry.run, attempt: 2 } };
+    await expect(runLlm(batched, nextAttempt)).rejects.toBe(SUSPENDED);
+    expect(llm.batches).toHaveLength(1);
+    expect(suspended[0]?.resume).toEqual({ batch_id: 'msgbatch_1', attempt: 2 });
+  });
+
+  it('fails without retry when the wait timed out', async () => {
+    const llm = fakeLlmPort({ defaults: { provider: 'anthropic', model: 'm' } });
+    await expect(
+      runLlm(batched, testContext({ llm, suspend, resume: ended(null, 'timeout') })),
+    ).rejects.toThrow(new NonRetryableError('batch msgbatch_1 did not end within 25h'));
   });
 });

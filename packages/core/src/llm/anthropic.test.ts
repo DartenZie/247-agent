@@ -327,3 +327,199 @@ describe('anthropic adapter: errors', () => {
     expect(sawAbort).toBe(true);
   });
 });
+
+/** A Message Batches API: POST creates `msgbatch_01`, GET reports `status`, the results URL serves `results` as JSONL. */
+function batchApi(status: 'in_progress' | 'ended', results: unknown[] = []) {
+  const calls: { method: string; url: string; body: Record<string, unknown> | null }[] = [];
+  const batch = {
+    id: 'msgbatch_01',
+    type: 'message_batch',
+    processing_status: status,
+    request_counts: { processing: 0, succeeded: 1, errored: 0, canceled: 0, expired: 0 },
+    created_at: '2026-09-30T10:00:00Z',
+    expires_at: '2026-10-01T10:00:00Z',
+    ended_at: status === 'ended' ? '2026-09-30T10:05:00Z' : null,
+    archived_at: null,
+    cancel_initiated_at: null,
+    results_url:
+      status === 'ended'
+        ? 'https://api.anthropic.com/v1/messages/batches/msgbatch_01/results'
+        : null,
+  };
+  const fetch: FetchLike = (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const raw = typeof init?.body === 'string' ? init.body : '';
+    calls.push({
+      method: init?.method ?? 'GET',
+      url,
+      body: raw === '' ? null : (JSON.parse(raw) as Record<string, unknown>),
+    });
+    if (url.endsWith('/results')) {
+      return Promise.resolve(
+        new Response(results.map((r) => JSON.stringify(r)).join('\n'), {
+          headers: { 'content-type': 'application/binary' },
+        }),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify(batch), { headers: { 'content-type': 'application/json' } }),
+    );
+  };
+  return { calls, fetch };
+}
+
+describe('anthropic adapter: message batches', () => {
+  const poll = (fetch: FetchLike, structured = true) => {
+    const adapter = createAnthropicProvider({ fetch })(provider);
+    if (adapter.pollBatch === undefined) {
+      throw new Error('no pollBatch');
+    }
+    return adapter.pollBatch({
+      batchId: 'msgbatch_01',
+      customId: 'run_1',
+      structured,
+      signal: new AbortController().signal,
+    });
+  };
+
+  it('submits the same request as one batch entry keyed by the run id', async () => {
+    const api = batchApi('in_progress');
+    const adapter = createAnthropicProvider({ fetch: api.fetch })(provider);
+    const res = await adapter.submitBatch?.({
+      ...request({ model: 'claude-sonnet-5', system: 'You classify.', effort: 'low' }),
+      outputSchema: SCHEMA,
+      customId: 'run_1',
+    });
+    expect(res).toEqual({ batchId: 'msgbatch_01' });
+    expect(api.calls).toHaveLength(1);
+    expect(api.calls[0]?.url).toBe('https://api.anthropic.com/v1/messages/batches');
+    expect(api.calls[0]?.body).toEqual({
+      requests: [
+        {
+          custom_id: 'run_1',
+          params: {
+            model: 'claude-sonnet-5',
+            max_tokens: 256,
+            messages: [{ role: 'user', content: 'Subject: Spring event' }],
+            system: [{ type: 'text', text: 'You classify.', cache_control: { type: 'ephemeral' } }],
+            thinking: { type: 'adaptive' },
+            output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+          },
+        },
+      ],
+    });
+  });
+
+  it('sends no output_config on Haiku without a schema and refuses an unsafe custom_id', async () => {
+    const api = batchApi('in_progress');
+    const adapter = createAnthropicProvider({ fetch: api.fetch })(provider);
+    await adapter.submitBatch?.({ ...request({ effort: 'high' }), customId: 'run_2' });
+    const params = (api.calls[0]?.body?.requests as { params: Record<string, unknown> }[])[0]
+      ?.params;
+    expect(params).not.toHaveProperty('output_config');
+    expect(params).not.toHaveProperty('thinking');
+    await expect(
+      adapter.submitBatch?.({ ...request(), customId: "x' || true" }),
+    ).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it('reports a batch in progress without fetching results', async () => {
+    const api = batchApi('in_progress');
+    await expect(poll(api.fetch)).resolves.toEqual({ status: 'in_progress' });
+    expect(api.calls.map((c) => c.url)).toEqual([
+      'https://api.anthropic.com/v1/messages/batches/msgbatch_01',
+    ]);
+  });
+
+  it('parses a succeeded structured result and maps usage and stop reason', async () => {
+    const api = batchApi('ended', [
+      { custom_id: 'other', result: { type: 'expired' } },
+      { custom_id: 'run_1', result: { type: 'succeeded', message: message() } },
+    ]);
+    await expect(poll(api.fetch)).resolves.toEqual({
+      status: 'succeeded',
+      response: {
+        output: { kind: 'general_change' },
+        usage: { input: 120, output: 15, cacheRead: 800, cacheWrite: 40 },
+        stopReason: 'end',
+      },
+    });
+  });
+
+  it('returns the text without a schema and no output on truncation', async () => {
+    const plain = batchApi('ended', [
+      {
+        custom_id: 'run_1',
+        result: {
+          type: 'succeeded',
+          message: message({ content: [{ type: 'text', text: 'hello' }] }),
+        },
+      },
+    ]);
+    await expect(poll(plain.fetch, false)).resolves.toMatchObject({
+      status: 'succeeded',
+      response: { output: null, text: 'hello', stopReason: 'end' },
+    });
+    const cut = batchApi('ended', [
+      {
+        custom_id: 'run_1',
+        result: { type: 'succeeded', message: message({ stop_reason: 'max_tokens' }) },
+      },
+    ]);
+    await expect(poll(cut.fetch)).resolves.toMatchObject({
+      status: 'succeeded',
+      response: { output: null, stopReason: 'max_tokens' },
+    });
+  });
+
+  it('flags a billed structured result that is not JSON', async () => {
+    const api = batchApi('ended', [
+      {
+        custom_id: 'run_1',
+        result: {
+          type: 'succeeded',
+          message: message({ content: [{ type: 'text', text: 'not json' }] }),
+        },
+      },
+    ]);
+    await expect(poll(api.fetch)).resolves.toMatchObject({
+      status: 'succeeded',
+      error: expect.stringMatching(/without a structured output/) as unknown,
+    });
+  });
+
+  it('maps errored, expired and canceled results; only an invalid request is final', async () => {
+    const outcome = async (result: unknown) =>
+      poll(batchApi('ended', [{ custom_id: 'run_1', result }]).fetch);
+    await expect(
+      outcome({
+        type: 'errored',
+        error: { type: 'error', error: apiError('invalid_request_error', 'bad').error },
+      }),
+    ).resolves.toEqual({
+      status: 'errored',
+      error: 'anthropic: invalid_request_error: bad',
+      retryable: false,
+    });
+    await expect(
+      outcome({
+        type: 'errored',
+        error: { type: 'error', error: apiError('overloaded_error', 'busy').error },
+      }),
+    ).resolves.toMatchObject({ status: 'errored', retryable: true });
+    await expect(outcome({ type: 'expired' })).resolves.toMatchObject({
+      status: 'expired',
+      retryable: true,
+    });
+    await expect(outcome({ type: 'canceled' })).resolves.toMatchObject({
+      status: 'canceled',
+      retryable: true,
+    });
+  });
+
+  it('fails non-retryably when the ended batch has no result for the run', async () => {
+    const err = await poll(batchApi('ended', []).fetch).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(isRetryable(err)).toBe(false);
+  });
+});
