@@ -198,7 +198,9 @@ shows the ledger.
 
 The `llm` action is validated, cross-checked against `providers:`/`pricing:` and
 runnable through `ctx.llm`, with the ledger and budgets applied, and all three provider
-types (`anthropic`, `openai`, `openrouter`) have adapters. The `decide` action runs
+types (`anthropic`, `openai`, `openrouter`) have adapters. `batch: true` works on
+`anthropic` providers (Message Batches, the run parks until `llm.batch.ended`; see
+`references/llm-action.md`). The `decide` action runs
 through the same port (`ctx.llm.decide()`), with the Decisions API implemented in the
 `openrouter` adapter only; `docs/examples/decide-triage.yaml` is the reference. The
 `agent` action runs on ACP connectors (`transport: acp`); `docs/examples/website-updates.yaml`

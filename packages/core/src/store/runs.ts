@@ -71,6 +71,7 @@ export class RunStore {
     );
     this.finishedBeforeStmt = db.prepare(
       `SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled') AND finished_at < ?
+       AND id NOT IN (SELECT run_id FROM llm_batches)
        ORDER BY finished_at LIMIT ?`,
     );
     this.deleteStmt = db.prepare('DELETE FROM runs WHERE id = ?');
@@ -120,7 +121,10 @@ export class RunStore {
     return row === undefined ? undefined : rowToRun(row);
   }
 
-  /** Retention: ids of runs in a terminal status finished before `beforeIso`, oldest first. */
+  /**
+   * Retention: ids of runs in a terminal status finished before `beforeIso`, oldest first.
+   * A run with a batch still in flight stays: its ledger row is yet to be written.
+   */
   listFinishedBefore(beforeIso: string, limit: number): string[] {
     return this.finishedBeforeStmt.all(beforeIso, limit).map((row) => (row as { id: string }).id);
   }

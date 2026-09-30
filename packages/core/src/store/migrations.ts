@@ -105,6 +105,22 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX transcripts_run ON transcripts(run_id, id);
   `,
+  `
+  -- In-flight Message Batches requests of \`llm\` actions with \`batch: true\`; a row is
+  -- deleted when the batch's result is ledgered and published.
+  CREATE TABLE llm_batches (
+    batch_id     TEXT    PRIMARY KEY,
+    run_id       TEXT    NOT NULL,
+    task         TEXT    NOT NULL,
+    attempt      INTEGER NOT NULL,
+    provider     TEXT    NOT NULL,
+    model        TEXT    NOT NULL,
+    structured   INTEGER NOT NULL,
+    worst_usd    REAL    NOT NULL,
+    submitted_at TEXT    NOT NULL
+  );
+  CREATE INDEX llm_batches_run ON llm_batches(run_id);
+  `,
 ];
 
 export function migrate(db: Database): void {

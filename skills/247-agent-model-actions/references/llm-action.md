@@ -14,8 +14,32 @@ One model call, structured output, no loop. `docs/ARCHITECTURE.md` §5.2 and §9
 | `input` | templated user content, rendered last |
 | `output_schema` | JSON Schema (`type: object`) for the result; without it the result is `{ text }` |
 | `budget` | `{ max_usd }` per run; the smaller of this and the task's `budget` applies |
+| `batch` | `true`: Anthropic Message Batches at half price; the run waits (up to 25h) for the result, which arrives as an `llm.batch.ended` event. `anthropic` providers only |
 
-`batch: true` (Message Batches) is planned and currently rejected by the schema.
+## `batch: true`
+
+For anything that can wait (nightly digests, bulk extraction, summaries nobody reads at
+once): every token at half price. The result is identical, it just arrives later.
+
+- The runner calls `ctx.llm.submitBatch()` (worst case checked at the batch price, one
+  request with `custom_id` = run id, row in `llm_batches`) and parks the run with
+  `ctx.suspend` on `llm.batch.ended` where `payload.batch_id` is its batch, 25h timeout.
+- `BatchPoller` (`src/llm/batches.ts`, every `batches.poll`, default 1m) calls
+  `LlmService.pollBatches()`: per batch in flight, `adapter.pollBatch()`; once ended, the
+  ledger row at `batchPrice()` (half the table), the breaker, `llm.batch.ended` (parented
+  to the run's trigger event) and the row's deletion, in one transaction.
+- The event resumes the run: `ctx.llm.batchResult()` reads the payload and applies the
+  post-hoc run budget; `max_tokens`/refusal handling and the result are the synchronous
+  call's.
+- `errored` (except `invalid_request_error`), `expired`, `canceled`, or a billed
+  structured output that is not JSON: the attempt fails retryably and the retry submits a
+  new batch. Invalid request or wait timeout: the run fails for good. Not billed unless
+  `succeeded`.
+- A restart between submit and park reuses the run's batch in flight; retention keeps a
+  run while it has one; a batch unreachable for 7 days is dropped (`llm.batch_abandoned`).
+- Don't use it where a human waits for the answer, or in front of an approval gate you
+  want to reach quickly: latency is minutes to hours.
+- `oa validate` refuses `batch: true` on a non-`anthropic` provider.
 
 ## Providers and prices (agent.yaml)
 
@@ -67,7 +91,9 @@ budgets: { daily_usd: 10 }
 
 ## Adapter notes (`src/llm/<type>.ts`, one per provider type)
 
-- Anthropic (`anthropic.ts`, shipped): `client.messages.parse()` with a schema,
+- Anthropic (`anthropic.ts`, shipped; also `submitBatch`/`pollBatch` over
+  `client.messages.batches`, the same params with `output_config.format` as a plain
+  `json_schema`, the result text parsed as JSON): `client.messages.parse()` with a schema,
   `messages.create()` without; system block first with `cache_control`, the input as
   the user turn, `output_config.format` with the raw JSON Schema; adaptive thinking and
   `output_config.effort` on Sonnet/Opus 5 only (`models.ts`); no prefill. Usage:

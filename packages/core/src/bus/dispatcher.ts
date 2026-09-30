@@ -177,7 +177,7 @@ export class Dispatcher {
         if (event.seq > cursor) {
           break; // not dispatched yet; the dispatch loop will see it
         }
-        if (event.depth <= this.maxDepth && this.waitMatches(compiled, event)) {
+        if (this.waitMatches(compiled, event)) {
           const run = this.endWait(wait, 'matched', event);
           if (run !== undefined) {
             this.handOff([run]);
@@ -222,16 +222,10 @@ export class Dispatcher {
       }
       let waits = this.compileWaits();
       for (const event of events) {
-        if (event.depth > this.maxDepth) {
-          this.metrics.eventsDropped.inc({ reason: 'depth' });
-          this.log.warn('event.depth_exceeded', {
-            event_id: event.id,
-            event_type: event.type,
-            depth: event.depth,
-            correlation_id: event.correlation_id,
-          });
-          continue;
-        }
+        // Ending a wait continues a run already in the chain; only starting new runs is a
+        // hop the depth guard limits. So a too-deep event still resumes its waiter (an
+        // `llm.batch.ended` one hop past the limit must not strand a billed batch), and
+        // whatever the resumed run emits is deeper still and dropped here.
         if (waits.length > 0) {
           const still: CompiledWait[] = [];
           for (const w of waits) {
@@ -245,6 +239,16 @@ export class Dispatcher {
             }
           }
           waits = still;
+        }
+        if (event.depth > this.maxDepth) {
+          this.metrics.eventsDropped.inc({ reason: 'depth' });
+          this.log.warn('event.depth_exceeded', {
+            event_id: event.id,
+            event_type: event.type,
+            depth: event.depth,
+            correlation_id: event.correlation_id,
+          });
+          continue;
         }
         for (const task of this.config.tasks) {
           if (!task.matches(event, this.log)) {

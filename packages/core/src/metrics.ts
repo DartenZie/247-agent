@@ -308,6 +308,15 @@ export class Metrics {
     'USD ledgered, by provider, model and task',
     ['provider', 'model', 'task'],
   );
+  readonly llmBatches = this.registry.counter(
+    'oa_llm_batches_total',
+    'Message Batches requests of batch: true llm actions, by provider and what happened (submitted, succeeded, errored, expired, canceled, abandoned, poll_failed)',
+    ['provider', 'status'],
+  );
+  readonly llmBatchesPending = this.registry.gauge(
+    'oa_llm_batches_pending',
+    'Message Batches requests submitted and not settled yet',
+  );
   readonly budgetExceeded = this.registry.counter(
     'oa_budget_exceeded_total',
     'Calls refused or runs failed over a budget, by scope (daily, task)',

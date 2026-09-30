@@ -93,6 +93,37 @@ export interface DecideResponse {
   provider?: string | undefined;
 }
 
+/** One request for a Message Batches API: a completion, identified by `customId` in its batch. */
+export interface BatchSubmitRequest extends LlmRequest {
+  /** `[A-Za-z0-9_-]{1,64}`; the run id. */
+  customId: string;
+}
+
+/** What a batch came to. `succeeded` is billed; the others are not. */
+export type BatchOutcome =
+  | {
+      status: 'succeeded';
+      response: LlmResponse;
+      /** Set when the response is billed but unusable (a structured output that is not JSON). */
+      error?: string | undefined;
+    }
+  | {
+      status: 'errored' | 'expired' | 'canceled';
+      error: string;
+      /** `false` for a request the provider rejected as invalid: resubmitting cannot help. */
+      retryable: boolean;
+    };
+
+export type BatchStatus = { status: 'in_progress' } | BatchOutcome;
+
+export interface BatchPollRequest {
+  batchId: string;
+  customId: string;
+  /** Whether the request had a schema: the result text is then parsed as JSON. */
+  structured: boolean;
+  signal: AbortSignal;
+}
+
 /** One provider adapter, built per call from the resolved config. */
 export interface LlmProvider {
   readonly name: string;
@@ -100,6 +131,13 @@ export interface LlmProvider {
   complete(req: LlmRequest): Promise<LlmResponse>;
   /** The Decisions API; only provider types that serve it implement this. */
   decide?(req: DecideRequest): Promise<DecideResponse>;
+  /**
+   * A Message Batches API (`batch: true`); only provider types that serve one implement
+   * this pair. `submitBatch` returns the batch id; `pollBatch` reports it in progress or
+   * fetches its one result.
+   */
+  submitBatch?(req: BatchSubmitRequest): Promise<{ batchId: string }>;
+  pollBatch?(req: BatchPollRequest): Promise<BatchStatus>;
 }
 
 /** A `providers.<name>` entry with its templates rendered. Never logged, never stored. */
@@ -158,6 +196,22 @@ export interface DecideCallResult extends DecideResponse {
   ledgerId: number;
 }
 
+/** What `submitBatch` did: the batch the run now waits for. */
+export interface BatchSubmitResult {
+  batchId: string;
+  /** True when the run already had this batch in flight (a restart before it was parked). */
+  reused: boolean;
+}
+
+/** A batch's result as the resumed run sees it (`batchResult`). */
+export type BatchCallResult =
+  | { status: 'succeeded'; result: LlmCallResult }
+  | {
+      status: 'errored' | 'expired' | 'canceled';
+      error: string;
+      retryable: boolean;
+    };
+
 /**
  * A turn an ACP agent ran on its own model (ARCHITECTURE §5.4): the core only sees what the
  * agent reported. `provider` is the connector's name; `usage.reportedUsd` is the agent's
@@ -195,6 +249,25 @@ export interface LlmPort {
    * when the provider's type does not serve the Decisions API.
    */
   decide(req: DecideCall, ctx: LlmCallContext): Promise<DecideCallResult>;
+  /**
+   * `batch: true` (ARCHITECTURE §5.2): the same checks as `call` with the worst case at the
+   * batch price, then one request submitted to the provider's Message Batches API. Nothing
+   * is ledgered yet: the service polls the batch and, once it ended, writes the row and
+   * publishes `llm.batch.ended` with the result. A run that already has a batch in flight
+   * gets that one back. Also `ProviderUnavailableError` when the provider's type has no
+   * batch API.
+   */
+  submitBatch(req: LlmCall, ctx: LlmCallContext): Promise<BatchSubmitResult>;
+  /**
+   * Reads an `llm.batch.ended` payload for the run that waited for it; for a succeeded
+   * batch, the post-hoc checks of `call` (`UnpricedModelError`, `BudgetExceededError`).
+   * A payload of another shape is a `NonRetryableError`.
+   */
+  batchResult(
+    payload: JsonValue,
+    req: { maxUsd?: number | undefined },
+    ctx: LlmCallContext,
+  ): BatchCallResult;
   /**
    * Before an agent turn: throws `BudgetExceededError` when the daily cap is reached or the
    * run has already spent its `maxUsd`. No provider is contacted.

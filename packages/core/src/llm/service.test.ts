@@ -8,12 +8,13 @@ import { createBus, type EventBus } from '../bus/bus.js';
 import { testEnv, type TestEnv } from '../bus/testing.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import type { RunRecord } from '../store/types.js';
-import type { ProviderConfigParsed } from './config.js';
+import { Batches, type ProviderConfigParsed } from './config.js';
 import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './errors.js';
 import { resolvePricing } from './pricing.js';
 import { BUDGET_EXCEEDED, LlmService, type LlmServiceOptions } from './service.js';
 import { fakeProviderFactory, type FakeProvider } from './testing.js';
-import type { DecideCall, DecideResponse, LlmCall, LlmResponse } from './types.js';
+import { LLM_BATCH_ENDED } from '../bus/matcher.js';
+import type { BatchStatus, DecideCall, DecideResponse, LlmCall, LlmResponse } from './types.js';
 
 let env: TestEnv;
 let bus: EventBus;
@@ -452,5 +453,224 @@ describe('LlmService.readSystemFile', () => {
     expect(() => s.readSystemFile('../etc/passwd')).toThrow(NonRetryableError);
     expect(() => s.readSystemFile('prompts/nope.md')).toThrow(/cannot read system_file/);
     expect(s.providers()).toEqual(['anthropic', 'router', 'nokey']);
+  });
+});
+
+describe('LlmService batches', () => {
+  const ctxOf = (r: RunRecord) => ({
+    run: r,
+    task: r.task,
+    signal: new AbortController().signal,
+    log: env.log,
+  });
+  const req: LlmCall = {
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    input: 'classify this',
+    outputSchema: { type: 'object' },
+    maxTokens: 100,
+  };
+  let status: BatchStatus;
+  const withBatches = (over: Partial<LlmServiceOptions> = {}): LlmService => {
+    fake = fakeProviderFactory(usage(1000, 100), undefined, () => status);
+    return service({ factories: { anthropic: fake.factory }, ...over });
+  };
+  const poll = (s: LlmService) => s.pollBatches(new AbortController().signal);
+
+  it('submits once per run, keyed by the run id, and records the batch in flight', async () => {
+    const s = withBatches();
+    const r = run();
+    await expect(
+      s.submitBatch({ ...req, system: 'sys', effort: 'low' }, ctxOf(r)),
+    ).resolves.toEqual({ batchId: 'msgbatch_1', reused: false });
+    expect(fake.batches[0]?.req).toMatchObject({
+      customId: r.id,
+      system: 'sys',
+      input: 'classify this',
+      outputSchema: { type: 'object' },
+      effort: 'low',
+    });
+    expect(env.store.batches.list()).toEqual([
+      expect.objectContaining({
+        batch_id: 'msgbatch_1',
+        run_id: r.id,
+        task: 'classify',
+        attempt: 0,
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        structured: true,
+      }),
+    ]);
+    // A restart before the run was parked: the same batch, nothing submitted again.
+    await expect(s.submitBatch(req, ctxOf(r))).resolves.toEqual({
+      batchId: 'msgbatch_1',
+      reused: true,
+    });
+    expect(fake.batches).toHaveLength(1);
+    expect(env.store.ledger.listByRun(r.id)).toEqual([]);
+  });
+
+  it('checks the worst case at the batch price and refuses a provider without a batch API', async () => {
+    const s = withBatches();
+    // Haiku worst case: 100 output tokens at $5/Mtok = $0.0005, half of it in a batch.
+    await expect(s.submitBatch({ ...req, maxUsd: 0.0003 }, ctxOf(run()))).resolves.toMatchObject({
+      reused: false,
+    });
+    await expect(s.submitBatch({ ...req, maxUsd: 0.0002 }, ctxOf(run()))).rejects.toThrow(
+      BudgetExceededError,
+    );
+    const plain = service({ factories: { anthropic: fakeProviderFactory().factory } }); // no batch methods
+    await expect(plain.submitBatch(req, ctxOf(run()))).rejects.toThrow(ProviderUnavailableError);
+    await expect(plain.submitBatch(req, ctxOf(run()))).rejects.toThrow(
+      /needs an anthropic provider/,
+    );
+  });
+
+  it('bounds batches.poll to 1s..1h', () => {
+    expect(Batches.parse({}).poll).toBe('1m');
+    expect(Batches.safeParse({ poll: '1s' }).success).toBe(true);
+    expect(Batches.safeParse({ poll: '1h' }).success).toBe(true);
+    expect(Batches.safeParse({ poll: '0s' }).success).toBe(false);
+    expect(Batches.safeParse({ poll: '2h' }).success).toBe(false);
+    expect(Batches.safeParse({ poll: 'soon' }).success).toBe(false);
+  });
+
+  it('reserves the worst case of batches in flight against the daily cap', async () => {
+    // Each worst case is ~$0.00025 at the batch price: two fit under $0.0006, a third does not.
+    const s = withBatches({ budgets: { daily_usd: 0.0006 } });
+    await s.submitBatch(req, ctxOf(run()));
+    await s.submitBatch(req, ctxOf(run()));
+    expect(env.store.batches.reservedUsd()).toBeCloseTo(0.0005, 4);
+    await expect(s.submitBatch(req, ctxOf(run()))).rejects.toThrow(/reserved by batches in flight/);
+    expect(fake.batches).toHaveLength(2);
+    // An unbilled end frees its reservation.
+    status = { status: 'expired', error: 'expired', retryable: true };
+    await poll(s);
+    expect(env.store.batches.reservedUsd()).toBe(0);
+    await expect(s.submitBatch(req, ctxOf(run()))).resolves.toMatchObject({ reused: false });
+  });
+
+  it('leaves a batch in progress alone and settles a succeeded one at half price', async () => {
+    const s = withBatches();
+    const r = run();
+    await s.submitBatch(req, ctxOf(r));
+    status = { status: 'in_progress' };
+    await expect(poll(s)).resolves.toEqual({ ended: 0, pending: 1, failed: 0, abandoned: 0 });
+    expect(events(LLM_BATCH_ENDED)).toEqual([]);
+    status = { status: 'succeeded', response: usage(1000, 100) };
+    await expect(poll(s)).resolves.toEqual({ ended: 1, pending: 0, failed: 0, abandoned: 0 });
+    expect(fake.polls[1]).toMatchObject({
+      batchId: 'msgbatch_1',
+      customId: r.id,
+      structured: true,
+    });
+    const rows = env.store.ledger.listByRun(r.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.usd).toBeCloseTo(0.00075); // ($0.001 + $0.0005) / 2
+    expect(rows[0]).toMatchObject({ provider: 'anthropic', in_tok: 1000, priced_by: 'table' });
+    const ended = events(LLM_BATCH_ENDED);
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toMatchObject({
+      source: 'core',
+      parent_id: r.event_id,
+      correlation_id: r.correlation_id,
+      dedup_key: 'llm.batch:msgbatch_1',
+      payload: {
+        batch_id: 'msgbatch_1',
+        run_id: r.id,
+        task: 'classify',
+        status: 'succeeded',
+        stop_reason: 'end',
+        output: { kind: 'x' },
+        usage: { input: 1000, output: 100, cache_read: 0, cache_write: 0 },
+        priced_by: 'table',
+        ledger_id: rows[0]?.id,
+      },
+    });
+    expect(env.store.batches.count()).toBe(0);
+    await expect(poll(s)).resolves.toEqual({ ended: 0, pending: 0, failed: 0, abandoned: 0 });
+  });
+
+  it('publishes an unbilled failure without a ledger row', async () => {
+    const s = withBatches();
+    const r = run();
+    await s.submitBatch(req, ctxOf(r));
+    status = { status: 'expired', error: 'expired', retryable: true };
+    await poll(s);
+    expect(env.store.ledger.listByRun(r.id)).toEqual([]);
+    expect(events(LLM_BATCH_ENDED)[0]?.payload).toEqual({
+      batch_id: 'msgbatch_1',
+      run_id: r.id,
+      task: 'classify',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      status: 'expired',
+      error: 'expired',
+      retryable: true,
+    });
+  });
+
+  it('ledgers a billed but unusable result and reports it as errored', async () => {
+    const s = withBatches();
+    const r = run();
+    await s.submitBatch(req, ctxOf(r));
+    status = { status: 'succeeded', response: usage(1000, 100), error: 'not JSON' };
+    await poll(s);
+    expect(env.store.ledger.listByRun(r.id)).toHaveLength(1);
+    expect(events(LLM_BATCH_ENDED)[0]?.payload).toMatchObject({
+      status: 'errored',
+      error: 'not JSON',
+      retryable: true,
+    });
+  });
+
+  it('keeps polling after a failed poll and abandons a batch after a week', async () => {
+    const s = withBatches();
+    await s.submitBatch(req, ctxOf(run()));
+    await s.submitBatch(req, ctxOf(run()));
+    const throwing = service({
+      factories: {
+        anthropic: (p) => ({
+          ...fakeProviderFactory().factory(p),
+          pollBatch: () => Promise.reject(new Error('503 overloaded')),
+        }),
+      },
+    });
+    await expect(poll(throwing)).resolves.toEqual({
+      ended: 0,
+      pending: 2,
+      failed: 2,
+      abandoned: 0,
+    });
+    expect(env.store.batches.count()).toBe(2);
+    expect(env.lines.filter((l) => l.msg === 'llm.batch_poll_failed')).toHaveLength(2);
+    env.clock.set('2026-09-27T10:00:00.000Z'); // 8 days later
+    status = { status: 'in_progress' };
+    await expect(poll(s)).resolves.toMatchObject({ pending: 0, abandoned: 2 });
+    expect(env.store.batches.count()).toBe(0);
+    expect(events(LLM_BATCH_ENDED)).toEqual([]);
+  });
+
+  it('reads a payload back and applies the post-hoc run budget', async () => {
+    const s = withBatches();
+    const r = run();
+    await s.submitBatch(req, ctxOf(r));
+    status = { status: 'succeeded', response: usage(1000, 100) };
+    await poll(s);
+    const payload = events(LLM_BATCH_ENDED)[0]?.payload ?? null;
+    const res = s.batchResult(payload, { maxUsd: 1 }, ctxOf(r));
+    expect(res).toMatchObject({
+      status: 'succeeded',
+      result: { output: { kind: 'x' }, stopReason: 'end', priced_by: 'table' },
+    });
+    expect(() => s.batchResult(payload, { maxUsd: 0.0005 }, ctxOf(r))).toThrow(BudgetExceededError);
+    expect(
+      s.batchResult(
+        { ...(payload as object), status: 'errored', error: 'bad', retryable: false },
+        {},
+        ctxOf(r),
+      ),
+    ).toEqual({ status: 'errored', error: 'bad', retryable: false });
+    expect(() => s.batchResult({ nope: true }, {}, ctxOf(r))).toThrow(NonRetryableError);
   });
 });

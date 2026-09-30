@@ -37,7 +37,8 @@ export const isInside = isInsidePath;
  * `llm` and `decide` task names a configured provider and a model with a known price (unless
  * the provider reports cost itself); an `llm` task's `system_file` exists under the config
  * directory; a `decide` task's provider is of type `openrouter`, the only one that serves the
- * Decisions API; an `agent` task's `model` (when set), `system_file` and `result.schema`
+ * Decisions API; an `llm` task with `batch: true` has an `anthropic` provider, the only type
+ * with a batch API here; an `agent` task's `model` (when set), `system_file` and `result.schema`
  * likewise. Run at daemon start, on reload and by `oa validate agent.yaml`, so no unpriced
  * call can be configured.
  */
@@ -105,6 +106,17 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
       issues.push({
         path: at('provider'),
         message: `decide needs an openrouter provider (the Decisions API); "${String(providerName)}" is type ${provider.type}`,
+      });
+    }
+    if (
+      a.kind === 'llm' &&
+      a.batch === true &&
+      provider !== undefined &&
+      provider.type !== 'anthropic'
+    ) {
+      issues.push({
+        path: at('batch'),
+        message: `batch: true needs an anthropic provider (Message Batches); "${String(providerName)}" is type ${provider.type}`,
       });
     }
     if (

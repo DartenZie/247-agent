@@ -40,12 +40,12 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(6);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(5);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(6);
   });
 });
 

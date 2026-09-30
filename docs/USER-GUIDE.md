@@ -200,7 +200,7 @@ The global file. Every key has a default; the full reference is
 | `connectors` | Manifest file(s), directories, or inline manifests | none |
 | `workers` | Runs executing at the same time, globally | 4 |
 | `log.level` | `debug`, `info`, `warn`, `error` | `info` |
-| `limits.max_event_depth` | Events deeper than this in a causal chain are dropped (loop guard) | 32 |
+| `limits.max_event_depth` | Events deeper than this in a causal chain start no run (loop guard); they still end a matching `wait` | 32 |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without their own | `15m` |
 | `defaults.retry` | Retry policy for tasks without their own (see 4.4) | 1 attempt |
 | `defaults.sandbox` | `none` or `bwrap` for `shell` actions without their own (see 5.1) | `none` |
@@ -210,6 +210,7 @@ The global file. Every key has a default; the full reference is
 | `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{ provider, model }` for `decide` actions without their own; the provider must be an `openrouter` one (see 5.6) | `model: typesafe/jev-1.13` |
 | `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
+| `batches.poll` | How often `llm` actions with `batch: true` are checked for their result, 1s to 1h (see 5.5) | `1m` |
 | `defaults.agent` | `{ connector, max_tool_calls, budget, work_dir }` for `agent` actions | `max_tool_calls: 40`, `work_dir` = `work/` next to `db` |
 | `retention` | `{ events, runs, ledger, workspaces, interval }`: how long to keep events, finished runs (with their ledger rows), ledger rows, and `work/<run_id>` directories; durations or `never`. `ledger` defaults to `runs` and cannot exceed it. A pass runs at start and every `interval`; active runs are never touched (see 9.4) | `90d`, `90d`, `90d`, `7d`, `1h` |
 
@@ -467,6 +468,7 @@ action:
     <email>${event.payload.body}</email>
   output_schema: { type: object, required: [kind], properties: { kind: { enum: [a, b] } } }
   budget: { max_usd: 0.05 }      # per run
+  batch: false                   # true: half price, the result arrives later (below)
 ```
 
 The result is the parsed object (`${result.kind}` in `emit`), or `{ text }` without a
@@ -495,6 +497,19 @@ so OpenRouter models need no price. Put `HTTP-Referer`/`X-Title` in the provider
 `headers` for OpenRouter's attribution. On `openai` and `openrouter` the schema is sent
 in strict mode: list every property in `required` and set `additionalProperties: false`
 on every object, or the call fails with the vendor's 400.
+
+**`batch: true`** (anthropic providers only) sends the call through the Message Batches
+API at half the price of every token. Use it for anything that can wait: most batches
+end within minutes to an hour, all within 24 hours. The run submits the request and
+then sits in `waiting` (`oa runs ls --status waiting`), holding no worker; the daemon
+checks the batch every `batches.poll` (default `1m`) and, once it ended, writes the
+ledger row and publishes an `llm.batch.ended` event with the result. That event resumes
+the run, which finishes exactly as a synchronous call would: the same result, the same
+`emit` routing. You can also trigger other tasks on `llm.batch.ended` (payload:
+`batch_id`, `run_id`, `task`, `status` of `succeeded`/`errored`/`expired`/`canceled`,
+and the `output` or `text`, `usage` and `usd`, or the `error`). An expired or failed
+batch fails the attempt and `retry` submits a new one; a run whose batch has not ended
+after 25 hours fails. The task's `timeout` does not count the waiting.
 
 ### 5.6 `decide`
 
@@ -1021,8 +1036,10 @@ checks (6.2), and the full config reload (`oa reload`, 9.3).
 Done since as well: sandboxing of the agent program (`sandbox: bwrap` on an `acp`
 manifest, 6.1), agent transcripts and `oa runs` / `oa events` (section 7).
 
-Not implemented yet: `batch: true` for `llm`, a Matrix backend for `chat`, a network
-allowlist for sandboxed agents.
+Done since as well: `batch: true` on `llm` actions (Message Batches at half price, 5.5).
+
+Not implemented yet: a Matrix backend for `chat`, a network allowlist for sandboxed
+agents.
 
 ## 11. Troubleshooting
 

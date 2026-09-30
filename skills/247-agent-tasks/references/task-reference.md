@@ -43,7 +43,8 @@ The event a task sees:
 ```
 
 `source` is a connector name, `scheduler`, `manual`, or `task:<name>`. Events deeper
-than `limits.max_event_depth` (default 32) in a causal chain are dropped.
+than `limits.max_event_depth` (default 32) in a causal chain start no run (they still end a
+matching `wait`).
 
 ## Actions
 
