@@ -84,7 +84,9 @@ Connector ──emits──▶ Event ──matches──▶ Trigger ──starts
   by a task's runs. **A task never triggers on events with its own `task:<name>` source**, so
   `notify` on `task.*.failed` cannot loop on its own failure.
 - `depth` counts hops from the root of a causal chain (via `parent_id`). The dispatcher drops
-  events deeper than `limits.max_event_depth` (default 32) as a runaway-loop guard.
+  events deeper than `limits.max_event_depth` (default 32) as a runaway-loop guard: such an
+  event starts no run, but it still ends a matching `wait` (resuming a run is not a new hop;
+  what the resumed run emits is deeper still and dropped).
 
 **Trigger** — what starts a task.
 
@@ -116,7 +118,7 @@ One daemon, `247-agent-core`, with these internal modules:
 |---|---|
 | **Config loader** | Reads `agent.yaml` + `tasks.d/*.yaml` + `connectors.d/*.yaml`, validates against schema, hot-reloads on SIGHUP or `POST /v1/reload` (`oa reload`): all three together or nothing. Everything in `agent.yaml` but `db`, `socket` and `secrets` applies live (workers, defaults, providers, pricing, budgets, retention, log level, limits); those three are reported as `restart_required`. Connectors whose manifest changed are respawned, new ones spawned, removed ones stopped, unchanged ones untouched; running runs finish under the config they started with. An invalid file on reload is logged and the previous config stays active. |
 | **Scheduler** | Cron → `cron.tick` events (with task name in payload). |
-| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` are dropped. The same loop ends `wait`s: an event matching a waiting run's wait, or a wait past its timeout (checked on every dispatch, so within the 1s safety-net interval), re-queues the run. |
+| **Event store / bus** | Append-only `events` table. Publishing = insert. Dispatch loop reads a cursor, matches triggers, enqueues runs, advances the cursor, all in one transaction. At-least-once + `dedup_key` + `UNIQUE(task, event_id)` = effectively once. A task never matches events whose `source` is its own `task:<name>`; events deeper than `limits.max_event_depth` start no run (they still end a matching wait). The same loop ends `wait`s: an event matching a waiting run's wait, or a wait past its timeout (checked on every dispatch, so within the 1s safety-net interval), re-queues the run. |
 | **Matcher** | Evaluates `trigger.filter` (JMESPath) against the event. Filters are pure, cheap, and where most "is this relevant?" logic should live (sender address, label, repo name). A filter that throws at run time counts as no match and is logged. |
 | **Executor** | Worker pool. Enforces per-task and global concurrency, timeouts, retries with backoff, budgets. Resolves the secrets a task names, delegates to an *action runner* per kind, then applies `state_updates` and `emit` in one transaction with the lifecycle event. |
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
@@ -236,7 +238,9 @@ run goes through two entries, like a `wait`:
 1. `ctx.llm.submitBatch` applies the usual checks, with the worst case at the batch price,
    submits a batch of one request (`custom_id` = the run id, the same params as the
    synchronous call: cached system block, structured output, effort) and records it in
-   `llm_batches`. Nothing is ledgered yet. The runner then parks the run (`ctx.suspend`)
+   `llm_batches` with that worst case, which stays reserved against `budgets.daily_usd`
+   until the batch is settled (a submission that would push today's spend plus the
+   reservations of every batch in flight over the cap is refused). Nothing is ledgered yet. The runner then parks the run (`ctx.suspend`)
    on `llm.batch.ended` with `payload.batch_id == '<id>'`, timing out after 25h; the run
    holds no worker slot and no timer while it waits.
 2. The **batch poller** (§4) retrieves each batch in flight every `batches.poll`. Once it
@@ -261,7 +265,9 @@ result arrived reads it from the event again. The provider bills a batch however
 ended, so the poller settles every batch, and retention keeps a run while one of its
 batches is in flight. A batch the poller cannot reach for 7 days (provider removed from
 `agent.yaml`, key revoked) is dropped with an `llm.batch_abandoned` error and nothing
-ledgered. One batch per run keeps the bookkeeping per run; the poller's requests are one
+ledgered. The one gap: a daemon killed after Anthropic accepted a batch but before the
+row was written loses track of it (the Batches API has no idempotency key), so the retry
+submits again and the first batch is billed without a ledger row. One batch per run keeps the bookkeeping per run; the poller's requests are one
 retrieve per batch per pass. `oa_llm_batches_total{provider,status}` and
 `oa_llm_batches_pending` are on `/metrics`.
 

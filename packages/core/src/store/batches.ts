@@ -15,6 +15,8 @@ export interface BatchRecord {
   model: string;
   /** Whether the request had an `output_schema` (the result is then parsed as JSON). */
   structured: boolean;
+  /** The worst-case cost at the batch price, reserved against the daily cap until settled. */
+  worst_usd: number;
   submitted_at: string;
 }
 
@@ -32,18 +34,20 @@ export class BatchStore {
   private readonly listStmt: Statement;
   private readonly forRunStmt: Statement;
   private readonly countStmt: Statement;
+  private readonly reservedStmt: Statement;
   private readonly deleteStmt: Statement;
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
-      `INSERT INTO llm_batches (batch_id, run_id, task, attempt, provider, model, structured, submitted_at)
-       VALUES (@batch_id, @run_id, @task, @attempt, @provider, @model, @structured, @submitted_at)`,
+      `INSERT INTO llm_batches (batch_id, run_id, task, attempt, provider, model, structured, worst_usd, submitted_at)
+       VALUES (@batch_id, @run_id, @task, @attempt, @provider, @model, @structured, @worst_usd, @submitted_at)`,
     );
     this.listStmt = db.prepare('SELECT * FROM llm_batches ORDER BY submitted_at');
     this.forRunStmt = db.prepare(
       'SELECT * FROM llm_batches WHERE run_id = ? ORDER BY submitted_at DESC LIMIT 1',
     );
     this.countStmt = db.prepare('SELECT COUNT(*) AS n FROM llm_batches');
+    this.reservedStmt = db.prepare('SELECT COALESCE(SUM(worst_usd), 0) AS usd FROM llm_batches');
     this.deleteStmt = db.prepare('DELETE FROM llm_batches WHERE batch_id = ?');
   }
 
@@ -65,6 +69,11 @@ export class BatchStore {
   /** How many batches are in flight (the `oa_llm_batches_pending` gauge). */
   count(): number {
     return (this.countStmt.get() as { n: number }).n;
+  }
+
+  /** The worst-case USD of every batch in flight: spend not in the ledger yet. */
+  reservedUsd(): number {
+    return (this.reservedStmt.get() as { usd: number }).usd;
   }
 
   delete(batchId: string): boolean {

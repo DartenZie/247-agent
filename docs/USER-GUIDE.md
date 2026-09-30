@@ -200,7 +200,7 @@ The global file. Every key has a default; the full reference is
 | `connectors` | Manifest file(s), directories, or inline manifests | none |
 | `workers` | Runs executing at the same time, globally | 4 |
 | `log.level` | `debug`, `info`, `warn`, `error` | `info` |
-| `limits.max_event_depth` | Events deeper than this in a causal chain are dropped (loop guard) | 32 |
+| `limits.max_event_depth` | Events deeper than this in a causal chain start no run (loop guard); they still end a matching `wait` | 32 |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without their own | `15m` |
 | `defaults.retry` | Retry policy for tasks without their own (see 4.4) | 1 attempt |
 | `defaults.sandbox` | `none` or `bwrap` for `shell` actions without their own (see 5.1) | `none` |
@@ -210,7 +210,7 @@ The global file. Every key has a default; the full reference is
 | `defaults.llm` | `{ provider, model, max_tokens, effort }` for `llm` actions without their own | `max_tokens: 1024` |
 | `defaults.decide` | `{ provider, model }` for `decide` actions without their own; the provider must be an `openrouter` one (see 5.6) | `model: typesafe/jev-1.13` |
 | `budgets.daily_usd` | Global cap per UTC day on model spend (see 5.5) | none |
-| `batches.poll` | How often `llm` actions with `batch: true` are checked for their result (see 5.5) | `1m` |
+| `batches.poll` | How often `llm` actions with `batch: true` are checked for their result, 1s to 1h (see 5.5) | `1m` |
 | `defaults.agent` | `{ connector, max_tool_calls, budget, work_dir }` for `agent` actions | `max_tool_calls: 40`, `work_dir` = `work/` next to `db` |
 | `retention` | `{ events, runs, ledger, workspaces, interval }`: how long to keep events, finished runs (with their ledger rows), ledger rows, and `work/<run_id>` directories; durations or `never`. `ledger` defaults to `runs` and cannot exceed it. A pass runs at start and every `interval`; active runs are never touched (see 9.4) | `90d`, `90d`, `90d`, `7d`, `1h` |
 

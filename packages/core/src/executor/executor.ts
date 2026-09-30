@@ -428,7 +428,8 @@ export class Executor {
       // A run re-queued by the dispatcher after its wait ended continues its attempt.
       const wait = this.store.waits.get(run.id);
       const resume = wait?.outcome === null || wait === undefined ? undefined : wait;
-      const resuming = resume !== undefined && run.status === 'queued';
+      // Only the first pass continues the parked attempt; a retry is a new attempt.
+      let resuming = resume !== undefined && run.status === 'queued';
       let attempt = run.attempt + (resuming ? 0 : 1);
       const policy = this.retryFor(task);
       // What the previous attempt failed with (from the store after a recovery), handed to
@@ -483,6 +484,7 @@ export class Executor {
           return; // stopping: stays `running`, recovered on the next start
         }
         attempt++;
+        resuming = false;
       }
     } catch (err) {
       // Bookkeeping failure (store, bus); the run itself already went through `perform`.

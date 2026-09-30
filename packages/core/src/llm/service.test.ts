@@ -8,7 +8,7 @@ import { createBus, type EventBus } from '../bus/bus.js';
 import { testEnv, type TestEnv } from '../bus/testing.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import type { RunRecord } from '../store/types.js';
-import type { ProviderConfigParsed } from './config.js';
+import { Batches, type ProviderConfigParsed } from './config.js';
 import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './errors.js';
 import { resolvePricing } from './pricing.js';
 import { BUDGET_EXCEEDED, LlmService, type LlmServiceOptions } from './service.js';
@@ -524,6 +524,30 @@ describe('LlmService batches', () => {
     await expect(plain.submitBatch(req, ctxOf(run()))).rejects.toThrow(
       /needs an anthropic provider/,
     );
+  });
+
+  it('bounds batches.poll to 1s..1h', () => {
+    expect(Batches.parse({}).poll).toBe('1m');
+    expect(Batches.safeParse({ poll: '1s' }).success).toBe(true);
+    expect(Batches.safeParse({ poll: '1h' }).success).toBe(true);
+    expect(Batches.safeParse({ poll: '0s' }).success).toBe(false);
+    expect(Batches.safeParse({ poll: '2h' }).success).toBe(false);
+    expect(Batches.safeParse({ poll: 'soon' }).success).toBe(false);
+  });
+
+  it('reserves the worst case of batches in flight against the daily cap', async () => {
+    // Each worst case is ~$0.00025 at the batch price: two fit under $0.0006, a third does not.
+    const s = withBatches({ budgets: { daily_usd: 0.0006 } });
+    await s.submitBatch(req, ctxOf(run()));
+    await s.submitBatch(req, ctxOf(run()));
+    expect(env.store.batches.reservedUsd()).toBeCloseTo(0.0005, 4);
+    await expect(s.submitBatch(req, ctxOf(run()))).rejects.toThrow(/reserved by batches in flight/);
+    expect(fake.batches).toHaveLength(2);
+    // An unbilled end frees its reservation.
+    status = { status: 'expired', error: 'expired', retryable: true };
+    await poll(s);
+    expect(env.store.batches.reservedUsd()).toBe(0);
+    await expect(s.submitBatch(req, ctxOf(run()))).resolves.toMatchObject({ reused: false });
   });
 
   it('leaves a batch in progress alone and settles a succeeded one at half price', async () => {

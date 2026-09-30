@@ -61,8 +61,20 @@ export function createAnthropicProvider(opts: AnthropicAdapterOptions = {}): Pro
 
 export const anthropicProvider: ProviderFactory = createAnthropicProvider();
 
-/** Everything but `output_config`, which `messages.parse()` wants with its own `parse`. */
-function baseParams(req: LlmRequest): Anthropic.MessageCreateParamsNonStreaming {
+/**
+ * The Messages API params for one request, shared by the synchronous call and a batch
+ * entry: a cached system block, the input as the one user turn, adaptive thinking and
+ * `output_config.effort` on models that take them, the schema as a plain `json_schema`
+ * format.
+ */
+function requestParams(req: LlmRequest): Anthropic.MessageCreateParamsNonStreaming {
+  const effortOk = supportsEffort(req.model);
+  const outputConfig: Anthropic.OutputConfig = {
+    ...(effortOk && req.effort !== undefined ? { effort: req.effort } : {}),
+    ...(req.outputSchema === undefined
+      ? {}
+      : { format: { type: 'json_schema', schema: req.outputSchema } }),
+  };
   return {
     model: req.model,
     max_tokens: req.maxTokens,
@@ -72,34 +84,29 @@ function baseParams(req: LlmRequest): Anthropic.MessageCreateParamsNonStreaming 
       : {
           system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
         }),
-    ...(supportsEffort(req.model) ? { thinking: { type: 'adaptive' } } : {}),
+    ...(effortOk ? { thinking: { type: 'adaptive' } } : {}),
+    ...(Object.keys(outputConfig).length === 0 ? {} : { output_config: outputConfig }),
   };
 }
 
-function effortOf(req: LlmRequest): LlmRequest['effort'] {
-  return supportsEffort(req.model) ? req.effort : undefined;
-}
-
 async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse> {
-  const effort = effortOf(req);
-  const base = baseParams(req);
+  const params = requestParams(req);
   const options = { signal: req.signal, timeout: HTTP_TIMEOUT_MS };
 
   try {
-    if (req.outputSchema === undefined) {
-      const msg = await client.messages.create(
-        { ...base, ...(effort === undefined ? {} : { output_config: { effort } }) },
-        options,
-      );
+    const schema = params.output_config?.format?.schema;
+    if (schema === undefined) {
+      const msg = await client.messages.create(params, options);
       return { output: null, text: textOf(msg), usage: usageOf(msg), stopReason: stopOf(msg) };
     }
+    // `messages.parse()` takes the same format with its own `parse`.
     const format = {
       type: 'json_schema' as const,
-      schema: req.outputSchema,
+      schema,
       parse: (text: string) => JSON.parse(text) as JsonValue,
     };
     const msg = await client.messages.parse(
-      { ...base, output_config: { ...(effort === undefined ? {} : { effort }), format } },
+      { ...params, output_config: { ...params.output_config, format } },
       options,
     );
     const stopReason = stopOf(msg);
@@ -122,17 +129,7 @@ async function submitBatch(
   if (!ID.test(req.customId)) {
     throw new NonRetryableError(`anthropic: invalid batch custom_id "${req.customId}"`);
   }
-  const effort = effortOf(req);
-  const outputConfig: Anthropic.OutputConfig = {
-    ...(effort === undefined ? {} : { effort }),
-    ...(req.outputSchema === undefined
-      ? {}
-      : { format: { type: 'json_schema', schema: req.outputSchema } }),
-  };
-  const params: Anthropic.MessageCreateParamsNonStreaming = {
-    ...baseParams(req),
-    ...(Object.keys(outputConfig).length === 0 ? {} : { output_config: outputConfig }),
-  };
+  const params = requestParams(req);
   try {
     const batch = await client.messages.batches.create(
       { requests: [{ custom_id: req.customId, params }] },

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DURATION } from '../config/duration.js';
+import { DURATION, parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, isTemplate } from '../expr/template.js';
 
 const NAME = /^[a-z][a-z0-9_]*$/;
@@ -126,10 +126,22 @@ export type BudgetConfig = z.infer<typeof Budget>;
 export const Budgets = z.strictObject({ daily_usd: z.number().positive().optional() }).prefault({});
 export type BudgetsConfig = z.infer<typeof Budgets>;
 
-/** `batches:` in agent.yaml: how often the batches of `batch: true` llm actions are polled (ARCHITECTURE §5.2). */
+/**
+ * `batches:` in agent.yaml: how often the batches of `batch: true` llm actions are polled
+ * (ARCHITECTURE §5.2). At least 1s (each pass hits the provider once per batch) and at most
+ * 1h: a run waits 25h for a batch that ends within 24h, so a longer interval would time
+ * out runs whose batch succeeded (and was billed).
+ */
 export const Batches = z
   .strictObject({
-    poll: z.string().regex(DURATION, 'durations look like 30s, 1m, 5m').default('1m'),
+    poll: z
+      .string()
+      .regex(DURATION, 'durations look like 30s, 1m, 5m')
+      .refine(
+        (d) => !DURATION.test(d) || (parseDuration(d) >= 1000 && parseDuration(d) <= 3_600_000),
+        'batches.poll must be between 1s and 1h',
+      )
+      .default('1m'),
   })
   .prefault({});
 export type BatchesConfig = z.infer<typeof Batches>;

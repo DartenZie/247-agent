@@ -224,21 +224,30 @@ export class LlmService implements LlmPort, BatchSource {
       return { batchId: inFlight.batch_id, reused: true };
     }
     const { cfg, factory, price } = this.lookup(req.provider, req.model);
-    this.precheck(
-      {
-        maxUsd: req.maxUsd,
-        estimate:
-          price === undefined
-            ? undefined
-            : costUsd(batchPrice(price), {
-                input: estimateInputTokens((req.system ?? '') + req.input),
-                output: req.maxTokens,
-                cacheRead: 0,
-                cacheWrite: 0,
-              }),
-      },
-      cctx,
-    );
+    const worst =
+      price === undefined
+        ? undefined
+        : costUsd(batchPrice(price), {
+            input: estimateInputTokens((req.system ?? '') + req.input),
+            output: req.maxTokens,
+            cacheRead: 0,
+            cacheWrite: 0,
+          });
+    const { now } = this.precheck({ maxUsd: req.maxUsd, estimate: worst }, cctx);
+    // Batches in flight are spend the ledger does not show yet: without reserving their
+    // worst case, any number of them would pass the daily cap before the first one ends.
+    const dailyCap = this.o.budgets.daily_usd;
+    if (dailyCap !== undefined && worst !== undefined) {
+      const spentToday = this.o.store.ledger.sumSince(startOfUtcDay(now));
+      const reserved = this.o.store.batches.reservedUsd();
+      if (spentToday + reserved + worst > dailyCap) {
+        this.metrics.budgetExceeded.inc({ scope: 'daily' });
+        throw new BudgetExceededError(
+          'daily',
+          `worst case $${worst.toFixed(4)} with $${reserved.toFixed(4)} reserved by batches in flight and $${spentToday.toFixed(4)} spent today would exceed the daily budget of $${String(dailyCap)}`,
+        );
+      }
+    }
     const adapter = factory(this.resolveProvider(req.provider, cfg));
     if (adapter.submitBatch === undefined || adapter.pollBatch === undefined) {
       throw new ProviderUnavailableError(
@@ -263,6 +272,7 @@ export class LlmService implements LlmPort, BatchSource {
       provider: req.provider,
       model: req.model,
       structured: req.outputSchema !== undefined,
+      worst_usd: worst ?? 0,
       submitted_at: this.o.clock.now().toISOString(),
     });
     this.metrics.llmBatches.inc({ provider: req.provider, status: 'submitted' });
@@ -335,24 +345,29 @@ export class LlmService implements LlmPort, BatchSource {
     const report: BatchPollReport = { ended: 0, pending: 0, failed: 0, abandoned: 0 };
     // A function, not `signal.aborted` twice: the second read must not be narrowed away.
     const stopping = (): boolean => signal.aborted;
+    // One adapter per provider per pass: secrets resolved and a client built once, not per batch.
+    const adapters = new Map<string, LlmProvider>();
     for (const row of this.o.store.batches.list()) {
       if (stopping()) {
         break;
       }
       let outcome: Awaited<ReturnType<LlmService['pollBatch']>>;
       try {
-        outcome = await this.pollBatch(row, signal);
+        outcome = await this.pollBatch(row, adapters, signal);
       } catch (err) {
         if (stopping()) {
           break; // the daemon is stopping: not a failure of this batch
         }
         report.failed++;
         this.metrics.llmBatches.inc({ provider: row.provider, status: 'poll_failed' });
-        this.batchLog(row).warn('llm.batch_poll_failed', {
-          batch_id: row.batch_id,
-          provider: row.provider,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        this.batchLog(row, this.o.store.runs.getById(row.run_id)?.correlation_id).warn(
+          'llm.batch_poll_failed',
+          {
+            batch_id: row.batch_id,
+            provider: row.provider,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
         outcome = undefined;
       }
       if (outcome !== undefined) {
@@ -365,11 +380,14 @@ export class LlmService implements LlmPort, BatchSource {
         this.o.store.batches.delete(row.batch_id);
         report.abandoned++;
         this.metrics.llmBatches.inc({ provider: row.provider, status: 'abandoned' });
-        this.batchLog(row).error('llm.batch_abandoned', {
-          batch_id: row.batch_id,
-          provider: row.provider,
-          submitted_at: row.submitted_at,
-        });
+        this.batchLog(row, this.o.store.runs.getById(row.run_id)?.correlation_id).error(
+          'llm.batch_abandoned',
+          {
+            batch_id: row.batch_id,
+            provider: row.provider,
+            submitted_at: row.submitted_at,
+          },
+        );
       } else {
         report.pending++;
       }
@@ -380,17 +398,18 @@ export class LlmService implements LlmPort, BatchSource {
   /** The batch's outcome once it ended, `undefined` while it is in progress. */
   private async pollBatch(
     row: BatchRecord,
+    adapters: Map<string, LlmProvider>,
     signal: AbortSignal,
   ): Promise<BatchOutcome | undefined> {
-    const cfg = this.o.providers[row.provider];
-    if (cfg === undefined) {
-      throw new ProviderUnavailableError(`unknown provider "${row.provider}"`);
+    let adapter = adapters.get(row.provider);
+    if (adapter === undefined) {
+      const { cfg, factory } = this.providerOf(row.provider);
+      adapter = factory(this.resolveProvider(row.provider, cfg));
+      adapters.set(row.provider, adapter);
     }
-    const factory = this.o.factories[cfg.type];
-    const adapter = factory?.(this.resolveProvider(row.provider, cfg));
-    if (adapter?.pollBatch === undefined) {
+    if (adapter.pollBatch === undefined) {
       throw new ProviderUnavailableError(
-        `provider "${row.provider}" (type ${cfg.type}) has no batch API in this build`,
+        `provider "${row.provider}" (type ${adapter.type}) has no batch API in this build`,
       );
     }
     const status = await adapter.pollBatch({
@@ -551,6 +570,18 @@ export class LlmService implements LlmPort, BatchSource {
     provider: string,
     model: string,
   ): { cfg: ProviderConfigParsed; factory: ProviderFactory; price: ModelPrice | undefined } {
+    const { cfg, factory } = this.providerOf(provider);
+    const price = this.o.pricing.get(model);
+    if (price === undefined && cfg.type !== 'openrouter') {
+      throw new UnpricedModelError(
+        `no price for model "${model}" on provider "${provider}": add a pricing entry in agent.yaml`,
+      );
+    }
+    return { cfg, factory, price };
+  }
+
+  /** The provider's config and its adapter factory. */
+  private providerOf(provider: string): { cfg: ProviderConfigParsed; factory: ProviderFactory } {
     const cfg = this.o.providers[provider];
     if (cfg === undefined) {
       throw new ProviderUnavailableError(`unknown provider "${provider}"`);
@@ -561,13 +592,7 @@ export class LlmService implements LlmPort, BatchSource {
         `provider type "${cfg.type}" has no adapter in this build`,
       );
     }
-    const price = this.o.pricing.get(model);
-    if (price === undefined && cfg.type !== 'openrouter') {
-      throw new UnpricedModelError(
-        `no price for model "${model}" on provider "${provider}": add a pricing entry in agent.yaml`,
-      );
-    }
-    return { cfg, factory, price };
+    return { cfg, factory };
   }
 
   /**

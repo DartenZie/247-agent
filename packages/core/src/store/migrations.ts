@@ -116,6 +116,7 @@ export const MIGRATIONS: readonly string[] = [
     provider     TEXT    NOT NULL,
     model        TEXT    NOT NULL,
     structured   INTEGER NOT NULL,
+    worst_usd    REAL    NOT NULL,
     submitted_at TEXT    NOT NULL
   );
   CREATE INDEX llm_batches_run ON llm_batches(run_id);

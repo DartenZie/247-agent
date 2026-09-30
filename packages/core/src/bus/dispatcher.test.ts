@@ -115,6 +115,43 @@ describe('Dispatcher', () => {
     expect(env.lines.filter((l) => l.msg === 'event.depth_exceeded')).toHaveLength(1);
   });
 
+  it('lets an event beyond the depth limit end a wait but start no run', () => {
+    const shallow = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxDepth: 1,
+    });
+    shallow.setConfig(tasks);
+    const root = publish('x.happened');
+    const child = publish('y.trigger', null, { parent_id: root.id });
+    shallow.drain();
+    const now = env.clock.now().toISOString();
+    env.store.runs.insertQueued({
+      id: 'run_w',
+      task: 'm',
+      event_id: child.id,
+      correlation_id: child.correlation_id,
+      created_at: now,
+    });
+    env.store.runs.setStatus('run_w', 'waiting');
+    env.store.waits.insert({
+      run_id: 'run_w',
+      task: 'm',
+      type: 'x.happened',
+      filter: null,
+      expires_at: null,
+      on_timeout: 'fail',
+      resume: null,
+      created_at: now,
+    });
+    const deep = publish('x.happened', null, { parent_id: child.id });
+    expect(deep.depth).toBe(2);
+    expect(shallow.drain().map((r) => r.id)).toEqual(['run_w']); // resumed; tasks a, b not started
+    expect(env.store.waits.get('run_w')).toMatchObject({ outcome: 'matched', event_id: deep.id });
+    expect(env.lines.filter((l) => l.msg === 'event.depth_exceeded')).toHaveLength(1);
+  });
+
   it('notifies listeners once per batch and drains across batches', () => {
     const batches: RunRecord[][] = [];
     const off = dispatcher.onQueued((runs) => batches.push([...runs]));
