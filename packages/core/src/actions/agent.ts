@@ -335,6 +335,29 @@ function parseSchema(text: string, file: string): Record<string, unknown> {
   return doc as Record<string, unknown>;
 }
 
+/** How much of the previous attempt's error goes into a retry's prompt. */
+const PREVIOUS_ERROR_MAX = 2000;
+
+/**
+ * On a retry (§10), what the previous attempt failed with: the agent starts in a fresh
+ * workspace, so without this it would repeat the same mistake. `undefined` on attempt 1.
+ */
+export function previousFailure(run: ActionContext['run']): string | undefined {
+  if (run.attempt <= 1 || run.error === null || run.error === '') {
+    return undefined;
+  }
+  const error =
+    run.error.length <= PREVIOUS_ERROR_MAX
+      ? run.error
+      : run.error.slice(0, PREVIOUS_ERROR_MAX) + '…';
+  return [
+    `This is attempt ${String(run.attempt)}. The previous attempt failed with this error:`,
+    error,
+    'Its changes were discarded: you are starting again from a fresh working directory.',
+    'Avoid what caused that failure.',
+  ].join('\n');
+}
+
 function nudge(path: string, schema: Record<string, unknown> | undefined): string {
   return (
     `You have not written ${path}. Write it now and do nothing else.\n` +
@@ -368,7 +391,9 @@ async function runPostGates(
       );
     } catch (err) {
       if (err instanceof ShellError) {
-        throw new NonRetryableError(`${label} failed: ${err.message}`, { cause: err });
+        // Retryable: `retry` repeats the run in a fresh workspace with this error (and the
+        // gate's stderr tail) in the prompt, so the agent can fix what the gate caught.
+        throw new Error(`${label} failed: ${err.message}`, { cause: err });
       }
       throw err;
     }
@@ -408,7 +433,12 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
     cfg.result.schema === undefined
       ? undefined
       : parseSchema(llm.readSystemFile(cfg.result.schema), cfg.result.schema);
-  const prompt = [system, ctx.renderText(cfg.prompt), resultInstructions(cfg.result.path, schema)]
+  const prompt = [
+    system,
+    ctx.renderText(cfg.prompt),
+    previousFailure(ctx.run),
+    resultInstructions(cfg.result.path, schema),
+  ]
     .filter((s): s is string => s !== undefined)
     .join('\n\n');
   const cctx: LlmCallContext = {
@@ -541,9 +571,8 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         read = readAgentResult(ws.path, cfg.result.path, schema);
       }
       if (!read.ok) {
-        throw new NonRetryableError(
-          read.missing ? `the agent did not write ${cfg.result.path}` : read.error,
-        );
+        // Retryable: `retry` repeats it in a fresh workspace with this error in the prompt.
+        throw new Error(read.missing ? `the agent did not write ${cfg.result.path}` : read.error);
       }
       const result = read.result;
       transcript.result(result);

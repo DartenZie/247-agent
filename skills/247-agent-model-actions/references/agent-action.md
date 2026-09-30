@@ -79,7 +79,7 @@ object with at least:
 and is validated on top. The run result is the document itself, so `emit` and `post`
 read `${result.summary}`, `${result.missing}`.
 
-- `done` → the `post` gates run in order; a failing gate fails the run.
+- `done` → the `post` gates run in order; a failing gate fails the run (retryably).
 - `blocked` → gates skipped, the run **succeeds**. Route it:
 
 ```yaml
@@ -92,13 +92,18 @@ emit:
 and a deterministic task on `site.change_blocked` replies to the sender (`email.send`),
 asks in chat, or files a ticket. Missing file → one nudge turn in the same session; still
 missing or invalid → the run fails, `retry` repeats it in a fresh workspace, and
-`task.<name>.failed` reaches `notify`.
+`task.<name>.failed` reaches `notify` after the last attempt. Every retry's prompt says
+which attempt it is and what the previous one failed with (first 2000 characters of the
+error), so give agent tasks `retry.attempts` of 2 or more when a second try is worth
+its budget.
 
 ## Post gates
 
 Run in order in the workspace after a `done` result, through the `shell` runner (so
 `defaults.sandbox` applies). Typical sequence: build, test, `git commit -am "…:
-${result.summary}"`. A non-zero exit fails the run; nothing leaves the workspace.
+${result.summary}"`. A non-zero exit fails the run (nothing leaves the workspace)
+retryably: with `retry.attempts` > 1 the next attempt starts fresh with the gate's error
+and stderr tail in its prompt, so a build the agent broke gets a second try.
 Publishing is a separate task on `task.<name>.succeeded`, which is the only place a
 deploy secret lives.
 
