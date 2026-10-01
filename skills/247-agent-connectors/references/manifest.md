@@ -18,6 +18,8 @@ config:                                       # passed as OA_CONFIG_JSON, secret
 env: { NODE_ENV: production }                 # extra environment for the process
 restart: { base: 1s, max: 60s }               # crash backoff, doubling; reset after 30s up
 health: { interval: 60s, timeout: 10s, failures: 3 }   # stdio only: MCP ping every interval; 3 misses in a row = crash, respawn
+managed_by: core                              # or systemd: runs in its own 247-agent-connector@email unit (below)
+socket: /run/247-agent-connector/email/mcp.sock   # managed_by: systemd + stdio only; this is the default
 ```
 
 - `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only.
@@ -30,6 +32,25 @@ health: { interval: 60s, timeout: 10s, failures: 3 }   # stdio only: MCP ping ev
 - `health` pings the MCP server; `none` and `acp` connectors have none and reject it
   (their process exit is watched anyway). `oa connector list` shows `health=ok`,
   `failing(n)` or `unchecked`; `connector.unhealthy` / `connector.health_failed` in the log.
+
+## A connector in its own systemd unit
+
+`managed_by: systemd` (default `core`) takes a process connector out of the daemon's
+supervision: the template unit `247-agent-connector@<name>.service` runs
+`247-agent-connector-host <name>`, which reads the same `agent.yaml` and manifest,
+resolves the connector's secrets from the unit's own backend (its `LoadCredential=`
+lines with `systemd-credentials`) and starts `exec` with the usual environment. Use it
+for a connector that needs its own user, capabilities (a port below 1024), paths, or a
+secret the daemon must not hold. The daemon never resolves its secrets.
+
+- `transport: none`: the unit just runs it; `oa connector list` shows `external`, and
+  restarts go through `systemctl restart 247-agent-connector@<name>`.
+- `transport: stdio`: the unit serves MCP on `socket` (default
+  `/run/247-agent-connector/<name>/mcp.sock`); the daemon connects to it with the usual
+  backoff, `health` and `ops` allowlist, and `oa connector restart` reconnects, which
+  respawns the process in the unit with fresh secrets.
+- Not for `acp` agents (use `sandbox: bwrap`) or built-ins. Drop-ins keep
+  `Group=247-agent` (config and core socket access). USER-GUIDE §6.7 has the steps.
 
 ## An ACP agent as a connector
 

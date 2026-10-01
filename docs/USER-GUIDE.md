@@ -768,6 +768,59 @@ a folder). When the op takes a cursor and returns only what is new, a cron task 
 
 Example manifests for each are in [`examples/connectors.d/`](examples/connectors.d/).
 
+### 6.7 A connector in its own systemd unit
+
+Every connector runs as the daemon's child, as the daemon's user, by default. One that
+needs more (a port below 1024, a device, files another user owns) or holds a secret the
+daemon should not can run in its own unit instead:
+
+```yaml
+# connectors.d/webhook.yaml
+name: webhook
+exec: ["247-agent-connector-webhook"]
+transport: none
+managed_by: systemd                 # the daemon does not spawn it
+config:
+  listen: { host: 0.0.0.0, port: 80 }  # a low port: needs CAP_NET_BIND_SERVICE
+  routes: [{ path: /hooks/github, event: github, type_header: X-GitHub-Event, verify: { kind: github, secret: "${secrets.github_webhook_secret}" } }]
+```
+
+```
+systemctl edit 247-agent-connector@webhook
+#   [Service]
+#   AmbientCapabilities=CAP_NET_BIND_SERVICE
+#   LoadCredential=github_webhook_secret:/etc/credstore/github_webhook_secret
+systemctl enable --now 247-agent-connector@webhook
+oa reload                           # the daemon now lists it instead of spawning it
+```
+
+The template unit (`247-agent-connector@.service`, installed with the daemon's) runs
+`247-agent-connector-host <name>`, which reads the same `agent.yaml` and manifest, resolves
+the connector's secrets from the unit's own credentials and starts it exactly as the
+daemon would. Secrets it uses belong on this unit, not on `247-agent.service`: the daemon
+never resolves them. Set `User=` in the drop-in to give it its own user, but keep
+`Group=247-agent`: that group is how it reads `/etc/247-agent` and reaches the daemon's
+socket (created `0660`). The daemon's state directory is hidden from it.
+
+- **Without ops** (`transport: none`): `oa connector list` shows it `external` with
+  `unit=247-agent-connector@webhook`; `oa connector restart` points you to
+  `systemctl restart 247-agent-connector@webhook`, which is also the only way a changed
+  manifest reaches it (`oa reload` logs `connector.unit_restart_needed`); its logs are in
+  `journalctl -u 247-agent-connector@webhook`.
+- **With ops** (`transport: stdio`): the unit serves MCP on
+  `/run/247-agent-connector/<name>/mcp.sock` (or the manifest's `socket:`), and the
+  daemon connects to it instead of spawning, with the same `restart` backoff, `health`
+  checks and ops allowlist. It shows `down` with `is 247-agent-connector@<name>
+  running?` until the unit is up. `oa connector restart` reconnects, which starts a fresh
+  process in the unit with freshly read secrets and manifest.
+
+The unit is `PartOf=247-agent.service`: stopping or restarting the daemon does the same to
+its connectors. To try it without systemd, run the host by hand with the same config:
+`247-agent-connector-host --config agent.yaml webhook`, with its secrets in its own
+environment. For one with ops, set the manifest's `socket:` to a path you can write: the
+daemon always connects to the manifest's socket, so the host's `--socket` override is for
+a host the daemon does not use.
+
 ## 7. The `oa` command
 
 `oa` talks to the daemon over the socket: `--socket <path>`, else `$OA_CORE_SOCKET`, else
@@ -974,7 +1027,8 @@ LoadCredential=ftp_pass:/etc/credstore/ftp_pass
 ```
 
 With `secrets: { backend: systemd-credentials }` each `LoadCredential=` name becomes a
-secret of the same name. Upgrade: unpack the new tarball, point `/opt/247-agent` at it,
+secret of the same name. A connector with `managed_by: systemd` (6.7) takes its
+`LoadCredential=` lines on its own `247-agent-connector@<name>` unit instead. Upgrade: unpack the new tarball, point `/opt/247-agent` at it,
 `oa validate`, `systemctl restart 247-agent` (preferably while no `agent` run is in
 flight). Logs are JSON lines on stdout, so `journalctl -u 247-agent
 -o cat | jq` works. Every line about a run carries `run_id`, `task` and

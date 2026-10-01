@@ -9,7 +9,8 @@ if [ -d /run/systemd/system ]; then
 fi
 case "$1" in
   purge)
-    rm -rf /etc/247-agent /var/lib/247-agent /etc/systemd/system/247-agent.service.d
+    rm -rf /etc/247-agent /var/lib/247-agent /etc/systemd/system/247-agent.service.d \
+      /etc/systemd/system/247-agent-connector@*.service.d
     if getent passwd 247-agent > /dev/null; then
       userdel 247-agent 2> /dev/null || true
     fi ;;

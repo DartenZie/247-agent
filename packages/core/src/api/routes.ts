@@ -88,6 +88,7 @@ export type ConnectorEntry =
       name: string;
       builtin: 'poller';
       transport: 'none';
+      managed_by: 'core';
       sandbox: 'none';
       state: 'up';
       pid: null;
@@ -343,6 +344,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
     name: p.status().name,
     builtin: 'poller',
     transport: 'none',
+    managed_by: 'core',
     sandbox: 'none',
     state: 'up',
     pid: null,
@@ -363,6 +365,14 @@ async function restartConnector(ctx: RouteContext, name: string): Promise<ApiRes
   const supervisor = ctx.core.supervisor;
   if (!supervisor?.names().includes(name)) {
     throw new ApiError(404, `unknown connector "${name}"`);
+  }
+  // By the manifest, not the state: one being (re)attached is `stopped`/`starting` for a moment.
+  const manifest = supervisor.manifests().find((m) => m.name === name);
+  if (manifest?.managed_by === 'systemd' && manifest.transport !== 'stdio') {
+    throw new ApiError(
+      409,
+      `connector "${name}" runs in its own unit and serves no ops: restart it with systemctl restart 247-agent-connector@${name}`,
+    );
   }
   try {
     const status = await supervisor.restart(name);

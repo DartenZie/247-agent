@@ -25,6 +25,8 @@
 #   /etc/247-agent/{agent.yaml,tasks.d,connectors.d}   created once, never overwritten
 #   /etc/systemd/system/247-agent.service              replaced on upgrade; local
 #                                                       changes go in `systemctl edit`
+#   /etc/systemd/system/247-agent-connector@.service   the same; one instance per connector
+#                                                       with `managed_by: systemd`, enabled by hand
 #   /var/lib/247-agent, /run/247-agent                 by systemd (StateDirectory, RuntimeDirectory)
 set -eu
 
@@ -238,6 +240,10 @@ if [ $service = 1 ]; then
     # The unit names /opt/247-agent; point it at this prefix.
     sed "s|/opt/247-agent/|$prefix/|g" "$tree/share/systemd/247-agent.service" > "$tmp/247-agent.service"
     root install -m 644 "$tmp/247-agent.service" "$unit"
+    # The template for connectors with `managed_by: systemd`; nothing is enabled here,
+    # `systemctl enable --now 247-agent-connector@<name>` is the admin's call.
+    sed "s|/opt/247-agent/|$prefix/|g" "$tree/share/systemd/247-agent-connector@.service" > "$tmp/247-agent-connector@.service"
+    root install -m 644 "$tmp/247-agent-connector@.service" "/etc/systemd/system/247-agent-connector@.service"
     root systemctl daemon-reload
     if [ $fresh = 1 ]; then
       root systemctl enable --now 247-agent

@@ -109,7 +109,10 @@ location /hooks/ {
 ```
 
 or listen on a Unix socket the proxy can reach (`listen: { path: …, mode: "0660" }`, with
-the proxy's user in the socket's group).
+the proxy's user in the socket's group). A port below 1024 or a socket in a directory the
+daemon cannot write needs privileges the daemon does not have: run the connector as its
+own `247-agent-connector@webhook` unit (ARCHITECTURE §6, `managed_by: systemd`) and give
+that unit `AmbientCapabilities=CAP_NET_BIND_SERVICE` or a `RuntimeDirectory=`.
 
 `GET /healthz` answers `200 {"ok":true}` without touching the daemon, for the proxy's or a
 monitor's checks. The port or socket being taken is fatal at start: the process exits

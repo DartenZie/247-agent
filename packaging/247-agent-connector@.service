@@ -1,0 +1,46 @@
+# systemd template unit for one 247-agent connector in its own unit (ARCHITECTURE §6): for
+# a connector whose manifest says `managed_by: systemd`, because it needs privileges or
+# credentials the daemon should not have (a low port, a device, another user's files, a
+# secret only it may read). The instance name is the manifest's `name`:
+#
+#   systemctl enable --now 247-agent-connector@webhook
+#
+# It runs 247-agent-connector-host, which reads the same agent.yaml and manifest as the
+# daemon and starts the connector with the environment the daemon would give it. Secrets
+# come from THIS unit's backend: with `secrets: { backend: systemd-credentials }` in
+# agent.yaml, put the connector's LoadCredential= lines here and not on 247-agent.service.
+# A connector with ops serves them on /run/247-agent-connector/<name>/mcp.sock, which the
+# daemon connects to; one without ops just runs. Give it its own privileges in a drop-in
+# (`systemctl edit 247-agent-connector@webhook`), for example:
+#
+#   [Service]
+#   User=247-agent-webhook
+#   AmbientCapabilities=CAP_NET_BIND_SERVICE
+#   LoadCredential=github_webhook_secret:/etc/credstore/github_webhook_secret
+#
+# Keep Group=247-agent: it is how the connector reads /etc/247-agent and reaches the
+# daemon's socket (mode 0660), and how the daemon reaches the connector's socket.
+[Unit]
+Description=247-agent connector %i
+Documentation=file:///opt/247-agent/share/doc/ARCHITECTURE.md
+After=network-online.target 247-agent.service
+Wants=network-online.target
+PartOf=247-agent.service
+
+[Service]
+User=247-agent
+Group=247-agent
+ExecStart=/opt/247-agent/bin/247-agent-connector-host --config /etc/247-agent/agent.yaml %i
+Restart=always
+RestartSec=5
+RuntimeDirectory=247-agent-connector/%i
+RuntimeDirectoryMode=0750
+UMask=0007
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+# The daemon's database and agent workspaces are none of a connector's business.
+InaccessiblePaths=-/var/lib/247-agent
+
+[Install]
+WantedBy=multi-user.target

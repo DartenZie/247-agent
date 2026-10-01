@@ -22,6 +22,11 @@ manifest `config` block and the shape of its ops and events.
 | [`jira`](jira/README.md) | done (REST wrapper, Cloud or Data Center) | via `poller` | `search` (JQL), `get_issue`, `list_comments`, `create_issue`, `update_issue`, `add_comment`, `list_transitions`, `transition_issue`, confined to `projects` |
 | `poller` | done, built into the core | one event per new item of any op | none |
 
+Any of them can run in its own systemd unit instead of as the daemon's child
+(`managed_by: systemd` in the manifest, `247-agent-connector@<name>.service`): for a
+connector that needs its own user, capabilities or credentials. See
+`docs/USER-GUIDE.md` §6.7.
+
 Where things are documented:
 
 - `docs/ARCHITECTURE.md` §6: the protocol, lifecycle and environment (source of truth).

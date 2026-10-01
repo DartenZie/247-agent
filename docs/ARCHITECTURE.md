@@ -124,8 +124,8 @@ One daemon, `247-agent-core`, with these internal modules:
 | **State KV** | `state(namespace, key, value)` for connectors and tasks (IMAP cursor, last-seen PR number…). Tasks read it as `${state.<ns>.<key>}` (a snapshot taken at run start) and write it with `state_updates`; connectors use the API. |
 | **Cost ledger** | One row per model call: provider, model, input/output/cache tokens, USD, how it was priced. Budgets are derived from it: `budget.max_usd` per run (worst case checked before the call, actual after), `budgets.daily_usd` per UTC day → circuit breaker (§9). The `llm` runner reaches it only through the `ctx.llm` port, which prices, budgets and writes the row in one place. |
 | **Batch poller** | Once at start and every `batches.poll` (default 1m): polls every Message Batches request of a `batch: true` `llm` action still in flight (the `llm_batches` table) and, once one ended, writes its ledger row and publishes `llm.batch.ended` in one transaction, which resumes the waiting run (§5.2). |
-| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events?type=&after=&limit=` (the newest `limit` in `seq` order, or those after a `seq`; `type` is an exact type or a trigger pattern), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/runs/{id}/transcript?after=&limit=` (the agent transcript, §5.4), `GET /v1/runs/{id}/ledger` (its model calls and their total), `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; 409 for a built-in), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
-| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env (an `acp` agent gets its `env` and name only, and runs inside `bwrap` when its manifest says `sandbox: bwrap`, §6). A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. Deferring to systemd units is not implemented. |
+| **API** | HTTP over a Unix socket (`/run/247-agent/core.sock`), plain `node:http`, JSON in and out: `GET /v1/health`, `POST /v1/events` (201 inserted / 200 duplicate), `GET /v1/events?type=&after=&limit=` (the newest `limit` in `seq` order, or those after a `seq`; `type` is an exact type or a trigger pattern), `GET /v1/events/{id}`, `POST /v1/runs` (manual run, 201), `GET /v1/runs?status=&task=&limit=` (newest first), `GET /v1/runs/{id}`, `GET /v1/runs/{id}/transcript?after=&limit=` (the agent transcript, §5.4), `GET /v1/runs/{id}/ledger` (its model calls and their total), `GET /v1/state/{ns}` (list), `GET|PUT|DELETE /v1/state/{ns}/{key}` (`PUT` body `{value}`), `GET /v1/connectors` (supervised processes and built-ins with state/pid/restarts), `POST /v1/connectors/{name}/restart` (kill, re-resolve secrets, respawn; for a unit's connector with ops, reconnect, which respawns it in its unit; 409 for a built-in or a unit's connector without ops), `POST /v1/reload` (the config reload above; 200 with `{ok, files, restart_required, connectors?, tasks}`, `ok: false` when refused), `GET /metrics` (Prometheus text exposition, `oa_*`: runs by task and status, run latency, events (labelled by type only when the core or a task names it exactly, else `other`), waits, cron ticks, model calls/tokens/USD and the day's spend against the cap, connector state, ops, restarts and health checks, retention counts, DB size, API requests). Errors are `{error, issues?}` with 400/404/405/413. A stale socket file left by a dead daemon is replaced at start; a live one refuses the start. Also what the CLI talks to. |
+| **Connector supervisor** | Spawns configured connectors as child processes, holds one MCP stdio client per connector, restarts crashed ones with exponential backoff (`restart.base` doubling up to `restart.max`, reset after 30s up), passes the socket path, name, rendered config and secrets via env (an `acp` agent gets its `env` and name only, and runs inside `bwrap` when its manifest says `sandbox: bwrap`, §6). A `stdio` manifest with `health: { interval, timeout, failures }` is pinged (MCP `ping`) every `interval`; `failures` consecutive misses count as a crash (kill, respawn with backoff); the last check is in `GET /v1/connectors`. A manifest with `managed_by: systemd` is not spawned: its own `247-agent-connector@<name>` unit runs it (§6); the supervisor connects to the unit's socket for its ops (with the same backoff and health checks) or, for one without ops, just lists it as `external`. |
 | **Retention** | Once at start and every `retention.interval`: deletes finished runs older than `retention.runs` with their ledger rows and transcript, ledger rows older than `retention.ledger` (finished runs only), dispatched events older than `retention.events` that no run or wait references, and `work/<run_id>` directories of runs finished longer ago than `retention.workspaces` (or with no run; a git worktree is detached and its branch deleted). Active runs and their rows are never touched. Counts go to the log (`retention.purged`) and to `/metrics`. |
 
 Everything is in-process and single-node on purpose. If a queue is ever needed, the event
@@ -605,6 +605,7 @@ config:                                              # free-form, the connector'
   outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nExample Team office" }
 restart: { base: 1s, max: 60s }                      # crash backoff
 health: { interval: 60s, timeout: 10s, failures: 3 } # MCP ping; 3 misses in a row = crash (stdio only)
+# managed_by: systemd                                # run in its own 247-agent-connector@email unit (below)
 ```
 
 `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only. `cwd` is
@@ -705,9 +706,38 @@ other languages should do the same. Stderr lines are logged as `connector.output
 Secrets are resolved at spawn, so a rotated value reaches a running connector through
 `oa connector restart <name>` (`POST /v1/connectors/{name}/restart`): the process is
 killed, its secrets re-resolved, and it is respawned with the backoff counter reset. The
-built-in poller re-resolves on every poll and needs no restart. A
-`247-agent-connector@name` systemd unit for connectors that need their own privileges
-is not implemented yet.
+built-in poller re-resolves on every poll and needs no restart.
+
+**Connectors in their own unit.** A connector that needs privileges or credentials the
+daemon should not have (a port below 1024, a device, another user's files, a secret no
+other process may read) says `managed_by: systemd` and runs in the template unit
+`247-agent-connector@<name>.service` (`packaging/`) instead of as the daemon's child. The
+unit runs `247-agent-connector-host <name>` (`connectors/host.ts`), which reads the same
+`agent.yaml` and manifests, refuses a connector not marked `managed_by: systemd` (so it
+never runs twice), resolves the connector's secrets from **its own** backend (with
+`systemd-credentials`, the unit's `LoadCredential=` lines, which then need not be on the
+daemon's unit) and starts `exec` with the environment the supervisor would have built
+(`connectorChildEnv`, shared). The daemon never resolves such a connector's secrets.
+`User=`, capabilities, `ReadWritePaths=` and credentials go in the unit's drop-in; the
+template keeps `Group=247-agent`, how the connector reads `/etc/247-agent` and reaches the
+core socket, which the daemon creates with mode `0660` for that reason.
+
+- `transport: none` (a webhook receiver, a bot that only emits): the host runs the
+  process for the life of the unit and exits with it, so `Restart=always` stands in for
+  the supervisor's backoff. The daemon lists it as `external`; `oa connector restart`
+  answers 409 and names the `systemctl restart` to use.
+- `transport: stdio`: the host listens on `socket` (default
+  `/run/247-agent-connector/<name>/mcp.sock`, in the unit's `RuntimeDirectory`, mode
+  `0660`) and, for each connection, starts the connector and bridges the connection to
+  its stdin/stdout (MCP's line framing, unchanged). The supervisor connects instead of
+  spawning (`connectors/socket-transport.ts`), with the usual `restart` backoff and
+  `health` pings; a new connection replaces the old one, a closed one stops the process.
+  Config and secrets are read again for every process, so `oa connector restart`, which
+  reconnects, still re-resolves secrets and picks up a changed manifest.
+
+`acp` agents and built-ins cannot be `managed_by: systemd` (an agent program is confined
+with `sandbox: bwrap` instead, and a built-in has no process). The unit is `PartOf=` the
+daemon's, so stopping or restarting `247-agent` does the same to its connectors.
 
 **SDK (`@247-agent/connector-sdk`):** `connectorEnv()`, `CoreClient` (`emitEvent`,
 `getState`/`putState` in the connector's own namespace), `defineTool` +
@@ -904,7 +934,10 @@ scoped to the names its manifest uses, and never in a pull endpoint that any loc
 process could call.
 
 - Core and connectors run as an unprivileged `247-agent` user; systemd hardening
-  (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`).
+  (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`). A connector that needs more
+  (or must hold a secret the daemon should not) runs in its own
+  `247-agent-connector@<name>` unit with its own user, capabilities and
+  `LoadCredential=` lines (§6); the template hides `/var/lib/247-agent` from it.
 - Secrets via `LoadCredential=` (systemd) resolved by name in config; never written to
   the DB or run logs; injected only into the actions that declare them. The `file`
   backend refuses a secrets file readable by group or others.
@@ -955,7 +988,7 @@ since the sandbox lives inside the unit's own mount namespace (`work_dir` under
 `/opt/247-agent` is the unpacked release tarball (`scripts/build-release.sh`): `bin/`
 launchers, one bundled `.mjs` per program under `lib/`, a vendored Node under `node/`,
 `better-sqlite3` with the target's prebuilt addon under `node_modules/`, docs, examples,
-skills and this unit under `share/`. The tree is relocatable: the daemon resolves its
+skills and the units (this one and `247-agent-connector@.service`) under `share/`. The tree is relocatable: the daemon resolves its
 install root (`$OA_HOME`, else the nearest ancestor of its script with
 `bin/247-agent-core`) and puts `<root>/bin` and its own Node first on `PATH` for every
 child, which is how a manifest's `exec: ["247-agent-connector-email"]` finds the bundled
@@ -963,11 +996,13 @@ connector wherever the tree lives. A source checkout has the same `bin/` (runnin
 workspace `dist/`), so manifests are identical in development and production.
 `scripts/install.sh` (shipped as `share/install.sh` and attached to every release)
 installs or upgrades from the GitHub release: `/opt/247-agent-<version>` per version,
-`/opt/247-agent` a symlink, the user, a starter `/etc/247-agent`, the unit; the new
+`/opt/247-agent` a symlink, the user, a starter `/etc/247-agent`, the units (the
+connector template is installed, never enabled: `systemctl enable --now
+247-agent-connector@<name>` is the admin's call); the new
 version validates the existing config before the symlink moves. `uninstall.sh` is its
 counterpart and keeps config, state and the user unless `--purge`. The `.deb` and
 `.rpm` (`packaging/nfpm.yaml`, built by `scripts/build-package.sh` from the same tree
-with nfpm) install the identical layout, `/usr/bin/oa`, the unit under
+with nfpm) install the identical layout, `/usr/bin/oa`, the units under
 `/usr/lib/systemd/system` and the starter `/etc/247-agent` as conffiles; the maintainer
 scripts (`packaging/scripts/`) create the user, enable and start on install, restart on
 upgrade, stop on removal and clean up on purge. Both are attached to every release.
@@ -1002,7 +1037,7 @@ oa metrics                      # GET /metrics
 package.json                 # workspaces: packages/*, connectors/*
 bin/                         # launchers: 247-agent-core, oa, 247-agent-connector-<name>; the same files in a checkout and a release
 scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), build-package.sh (.deb/.rpm), install.sh + uninstall.sh
-packaging/                   # 247-agent.service, etc/ (the starter config), nfpm.yaml + scripts/ (the .deb/.rpm)
+packaging/                   # 247-agent.service, 247-agent-connector@.service, etc/ (the starter config), nfpm.yaml + scripts/ (the .deb/.rpm)
 .github/workflows/           # ci (build, lint, test, tarball smoke), release (tarballs on v* tags)
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml (incl. retention.ts), tasks, connectors; loader
@@ -1013,10 +1048,11 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); types.ts = ActionContext
   src/llm/                   # config.ts (providers, pricing, budgets, batches), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call`, `decide` and batches), batches.ts (the `llm.batch.ended` payload and the poller's timer), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API, anthropic.ts Message Batches)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
-  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); poller.ts: the built-in poller
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); poller.ts: the built-in poller; host.ts + socket-transport.ts: managed_by: systemd (the unit's host program, the core's MCP client over its socket); child-env.ts: a connector process's environment, shared by the supervisor and the host
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
+  host-main.ts               # the `247-agent-connector-host` binary a 247-agent-connector@<name> unit runs
   home.ts, version.ts        # install root discovery + PATH for children; the version constant (`--version`)
   src/expr/                  # type globs, jmespath filters, ${…} templating
   ids.ts, log.ts, clock.ts   # ULID-style ids, JSON-lines logger, injectable clock

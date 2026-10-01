@@ -1,10 +1,12 @@
 #!/bin/sh
 # 247-agent uninstaller: the counterpart of install.sh. Stops and removes the systemd
-# unit, the `oa` symlink, the install root symlink and every installed version tree.
-# Keeps the config (/etc/247-agent), the state (/var/lib/247-agent), the unit's drop-ins
-# (/etc/systemd/system/247-agent.service.d, where LoadCredential= lines live) and the
-# 247-agent user, so a later install.sh brings the same daemon back; --purge removes
-# those too. Secrets under /etc/credstore are never touched.
+# unit, the connector template unit and its enabled instances, the `oa` symlink, the
+# install root symlink and every installed version tree. Keeps the config
+# (/etc/247-agent), the state (/var/lib/247-agent), the units' drop-ins
+# (/etc/systemd/system/247-agent.service.d and 247-agent-connector@<name>.service.d, where
+# LoadCredential= lines live) and the 247-agent user, so a later install.sh brings the
+# same daemon back; --purge removes those too. Secrets under /etc/credstore are never
+# touched.
 #
 #   sh /opt/247-agent/share/uninstall.sh [--purge] [--yes]
 #   curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/uninstall.sh | sh -s -- --yes
@@ -37,10 +39,15 @@ die() { printf 'uninstall.sh: %s\n' "$*" >&2; exit 1; }
 
 unit=/etc/systemd/system/247-agent.service
 dropins=$unit.d
+# Connectors in their own units: the template, its enabled instances and their drop-ins.
+template=/etc/systemd/system/247-agent-connector@.service
+instances=$(cd /etc/systemd/system 2> /dev/null && ls -d ./*.wants/247-agent-connector@*.service 2> /dev/null | sed 's|.*/||' | sort -u)
+connector_dropins=$(ls -d /etc/systemd/system/247-agent-connector@*.service.d 2> /dev/null || true)
 
 # Root is needed when the unit exists, on --purge, or when the trees are not ours.
 needs_root=$purge
 [ -f "$unit" ] && needs_root=1
+[ -f "$template" ] && needs_root=1
 [ -w "$(dirname "$prefix")" ] || needs_root=1
 [ -w "$bin_dir" ] || needs_root=1
 sudo=
@@ -65,7 +72,10 @@ say "this removes:"
 for d in $trees; do say "  $d"; done
 [ -L "$bin_dir/oa" ] && say "  $bin_dir/oa"
 [ -f "$unit" ] && say "  $unit (stopped and disabled first)"
+[ -f "$template" ] && say "  $template"
+for i in $instances; do say "  $i (stopped and disabled first)"; done
 if [ $purge = 1 ]; then
+  for d in $connector_dropins; do say "  $d"; done
   [ -d "$dropins" ] && say "  $dropins"
   [ -d /etc/247-agent ] && say "  /etc/247-agent (config)"
   [ -d /var/lib/247-agent ] && say "  /var/lib/247-agent (state, database, agent workspaces)"
@@ -80,11 +90,16 @@ if [ $yes = 0 ]; then
   case $answer in y|Y|yes) ;; *) say "aborted"; exit 1 ;; esac
 fi
 
-if command -v systemctl > /dev/null 2>&1 && [ -f "$unit" ]; then
-  root systemctl disable --now 247-agent 2> /dev/null || true
+if command -v systemctl > /dev/null 2>&1; then
+  for i in $instances; do root systemctl disable --now "$i" 2> /dev/null || true; done
+  [ -f "$unit" ] && { root systemctl disable --now 247-agent 2> /dev/null || true; }
 fi
 [ -f "$unit" ] && root rm -f "$unit"
+[ -f "$template" ] && root rm -f "$template"
 [ $purge = 1 ] && [ -d "$dropins" ] && root rm -rf "$dropins"
+if [ $purge = 1 ]; then
+  for d in $connector_dropins; do root rm -rf "$d"; done
+fi
 if command -v systemctl > /dev/null 2>&1; then
   root systemctl daemon-reload 2> /dev/null || true
 fi
