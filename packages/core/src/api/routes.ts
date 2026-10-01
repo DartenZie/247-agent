@@ -366,7 +366,9 @@ async function restartConnector(ctx: RouteContext, name: string): Promise<ApiRes
   if (!supervisor?.names().includes(name)) {
     throw new ApiError(404, `unknown connector "${name}"`);
   }
-  if (supervisor.status().find((c) => c.name === name)?.state === 'external') {
+  // By the manifest, not the state: one being (re)attached is `stopped`/`starting` for a moment.
+  const manifest = supervisor.manifests().find((m) => m.name === name);
+  if (manifest?.managed_by === 'systemd' && manifest.transport !== 'stdio') {
     throw new ApiError(
       409,
       `connector "${name}" runs in its own unit and serves no ops: restart it with systemctl restart 247-agent-connector@${name}`,

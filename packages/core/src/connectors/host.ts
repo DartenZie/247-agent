@@ -23,8 +23,9 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js
 import { loadAgentFile } from '../config/agent.js';
 import { unitSocket, type ConnectorConfig } from '../config/connector.js';
 import { loadConnectors, type ConfigIssue } from '../config/load.js';
+import type { Logger } from '../log.js';
 import { createSecretsBackend } from '../secrets/secrets.js';
-import { connectorChildEnv } from './supervisor.js';
+import { connectorChildEnv } from './child-env.js';
 
 export interface ConnectorHostOptions {
   /** agent.yaml, as the daemon reads it. */
@@ -35,7 +36,8 @@ export interface ConnectorHostOptions {
   env: NodeJS.ProcessEnv;
   /** Overrides the socket a stdio connector listens on (tests, running it by hand). */
   socket?: string | undefined;
-  log: (line: string) => void;
+  /** JSON lines, like the daemon's (journald collects them). */
+  log: Logger;
   /** Grace period between SIGTERM and SIGKILL when stopping the process. */
   killTimeoutMs?: number;
 }
@@ -170,15 +172,13 @@ function runOnce(launch: Launch, opts: ConnectorHostOptions): ConnectorHost {
   const grace = opts.killTimeoutMs ?? 5000;
   const child = start(launch, 'inherit');
   child.on('error', (err) => {
-    opts.log(`connector-host: cannot start ${launch.command}: ${err.message}`);
+    opts.log.error('connector_host.spawn_failed', { command: launch.command, error: err.message });
   });
-  opts.log(
-    `connector-host: ${launch.manifest.name} started (pid ${String(child.pid ?? '?')}, no ops)`,
-  );
+  opts.log.info('connector_host.started', { pid: child.pid ?? null, ops: false });
   let stopping = false;
   const done = exitOf(child).then((code) => {
     if (!stopping) {
-      opts.log(`connector-host: ${launch.manifest.name} exited with ${String(code)}`);
+      opts.log.warn('connector_host.exited', { code });
     }
     return stopping ? 0 : code === 0 ? 1 : code;
   });
@@ -197,6 +197,8 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
   const grace = opts.killTimeoutMs ?? 5000;
   const path = opts.socket ?? unitSocket(first.manifest);
   let current: { socket: Socket; child: ChildProcess } | undefined;
+  /** Bumped by every connection and by stop(): only the newest connection gets a process. */
+  let generation = 0;
   let finish: (code: number) => void = () => undefined;
   const done = new Promise<number>((resolve) => {
     finish = resolve;
@@ -208,18 +210,28 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
   };
 
   const onConnection = (socket: Socket): void => {
+    // Before any await: an unhandled 'error' (a reset while the previous one is dropped)
+    // would take the whole host down.
+    socket.on('error', () => undefined);
+    const mine = ++generation;
     const previous = current;
     current = undefined;
     void (async () => {
       if (previous !== undefined) {
-        opts.log('connector-host: a new connection replaces the previous one');
+        opts.log.info('connector_host.replaced', {});
         await drop(previous);
+      }
+      if (mine !== generation) {
+        socket.destroy(); // a newer connection (or stop) took over while we waited
+        return;
       }
       let launch: Launch;
       try {
         launch = prepareLaunch(opts);
       } catch (err) {
-        opts.log(`connector-host: ${err instanceof Error ? err.message : String(err)}`);
+        opts.log.error('connector_host.prepare_failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
         socket.destroy();
         return;
       }
@@ -229,15 +241,15 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
       const child = start(launch, 'pipe');
       const session = { socket, child };
       current = session;
-      opts.log(
-        `connector-host: ${launch.manifest.name} started for the core (pid ${String(child.pid ?? '?')})`,
-      );
+      opts.log.info('connector_host.session_started', { pid: child.pid ?? null });
       child.on('error', (err) => {
-        opts.log(`connector-host: cannot start ${launch.command}: ${err.message}`);
+        opts.log.error('connector_host.spawn_failed', {
+          command: launch.command,
+          error: err.message,
+        });
         socket.destroy();
       });
       child.stdin?.on('error', () => undefined);
-      socket.on('error', () => undefined);
       if (child.stdin !== null) {
         socket.pipe(child.stdin);
       }
@@ -249,7 +261,7 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
         void terminate(child, grace);
       });
       void exitOf(child).then((code) => {
-        opts.log(`connector-host: ${launch.manifest.name} exited with ${String(code)}`);
+        opts.log.info('connector_host.exited', { code });
         socket.end();
       });
     })();
@@ -269,13 +281,14 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
     // The core connects as another user in the same group.
     chmodSync(path, 0o660);
   } catch (err) {
-    opts.log(
-      `connector-host: cannot set the mode of ${path}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    opts.log.warn('connector_host.socket_mode_failed', {
+      socket: path,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
-  opts.log(`connector-host: ${first.manifest.name} serving its ops on ${path}`);
+  opts.log.info('connector_host.listening', { socket: path });
   server.on('error', (err) => {
-    opts.log(`connector-host: socket error: ${err.message}`);
+    opts.log.error('connector_host.socket_error', { error: err.message });
     finish(1);
   });
 
@@ -283,6 +296,7 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
     socket: path,
     done,
     stop: async () => {
+      generation++; // a connection still waiting for the previous one gives up
       await new Promise<void>((resolve) => {
         server.close(() => {
           resolve();

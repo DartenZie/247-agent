@@ -2,13 +2,14 @@
 /**
  * `247-agent-connector-host [--config <agent.yaml>] [--socket <path>] <name>`: runs one
  * `managed_by: systemd` connector in its own `247-agent-connector@<name>` unit
- * (ARCHITECTURE §6, `connectors/host.ts`). Logs are plain lines on stderr for journald;
- * the connector's own stderr goes there too. SIGTERM/SIGINT stop the connector and exit.
+ * (ARCHITECTURE §6, `connectors/host.ts`). Logs are JSON lines on stderr for journald,
+ * like the daemon's; the connector's own stderr goes there too. SIGTERM/SIGINT stop the connector and exit.
  */
 import { parseArgs } from 'node:util';
 
 import { ConnectorHostError, startConnectorHost } from './connectors/host.js';
 import { findHome, homeEnv } from './home.js';
+import { createLogger } from './log.js';
 import { VERSION } from './version.js';
 
 const USAGE = `usage: 247-agent-connector-host [--config <agent.yaml>] [--socket <path>] <connector>
@@ -19,7 +20,8 @@ Runs one connector whose manifest says managed_by: systemd, as the
 options:
   -c, --config <file>   agent config (default: /etc/247-agent/agent.yaml)
       --socket <path>   where a connector with ops listens (default: the manifest's
-                        socket, or /run/247-agent-connector/<connector>/mcp.sock)
+                        socket, or /run/247-agent-connector/<connector>/mcp.sock); the
+                        daemon only ever connects to the manifest's socket
   -h, --help
   -V, --version
 `;
@@ -66,9 +68,12 @@ async function main(argv: string[]): Promise<number> {
     Object.assign(process.env, homeEnv(home, process.env));
   }
 
-  const log = (line: string): void => {
-    process.stderr.write(line + '\n');
-  };
+  const log = createLogger({
+    base: { connector: name },
+    sink: (line) => {
+      process.stderr.write(line + '\n');
+    },
+  });
   let host;
   try {
     host = await startConnectorHost({
@@ -79,8 +84,7 @@ async function main(argv: string[]): Promise<number> {
       log,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`247-agent-connector-host: ${message}`);
+    log.error('connector_host.failed', { error: err instanceof Error ? err.message : String(err) });
     return err instanceof ConnectorHostError ? 1 : 70;
   }
   const running = host;

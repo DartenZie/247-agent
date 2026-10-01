@@ -71,7 +71,7 @@ async function host(name: string): Promise<ConnectorHost> {
     configFile,
     name,
     env,
-    log: (l) => hostLogs.push(l),
+    log: createLogger({ level: 'debug', sink: (l) => hostLogs.push(l) }),
     killTimeoutMs: 1000,
   });
   hosts.push(h);
@@ -180,7 +180,8 @@ describe('a unit with ops', () => {
     await host('fake');
     const s = supervisor();
     await s.start();
-    const started = (): number => hostLogs.filter((l) => l.includes('started for the core')).length;
+    const started = (): number =>
+      hostLogs.filter((l) => l.includes('connector_host.session_started')).length;
     expect(started()).toBe(1);
     const status = await s.restart('fake');
     expect(status.state).toBe('up');

@@ -804,7 +804,8 @@ socket (created `0660`). The daemon's state directory is hidden from it.
 
 - **Without ops** (`transport: none`): `oa connector list` shows it `external` with
   `unit=247-agent-connector@webhook`; `oa connector restart` points you to
-  `systemctl restart 247-agent-connector@webhook`; its logs are in
+  `systemctl restart 247-agent-connector@webhook`, which is also the only way a changed
+  manifest reaches it (`oa reload` logs `connector.unit_restart_needed`); its logs are in
   `journalctl -u 247-agent-connector@webhook`.
 - **With ops** (`transport: stdio`): the unit serves MCP on
   `/run/247-agent-connector/<name>/mcp.sock` (or the manifest's `socket:`), and the
@@ -815,8 +816,10 @@ socket (created `0660`). The daemon's state directory is hidden from it.
 
 The unit is `PartOf=247-agent.service`: stopping or restarting the daemon does the same to
 its connectors. To try it without systemd, run the host by hand with the same config:
-`247-agent-connector-host --config agent.yaml webhook` (`--socket <path>` for one with
-ops), with its secrets in its own environment.
+`247-agent-connector-host --config agent.yaml webhook`, with its secrets in its own
+environment. For one with ops, set the manifest's `socket:` to a path you can write: the
+daemon always connects to the manifest's socket, so the host's `--socket` override is for
+a host the daemon does not use.
 
 ## 7. The `oa` command
 
