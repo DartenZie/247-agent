@@ -1,0 +1,21 @@
+# Webhook connector manifest (ARCHITECTURE §6): generic HTTP in. An emit-only process
+# (transport none): each verified request to a route becomes one event. Full config
+# reference: connectors/webhook/README.md. Bind to loopback and publish the paths through
+# the reverse proxy that terminates TLS.
+name: webhook
+exec: ["247-agent-connector-webhook"]
+transport: none
+emits: [github.push, github.pull_request, deploy.requested]
+config:
+  listen: { host: 127.0.0.1, port: 8787 }   # or { path: /run/…/http.sock, mode: "0660" }
+  # max_body: 1048576                       # bytes; larger requests get 413
+  routes:
+    - path: /hooks/github                   # GitHub: content type application/json, a secret
+      event: github                         # emitted as github.<X-GitHub-Event>
+      type_header: X-GitHub-Event
+      dedup_header: X-GitHub-Delivery       # a redelivery is dropped
+      verify: { kind: github, secret: "${secrets.github_webhook_secret}" }
+    - path: /hooks/deploy                   # anything that can send a bearer token
+      event: deploy.requested
+      verify: { kind: token, token: "${secrets.deploy_hook_token}" }
+restart: { base: 1s, max: 60s }

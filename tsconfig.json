@@ -6,6 +6,7 @@
     { "path": "packages/connector-sdk" },
     { "path": "connectors/email" },
     { "path": "connectors/ftp" },
-    { "path": "connectors/chat" }
+    { "path": "connectors/chat" },
+    { "path": "connectors/webhook" }
   ]
 }

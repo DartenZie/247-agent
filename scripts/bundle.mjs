@@ -15,6 +15,7 @@ const PROGRAMS = {
   'connector-email': 'connectors/email/src/main.ts',
   'connector-ftp': 'connectors/ftp/src/main.ts',
   'connector-chat': 'connectors/chat/src/main.ts',
+  'connector-webhook': 'connectors/webhook/src/main.ts',
 };
 
 const BANNER = [

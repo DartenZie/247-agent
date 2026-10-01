@@ -1,0 +1,12 @@
+{
+  "name": "@247-agent/connector-webhook",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Webhook connector: a small HTTP server that verifies incoming requests per route and emits them as events.",
+  "type": "module",
+  "main": "dist/main.js",
+  "dependencies": {
+    "@247-agent/connector-sdk": "0.1.0",
+    "zod": "^4.6.5"
+  }
+}

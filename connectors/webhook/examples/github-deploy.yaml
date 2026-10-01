@@ -1,0 +1,34 @@
+# Example — deploy a site when main is pushed on GitHub, and tell the chat when a pull
+# request is opened. Deterministic: no model call. Drop this file next to an `agent.yaml`
+# whose `connectors:` includes the webhook manifest (docs/examples/connectors.d/webhook.yaml)
+# and, for the second task, the chat one.
+#
+#   node packages/cli/dist/main.js validate connectors/webhook/examples/github-deploy.yaml
+#
+# The connector emits `github.<X-GitHub-Event>` for every verified delivery, deduplicated
+# on X-GitHub-Delivery, so GitHub's "Redeliver" never deploys twice.
+
+tasks:
+  - name: deploy_on_push
+    trigger:
+      kind: event
+      type: github.push
+      filter: "payload.body.ref == 'refs/heads/main' && payload.body.repository.full_name == 'acme/site'"
+    concurrency: 1
+    timeout: 10m
+    action:
+      kind: shell
+      cmd: [/usr/local/bin/deploy-site, '${event.payload.body.after}']
+    retry: { attempts: 1 }
+
+  - name: announce_pull_request
+    trigger:
+      kind: event
+      type: github.pull_request
+      filter: "payload.body.action == 'opened'"
+    action:
+      kind: connector
+      connector: chat
+      op: send
+      args:
+        text: "PR #${event.payload.body.number}: ${event.payload.body.pull_request.title}\n${event.payload.body.pull_request.html_url}"
