@@ -46,9 +46,9 @@ export interface TgInlineKeyboardButton {
   callback_data: string;
 }
 
-/** `from` as the events carry it. */
+/** `from` as the events carry it: a Telegram user id, or a Matrix user id (`@miro:example.org`). */
 export interface From {
-  id: number | null;
+  id: number | string | null;
   name: string;
   username: string | null;
 }
@@ -57,11 +57,12 @@ export interface From {
 export interface ChatMessagePayload {
   text: string;
   from: From;
-  message_id: number;
+  /** A Telegram message id (number) or a Matrix event id (`$…`). */
+  message_id: number | string;
   chat_id: string;
   date: string;
   /** The message this one replies to, when it does. */
-  reply_to: number | null;
+  reply_to: number | string | null;
   [key: string]: unknown;
 }
 
@@ -76,9 +77,9 @@ export interface ChatReplyPayload {
   text: string;
   from: From;
   /** The question's message id, as `ask` returned it. */
-  message_id: number;
+  message_id: number | string;
   chat_id: string;
-  /** The answering message's id for a text reply; null for a button tap. */
-  answer_message_id: number | null;
+  /** The answering message's id for a text reply; null for a button tap or a reaction. */
+  answer_message_id: number | string | null;
   [key: string]: unknown;
 }
