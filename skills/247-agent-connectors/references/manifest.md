@@ -111,15 +111,53 @@ naming an option, is emitted as `chat.reply` with `{correlation_id, approved, ch
 from, message_id, chat_id}` and the same `correlation_id` on the event. `approved` is true
 for the first option. Full reference: `connectors/chat/README.md`.
 
+## The webhook connector (`connectors/webhook`)
+
+Generic HTTP in, `transport: none`, no ops. `listen` (`{host, port}`, default
+`127.0.0.1:8787`, or `{path, mode}` for a Unix socket), `routes` (each `path`, `event`,
+optional `type_header` appending `.<header value>`, `dedup_header` for the delivery id,
+`methods`, and `verify`: `{kind: github, secret}`, `{kind: gitlab, token}`, `{kind:
+hmac, secret, header, algorithm, encoding, prefix}`, `{kind: token, token, header,
+scheme}` or `{kind: none}`), `max_body`, `drop_headers`, `trust_proxy`. Payload
+`{route, method, path, query, headers, content_type, body_format, body, remote,
+received_at}` with the body parsed for JSON and forms; credential headers never stored.
+Answers 202 emitted, 200 duplicate, 401 bad signature, 503 core down (retry). Full
+reference: `connectors/webhook/README.md`.
+
+## The github connector (`connectors/github`)
+
+GitHub REST, ops only, confined to `repos: [owner/name, …]` (`token`, optional
+`api_base` for GHE). Every op takes `repo: owner/name` or `owner` + `repo` (default: the
+first repo). List ops return `{repo, <items>: […]}` for the poller: `list_pull_requests`
+→ `pull_requests`, `list_issues` → `issues`, `list_comments` → `comments`,
+`list_commits` → `commits`, `list_workflow_runs` → `workflow_runs`, `search_issues` →
+`issues`; plus `get_pull_request`, `get_pull_request_diff`, `get_issue` and the writes
+`create_issue`, `update_issue`, `add_comment`, `add_labels`, `remove_label`,
+`create_pull_request`. Full reference: `connectors/github/README.md`.
+
+## The jira connector (`connectors/jira`)
+
+Jira Cloud (API v3, rich text converted from and to ADF) or Data Center (v2), ops only,
+confined to `projects: [KEY, …]` (`base_url`; `email` + `api_token`, `token`, or
+`username` + `password`). `search {jql, fields?, limit?}` → `{jql, issues}` with the query
+wrapped as `project in (…) AND (…)`; `get_issue`, `list_comments`, `create_issue`,
+`update_issue`, `add_comment`, `list_transitions`, `transition_issue` (by name, id or
+target status). Poll it with `items: issues`, `item_key: key`. Full reference:
+`connectors/jira/README.md`.
+
 ## Using an existing MCP server
 
 ```yaml
 name: github
-exec: ["npx", "-y", "@modelcontextprotocol/server-github"]
+exec: ["github-mcp-server", "stdio", "--read-only", "--toolsets", "pull_requests,issues"]
 transport: stdio
-ops: [list_pull_requests, get_pull_request]
+ops: []                                        # list what it serves, then pin the ones you use
 env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secrets.github_token}" }
 ```
+
+Its tools return their own shapes (often a bare array: leave the poller's `items` out);
+run an op with `oa run` before writing `items` and `item_key`. The bundled `github`
+connector is the scoped alternative.
 
 Turn its ops into events with the built-in poller below, or with a cron task that calls
 the op and fans out with `emit … each` and a `dedup_key` when the op takes a cursor.

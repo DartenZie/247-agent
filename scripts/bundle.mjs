@@ -16,6 +16,8 @@ const PROGRAMS = {
   'connector-ftp': 'connectors/ftp/src/main.ts',
   'connector-chat': 'connectors/chat/src/main.ts',
   'connector-webhook': 'connectors/webhook/src/main.ts',
+  'connector-github': 'connectors/github/src/main.ts',
+  'connector-jira': 'connectors/jira/src/main.ts',
 };
 
 const BANNER = [

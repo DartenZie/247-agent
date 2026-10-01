@@ -40,7 +40,7 @@ packages/core/           daemon: config, store, bus, actions, connectors, execut
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
-connectors/<name>/       one package per connector (email, chat, ...)
+connectors/<name>/       one package per connector (email, ftp, chat, webhook, github, jira)
 docs/                        ARCHITECTURE.md, examples/ (agent.yaml, website-updates.yaml, connectors.d/)
 skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
 ```

@@ -59,7 +59,7 @@ describe('oa validate', () => {
     expect(out).toEqual([`ok ${join(EXAMPLES, 'decide-triage.yaml')} (2 tasks)`]);
     out = [];
     expect(await main(['validate', join(EXAMPLES, 'agent.yaml')], io)).toBe(0);
-    expect(out).toHaveLength(10); // agent.yaml, its tasks file, eight connector manifests
+    expect(out).toHaveLength(12); // agent.yaml, its tasks file, ten connector manifests
     expect(err).toEqual([]);
   });
 

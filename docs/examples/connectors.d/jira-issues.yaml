@@ -1,0 +1,14 @@
+# The built-in poller over the jira connector (jira.yaml): every 10 minutes it runs a JQL
+# search and emits `jira.issue_created` once per issue key it has not seen before.
+name: jira_new_issues
+builtin: poller
+config:
+  schedule: "*/10 * * * *"
+  connector: jira
+  op: search
+  args: { jql: "labels = website AND statusCategory = new ORDER BY created DESC", limit: 50 }
+  items: "issues"
+  item_key: "key"
+  event: jira.issue_created
+  first_run: skip          # issues open at install time are not news
+  keep: 1000

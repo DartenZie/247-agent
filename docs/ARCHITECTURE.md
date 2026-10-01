@@ -722,9 +722,19 @@ the config reference); `ftp` (`connectors/ftp`, done: SFTP, FTP or FTPS; ops `li
 over the Bot API with long polling, the `getUpdates` offset and the open questions kept in
 state; emits `chat.message` for every message in the configured chat and `chat.reply`,
 carrying the `correlation_id` an `ask` received, when a button is tapped or an option is
-typed as a reply; ops `send`, `ask`; `backend: telegram` leaves room for Matrix). Planned:
-`github`, `jira` (both thin wrappers or direct use of their official MCP servers +
-`poller`), `webhook` (generic HTTP in), `poller` (built-in).
+typed as a reply; ops `send`, `ask`; `backend: telegram` leaves room for Matrix); `webhook`
+(`connectors/webhook`, done: generic HTTP in, `transport: none`; routes by path, each
+verified by a GitHub signature, an HMAC, a token or nothing, emitted as the route's event
+(plus `.<type_header>`), deduplicated on a delivery header; answers 202/200/4xx/503 so
+senders know whether to retry); `github` (`connectors/github`, done: a thin REST wrapper
+confined to the configured `repos`; list ops for PRs, issues, comments, commits and
+workflow runs shaped `{<items>: […]}` for the poller, plus comment/label/issue/PR writes;
+GitHub's own `github-mcp-server` works in its place, documented there); `jira`
+(`connectors/jira`, done: a thin REST wrapper for Cloud (API v3, rich text converted from
+and to ADF) or Data Center (v2), confined to the configured `projects`, JQL wrapped as
+`project in (…) AND (…)` with unbalanced queries refused; search, issues, comments,
+transitions; Atlassian's hosted MCP server needs a browser OAuth flow, so the wrapper is
+the unattended path); `poller` (built-in, above).
 
 ## 7. Configuration layout
 
@@ -1013,6 +1023,9 @@ packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient
 connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
 connectors/ftp/          # ssh2-sftp-client (SFTP) + basic-ftp (FTP/FTPS), paths confined to a root
 connectors/chat/         # Telegram Bot API over fetch (long polling), offset and pending questions in state
+connectors/webhook/      # node:http receiver: routes, HMAC/token verification, body parsing, one event per request
+connectors/github/       # GitHub REST over fetch, confined to configured repos
+connectors/jira/         # Jira REST (Cloud v3 with ADF, Data Center v2) over fetch, confined to configured projects
 docs/                        # ARCHITECTURE.md, examples/
 ```
 

@@ -1,0 +1,14 @@
+# Jira connector manifest (ARCHITECTURE §6): a thin REST wrapper for Jira Cloud (API v3) or
+# Data Center (API v2), ops only, confined to the projects listed. The poller in
+# jira-issues.yaml turns a JQL search into events. Full reference: connectors/jira/README.md.
+name: jira
+exec: ["247-agent-connector-jira"]
+transport: stdio
+ops: [search, get_issue, list_comments, add_comment, list_transitions, transition_issue]
+config:
+  base_url: https://acme.atlassian.net      # Cloud; a Data Center base URL works too
+  email: "${secrets.jira_email}"            # Cloud: account email + API token
+  api_token: "${secrets.jira_api_token}"
+  # token: "${secrets.jira_pat}"            # Data Center: a personal access token instead
+  projects: [SITE]                          # every key and query is confined to these
+restart: { base: 1s, max: 60s }
