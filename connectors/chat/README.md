@@ -6,8 +6,8 @@ every message from the configured chat as a `chat.message` event; `send` posts a
 `ask` posts a question with its options (Approve / Reject by default) and emits the answer
 as a `chat.reply` event carrying the `correlation_id` the asking task passed in, which is
 what a `wait` step matches on (see `docs/examples/website-updates.yaml`, task
-`approve_general_change`). Ops, events and state keys are the same on both backends, so a
-task file does not change when the backend does.
+`approve_general_change`). Ops and events are the same on both backends, so a task file
+does not change when the backend does (the state keys differ, see [State](#state)).
 
 ```
 npm run build

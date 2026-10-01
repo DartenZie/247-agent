@@ -45,6 +45,15 @@ describe('send', () => {
     });
   });
 
+  it('takes reply_to as a number or a numeric string, and refuses anything else', async () => {
+    const { tg, bot } = setup();
+    await bot.send({ text: 'x', reply_to: '7' });
+    expect(tg.of('sendMessage')[0]?.params).toMatchObject({ reply_parameters: { message_id: 7 } });
+    for (const bad of ['$evt:example.org', ' ', '0x10', '1e3']) {
+      await expect(bot.send({ text: 'x', reply_to: bad })).rejects.toThrow(/Telegram message id/);
+    }
+  });
+
   it('accepts an allowed chat id and refuses any other', async () => {
     const { tg, bot } = setup({ allowed_chat_ids: [43] });
     await bot.send({ text: 'x', chat_id: 43 });

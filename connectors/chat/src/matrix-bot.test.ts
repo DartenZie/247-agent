@@ -293,6 +293,49 @@ describe('ask → chat.reply', () => {
     );
     expect(core.ofType('chat.reply')[0]?.payload).toMatchObject({ choice: 'Reject' });
   });
+
+  it('answers from later in the thread, where the reply fallback points elsewhere', async () => {
+    const { bot, core } = await setup();
+    await bot.ask({ text: 'Q', correlation_id: 'cor_t2' });
+    await bot.handleEvent(
+      ROOM,
+      msg('Approve', {
+        'm.relates_to': {
+          rel_type: 'm.thread',
+          event_id: '$sent1',
+          is_falling_back: true,
+          'm.in_reply_to': { event_id: '$earlier-in-thread' },
+        },
+      }),
+    );
+    expect(core.ofType('chat.reply')[0]?.payload).toMatchObject({ choice: 'Approve' });
+    expect(core.ofType('chat.message')).toHaveLength(0);
+  });
+
+  it('keeps both a concurrent ask and an answer in pending', async () => {
+    const { bot, core } = await setup();
+    const first = await bot.ask({ text: 'Q1', correlation_id: 'cor_a' });
+    // A slow core that, like the real one, hands out copies of state: the answer is still
+    // being emitted while the second ask stores its question.
+    core.getState = (key) => Promise.resolve(structuredClone(core.state.get(key)));
+    const emit = core.emitEvent.bind(core);
+    core.emitEvent = async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return emit(input);
+    };
+    const [, second] = await Promise.all([
+      bot.handleEvent(ROOM, {
+        ...msg(''),
+        type: 'm.reaction',
+        content: {
+          'm.relates_to': { rel_type: 'm.annotation', event_id: first.message_id, key: '1️⃣' },
+        },
+      }),
+      bot.ask({ text: 'Q2', correlation_id: 'cor_b' }),
+    ]);
+    expect(core.ofType('chat.reply')).toHaveLength(1);
+    expect(Object.keys(core.state.get(STATE_PENDING) as object)).toEqual([second.message_id]);
+  });
 });
 
 describe('messages', () => {

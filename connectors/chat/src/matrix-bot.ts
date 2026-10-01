@@ -16,17 +16,27 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { JsonValue } from '@247-agent/connector-sdk';
 
-import type { AskArgs, CoreLike, SendArgs, SentMessage } from './bot.js';
+import {
+  loadPendingState,
+  savePendingState,
+  STATE_PENDING,
+  type AskArgs,
+  type CoreLike,
+  type SendArgs,
+  type SentMessage,
+} from './bot.js';
 import { allowedChats, type MatrixConfig } from './config.js';
 import { MatrixError, seg, type MatrixApi } from './matrix.js';
 import type { ChatMessagePayload, ChatReplyPayload, From } from './types.js';
 import { matchOption } from './updates.js';
 
 export const STATE_SINCE = 'since';
-export const STATE_PENDING = 'pending';
+export { STATE_PENDING };
 
 /** Reaction keys for options 1..10, in order. */
 export const OPTION_KEYS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+/** `OPTION_KEYS` without the variation selector, for matching what clients send. */
+const OPTION_KEYS_NORMALIZED = OPTION_KEYS.map(normalizeKey);
 
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
@@ -64,6 +74,8 @@ interface Relation {
   rel_type?: string;
   event_id?: string;
   key?: string;
+  /** On a thread relation: `m.in_reply_to` is only the fallback for thread-unaware clients. */
+  is_falling_back?: boolean;
   'm.in_reply_to'?: { event_id?: string };
 }
 
@@ -80,6 +92,8 @@ export class MatrixBot {
   private failing: { event_id: string; attempts: number } | undefined;
   private readonly names = new Map<string, string>();
   private readonly warnedEncrypted = new Set<string>();
+  /** Serialises read-modify-write of `pending` between `ask` and the sync loop. */
+  private pendingLock: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly config: MatrixConfig,
@@ -152,21 +166,22 @@ export class MatrixBot {
       content['m.relates_to'] = { 'm.in_reply_to': { event_id: replyTo } };
     }
     const eventId = await this.sendEvent(room, 'm.room.message', content);
-    const pending = await this.loadPending();
-    pending[eventId] = {
-      correlation_id: args.correlation_id ?? null,
-      options,
-      chat_id: room,
-      asked_at: new Date().toISOString(),
-    };
-    await this.savePending(pending);
-    for (const [i] of options.entries()) {
+    await this.withPending(async (pending) => {
+      pending[eventId] = {
+        correlation_id: args.correlation_id ?? null,
+        options,
+        chat_id: room,
+        asked_at: new Date().toISOString(),
+      };
+      await this.savePending(pending);
+    });
+    for (const key of OPTION_KEYS.slice(0, options.length)) {
       try {
         await this.sendEvent(room, 'm.reaction', {
-          'm.relates_to': { rel_type: 'm.annotation', event_id: eventId, key: OPTION_KEYS[i] },
+          'm.relates_to': { rel_type: 'm.annotation', event_id: eventId, key },
         });
       } catch (err) {
-        this.log(`chat: could not add the ${OPTION_KEYS[i] ?? ''} reaction: ${errorText(err)}`);
+        this.log(`chat: could not add the ${key} reaction: ${errorText(err)}`);
       }
     }
     return { message_id: eventId, chat_id: room, options };
@@ -279,21 +294,36 @@ export class MatrixBot {
       return; // an edit; Telegram's edited messages are ignored too
     }
     const text = stripReplyFallback(body);
-    const replyTo =
-      relation?.['m.in_reply_to']?.event_id ??
-      (relation?.rel_type === 'm.thread' ? relation.event_id : undefined) ??
-      null;
+    const thread = relation?.rel_type === 'm.thread' ? relation.event_id : undefined;
+    // In a thread, `m.in_reply_to` with `is_falling_back` points at the thread's latest
+    // event, not at what the user answered: the thread root is the question then.
+    const inReplyTo =
+      thread !== undefined && relation?.is_falling_back === true
+        ? undefined
+        : relation?.['m.in_reply_to']?.event_id;
+    const replyTo = inReplyTo ?? thread ?? null;
     const from = await this.fromOf(event.sender);
-    if (replyTo !== null) {
-      const pending = await this.loadPending();
-      const question = pending[replyTo];
-      const choice = question === undefined ? undefined : matchAnswer(text, question.options);
-      if (question !== undefined && choice !== undefined) {
-        await this.answer(pending, replyTo, question, choice, {
-          text,
-          from,
-          answer_message_id: event.event_id,
-        });
+    const candidates = [replyTo, thread].filter(
+      (id): id is string => id !== null && id !== undefined,
+    );
+    if (candidates.length > 0) {
+      const answered = await this.withPending(async (pending) => {
+        for (const questionId of candidates) {
+          const question = pending[questionId];
+          const choice = question === undefined ? undefined : matchAnswer(text, question.options);
+          if (question !== undefined && choice !== undefined) {
+            await this.answer(pending, questionId, question, choice, {
+              text,
+              from,
+              answer_message_id: event.event_id,
+            });
+            return { questionId, chat_id: question.chat_id, choice };
+          }
+        }
+        return undefined;
+      });
+      if (answered !== undefined) {
+        await this.confirm(answered.chat_id, answered.questionId, answered.choice);
         return;
       }
     }
@@ -313,21 +343,25 @@ export class MatrixBot {
   }
 
   private async handleReaction(event: MxEvent, questionId: string, key: string): Promise<void> {
-    const pending = await this.loadPending();
-    const question = pending[questionId];
-    if (question === undefined) {
-      return; // a reaction to anything else, or to a question already answered
-    }
-    const index = OPTION_KEYS.map(normalizeKey).indexOf(normalizeKey(key));
-    const choice = question.options[index];
-    if (choice === undefined) {
-      return;
-    }
-    await this.answer(pending, questionId, question, choice, {
-      text: choice,
-      from: await this.fromOf(event.sender),
-      answer_message_id: null,
+    const answered = await this.withPending(async (pending) => {
+      const question = pending[questionId];
+      if (question === undefined) {
+        return undefined; // a reaction to anything else, or to a question already answered
+      }
+      const choice = question.options[OPTION_KEYS_NORMALIZED.indexOf(normalizeKey(key))];
+      if (choice === undefined) {
+        return undefined;
+      }
+      await this.answer(pending, questionId, question, choice, {
+        text: choice,
+        from: await this.fromOf(event.sender),
+        answer_message_id: null,
+      });
+      return { chat_id: question.chat_id, choice };
     });
+    if (answered !== undefined) {
+      await this.confirm(answered.chat_id, questionId, answered.choice);
+    }
   }
 
   private async answer(
@@ -357,8 +391,12 @@ export class MatrixBot {
     delete pending[questionId];
     await this.savePending(pending);
     this.log(`chat: question ${questionId} answered: ${choice}`);
+  }
+
+  /** The `Recorded: <choice>` notice in reply to an answered question; best effort. */
+  private async confirm(room: string, questionId: string, choice: string): Promise<void> {
     try {
-      await this.sendEvent(question.chat_id, 'm.room.message', {
+      await this.sendEvent(room, 'm.room.message', {
         msgtype: 'm.notice',
         body: `Recorded: ${choice}`,
         'm.relates_to': { 'm.in_reply_to': { event_id: questionId } },
@@ -366,6 +404,16 @@ export class MatrixBot {
     } catch (err) {
       this.log(`chat: could not confirm the answer: ${errorText(err)}`);
     }
+  }
+
+  /** Runs `fn` on the stored questions, one caller at a time, so no save loses another's change. */
+  private withPending<T>(fn: (pending: PendingMap) => Promise<T>): Promise<T> {
+    const run = this.pendingLock.then(async () => fn(await loadPendingState<Pending>(this.core)));
+    this.pendingLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async sendEvent(
@@ -420,10 +468,11 @@ export class MatrixBot {
           `/profile/${seg(userId)}/displayname`,
         );
         name = profile.displayname ?? localpart(userId);
+        this.names.set(userId, name);
       } catch {
+        // Not cached: a transient failure should not pin the fallback name for good.
         name = localpart(userId);
       }
-      this.names.set(userId, name);
     }
     return { id: userId, name, username: userId };
   }
@@ -452,25 +501,8 @@ export class MatrixBot {
     await this.core.putState(STATE_SINCE, since);
   }
 
-  private async loadPending(): Promise<PendingMap> {
-    const stored = await this.core.getState(STATE_PENDING);
-    return stored !== null && typeof stored === 'object' && !Array.isArray(stored)
-      ? (stored as PendingMap)
-      : {};
-  }
-
   private async savePending(pending: PendingMap): Promise<void> {
-    const keys = Object.keys(pending);
-    if (keys.length > this.config.pending_limit) {
-      keys
-        .sort((a, b) => (pending[a]?.asked_at ?? '').localeCompare(pending[b]?.asked_at ?? ''))
-        .slice(0, keys.length - this.config.pending_limit)
-        .forEach((k) => {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete pending[k];
-        });
-    }
-    await this.core.putState(STATE_PENDING, pending);
+    await savePendingState(this.core, pending, this.config.pending_limit);
   }
 }
 
@@ -484,13 +516,13 @@ export function matchAnswer(text: string, options: string[]): string | undefined
   if (/^\d{1,2}$/.test(wanted)) {
     return options[Number(wanted) - 1];
   }
-  const index = OPTION_KEYS.map(normalizeKey).indexOf(normalizeKey(wanted));
+  const index = OPTION_KEYS_NORMALIZED.indexOf(normalizeKey(wanted));
   return index < 0 ? undefined : options[index];
 }
 
 /** Keycaps arrive with or without the emoji variation selector; compare without it. */
 function normalizeKey(key: string): string {
-  return key.replace(/️/g, '').trim();
+  return key.replace(/\uFE0F/g, '').trim();
 }
 
 /**

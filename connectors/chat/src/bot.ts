@@ -343,25 +343,39 @@ export class ChatBot {
   }
 
   private async loadPending(): Promise<PendingMap> {
-    const stored = await this.core.getState(STATE_PENDING);
-    return stored !== null && typeof stored === 'object' && !Array.isArray(stored)
-      ? (stored as PendingMap)
-      : {};
+    return loadPendingState<Pending>(this.core);
   }
 
   private async savePending(pending: PendingMap): Promise<void> {
-    const keys = Object.keys(pending);
-    if (keys.length > this.config.pending_limit) {
-      keys
-        .sort((a, b) => (pending[a]?.asked_at ?? '').localeCompare(pending[b]?.asked_at ?? ''))
-        .slice(0, keys.length - this.config.pending_limit)
-        .forEach((k) => {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete pending[k];
-        });
-    }
-    await this.core.putState(STATE_PENDING, pending);
+    await savePendingState(this.core, pending, this.config.pending_limit);
   }
+}
+
+/** The open questions in state (`pending`), shared by both backends. */
+export async function loadPendingState<T>(core: CoreLike): Promise<Record<string, T>> {
+  const stored = await core.getState(STATE_PENDING);
+  return stored !== null && typeof stored === 'object' && !Array.isArray(stored)
+    ? (stored as Record<string, T>)
+    : {};
+}
+
+/** Stores the open questions, keeping the newest `limit` by `asked_at`. */
+export async function savePendingState<T extends { asked_at: string; [key: string]: JsonValue }>(
+  core: CoreLike,
+  pending: Record<string, T>,
+  limit: number,
+): Promise<void> {
+  const keys = Object.keys(pending);
+  if (keys.length > limit) {
+    keys
+      .sort((a, b) => (pending[a]?.asked_at ?? '').localeCompare(pending[b]?.asked_at ?? ''))
+      .slice(0, keys.length - limit)
+      .forEach((k) => {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete pending[k];
+      });
+  }
+  await core.putState(STATE_PENDING, pending);
 }
 
 /** The option a button tap names, when the tap belongs to this (still open) question. */
@@ -383,7 +397,7 @@ function replyParameters(replyTo: SendArgs['reply_to']): Record<string, unknown>
   if (replyTo === undefined) {
     return {};
   }
-  const id = Number(replyTo);
+  const id = typeof replyTo === 'number' ? replyTo : /^\d+$/.test(replyTo) ? Number(replyTo) : NaN;
   if (!Number.isInteger(id)) {
     throw new Error('reply_to must be a Telegram message id (a number) on the telegram backend');
   }
