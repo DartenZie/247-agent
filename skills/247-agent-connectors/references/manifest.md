@@ -122,7 +122,8 @@ to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans `list` ou
 ## The chat connector (`connectors/chat`)
 
 A Telegram bot (`token`, `chat_id`; optional `allowed_chat_ids`, `poll_timeout`, `initial`,
-`ask_options`). Push-style: long-polls the Bot API with the offset in state and emits
+`ask_options`), or a Matrix user with `backend: matrix` (`homeserver`, `token`, `chat_id`
+as a quoted room id `"!…:server"` or alias `"#…:server"`; unencrypted rooms only). Push-style: long-polls the Bot API with the offset in state and emits
 `chat.message` (`{text, from: {id, name, username}, message_id, chat_id, date, reply_to}`)
 for every message in the configured chat, ignoring other chats. Ops `send`
 (`{text, parse_mode?, reply_to?}` → `{message_id, chat_id}`) and `ask` (`{text,
@@ -130,7 +131,10 @@ correlation_id, options?}` → `{message_id, chat_id, options}`), which posts in
 (`Approve`/`Reject` by default) and stores the question in state; the tap, or a reply
 naming an option, is emitted as `chat.reply` with `{correlation_id, approved, choice, text,
 from, message_id, chat_id}` and the same `correlation_id` on the event. `approved` is true
-for the first option. Full reference: `connectors/chat/README.md`.
+for the first option. On Matrix, ids are strings (event ids `$…`, room ids, user ids
+`@…`) and `ask` lists the options with keycap reactions (1️⃣ 2️⃣ …, at most 10) that
+the user taps, or replies with an option's text or number. Full reference:
+`connectors/chat/README.md`.
 
 ## The webhook connector (`connectors/webhook`)
 

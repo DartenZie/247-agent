@@ -2,14 +2,18 @@
 import type { EmitInput, EmitResult, JsonValue } from '@247-agent/connector-sdk';
 
 import type { CoreLike } from './bot.js';
-import { parseConfig, type ChatConfig } from './config.js';
+import { parseConfig, type TelegramConfig } from './config.js';
 import { createTelegramApi, type TelegramApi } from './telegram.js';
 import type { TgMessage, TgUpdate } from './types.js';
 
 export const TOKEN = '123456:secret-token';
 
-export function config(overrides: Record<string, unknown> = {}): ChatConfig {
-  return parseConfig({ token: TOKEN, chat_id: 42, poll_timeout: 0, ...overrides });
+export function config(overrides: Record<string, unknown> = {}): TelegramConfig {
+  const c = parseConfig({ token: TOKEN, chat_id: 42, poll_timeout: 0, ...overrides });
+  if (c.backend !== 'telegram') {
+    throw new Error('not a telegram config');
+  }
+  return c;
 }
 
 export interface ApiCall {
@@ -35,7 +39,7 @@ export class FakeTelegram {
   private readonly responders = new Map<string, Responder>();
   private readonly failures = new Map<string, ApiFailure[]>();
 
-  constructor(cfg: ChatConfig = config()) {
+  constructor(cfg: TelegramConfig = config()) {
     this.api = createTelegramApi({
       token: cfg.token,
       apiBase: cfg.api_base,

@@ -1,6 +1,13 @@
 # Chat connector manifest (ARCHITECTURE §6): a Telegram bot that relays the chat's messages
 # as chat.message events, asks questions with inline buttons and emits the answers as
 # chat.reply. Full config reference: connectors/chat/README.md.
+#
+# For Matrix instead, replace the config with (same ops, events and task files):
+#   backend: matrix
+#   homeserver: https://matrix.example.org
+#   token: "${secrets.chat_token}"        # the bot user's access token
+#   chat_id: "!AbCdEf:example.org"        # an unencrypted room id or "#alias:example.org"
+# `ask` then lists the options with keycap reactions (1️⃣ 2️⃣ …) to tap.
 name: chat
 exec: ["247-agent-connector-chat"]
 transport: stdio
@@ -9,7 +16,7 @@ ops: [send, ask]
 config:
   token: "${secrets.chat_token}"        # from @BotFather
   chat_id: "${secrets.chat_id}"         # the one chat the bot listens to and posts in
-  # backend: telegram                   # the only backend today
+  # backend: telegram                   # the default; matrix: see above
   # allowed_chat_ids: []                # more chats to relay; send/ask may target them with chat_id
   # poll_timeout: 30                    # getUpdates long-poll seconds (0..50)
   # initial: none                       # first start: skip the backlog, or `all`

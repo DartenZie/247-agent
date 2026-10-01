@@ -761,7 +761,7 @@ a folder). When the op takes a cursor and returns only what is new, a cron task 
 |---|---|---|
 | `email` | IMAP or POP3 in, SMTP out | [`connectors/email/README.md`](../connectors/email/README.md) |
 | `ftp` | files over SFTP, FTP or FTPS, confined to a `root` | [`connectors/ftp/README.md`](../connectors/ftp/README.md) |
-| `chat` | a Telegram bot: messages as events, `send`, `ask` with an answer event | [`connectors/chat/README.md`](../connectors/chat/README.md) |
+| `chat` | a Telegram bot or a Matrix user: messages as events, `send`, `ask` with an answer event | [`connectors/chat/README.md`](../connectors/chat/README.md) |
 | `webhook` | generic HTTP in: verified requests (GitHub, GitLab, HMAC, token) as events | [`connectors/webhook/README.md`](../connectors/webhook/README.md) |
 | `github` | GitHub REST, confined to listed repositories; pair with the poller | [`connectors/github/README.md`](../connectors/github/README.md) |
 | `jira` | Jira Cloud or Data Center REST, confined to listed projects; pair with the poller | [`connectors/jira/README.md`](../connectors/jira/README.md) |
@@ -1107,8 +1107,8 @@ Done since as well: `batch: true` on `llm` actions (Message Batches at half pric
 
 Done since as well: the `webhook`, `github` and `jira` connectors.
 
-Not implemented yet: a Matrix backend for `chat`, a network allowlist for sandboxed
-agents.
+Not implemented yet: a network allowlist for sandboxed agents, end-to-end encrypted
+Matrix rooms (the Matrix backend of `chat` reads unencrypted rooms).
 
 ## 11. Troubleshooting
 

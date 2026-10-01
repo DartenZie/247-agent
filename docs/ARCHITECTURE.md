@@ -752,7 +752,10 @@ the config reference); `ftp` (`connectors/ftp`, done: SFTP, FTP or FTPS; ops `li
 over the Bot API with long polling, the `getUpdates` offset and the open questions kept in
 state; emits `chat.message` for every message in the configured chat and `chat.reply`,
 carrying the `correlation_id` an `ask` received, when a button is tapped or an option is
-typed as a reply; ops `send`, `ask`; `backend: telegram` leaves room for Matrix); `webhook`
+typed as a reply; ops `send`, `ask`; `backend: matrix` is the same connector as a Matrix
+user over the Client-Server API: `/sync` long polling with the `since` token in state,
+questions answered by tapping the keycap reactions (1️⃣ 2️⃣ …) the bot adds to its own
+question or by replying with an option; unencrypted rooms only); `webhook`
 (`connectors/webhook`, done: generic HTTP in, `transport: none`; routes by path, each
 verified by a GitHub signature, an HMAC, a token or nothing, emitted as the route's event
 (plus `.<type_header>`), deduplicated on a delivery header; answers 202/200/4xx/503 so
@@ -1058,7 +1061,7 @@ packages/cli/            # `oa` (node:util parseArgs); talks to the socket
 packages/connector-sdk/  # helpers for TS connectors: connectorEnv(), CoreClient, defineTool/createConnectorServer/serveStdio, runConnector()
 connectors/email/        # imapflow (IMAP) + own POP3 client + nodemailer (SMTP) + mailparser
 connectors/ftp/          # ssh2-sftp-client (SFTP) + basic-ftp (FTP/FTPS), paths confined to a root
-connectors/chat/         # Telegram Bot API over fetch (long polling), offset and pending questions in state
+connectors/chat/         # Telegram Bot API over fetch (long polling) or the Matrix Client-Server API (/sync); cursor and pending questions in state
 connectors/webhook/      # node:http receiver: routes, HMAC/token verification, body parsing, one event per request
 connectors/github/       # GitHub REST over fetch, confined to configured repos
 connectors/jira/         # Jira REST (Cloud v3 with ADF, Data Center v2) over fetch, confined to configured projects
@@ -1144,8 +1147,9 @@ the agent sandbox has no network allowlist; `shell.user` is rejected.
 
 - Expression language: JMESPath (simple, ubiquitous) vs CEL (richer, typed). Start with
   JMESPath; the matcher is one function to swap.
-- Chat backend: Telegram is the least friction for a single user; Matrix if self-hosting
-  matters.
+- Chat backend: Telegram is the least friction for a single user; Matrix (built, unencrypted
+  rooms only) if self-hosting matters. End-to-end encryption would need a crypto store
+  (libolm/vodozemac) in the connector.
 - Whether `general_change` needs approval by default. The config supports both; start
   with approval on.
 - Whether `decide` should also reach TypeSafe directly (a `typesafe` provider type
