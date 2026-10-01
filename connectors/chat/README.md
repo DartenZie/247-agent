@@ -1,11 +1,13 @@
-# Chat connector (Telegram)
+# Chat connector (Telegram or Matrix)
 
-A Telegram bot for the human-in-the-loop parts of a workflow. A push-style connector: it
-long-polls the Bot API and emits every message from the configured chat as a
-`chat.message` event; `send` posts a message; `ask` posts a question with inline buttons
-(Approve / Reject by default) and emits the answer as a `chat.reply` event carrying the
-`correlation_id` the asking task passed in, which is what a `wait` step matches on (see
-`docs/examples/website-updates.yaml`, task `approve_general_change`).
+A chat bot for the human-in-the-loop parts of a workflow, on Telegram (the default) or
+Matrix ([below](#matrix)). A push-style connector: it long-polls the chat service and emits
+every message from the configured chat as a `chat.message` event; `send` posts a message;
+`ask` posts a question with its options (Approve / Reject by default) and emits the answer
+as a `chat.reply` event carrying the `correlation_id` the asking task passed in, which is
+what a `wait` step matches on (see `docs/examples/website-updates.yaml`, task
+`approve_general_change`). Ops, events and state keys are the same on both backends, so a
+task file does not change when the backend does.
 
 ```
 npm run build
@@ -21,7 +23,7 @@ transport: stdio
 emits: [chat.message, chat.reply]
 ops: [send, ask]
 config:
-  backend: telegram                     # only telegram today (the key is here for a Matrix backend)
+  backend: telegram                     # telegram (default) | matrix (see Matrix below)
   token: "${secrets.chat_token}"        # the bot token from @BotFather
   chat_id: "${secrets.chat_id}"         # the chat the bot talks to: a number, or @channelname
   allowed_chat_ids: []                  # more chats whose messages are relayed; send/ask may target them
@@ -75,6 +77,76 @@ the next start (Telegram keeps them for 24 hours), except on the very first star
   core as well.
 - The manifest's `ops` list is the boundary: an agent-facing copy of the manifest should
   list neither `send` nor `ask`.
+
+## Matrix
+
+The same connector with `backend: matrix` is a Matrix user instead of a Telegram bot:
+
+```yaml
+name: chat
+exec: ["247-agent-connector-chat"]
+transport: stdio
+emits: [chat.message, chat.reply]
+ops: [send, ask]
+config:
+  backend: matrix
+  homeserver: https://matrix.example.org   # the client API base of the bot's homeserver
+  token: "${secrets.chat_token}"           # the bot user's access token
+  chat_id: "!AbCdEf:example.org"           # a room id, or an alias like "#ops:example.org"
+  allowed_chat_ids: []                     # more rooms (ids or aliases) to relay; send/ask may target them
+  poll_timeout: 30                         # /sync long-poll wait in seconds, 0..120
+  initial: none                            # first start with no stored `since`: skip the room history | `all`
+  ask_options: [Approve, Reject]           # default options of `ask`, at most 10; the first means "approved"
+  pending_limit: 200
+  timeout: 30000                           # per API call, ms (/sync adds poll_timeout on top)
+```
+
+`homeserver`, `token` and `chat_id` are required. Remember to quote room ids and aliases in
+YAML (`!` and `#` are YAML syntax).
+
+### Getting a token and a room
+
+1. Register a user for the bot on your homeserver (for Synapse: `register_new_matrix_user`,
+   or any client), and invite it to the room the workflows use. At start the connector
+   joins every configured room (a no-op when already joined), which also accepts the
+   invite and resolves aliases.
+2. Log in once to get an access token, and store it as `chat_token`:
+
+   ```
+   curl -s -XPOST https://matrix.example.org/_matrix/client/v3/login \
+     -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"bot"},"password":"…","initial_device_display_name":"247-agent"}' | jq -r .access_token
+   ```
+
+   Don't log that device out: it invalidates the token.
+3. The room id is under the room's settings → Advanced in Element (`!…:example.org`); an
+   alias works as well.
+
+The room must **not be end-to-end encrypted**: the connector speaks the plain
+Client-Server API and sees only `m.room.encrypted` in an encrypted room, which it logs once
+(`chat: room … is encrypted …`) and otherwise ignores. Use an unencrypted room on a
+homeserver you run; messages to and from the bot then stay on that server.
+
+### How it differs from Telegram
+
+- **Questions.** Matrix has no inline buttons. `ask` posts the question with one keycap per
+  option (`1️⃣ Approve`, `2️⃣ Reject`, at most 10 options) and reacts to its own message
+  with those keycaps, so answering is one tap on a reaction. Replying to the question (or in
+  its thread) with an option's text, its number or its keycap answers too. The answer is
+  confirmed with a `Recorded: <choice>` notice in reply to the question; later reactions to
+  an answered question are ignored.
+- **Ids are strings.** `message_id`, `reply_to` and `answer_message_id` are event ids
+  (`$…`), `chat_id` is the room id (also when the config names an alias), `from.id` and
+  `from.username` are the user id (`@miro:example.org`) and `from.name` their display
+  name. `send`/`ask` take an event id as `reply_to` and a room id or configured alias as
+  `chat_id`.
+- **Formatting.** `parse_mode: HTML` sends `formatted_body` (Matrix's HTML subset) with a
+  tag-stripped `body`; `Markdown`/`MarkdownV2` are sent as typed.
+- **Messages.** `m.text` and `m.emote` become `chat.message`; notices (other bots), edits
+  and the bot's own messages are ignored. Reply fallbacks (`> <@user> quoted` lines some
+  clients prepend) are stripped from `text`.
+- **State.** The cursor is `since` (the `/sync` token) instead of `offset`; `pending` is
+  keyed by the question's event id. A room with more than 50 new events between two syncs
+  (the daemon was down a long while) logs that the older ones were skipped.
 
 ## Ops
 
@@ -176,8 +248,9 @@ for a text reply, whose own id is then `answer_message_id`.
 
 | key | value |
 |---|---|
-| `offset` | the next `update_id` to ask Telegram for; written after every handled update, so a restart does not replay |
-| `pending` | open questions, `"<chat_id>:<message_id>"` → `{ correlation_id, options, nonce, chat_id, asked_at }`, newest `pending_limit` kept |
+| `offset` | Telegram: the next `update_id` to ask for; written after every handled update, so a restart does not replay |
+| `since` | Matrix: the `/sync` token; written after every handled batch (a restart mid-batch replays that batch, whose events are deduplicated) |
+| `pending` | open questions, newest `pending_limit` kept. Telegram: `"<chat_id>:<message_id>"` → `{ correlation_id, options, nonce, chat_id, asked_at }`; Matrix: `"<event_id>"` → `{ correlation_id, options, chat_id, asked_at }` |
 
 `oa` can inspect both through `GET /v1/state/chat`. Deleting `offset` with `initial: all`
 replays the last 24 hours of updates; the events are deduplicated, but answered questions
@@ -192,18 +265,23 @@ Telegram's `retry_after` on a 429.
 
 ```
 connectors/chat/src/
-  config.ts     zod schema and defaults
-  telegram.ts   the Bot API over fetch: one POST per method, errors without the token
-  updates.ts    pure: classify an update, callback_data codec, keyboard layout, option matching
-  bot.ts        send, ask, the update handler and the poll loop over a narrow CoreLike port
-  main.ts       runConnector: getMe at start (a bad token exits non-zero), the two ops
+  config.ts       zod schema and defaults, one branch per backend
+  telegram.ts     the Bot API over fetch: one POST per method, errors without the token
+  updates.ts      pure: classify an update, callback_data codec, keyboard layout, option matching
+  bot.ts          Telegram: send, ask, the update handler and the poll loop over a narrow CoreLike port
+  matrix.ts       the Client-Server API over fetch: bearer token, errcode and retry_after_ms on errors
+  matrix-bot.ts   Matrix: join, send, ask with keycap reactions, the event handler and the sync loop
+  main.ts         runConnector: getMe / whoami + join at start (a bad token exits non-zero), the two ops
 ```
 
 Tests run without the network: `test-helpers.ts` has a fake Bot API behind the injected
 `fetch` (records every call, answers with defaults or scripted responses and failures) and
 an in-memory core (`state`, `events` with `dedup_key`). `bot.test.ts` covers the ops, the
 ask → reply flow for buttons and text replies, foreign chats, offset persistence and the
-poll loop's backoff. To try the real thing by hand:
+poll loop's backoff. `matrix-bot.test.ts` does the same for Matrix against a fake homeserver
+behind `fetch` (scripted `/sync` batches, recorded sends and reactions): alias resolution,
+reactions and text replies as answers, ignored edits and encrypted rooms, the `since`
+cursor, a retried batch and the 429 wait. To try the real thing by hand:
 
 ```
 OA_CORE_SOCKET=/tmp/x.sock OA_CONNECTOR_NAME=chat \

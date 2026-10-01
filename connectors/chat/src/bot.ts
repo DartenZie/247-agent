@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { EmitInput, EmitResult, JsonValue } from '@247-agent/connector-sdk';
 
-import { allowedChats, type ChatConfig } from './config.js';
+import { allowedChats, type TelegramConfig } from './config.js';
 import { TelegramError, type TelegramApi } from './telegram.js';
 import type { ChatMessagePayload, ChatReplyPayload, From, TgUpdate, TgUser } from './types.js';
 import { classifyUpdate, decodeCallback, inlineKeyboard, matchOption } from './updates.js';
@@ -26,7 +26,8 @@ export interface CoreLike {
 export interface SendArgs {
   text: string;
   parse_mode?: 'HTML' | 'Markdown' | 'MarkdownV2' | undefined;
-  reply_to?: number | undefined;
+  /** A Telegram message id, or a Matrix event id (`$…`). */
+  reply_to?: number | string | undefined;
   chat_id?: string | number | undefined;
 }
 
@@ -36,7 +37,7 @@ export interface AskArgs extends SendArgs {
 }
 
 export interface SentMessage {
-  message_id: number;
+  message_id: number | string;
   chat_id: string;
   [key: string]: JsonValue;
 }
@@ -69,7 +70,7 @@ export class ChatBot {
   private failing: { update_id: number; attempts: number } | undefined;
 
   constructor(
-    private readonly config: ChatConfig,
+    private readonly config: TelegramConfig,
     private readonly api: TelegramApi,
     private readonly core: CoreLike,
     private readonly log: (line: string) => void,
@@ -79,13 +80,13 @@ export class ChatBot {
   }
 
   /** Posts a message; `reply_to` quotes an earlier message of the same chat. */
-  async send(args: SendArgs): Promise<SentMessage> {
+  async send(args: SendArgs): Promise<SentMessage & { message_id: number }> {
     const chat_id = this.targetChat(args.chat_id);
     const result = await this.api.call<{ message_id: number }>('sendMessage', {
       chat_id,
       text: args.text,
       ...(args.parse_mode === undefined ? {} : { parse_mode: args.parse_mode }),
-      ...(args.reply_to === undefined ? {} : { reply_parameters: { message_id: args.reply_to } }),
+      ...replyParameters(args.reply_to),
     });
     return { message_id: result.message_id, chat_id };
   }
@@ -94,7 +95,7 @@ export class ChatBot {
    * Posts a question with one inline button per option and remembers it in state, so the
    * tap (or a text reply naming an option) becomes a `chat.reply` carrying `correlation_id`.
    */
-  async ask(args: AskArgs): Promise<SentMessage & { options: string[] }> {
+  async ask(args: AskArgs): Promise<SentMessage & { message_id: number; options: string[] }> {
     const chat_id = this.targetChat(args.chat_id);
     const options = (args.options ?? this.config.ask_options).map((o) => o.trim());
     if (options.length === 0 || options.some((o) => o === '')) {
@@ -105,7 +106,7 @@ export class ChatBot {
       chat_id,
       text: args.text,
       ...(args.parse_mode === undefined ? {} : { parse_mode: args.parse_mode }),
-      ...(args.reply_to === undefined ? {} : { reply_parameters: { message_id: args.reply_to } }),
+      ...replyParameters(args.reply_to),
       reply_markup: { inline_keyboard: inlineKeyboard(options, nonce) },
     });
     const pending = await this.loadPending();
@@ -375,6 +376,18 @@ function chosenOption(
     return undefined;
   }
   return question.options[decoded.index];
+}
+
+/** Telegram's `reply_parameters`; a Matrix-style event id is refused. */
+function replyParameters(replyTo: SendArgs['reply_to']): Record<string, unknown> {
+  if (replyTo === undefined) {
+    return {};
+  }
+  const id = Number(replyTo);
+  if (!Number.isInteger(id)) {
+    throw new Error('reply_to must be a Telegram message id (a number) on the telegram backend');
+  }
+  return { reply_parameters: { message_id: id } };
 }
 
 function pendingKey(chatId: string, messageId: number): string {
