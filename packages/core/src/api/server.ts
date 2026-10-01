@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { chmod, rm } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
 
@@ -133,6 +133,14 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
         log.warn('api.stale_socket_removed', { socket: socketPath });
         await rm(socketPath, { force: true });
         await bind(server, socketPath);
+      }
+      // Owner and group may connect: a connector in its own unit runs as another user in
+      // the daemon's group (ARCHITECTURE §6) and must still reach /v1/events. Best effort:
+      // a path over the platform's limit is bound truncated and cannot be chmod'ed by name.
+      try {
+        await chmod(socketPath, 0o660);
+      } catch (err) {
+        log.warn('api.socket_mode_failed', { socket: socketPath, error: errorMessage(err) });
       }
       log.info('api.listening', { socket: socketPath });
     },

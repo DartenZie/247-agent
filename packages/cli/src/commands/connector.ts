@@ -5,11 +5,15 @@ import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 export const CONNECTOR_USAGE = `usage: oa connector <list|restart <name>> [options]
 
 list             the daemon's connectors with state, transport (stdio, none, acp), pid, restart
-                 count, sandbox=bwrap for an agent program the core runs in bubblewrap and,
-                 for a manifest with health checks, the last check
+                 count, sandbox=bwrap for an agent program the core runs in bubblewrap,
+                 unit=247-agent-connector@<name> for one that runs in its own systemd unit
+                 (state external when it serves no ops) and, for a manifest with health
+                 checks, the last check
 restart <name>   kill and respawn one connector; it re-reads its secrets, so this is
                  how a rotated secret reaches a running connector (built-in pollers
-                 re-read on every poll and need no restart)
+                 re-read on every poll and need no restart; a unit's connector with ops is
+                 reconnected, which respawns it in its unit; one without ops is restarted
+                 with systemctl)
 
 options:
   --json                print the response as JSON
@@ -42,7 +46,7 @@ export async function connector(args: string[], io: Io): Promise<number> {
           for (const c of connectors) {
             const kind =
               c.builtin === null
-                ? `${c.transport}${c.sandbox === 'none' ? '' : ` sandbox=${c.sandbox}`}\tpid=${c.pid === null ? '-' : String(c.pid)}`
+                ? `${c.transport}${c.sandbox === 'none' ? '' : ` sandbox=${c.sandbox}`}${c.managed_by === 'systemd' ? ` unit=247-agent-connector@${c.name}` : ''}\tpid=${c.pid === null ? '-' : String(c.pid)}`
                 : 'builtin\tpid=-';
             const error = c.error === null ? '' : ` error=${JSON.stringify(c.error)}`;
             const health =

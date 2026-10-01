@@ -366,7 +366,8 @@ export function createCore(opts: CoreOptions): Core {
       }
     }
     metrics.connectorUp.reset();
-    for (const c of supervisor?.status() ?? []) {
+    // An external connector (its own unit, no ops) has nothing the core can observe.
+    for (const c of (supervisor?.status() ?? []).filter((s) => s.state !== 'external')) {
       metrics.connectorUp.set(
         { connector: c.name, transport: c.transport },
         c.state === 'up' ? 1 : 0,

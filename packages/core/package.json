@@ -5,7 +5,8 @@
   "description": "Daemon: config, store, bus, actions, connectors, api, expr.",
   "type": "module",
   "bin": {
-    "247-agent-core": "dist/main.js"
+    "247-agent-core": "dist/main.js",
+    "247-agent-connector-host": "dist/host-main.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

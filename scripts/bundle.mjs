@@ -12,6 +12,7 @@ import { build } from 'esbuild';
 const PROGRAMS = {
   core: 'packages/core/src/main.ts',
   oa: 'packages/cli/src/main.ts',
+  'connector-host': 'packages/core/src/host-main.ts',
   'connector-email': 'connectors/email/src/main.ts',
   'connector-ftp': 'connectors/ftp/src/main.ts',
   'connector-chat': 'connectors/chat/src/main.ts',

@@ -52,6 +52,8 @@ contents:
     type: symlink
   - src: packaging/247-agent.service
     dst: /usr/lib/systemd/system/247-agent.service
+  - src: packaging/247-agent-connector@.service
+    dst: /usr/lib/systemd/system/247-agent-connector@.service
   - src: packaging/etc/agent.yaml
     dst: /etc/247-agent/agent.yaml
     type: config|noreplace

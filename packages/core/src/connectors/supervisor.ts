@@ -24,7 +24,12 @@ import {
   type AgentOpenOptions,
   type ConnectorClients,
 } from '../actions/types.js';
-import type { ConnectorConfig, Transport } from '../config/connector.js';
+import {
+  unitSocket,
+  type ConnectorConfig,
+  type Manager,
+  type Transport,
+} from '../config/connector.js';
 import { parseDuration } from '../config/duration.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
@@ -35,6 +40,7 @@ import { VERSION } from '../version.js';
 import type { AgentInfo, AgentSession } from './acp-types.js';
 import { AcpAgent, pipeLines } from './acp.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
+import { SocketClientTransport } from './socket-transport.js';
 
 export interface SupervisorOptions {
   manifests: readonly ConnectorConfig[];
@@ -53,7 +59,11 @@ export interface SupervisorOptions {
   metrics?: Metrics | undefined;
 }
 
-export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped';
+/**
+ * `external`: a `managed_by: systemd` connector without ops (`transport: none`); its own
+ * unit runs it and the core has nothing to watch.
+ */
+export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped' | 'external';
 
 /** The last health check of a connector with `health:` in its manifest. */
 export interface ConnectorHealth {
@@ -67,6 +77,8 @@ export interface ConnectorHealth {
 export interface ConnectorStatus {
   name: string;
   transport: Transport;
+  /** `systemd` when the process runs in its own `247-agent-connector@<name>` unit. */
+  managed_by: Manager;
   /** `bwrap` when the core runs this agent program in bubblewrap (acp only). */
   sandbox: SandboxBackend;
   state: ConnectorState;
@@ -140,7 +152,8 @@ interface Managed {
   readonly manifest: ConnectorConfig;
   state: ConnectorState;
   client: Client | undefined;
-  transport: StdioClientTransport | undefined;
+  /** A child's stdio, or the unit's socket for a `managed_by: systemd` connector. */
+  transport: StdioClientTransport | SocketClientTransport | undefined;
   /** A `none` child, or the `acp` agent (which is also a plain process to watch and stop). */
   process: PlainProcess | undefined;
   acp: AcpAgent | undefined;
@@ -263,9 +276,10 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     return [...this.managed.values()].map((m) => ({
       name: m.manifest.name,
       transport: m.manifest.transport,
+      managed_by: m.manifest.managed_by,
       sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
       state: m.state,
-      pid: m.transport?.pid ?? m.process?.pid ?? null,
+      pid: pidOf(m),
       restarts: m.restarts,
       error: m.error,
       health: m.health === null ? null : { ...m.health },
@@ -488,36 +502,14 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     return m.client;
   }
 
-  /**
-   * The child's environment, secrets rendered (ARCHITECTURE §6). An acp agent gets the
-   * manifest's `env` and its name but no `OA_CORE_SOCKET` and no `OA_CONFIG_JSON`: it
-   * runs sessions, not ops, and a sandboxed one cannot reach the socket anyway. A
-   * sandboxed agent gets no base environment either (bwrap clears it and sets `PATH`,
-   * `HOME` and `LANG` itself); `OA_HOME` is kept so bundled launchers still resolve.
-   */
+  /** The child's environment, secrets rendered (ARCHITECTURE §6); see `connectorChildEnv`. */
   private childEnv(m: Managed): Record<string, string> {
-    const refs = collectTemplateRefs({ config: m.manifest.config, env: m.manifest.env });
-    const secrets = this.secrets.resolve(refs.secrets);
-    const scope = { secrets, env: this.baseEnv };
-    const env = renderValue(m.manifest.env, scope) as Record<string, string>;
-    if (m.manifest.transport === 'acp') {
-      const home = this.baseEnv.OA_HOME;
-      const base =
-        sandboxOf(m.manifest) === undefined
-          ? this.baseEnv
-          : home === undefined
-            ? {}
-            : { OA_HOME: home };
-      return { ...base, ...env, OA_CONNECTOR_NAME: m.manifest.name };
-    }
-    const config = renderValue(m.manifest.config, scope);
-    return {
-      ...this.baseEnv,
-      ...env,
-      OA_CORE_SOCKET: this.socketPath,
-      OA_CONNECTOR_NAME: m.manifest.name,
-      OA_CONFIG_JSON: JSON.stringify(config),
-    };
+    return connectorChildEnv({
+      manifest: m.manifest,
+      secrets: this.secrets,
+      baseEnv: this.baseEnv,
+      socketPath: this.socketPath,
+    });
   }
 
   /**
@@ -575,6 +567,10 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     const epoch = m.epoch;
     m.state = 'starting';
     m.error = null;
+    if (m.manifest.managed_by === 'systemd') {
+      await this.attach(m, epoch, log);
+      return;
+    }
     let env: Record<string, string>;
     try {
       env = this.childEnv(m);
@@ -696,11 +692,58 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     this.up(m, log);
   }
 
+  /**
+   * A `managed_by: systemd` connector: its unit runs the process, so nothing is spawned and
+   * no secret is resolved here. One without ops is `external`; one with ops is reached on
+   * the unit's socket, reconnected with the restart backoff when the connection drops.
+   */
+  private async attach(m: Managed, epoch: number, log: Logger): Promise<void> {
+    if (m.manifest.transport !== 'stdio') {
+      m.state = 'external';
+      log.info('connector.external', { unit: `247-agent-connector@${m.manifest.name}` });
+      return;
+    }
+    const path = unitSocket(m.manifest);
+    const transport = new SocketClientTransport(path);
+    const client = new Client({ name: '247-agent-core', version: VERSION });
+    transport.onerror = (err) => {
+      log.warn('connector.transport_error', { error: err.message });
+    };
+    try {
+      await client.connect(transport);
+    } catch (err) {
+      await transport.close().catch(() => undefined);
+      if (this.stillWanted(m, epoch)) {
+        this.failed(
+          m,
+          `cannot connect to ${path} (is 247-agent-connector@${m.manifest.name} running?): ${errorMessage(err)}`,
+          log,
+        );
+      }
+      return;
+    }
+    if (!this.stillWanted(m, epoch)) {
+      await transport.close().catch(() => undefined);
+      return;
+    }
+    m.client = client;
+    m.transport = transport;
+    transport.onclose = () => {
+      if (m.transport !== transport) {
+        return; // an older connection; ignore
+      }
+      m.client = undefined;
+      m.transport = undefined;
+      this.exited(m, 'connection to the unit closed', log);
+    };
+    this.up(m, log);
+  }
+
   private up(m: Managed, log: Logger): void {
     m.state = 'up';
     m.upSince = Date.now();
     log.info('connector.up', {
-      pid: m.transport?.pid ?? m.process?.pid ?? null,
+      pid: pidOf(m),
       restarts: m.restarts,
       sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
     });
@@ -833,6 +876,47 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       }
     }
   }
+}
+
+function pidOf(m: Managed): number | null {
+  const t = m.transport;
+  return (t instanceof StdioClientTransport ? t.pid : null) ?? m.process?.pid ?? null;
+}
+
+/**
+ * A connector process's environment, secrets rendered (ARCHITECTURE §6): the base
+ * environment, the manifest's `env`, `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and
+ * `OA_CONFIG_JSON`. An acp agent gets the manifest's `env` and its name but no
+ * `OA_CORE_SOCKET` and no `OA_CONFIG_JSON`: it runs sessions, not ops, and a sandboxed one
+ * cannot reach the socket anyway. A sandboxed agent gets no base environment either (bwrap
+ * clears it and sets `PATH`, `HOME` and `LANG` itself); `OA_HOME` is kept so bundled
+ * launchers still resolve. Shared by the supervisor and `247-agent-connector-host`.
+ */
+export function connectorChildEnv(opts: {
+  manifest: ConnectorConfig;
+  secrets: SecretsBackend;
+  baseEnv: Record<string, string>;
+  socketPath: string;
+}): Record<string, string> {
+  const { manifest, baseEnv } = opts;
+  const refs = collectTemplateRefs({ config: manifest.config, env: manifest.env });
+  const secrets = opts.secrets.resolve(refs.secrets);
+  const scope = { secrets, env: baseEnv };
+  const env = renderValue(manifest.env, scope) as Record<string, string>;
+  if (manifest.transport === 'acp') {
+    const home = baseEnv.OA_HOME;
+    const base =
+      sandboxOf(manifest) === undefined ? baseEnv : home === undefined ? {} : { OA_HOME: home };
+    return { ...base, ...env, OA_CONNECTOR_NAME: manifest.name };
+  }
+  const config = renderValue(manifest.config, scope);
+  return {
+    ...baseEnv,
+    ...env,
+    OA_CORE_SOCKET: opts.socketPath,
+    OA_CONNECTOR_NAME: manifest.name,
+    OA_CONFIG_JSON: JSON.stringify(config),
+  };
 }
 
 interface ToolResult {

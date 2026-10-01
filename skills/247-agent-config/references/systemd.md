@@ -117,8 +117,8 @@ interrupted runs are retried per policy or failed as interrupted.
 
 - `oa` on the server: `/opt/247-agent/bin/oa` (symlinked to `/usr/local/bin/oa`
   above); the default socket path matches the unit, so no `OA_CORE_SOCKET` is needed. The
-  invoking user needs write access to the socket (add them to the `247-agent` group and
-  set the socket mode accordingly, or run `oa` as that user).
+  invoking user needs write access to the socket (the daemon creates it `0660`, so add
+  them to the `247-agent` group, or run `oa` as that user).
 - Logs: JSON lines; `journalctl -u 247-agent -o cat | jq 'select(.run_id=="…")'`.
 - Reload config (tasks, manifests, `agent.yaml`): `oa reload` (prints the outcome) or
   `systemctl reload 247-agent`. Only `db`, `socket` and `secrets` need
@@ -130,8 +130,14 @@ interrupted runs are retried per policy or failed as interrupted.
 
 ## Hardening notes
 
-- Core and connectors run unprivileged. Connectors needing their own privileges as
-  separate units (`247-agent-connector@name`) are planned, not implemented.
+- Core and connectors run unprivileged. A connector needing its own privileges or a
+  secret the daemon must not hold says `managed_by: systemd` in its manifest and runs in
+  the template unit `247-agent-connector@<name>` (installed next to the daemon's, never
+  enabled by default): `systemctl edit 247-agent-connector@<name>` for `User=`,
+  capabilities and its `LoadCredential=` lines (keep `Group=247-agent`), then
+  `systemctl enable --now 247-agent-connector@<name>` and `oa reload`. Its secrets go on
+  that unit, not on `247-agent.service`; the daemon never resolves them. See
+  USER-GUIDE §6.7.
 - Trust model: anything running as the `247-agent` uid can reach the socket and every
   process's environment, so it is trusted. Untrusted work runs under `sandbox: bwrap`:
   `shell` steps that build or test what an agent produced set it on the action (or

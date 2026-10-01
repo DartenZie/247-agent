@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
@@ -19,6 +19,13 @@ export const BUILTINS = ['poller'] as const;
 export const TRANSPORTS = ['stdio', 'none', 'acp'] as const;
 export type Transport = (typeof TRANSPORTS)[number];
 
+/** Who runs a process connector: the core's supervisor, or its own systemd unit. */
+export const MANAGERS = ['core', 'systemd'] as const;
+export type Manager = (typeof MANAGERS)[number];
+
+/** Where the units' runtime directories live (`RuntimeDirectory=247-agent-connector/%i`). */
+export const UNIT_RUNTIME_ROOT = '/run/247-agent-connector';
+
 const ManifestFields = z.strictObject({
   name: z.string().regex(NAME, 'connector names are [a-z][a-z0-9_-]*'),
   /** argv of the connector process. Exactly one of `exec` and `builtin`. */
@@ -33,6 +40,19 @@ const ManifestFields = z.strictObject({
    * Defaults to `stdio` for a process and `none` for a built-in.
    */
   transport: z.enum(TRANSPORTS).optional(),
+  /**
+   * `core` (default): the supervisor spawns the process as a child of the daemon.
+   * `systemd`: the process runs in its own `247-agent-connector@<name>` unit, as its own
+   * user with its own credentials and hardening; the core never spawns it nor resolves its
+   * secrets. A `stdio` one serves its ops on `socket`, which the core connects to; a
+   * `none` one only emits, and the core just lists it.
+   */
+  managed_by: z.enum(MANAGERS).default('core'),
+  /**
+   * `managed_by: systemd` + `stdio` only: the Unix socket the unit serves MCP on.
+   * Default `/run/247-agent-connector/<name>/mcp.sock`, inside the unit's runtime directory.
+   */
+  socket: z.string().min(1).optional(),
   /** Event types the connector emits (documentation; checked for shape). */
   emits: z.array(z.string().min(1)).default([]),
   /** MCP tools the core may call; empty = whatever the server lists. */
@@ -188,6 +208,42 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
         'only an acp connector (the agent program) can be sandboxed: a connector needs the core socket, which the sandbox hides',
     });
   }
+  if (m.managed_by === 'systemd') {
+    const refuse = (path: string, message: string): void => {
+      ctx.addIssue({ code: 'custom', path: [path], message });
+    };
+    if (m.builtin !== undefined) {
+      refuse('managed_by', 'a built-in connector runs inside the core; it has no unit');
+    } else if (m.transport === 'acp') {
+      refuse(
+        'managed_by',
+        'an acp agent runs as a child of the core (use sandbox: bwrap to confine it)',
+      );
+    }
+  } else if (m.socket !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['socket'],
+      message:
+        'socket is where a managed_by: systemd connector serves its ops; this one is spawned by the core',
+    });
+  }
+  if (m.socket !== undefined) {
+    if (!isAbsolute(m.socket)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['socket'],
+        message: 'socket must be an absolute path',
+      });
+    }
+    if (effectiveTransport(m) !== 'stdio') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['socket'],
+        message: `a "${effectiveTransport(m)}" connector serves no ops: it has no socket`,
+      });
+    }
+  }
   if ((m.exec === undefined) === (m.builtin === undefined)) {
     ctx.addIssue({
       code: 'custom',
@@ -226,6 +282,15 @@ export interface ConnectorConfig extends Omit<ConnectorManifestConfig, 'transpor
   transport: Transport;
   /** The manifest file, or the agent.yaml it was inlined in. */
   file: string;
+}
+
+/**
+ * The socket a `managed_by: systemd` stdio connector serves MCP on: the manifest's
+ * `socket`, or `mcp.sock` in the unit's runtime directory. The core connects to it and
+ * `247-agent-connector-host` listens on it, so both compute it here.
+ */
+export function unitSocket(m: { name: string; socket?: string | undefined }): string {
+  return m.socket ?? join(UNIT_RUNTIME_ROOT, m.name, 'mcp.sock');
 }
 
 export type ConnectorLoadResult =

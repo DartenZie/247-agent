@@ -5,6 +5,11 @@ set -e
 case "$1" in
   remove|0)
     if [ -d /run/systemd/system ]; then
+      # Connectors in their own units first: the template goes away with the package.
+      for link in /etc/systemd/system/*.wants/247-agent-connector@*.service; do
+        [ -e "$link" ] || [ -L "$link" ] || continue
+        systemctl disable --now "$(basename "$link")" 2> /dev/null || true
+      done
       systemctl disable --now 247-agent 2> /dev/null || true
     fi ;;
 esac

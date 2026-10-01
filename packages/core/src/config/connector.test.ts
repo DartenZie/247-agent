@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { checkConfigFile } from './check.js';
-import { looksLikeManifest, parseManifest } from './connector.js';
+import { looksLikeManifest, parseManifest, unitSocket } from './connector.js';
 import { loadConnectors } from './load.js';
 
 const POLLER = {
@@ -405,5 +405,38 @@ connectors:
       'db: state.db\ntasks: tasks.yaml\ndefaults: { agent: { connector: codex } }\nconnectors:\n  - { name: codex, exec: [codex-acp], transport: acp }\n',
     );
     expect(checkConfigFile(plain).every((c) => c.ok)).toBe(true);
+  });
+});
+
+describe('ConnectorManifest with managed_by: systemd', () => {
+  const UNIT = { name: 'webhook', exec: ['247-agent-connector-webhook'], managed_by: 'systemd' };
+
+  it('defaults to core and derives the socket of a unit with ops', () => {
+    const core = parseManifest({ name: 'x', exec: ['x'] }, '/x/c.yaml');
+    expect(core.ok && core.config.managed_by).toBe('core');
+    const r = parseManifest(UNIT, '/x/c.yaml');
+    expect(r.ok && r.config).toMatchObject({ managed_by: 'systemd', transport: 'stdio' });
+    expect(r.ok && unitSocket(r.config)).toBe('/run/247-agent-connector/webhook/mcp.sock');
+    expect(unitSocket({ name: 'w', socket: '/srv/w.sock' })).toBe('/srv/w.sock');
+    expect(issues({ ...UNIT, transport: 'none' })).toEqual([]);
+    expect(issues({ ...UNIT, socket: '/srv/w.sock', health: { interval: '1m' } })).toEqual([]);
+  });
+
+  it('refuses built-ins, acp agents, sandboxes and misplaced sockets', () => {
+    expect(issues({ ...POLLER, managed_by: 'systemd' })).toContain(
+      'managed_by: a built-in connector runs inside the core; it has no unit',
+    );
+    expect(issues({ ...UNIT, transport: 'acp' })).toContain(
+      'managed_by: an acp agent runs as a child of the core (use sandbox: bwrap to confine it)',
+    );
+    expect(issues({ name: 'x', exec: ['x'], socket: '/s.sock' })).toEqual([
+      'socket: socket is where a managed_by: systemd connector serves its ops; this one is spawned by the core',
+    ]);
+    expect(issues({ ...UNIT, socket: 'rel.sock' })).toEqual([
+      'socket: socket must be an absolute path',
+    ]);
+    expect(issues({ ...UNIT, transport: 'none', socket: '/s.sock' })).toEqual([
+      'socket: a "none" connector serves no ops: it has no socket',
+    ]);
   });
 });

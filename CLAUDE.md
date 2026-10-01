@@ -33,9 +33,9 @@ truth for concepts, action semantics, the connector protocol and the config form
 ## Layout
 
 ```
-bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>); same files in a checkout and a release
+bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>, 247-agent-connector-host); same files in a checkout and a release
 scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release)
-packaging/               247-agent.service, etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
+packaging/               247-agent.service, 247-agent-connector@.service (a connector with managed_by: systemd), etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
