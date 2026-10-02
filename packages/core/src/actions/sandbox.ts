@@ -3,6 +3,13 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
 
+import {
+  NET_BRIDGE_SOURCE,
+  SANDBOX_NET_SOCKET,
+  SandboxNetwork,
+  type SandboxNet,
+} from './sandbox-net.js';
+
 /**
  * Sandbox for `shell` actions (ARCHITECTURE §5.1) and for the agent program behind a
  * `transport: acp` connector (§5.4, §6, §11). `none` runs the command as the daemon
@@ -33,6 +40,41 @@ export const Sandbox = z.union([
 
 export type SandboxConfig = z.infer<typeof SandboxObject>;
 export type SandboxBackend = z.infer<typeof Backend>;
+
+const AgentSandboxObject = SandboxObject.extend({
+  /**
+   * What the agent program may reach: `{ allow: [host[:port], …] }`, enforced by the
+   * daemon's proxy (`sandbox-net.ts`); `allow: []` is no network. Absent: the host's.
+   */
+  network: SandboxNetwork.optional(),
+}).superRefine((s, ctx) => {
+  if (s.network !== undefined && s.backend === 'none') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['network'],
+      message: 'a network allowlist needs backend: bwrap (nothing confines the program without it)',
+    });
+  }
+  if (s.network !== undefined && s.extra_args.includes('--share-net')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['extra_args'],
+      message: '--share-net would give the sandbox the host network back: drop it or drop network',
+    });
+  }
+});
+
+/**
+ * `sandbox` of an `acp` manifest: the forms of `Sandbox` plus `network`, which only the
+ * agent program has (its proxy lives as long as the process; a `shell` action cuts the
+ * network with `extra_args: [--unshare-net]`).
+ */
+export const AgentSandbox = z.union([
+  Backend.transform((backend) => ({ backend, extra_args: [], ro_binds: [], rw_binds: [] })),
+  AgentSandboxObject,
+]);
+
+export type AgentSandboxConfig = z.infer<typeof AgentSandboxObject>;
 
 /** Host directories the sandbox sees read-only, when they exist. */
 export const BASE_RO_PATHS = ['/usr', '/lib', '/lib64', '/bin', '/etc'] as const;
@@ -190,6 +232,12 @@ export interface SandboxArgvOptions {
   host?: SandboxHost | undefined;
   /** Where `PATH` and `LANG` come from; defaults to the daemon's environment. */
   hostEnv?: NodeJS.ProcessEnv | undefined;
+  /**
+   * Cuts the sandbox off the host's network (`--unshare-net`); with a `proxySocket`, binds
+   * it in and runs `cmd` behind the bridge that serves it as the HTTP proxy. Absent: the
+   * host's network is shared.
+   */
+  net?: SandboxNet | undefined;
   /** Filesystem probe; tests pass a stub. */
   probe?: PathProbe | undefined;
 }
@@ -202,7 +250,8 @@ export interface SandboxArgvOptions {
  * the OS and the install first, then the host's masks over them and `/dev/null` over any
  * protected file those mounts would still show, then the writable directory and the
  * config's own binds, which may lie inside a mask but, by `oa validate` (`checkSandboxes`),
- * never contain a protected path.
+ * never contain a protected path, and last the proxy socket of a sandbox with a network
+ * allowlist, in the private `/tmp`.
  */
 export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
   const probe = opts.probe ?? probePath;
@@ -217,6 +266,9 @@ export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
     '--die-with-parent',
     '--new-session',
   ];
+  if (opts.net !== undefined) {
+    argv.push('--unshare-net');
+  }
   for (const path of BASE_RO_PATHS) {
     const p = probe(path);
     if (p === undefined) {
@@ -258,6 +310,10 @@ export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
   for (const path of opts.sandbox.rw_binds) {
     argv.push('--bind', path, path);
   }
+  const proxySocket = opts.net?.proxySocket;
+  if (proxySocket !== undefined) {
+    argv.push('--ro-bind', proxySocket, SANDBOX_NET_SOCKET);
+  }
   argv.push('--chdir', cwd, '--clearenv');
   const env: Record<string, string> = {
     PATH: hostEnv.PATH ?? DEFAULT_PATH,
@@ -268,6 +324,11 @@ export function buildSandboxArgv(opts: SandboxArgvOptions): string[] {
   for (const [key, value] of Object.entries(env)) {
     argv.push('--setenv', key, value);
   }
-  argv.push(...opts.sandbox.extra_args, '--', ...opts.cmd);
+  argv.push(...opts.sandbox.extra_args, '--');
+  if (proxySocket !== undefined) {
+    const node = opts.net?.execPath ?? process.execPath;
+    argv.push(node, '-e', NET_BRIDGE_SOURCE, '--', SANDBOX_NET_SOCKET);
+  }
+  argv.push(...opts.cmd);
   return argv;
 }

@@ -3,13 +3,13 @@
  * `247-agent-connector-host` (a `managed_by: systemd` unit). Kept apart from the supervisor
  * so the host's bundle does not pull in the ACP client, execa and the tool bridge.
  */
-import type { SandboxConfig } from '../actions/sandbox.js';
+import type { AgentSandboxConfig } from '../actions/sandbox.js';
 import type { ConnectorConfig } from '../config/connector.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 
 /** The sandbox an acp manifest asks for; anything else runs as the daemon. */
-export function sandboxOf(m: ConnectorConfig): SandboxConfig | undefined {
+export function sandboxOf(m: ConnectorConfig): AgentSandboxConfig | undefined {
   return m.transport === 'acp' && m.sandbox !== undefined && m.sandbox.backend !== 'none'
     ? m.sandbox
     : undefined;

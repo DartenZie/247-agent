@@ -356,6 +356,11 @@ export class Metrics {
     'Health checks (MCP ping) by connector and result (ok, failed)',
     ['connector', 'result'],
   );
+  readonly sandboxNetRequests = this.registry.counter(
+    'oa_sandbox_net_requests_total',
+    'Requests of a sandboxed agent program through its network allowlist proxy, by connector and result (allowed, denied, failed)',
+    ['connector', 'result'],
+  );
 
   readonly retentionDeleted = this.registry.counter(
     'oa_retention_deleted_total',

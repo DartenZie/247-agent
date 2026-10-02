@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
-import { Sandbox } from '../actions/sandbox.js';
+import { AgentSandbox } from '../actions/sandbox.js';
 import { PollerConfig } from '../connectors/poller.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { DURATION } from './duration.js';
@@ -66,9 +66,11 @@ const ManifestFields = z.strictObject({
    * read-only, `defaults.agent.work_dir` the only writable path (every run's workspace
    * and the agent's own home, `<work_dir>/home/<name>`), the daemon's config, database
    * and socket out of reach, other processes invisible. Repositories that `git-worktree`
-   * workspaces come from go in `ro_binds`. Default `none`: the program runs as the daemon.
+   * workspaces come from go in `ro_binds`. `network: { allow: [host[:port], …] }` takes the
+   * host's network away and lets the program reach only those hosts, through the core's
+   * filtering proxy (`[]`: none at all). Default `none`: the program runs as the daemon.
    */
-  sandbox: Sandbox.optional(),
+  sandbox: AgentSandbox.optional(),
   restart: z
     .strictObject({
       /** First delay after a crash; doubles up to `max`. */

@@ -60,6 +60,8 @@ skills/                      agent skills for working with 247-agent (linked fro
   route it. Agents never hold deploy secrets and never publish. The agent program itself
   runs in bubblewrap when its `acp` manifest says `sandbox: bwrap` (`work_dir` writable,
   the daemon's config, db and socket hidden); only `acp` connectors may be sandboxed.
+  `sandbox.network.allow` leaves it no network but the core's filtering proxy
+  (`connectors/net-proxy.ts`), which lets through the listed `host[:port]` only.
 - Secrets are resolved by name from the configured backend at run time. Never write them
   to the DB, run logs, or event payloads.
 - Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and

@@ -18,6 +18,8 @@
  *   [[refuse]]               end the turn with stopReason: refusal
  *   [[crash]]                exit the process with code 3 during the turn
  *   [[config]]               write the session's {model, effort} to <cwd>/CONFIG.json
+ *   [[fetch: http://…]]      GET that URL through $HTTP_PROXY (as a client behind a proxy does) and
+ *                            write {proxy, status, body} (or {proxy, error}) to <cwd>/FETCH_RESULT.json
  *
  * Every session offers two config options, like claude-agent-acp: `model` (category
  * `model`, values in groups: `default`, `claude-sonnet-5`, `claude-opus-5`) and `effort` (category
@@ -27,6 +29,7 @@
  * Run with `node fake-acp.ts` (Node strips the types).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -92,6 +95,26 @@ function marker(prompt: string, name: string): string | undefined {
 
 function flag(prompt: string, name: string): boolean {
   return prompt.includes(`[[${name}]]`);
+}
+
+/** GET `url` the way an HTTP client behind `HTTP_PROXY` does: in absolute form, to the proxy. */
+function fetchViaProxy(proxy: string, url: string): Promise<{ status: number; body: string }> {
+  const p = new URL(proxy);
+  return new Promise((done, fail) => {
+    const req = httpRequest(
+      { host: p.hostname, port: p.port, path: url, headers: { host: new URL(url).host } },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (body += chunk));
+        res.on('end', () => {
+          done({ status: res.statusCode ?? 0, body });
+        });
+      },
+    );
+    req.on('error', fail);
+    req.end();
+  });
 }
 
 process.stderr.write(`fake-acp starting pid=${String(process.pid)}\n`);
@@ -209,6 +232,14 @@ const app = agent({ name: 'fake-acp' })
         resolve(s.cwd, 'CONFIG.json'),
         JSON.stringify({ model: s.model, effort: s.effort }) + '\n',
       );
+    }
+    const fetchUrl = marker(prompt, 'fetch');
+    if (fetchUrl !== undefined) {
+      const proxy = process.env.HTTP_PROXY ?? '';
+      const out = await fetchViaProxy(proxy, fetchUrl).catch((err: unknown) => ({
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      writeFileSync(resolve(s.cwd, 'FETCH_RESULT.json'), JSON.stringify({ proxy, ...out }) + '\n');
     }
     if (flag(prompt, 'never-result')) {
       s.neverResult = true;

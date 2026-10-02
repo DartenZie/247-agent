@@ -283,6 +283,27 @@ describe('sandbox in a manifest', () => {
     ]);
   });
 
+  it('takes a network allowlist with bwrap and names a bad entry', () => {
+    const ok = parseManifest(
+      {
+        ...ACP,
+        sandbox: { backend: 'bwrap', network: { allow: ['api.anthropic.com', '*.npmjs.org'] } },
+      },
+      '/x/c.yaml',
+    );
+    expect(ok.ok && ok.config.sandbox).toMatchObject({
+      network: { allow: ['api.anthropic.com', '*.npmjs.org'] },
+    });
+    expect(
+      issues({ ...ACP, sandbox: { backend: 'bwrap', network: { allow: ['ok.test', 'a/b'] } } }),
+    ).toEqual([
+      expect.stringMatching(/^sandbox\.network\.allow\[1\]: "a\/b": the host must be a hostname/),
+    ]);
+    expect(issues({ ...ACP, sandbox: { backend: 'none', network: { allow: [] } } })).toEqual([
+      expect.stringMatching(/^sandbox\.network: a network allowlist needs backend: bwrap/),
+    ]);
+  });
+
   it('is refused on connectors that need the core socket, unless it is none', () => {
     for (const transport of ['stdio', 'none']) {
       expect(issues({ name: 'c', exec: ['x'], transport, sandbox: 'bwrap' })).toEqual([

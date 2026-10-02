@@ -165,12 +165,14 @@ export {
 } from './connectors/acp-types.js';
 export { runShell, ShellAction, ShellError, type ShellActionConfig } from './actions/shell.js';
 export {
+  AgentSandbox,
   buildSandboxArgv,
   canonicalPath,
   isInsidePath,
   NO_HOST,
   Sandbox,
   sandboxHost,
+  type AgentSandboxConfig,
   type ProtectedPath,
   type SandboxArgvOptions,
   type SandboxBackend,
@@ -314,6 +316,7 @@ export {
   toolResultToJson,
   type ApplyResult,
   type ConnectorHealth,
+  type ConnectorNetwork,
   type ConnectorStatus,
   type SupervisorOptions,
 } from './connectors/supervisor.js';

@@ -87,7 +87,7 @@ why these and not an off-the-shelf workflow engine.
    result contract and post-run gates (done).
 5. `wait` action and chat connector for approvals.
 6. Hardening: retention, metrics, hot reload and connector health checks (done);
-   sandboxing of the agent program.
+   sandboxing of the agent program, with a network allowlist (done).
 
 ## License
 

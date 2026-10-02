@@ -177,7 +177,8 @@ itself or the install root, is bound to `/dev/null` instead); `oa validate` refu
 `cwd` or a bind that would show one of them. The runtime directory with the core socket, the
 state directory and other processes are not visible. The long form
 `sandbox: { backend: bwrap, ro_binds: [/srv/data], rw_binds: [], extra_args: [] }`
-adds mounts and raw bwrap flags (`--unshare-net` for offline steps). Use it for every
+adds mounts and raw bwrap flags (`--unshare-net` for offline steps; the `network`
+allowlist of §6 is for agent programs only, whose proxy lives as long as they do). Use it for every
 step that runs untrusted code or content, per the trust model in §11; steps that hold
 deploy secrets and need the network (publishing) run unsandboxed and keep the secret in
 `env`, not argv.
@@ -634,11 +635,14 @@ name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
-sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }   # §11; acp only
+sandbox:                                             # §11; acp only
+  backend: bwrap
+  ro_binds: [/var/lib/247-agent/repos/website]
+  network: { allow: [api.anthropic.com, registry.npmjs.org] }   # nothing else is reachable
 ```
 
 **Sandboxing the agent program.** `sandbox` (the same `none | bwrap | { backend, ro_binds,
-rw_binds, extra_args }` as a `shell` action, §5.1) is accepted on `acp` manifests only:
+rw_binds, extra_args }` as a `shell` action, §5.1, plus `network`) is accepted on `acp` manifests only:
 every other connector needs the core socket, which the sandbox hides. The supervisor then
 spawns `bwrap … -- <exec>` once, for the life of the process, with: the OS and the install
 read-only; `defaults.agent.work_dir` the only writable path, which holds every run's
@@ -650,9 +654,8 @@ masked with an empty tmpfs; an environment of `PATH`, `HOME`, `LANG`, `OA_HOME`,
 `OA_CONNECTOR_NAME` and the manifest's `env`, nothing of the daemon's. The runtime
 directory (socket), the state directory, `/proc` of other processes and the daemon's
 environment are not reachable, which is what §11 requires of the one process that runs
-untrusted content. The network is shared: the agent must reach its model API, and bwrap
-can only cut it off entirely (`extra_args: [--unshare-net]`); an allowlist would take a
-filtering proxy and is not built. Because the process is shared by concurrent runs, the
+untrusted content. The network is the host's unless the sandbox has a `network` (next
+paragraph). Because the process is shared by concurrent runs, the
 sandbox is per program, not per run: an agent can see other runs' workspaces under
 `work_dir`, as it already could in one process. `oa validate` refuses a `sandbox` bind or
 a `work_dir` that contains the database, the socket, `agent.yaml` or the secrets file, a
@@ -663,6 +666,45 @@ and no `OA_CONFIG_JSON` (`config` is refused on it): the agent program is config
 through `env` alone. `oa connector list` shows `sandbox=bwrap`. Needs the `bubblewrap`
 package and unprivileged user namespaces (§12); without `bwrap` the spawn fails and the
 connector stays down with the error in `oa connector list`.
+
+**Network allowlist.** `sandbox.network: { allow: [host[:port], …] }` names what the agent
+program may reach; without it the sandbox shares the host's network, since the agent
+needs its model API. bwrap can only share the network or cut it off, so an allowlist is
+built from three parts. The sandbox gets an empty network namespace of its own
+(`--unshare-net`: a loopback, no route, no DNS). The core serves a **filtering proxy**
+for it (`connectors/net-proxy.ts`): an HTTP proxy on a Unix socket in a directory only
+the daemon can enter, outside `work_dir`, bound read-only into this one sandbox, so
+another agent cannot borrow the list. And since clients take a proxy as a TCP address,
+the first process inside is a **bridge** (the daemon's Node running an inline script,
+`actions/sandbox-net.ts`) that listens on the sandbox's loopback, pipes every connection
+to the socket and starts the agent with `HTTP_PROXY`/`HTTPS_PROXY` (both spellings)
+pointing at itself, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`; it filters
+nothing, and the agent's stdio (the ACP stream) is inherited, not relayed.
+
+An entry is `host[:port]`: a hostname, `*.suffix` for every name below one (not the
+suffix itself), an IPv4 address or `[IPv6]`; the port is a number or `*` and defaults to
+443. The proxy serves `CONNECT` (HTTPS and whatever else tunnels) and absolute-form
+`http://` requests to listed targets; anything else gets a 403, a `sandbox.net_denied`
+log line with the connector, host and port (`warn` the first time per target, `debug`
+after: read these to learn what an agent wants) and a count in
+`oa_sandbox_net_requests_total{connector,result}` (`allowed`, `denied`, `failed` for a
+listed target that could not be reached). Names are resolved by the proxy, on the host,
+and the connection goes to the address that was checked. A name let through by a
+wildcard is refused when it resolves to a loopback, private or link-local address: a
+name anyone can register under an allowed suffix must not point the agent at the host's
+own services or a cloud metadata endpoint. An entry that names the host or the address
+itself is the operator's word and resolves anywhere. `allow: []` is no network at all
+(no proxy, no bridge). The proxy lives as long as the process, a respawn gets a new one,
+and a changed list is a changed manifest, so a reload respawns the agent; `oa connector
+list` shows `net=allowlist` or `net=none`.
+
+What it does not do: the proxy never opens a tunnel, so TLS stays end to end and the
+list limits where the agent talks, not what it says there (an allowed host that accepts
+uploads is still a way out: list hosts, not whole clouds). Only what honours the proxy
+variables gets out at all: Claude Code, Node, npm, curl and git over HTTPS do; git over
+SSH and raw sockets do not. Loopback names stay inside the sandbox; a service on the
+host is reached by a name that resolves to it. The proxy connects directly, with no
+upstream proxy of its own.
 
 **Turning any MCP tool into an event source:** the built-in `poller` connector runs on a
 cron, calls `connector.op`, diffs the result against KV by `item_key`, and emits one event
@@ -950,9 +992,10 @@ process could call.
   `sandbox: bwrap` on its manifest (§6): same uid, but its own pid namespace, no socket
   directory, no state or config directory, no daemon environment, `work_dir` and the
   listed repositories the only paths it can touch. That is the sandbox this section asks
-  for; a separate uid would add nothing the daemon can enforce without privileges. The
-  network stays open to the agent (it needs its model API); a network allowlist is
-  planned and would take a filtering proxy.
+  for; a separate uid would add nothing the daemon can enforce without privileges. Its
+  network is the host's until the manifest lists what it may reach
+  (`sandbox.network.allow`, §6): then the sandbox has no network of its own and the
+  core's filtering proxy is the only way out, to those hosts.
 - **Approval gate** (`wait` + chat) is config, so it can be required for high-impact tasks
   and skipped for routine ones.
 - Inbound content (emails, chat, PR text) is untrusted: it enters prompts as data in a
@@ -1045,10 +1088,10 @@ packages/core/           # the daemon: config, store, scheduler, matcher, execut
   src/store/                 # better-sqlite3: events, runs, state, ledger, transcripts, llm_batches; migrations
   src/bus/                   # publish, matcher, dispatch loop, manual runs
   src/scheduler/             # croner jobs → cron.tick events
-  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); types.ts = ActionContext
+  src/actions/               # shell.ts, connector.ts, wait.ts, sequence.ts, llm.ts, decide.ts, agent.ts (+ agent-policy.ts, agent-workspace.ts, agent-result.ts, agent-config.ts); sandbox.ts (the bwrap argv) + sandbox-net.ts (the network allowlist's entries and in-sandbox bridge); types.ts = ActionContext
   src/llm/                   # config.ts (providers, pricing, budgets, batches), pricing.ts, service.ts (the ctx.llm port: budgets + ledger for `call`, `decide` and batches), batches.ts (the `llm.batch.ended` payload and the poller's timer), types.ts (provider interface), adapters per provider type (openrouter.ts also serves the Decisions API, anthropic.ts Message Batches)
   src/executor/              # worker pool: concurrency, timeouts, retries, secrets, emit/state routing, wait suspend/resume, recovery
-  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); poller.ts: the built-in poller; host.ts + socket-transport.ts: managed_by: systemd (the unit's host program, the core's MCP client over its socket); child-env.ts: a connector process's environment, shared by the supervisor and the host
+  src/connectors/            # supervisor.ts: spawn, MCP client per connector, ACP connection per agent, restart backoff; acp.ts: the ACP client (the only SDK import), acp-types.ts: the runner-facing session types; mcp-bridge.ts: connector ops as agent tools (per-run socket + stdio proxy); net-proxy.ts: the filtering HTTP proxy behind a sandboxed agent's network allowlist; poller.ts: the built-in poller; host.ts + socket-transport.ts: managed_by: systemd (the unit's host program, the core's MCP client over its socket); child-env.ts: a connector process's environment, shared by the supervisor and the host
   src/secrets/               # env | file | systemd-credentials backends
   src/api/                   # routes.ts (transport-free handlers), server.ts (node:http on the socket), client.ts (typed client for the CLI and TS connectors)
   daemon.ts, main.ts         # agent.yaml → core → api; the `247-agent-core` binary with signal handling
@@ -1132,7 +1175,9 @@ Step 6 is done: the retention pass (`retention.ts`,
 and supervisor, gauges collected at scrape time in `core.ts`), connector health checks in
 the supervisor, the full reload (`Core.reload`, `Daemon.reload`, `POST /v1/reload`,
 `oa reload`), and the sandbox wrapper for agent programs (`sandbox:` on `acp`
-manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check).
+manifests, `actions/sandbox.ts` + the supervisor, the `checkSandboxes` cross-check) with
+its network allowlist (`sandbox.network`: `actions/sandbox-net.ts`, the filtering proxy
+in `connectors/net-proxy.ts`).
 Connector ops as agent tools are done: `mcp_servers` on the `agent` action, the tool
 bridge (`connectors/mcp-bridge.ts`) opened by the supervisor per session, and the
 `checkAgentTools` cross-check. An agent's `model` and `effort` are set as ACP session
@@ -1140,8 +1185,7 @@ config options by category (`actions/agent-session-config.ts`). `batch: true` on
 is done (§5.2): the Anthropic adapter's `submitBatch`/`pollBatch`, the service's
 `submitBatch`/`batchResult`/`pollBatches`, the `llm_batches` table, the `BatchPoller`
 (`llm/batches.ts`) and `batches.poll` in agent.yaml.
-Where the code is behind this document:
-the agent sandbox has no network allowlist; `shell.user` is rejected.
+Where the code is behind this document: `shell.user` is rejected.
 
 ## 15. Open decisions
 
