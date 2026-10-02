@@ -59,7 +59,10 @@ name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]   # any Agent Client Protocol program
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }     # the agent's own model key
-sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/site] }   # run it in bubblewrap (acp only)
+sandbox:                                                       # run it in bubblewrap (acp only)
+  backend: bwrap
+  ro_binds: [/var/lib/247-agent/repos/site]
+  network: { allow: [api.anthropic.com, registry.npmjs.org] }  # nothing else is reachable
 ```
 
 `agent` actions name it with `connector: claude` and open one ACP session per run (the
@@ -67,10 +70,11 @@ core is the client, protocol version 1). It serves no ops and emits no events, s
 and `emits` must be empty; `config` is refused (no `OA_CONFIG_JSON`: configure the program
 through `env`). Same lifecycle as any process connector: crash backoff, `oa connector
 restart` to re-read a rotated key, stderr as `connector.output`; `oa connector list`
-shows `acp` as its transport and `sandbox=bwrap` when sandboxed.
+shows `acp` as its transport, `sandbox=bwrap` when sandboxed and `net=allowlist` (or
+`net=none`) when the sandbox restricts the network.
 
 `sandbox` takes the same forms as on a `shell` action (`bwrap` or `{ backend: bwrap,
-ro_binds, rw_binds, extra_args }`) and is the trust boundary ARCHITECTURE §11 asks for:
+ro_binds, rw_binds, extra_args }`), plus `network`, and is the trust boundary ARCHITECTURE §11 asks for:
 the program runs for its whole life inside bubblewrap with the OS and the install
 read-only, `defaults.agent.work_dir` the only writable path (every run's workspace and
 the program's home, `<work_dir>/home/<name>`, for npm and Claude Code caches), the
@@ -79,9 +83,31 @@ secrets file (their directories are masked), no other process, an environment of
 `PATH`/`HOME`/`LANG`/`OA_HOME`/`OA_CONNECTOR_NAME` plus the manifest's `env`. Put every
 repository the tasks' `git-worktree` workspaces use in `ro_binds` (`rw_binds` only when
 the agent itself must commit); `oa validate` refuses a repository the sandbox cannot see,
-a bind or `work_dir` covering the daemon's files, and a `cwd` outside every bind. The
-network stays open (the model API). Needs `bubblewrap` on the host; otherwise the
-connector stays `down` with the spawn error. Other
+a bind or `work_dir` covering the daemon's files, and a `cwd` outside every bind. Needs
+`bubblewrap` on the host; otherwise the connector stays `down` with the spawn error.
+
+`network: { allow: [...] }` is the network allowlist. Without it the sandbox shares the
+host's network. With it the sandbox has no network of its own and one way out, a
+filtering HTTP proxy the daemon runs for this connector, to the listed targets:
+
+- An entry is `host[:port]`: a hostname, `*.suffix` (every name below it, not the suffix
+  itself), an IPv4 address or `[IPv6]`; the port is a number or `*`, default 443. So
+  plain HTTP needs `host:80`. `allow: []` is no network at all.
+- Start small: the model API (`api.anthropic.com`; `platform.claude.com` too for a
+  claude.ai login) and, for an `npx` exec, `registry.npmjs.org`. A refused request is
+  logged as `sandbox.net_denied` with host and port and counted in
+  `oa_sandbox_net_requests_total{connector,result}`; add what the tasks really need
+  (`github.com` for an agent that fetches) and `oa reload`, which respawns the agent.
+- A forgotten registry shows as a connector that stays `down` with npm `E403` in
+  `connector.output`.
+- It limits where the agent talks, not what it says: HTTPS is tunnelled unread, so an
+  allowed host that takes uploads is still a way out. List hosts, not whole clouds, and
+  keep wildcards to suffixes you control; a wildcard never reaches a loopback, private
+  or link-local address, an entry naming the host does.
+- Only proxy-aware programs get out (Claude Code, Node, npm, curl, git over HTTPS; not
+  git over SSH). `localhost` inside the sandbox is the sandbox's own.
+
+Other
 agents: Codex (`docs/examples/connectors.d/codex.yaml`: `@agentclientprotocol/codex-acp`,
 configured through the `CODEX_CONFIG` JSON in `env`, used with `unasked_execute:
 sandboxed` on the action), `gemini --experimental-acp`, and the list at

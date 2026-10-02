@@ -150,7 +150,10 @@ interrupted runs are retried per policy or failed as interrupted.
   `NoNewPrivileges=yes`, and the unit must not set `RestrictNamespaces=`. Writable paths
   still need `ReadWritePaths=` in the unit (`/var/lib/247-agent` is covered).
 - Agent runs get a fresh worktree, a tool allowlist and a bash allowlist inside that
-  sandbox; the network stays open to the agent (its model API), a network allowlist is
-  planned.
+  sandbox. Its network is the host's until the manifest sets `sandbox.network: { allow:
+  [api.anthropic.com, registry.npmjs.org] }`: then the program reaches only those hosts,
+  through a filtering proxy in the daemon, and refusals are logged as
+  `sandbox.net_denied`. Nothing to install for it and no unit change: the proxy's socket
+  lives beside the core socket (`core.sock.net/`), so in the unit's `RuntimeDirectory`.
 - Inbound content is untrusted data; the capability surface, not the prompt, limits
   damage.

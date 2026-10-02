@@ -430,4 +430,38 @@ describe('checkSandboxes', () => {
       },
     ]);
   });
+
+  it('refuses a bind or a work_dir that holds the proxy sockets or lies among them', () => {
+    const net = '/run/247-agent/core.sock.net';
+    const r = checkSandboxes(
+      [],
+      sctx({
+        protected: [...sctx().protected, { path: net, what: 'proxy socket directory', dir: true }],
+        manifests: [
+          manifest({
+            sandbox: {
+              backend: 'bwrap',
+              ro_binds: [net, '/run/247-agent/other'],
+              rw_binds: [`${net}/1.sock`],
+            },
+          }),
+        ],
+        workDir: `${net}/work`,
+      }),
+    );
+    expect(r.agent).toEqual([
+      {
+        path: 'defaults.agent.work_dir',
+        message: expect.stringContaining(
+          `${net}/work contains the proxy socket directory ${net}, which`,
+        ) as string,
+      },
+    ]);
+    const exposed = (bind: string): string =>
+      `${bind} would expose the proxy socket directory ${net} to the sandboxed agent program`;
+    expect(r.manifests[0]?.issues).toEqual([
+      { path: 'sandbox.ro_binds[0]', message: exposed(net) },
+      { path: 'sandbox.rw_binds[0]', message: exposed(`${net}/1.sock`) },
+    ]);
+  });
 });

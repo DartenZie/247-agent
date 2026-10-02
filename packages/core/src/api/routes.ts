@@ -90,6 +90,7 @@ export type ConnectorEntry =
       transport: 'none';
       managed_by: 'core';
       sandbox: 'none';
+      network: 'host';
       state: 'up';
       pid: null;
       restarts: 0;
@@ -346,6 +347,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
     transport: 'none',
     managed_by: 'core',
     sandbox: 'none',
+    network: 'host',
     state: 'up',
     pid: null,
     restarts: 0,

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -12,6 +12,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
+import { netProxyDir } from '../actions/sandbox-net.js';
 import { buildSandboxArgv, type SandboxBackend, type SandboxHost } from '../actions/sandbox.js';
 import {
   NonRetryableError,
@@ -35,6 +36,7 @@ import type { AgentInfo, AgentSession } from './acp-types.js';
 import { AcpAgent, pipeLines } from './acp.js';
 import { connectorChildEnv, sandboxOf } from './child-env.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
+import { openNetProxy, type NetProxy } from './net-proxy.js';
 import { SocketClientTransport } from './socket-transport.js';
 
 export interface SupervisorOptions {
@@ -60,6 +62,13 @@ export interface SupervisorOptions {
  */
 export type ConnectorState = 'starting' | 'up' | 'down' | 'stopped' | 'external';
 
+/**
+ * What a connector process reaches: the `host`'s network (every unsandboxed one, and a
+ * sandbox without `network`), `none`, or only its sandbox's `allowlist` through the
+ * core's proxy.
+ */
+export type ConnectorNetwork = 'host' | 'none' | 'allowlist';
+
 /** The last health check of a connector with `health:` in its manifest. */
 export interface ConnectorHealth {
   /** `null` until the first check after a (re)start. */
@@ -76,6 +85,8 @@ export interface ConnectorStatus {
   managed_by: Manager;
   /** `bwrap` when the core runs this agent program in bubblewrap (acp only). */
   sandbox: SandboxBackend;
+  /** `allowlist` or `none` when the sandbox has a `network` (acp only). */
+  network: ConnectorNetwork;
   state: ConnectorState;
   pid: number | null;
   restarts: number;
@@ -122,6 +133,11 @@ const STABLE_MS = 30_000;
  */
 export function agentHome(workDir: string, connector: string): string {
   return join(workDir, 'home', connector);
+}
+
+function networkOf(m: ConnectorConfig): ConnectorNetwork {
+  const network = sandboxOf(m)?.network;
+  return network === undefined ? 'host' : network.allow.length === 0 ? 'none' : 'allowlist';
 }
 
 function errorMessage(err: unknown): string {
@@ -197,10 +213,15 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private readonly baseEnv: Record<string, string>;
   private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
+  /** Where the allowlist proxies listen (`netProxyDir`): made on first use, 0700. */
+  private readonly netDir: string;
+  private netSeq = 0;
+  private readonly netProxies = new Set<NetProxy>();
   private stopping = false;
 
   constructor(opts: SupervisorOptions) {
     this.socketPath = opts.socketPath;
+    this.netDir = netProxyDir(opts.socketPath);
     this.secrets = opts.secrets;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
@@ -266,6 +287,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       transport: m.manifest.transport,
       managed_by: m.manifest.managed_by,
       sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
+      network: networkOf(m.manifest),
       state: m.state,
       pid: pidOf(m),
       restarts: m.restarts,
@@ -339,6 +361,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   async stop(): Promise<void> {
     this.stopping = true;
     await Promise.all([...this.managed.values()].map((m) => this.kill(m)));
+    await Promise.all([...this.netProxies].map((p) => p.close()));
+    try {
+      // Each proxy removed its socket; the directory goes only if nothing else is in it.
+      rmdirSync(this.netDir);
+    } catch {
+      // never made, or not empty
+    }
   }
 
   /**
@@ -508,22 +537,63 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   }
 
   /**
+   * The filtering proxy of a sandbox with a network allowlist (`connectors/net-proxy.ts`):
+   * a socket in the daemon's runtime directory, which every sandbox masks and no bind may
+   * show (`sandboxHost`, `checkSandboxes`), so no sandbox sees it unless bwrap binds it in
+   * and one agent cannot borrow another's allowlist. The pid in the name keeps a second
+   * daemon started on the same config, which fails only once it binds the core socket,
+   * off this one's sockets. The caller closes it when the program is gone.
+   */
+  private async openNetProxy(m: Managed, allow: readonly string[], log: Logger): Promise<NetProxy> {
+    if (!existsSync(this.netDir)) {
+      // Not recursive: the runtime directory is the operator's to make, with its own mode.
+      mkdirSync(this.netDir, { mode: 0o700 });
+    }
+    const connector = m.manifest.name;
+    const proxy = await openNetProxy({
+      allow,
+      socket: join(this.netDir, `${String(process.pid)}-${String(++this.netSeq)}.sock`),
+      log,
+      onRequest: (result) => {
+        this.metrics.sandboxNetRequests.inc({ connector, result });
+      },
+    });
+    this.netProxies.add(proxy);
+    return {
+      socket: proxy.socket,
+      close: () => {
+        this.netProxies.delete(proxy);
+        return proxy.close();
+      },
+    };
+  }
+
+  /**
    * How an acp agent is started: as it is, or as `bwrap … -- <exec>` with `work_dir`
    * writable, its home under it, the manifest's `cwd` (else that home) as cwd and the
    * agent's environment set inside; bwrap itself runs with the base environment, which
-   * is where it is found on PATH.
+   * is where it is found on PATH. With `sandbox.network` the sandbox gets no network but
+   * the proxy opened here for its `allow` list (none at all for an empty one).
    */
-  private agentSpawn(
+  private async agentSpawn(
     m: Managed,
     env: Record<string, string>,
-  ): { exec: string[]; cwd: string | undefined; env: Record<string, string> } {
+    log: Logger,
+  ): Promise<{
+    exec: string[];
+    cwd: string | undefined;
+    env: Record<string, string>;
+    proxy: NetProxy | undefined;
+  }> {
     const exec = m.manifest.exec ?? [];
     const sandbox = sandboxOf(m.manifest);
     if (sandbox === undefined) {
-      return { exec, cwd: m.manifest.cwd, env };
+      return { exec, cwd: m.manifest.cwd, env, proxy: undefined };
     }
     const home = agentHome(this.agentWorkDir, m.manifest.name);
     mkdirSync(home, { recursive: true });
+    const allow = sandbox.network?.allow ?? [];
+    const proxy = allow.length === 0 ? undefined : await this.openNetProxy(m, allow, log);
     return {
       exec: buildSandboxArgv({
         sandbox,
@@ -534,9 +604,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         env,
         host: this.sandboxHost,
         hostEnv: this.baseEnv,
+        net: sandbox.network === undefined ? undefined : { proxySocket: proxy?.socket },
       }),
       cwd: undefined,
       env: this.baseEnv,
+      proxy,
     };
   }
 
@@ -623,15 +695,25 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     }
     if (m.manifest.transport === 'acp') {
       let agent: AcpAgent;
+      let proxy: NetProxy | undefined;
       try {
-        const spawn = this.agentSpawn(m, env);
+        const spawn = await this.agentSpawn(m, env, log);
+        proxy = spawn.proxy;
+        if (!this.stillWanted(m, epoch)) {
+          // Stopped, killed or replaced while the proxy was opening: start nothing.
+          void proxy?.close();
+          return;
+        }
         agent = await AcpAgent.spawn({ exec: spawn.exec, cwd: spawn.cwd, env: spawn.env, log });
       } catch (err) {
+        void proxy?.close();
         if (this.stillWanted(m, epoch)) {
           this.failed(m, `cannot start: ${errorMessage(err)}`, log);
         }
         return;
       }
+      // The proxy serves this process alone: it goes when the process does, however.
+      void agent.exited.then(() => proxy?.close());
       if (!this.stillWanted(m, epoch)) {
         agent.kill('SIGTERM');
         return;
@@ -748,6 +830,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       pid: pidOf(m),
       restarts: m.restarts,
       sandbox: sandboxOf(m.manifest)?.backend ?? 'none',
+      network: networkOf(m.manifest),
     });
     if (m.health !== null) {
       m.health = { ok: null, checked_at: null, failures: 0 };

@@ -283,6 +283,27 @@ describe('sandbox in a manifest', () => {
     ]);
   });
 
+  it('takes a network allowlist with bwrap and names a bad entry', () => {
+    const ok = parseManifest(
+      {
+        ...ACP,
+        sandbox: { backend: 'bwrap', network: { allow: ['api.anthropic.com', '*.npmjs.org'] } },
+      },
+      '/x/c.yaml',
+    );
+    expect(ok.ok && ok.config.sandbox).toMatchObject({
+      network: { allow: ['api.anthropic.com', '*.npmjs.org'] },
+    });
+    expect(
+      issues({ ...ACP, sandbox: { backend: 'bwrap', network: { allow: ['ok.test', 'a/b'] } } }),
+    ).toEqual([
+      expect.stringMatching(/^sandbox\.network\.allow\[1\]: "a\/b": the host must be a hostname/),
+    ]);
+    expect(issues({ ...ACP, sandbox: { backend: 'none', network: { allow: [] } } })).toEqual([
+      expect.stringMatching(/^sandbox\.network: a network allowlist needs backend: bwrap/),
+    ]);
+  });
+
   it('is refused on connectors that need the core socket, unless it is none', () => {
     for (const transport of ['stdio', 'none']) {
       expect(issues({ name: 'c', exec: ['x'], transport, sandbox: 'bwrap' })).toEqual([
@@ -379,6 +400,29 @@ describe('oa validate with a sandboxed agent program', () => {
         message: expect.stringMatching(`expose the ${what}`) as string,
       })),
       { path: 'cwd', message: expect.stringMatching(/not visible inside the sandbox/) as string },
+    ]);
+  });
+
+  it('reports a bind over the directory of the network allowlist proxies, beside the socket', () => {
+    tasks('/srv/repos/site');
+    write(
+      'claude.yaml',
+      `name: claude\nexec: [claude-agent-acp]\ntransport: acp\nsandbox: { backend: bwrap, ro_binds: [/srv/repos/site, ${dir}/run/core.sock.net] }\n`,
+    );
+    const agent = write(
+      'agent.yaml',
+      'db: state.db\nsocket: run/core.sock\ntasks: tasks.yaml\nconnectors: [claude.yaml]\ndefaults: { agent: { connector: claude } }\n',
+    );
+    const byFile = Object.fromEntries(
+      checkConfigFile(agent).map((c) => [c.file.slice(dir.length + 1), c.ok ? 'ok' : c.issues]),
+    );
+    expect(byFile['claude.yaml']).toEqual([
+      {
+        path: 'sandbox.ro_binds[1]',
+        message: expect.stringMatching(
+          /would expose the proxy socket directory .*run\/core\.sock\.net /,
+        ) as string,
+      },
     ]);
   });
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { NET_BRIDGE_SOURCE, SANDBOX_NET_SOCKET } from './sandbox-net.js';
 import {
+  AgentSandbox,
   buildSandboxArgv,
   canonicalPath,
   type PathProbe,
@@ -52,6 +54,34 @@ describe('Sandbox schema', () => {
     expect(Sandbox.safeParse('firejail').success).toBe(false);
     expect(Sandbox.safeParse({ backend: 'bwrap', user: 'nobody' }).success).toBe(false);
   });
+
+  it('takes a network allowlist on an agent sandbox only, and only with bwrap', () => {
+    expect(
+      AgentSandbox.parse({ backend: 'bwrap', network: { allow: ['api.anthropic.com'] } }),
+    ).toEqual({
+      backend: 'bwrap',
+      extra_args: [],
+      ro_binds: [],
+      rw_binds: [],
+      network: { allow: ['api.anthropic.com'] },
+    });
+    expect(AgentSandbox.parse('bwrap')).toEqual(Sandbox.parse('bwrap'));
+    const off = AgentSandbox.safeParse({ backend: 'none', network: { allow: [] } });
+    expect(off.error?.issues.map((i) => [i.path.join('.'), i.message])).toEqual([
+      ['network', expect.stringContaining('needs backend: bwrap')],
+    ]);
+    expect(
+      AgentSandbox.safeParse({ backend: 'bwrap', network: { allow: ['http://x'] } }).success,
+    ).toBe(false);
+    const shared = AgentSandbox.safeParse({
+      backend: 'bwrap',
+      extra_args: ['--share-net'],
+      network: { allow: [] },
+    });
+    expect(shared.error?.issues.map((i) => i.path.join('.'))).toEqual(['extra_args']);
+    // A shell action's sandbox has no proxy to go with it.
+    expect(Sandbox.safeParse({ backend: 'bwrap', network: { allow: [] } }).success).toBe(false);
+  });
 });
 
 describe('buildSandboxArgv', () => {
@@ -91,6 +121,49 @@ describe('buildSandboxArgv', () => {
     expect(argv).not.toContain('OA_SECRET_X');
     expect(argv).not.toContain('/root');
     expect(argv.filter((a) => a.startsWith('/run') || a === '/var' || a === '/home')).toEqual([]);
+  });
+
+  it('shares the network unless told otherwise, and can cut it off', () => {
+    const base = { sandbox: bwrap, cmd: ['agent'], writable: '/work', env: {}, hostEnv: {}, probe };
+    expect(buildSandboxArgv(base)).not.toContain('--unshare-net');
+    const offline = buildSandboxArgv({ ...base, net: {} });
+    expect(offline.slice(0, 6)).toEqual([
+      'bwrap',
+      '--unshare-pid',
+      '--unshare-ipc',
+      '--die-with-parent',
+      '--new-session',
+      '--unshare-net',
+    ]);
+    expect(offline.slice(offline.indexOf('--'))).toEqual(['--', 'agent']);
+    expect(offline).not.toContain(SANDBOX_NET_SOCKET);
+  });
+
+  it('binds the proxy socket last and runs the command behind the bridge', () => {
+    const argv = buildSandboxArgv({
+      sandbox: { ...bwrap, ro_binds: ['/srv/repos/site'], extra_args: ['--hostname', 'box'] },
+      cmd: ['npx', '-y', 'agent'],
+      writable: '/work',
+      env: { KEY: 'v' },
+      hostEnv: {},
+      net: { proxySocket: '/run/247-agent/core.sock.net/1.sock', execPath: '/opt/node/bin/node' },
+      probe,
+    });
+    expect(argv).toContain('--unshare-net');
+    // After every other mount, so nothing shadows it; the socket only, read-only.
+    expect(argv.slice(argv.indexOf('/srv/repos/site') + 2, argv.indexOf('--chdir'))).toEqual([
+      '--ro-bind',
+      '/run/247-agent/core.sock.net/1.sock',
+      SANDBOX_NET_SOCKET,
+    ]);
+    expect(argv.slice(argv.indexOf('--hostname'))).toEqual([
+      ...['--hostname', 'box'],
+      '--',
+      ...['/opt/node/bin/node', '-e', NET_BRIDGE_SOURCE, '--', SANDBOX_NET_SOCKET],
+      ...['npx', '-y', 'agent'],
+    ]);
+    // The proxy variables are the bridge's to set: it alone knows its port.
+    expect(argv.join(' ')).not.toMatch(/--setenv HTTPS?_PROXY/);
   });
 
   it('runs in the private /tmp when the action has no cwd and lets env override HOME/PATH', () => {
@@ -220,12 +293,14 @@ describe('sandboxHost', () => {
       protected: [
         { path: '/var/lib/247-agent/state.db', what: 'database' },
         { path: '/run/247-agent/core.sock', what: 'socket' },
+        { path: '/run/247-agent/core.sock.net', what: 'proxy socket directory', dir: true },
         { path: '/etc/247-agent/agent.yaml', what: 'config file' },
         { path: '/etc/247-agent/secrets.yaml', what: 'secrets file' },
       ],
       env: { OA_HOME: '/opt/247-agent' },
       execPath: '/opt/247-agent/node/bin/node',
     });
+    // The proxy sockets' directory lies in the socket's, which is masked: no mask of its own.
     expect(host.masks).toEqual(
       ['/var/lib/247-agent', '/run/247-agent', '/etc/247-agent'].map(canonicalPath),
     );
@@ -234,6 +309,7 @@ describe('sandboxHost', () => {
     expect(host.protected.map((p) => p.what)).toEqual([
       'database',
       'socket',
+      'proxy socket directory',
       'config file',
       'secrets file',
     ]);
@@ -246,12 +322,17 @@ describe('sandboxHost', () => {
         { path: '/etc/agent.yaml', what: 'config file' },
         { path: '/srv/oa/data/state.db', what: 'database' },
         { path: '/srv/oa/state.db', what: 'database' },
+        { path: '/srv/oa/checkout/core.sock', what: 'socket' },
+        { path: '/srv/oa/checkout/core.sock.net', what: 'proxy socket directory', dir: true },
       ],
       env: { OA_HOME: '/srv/oa/checkout' },
       execPath: '/home/dev/.nvm/versions/node/v22.0.0/bin/node',
     });
     // `/` and `/etc` are never masked, nor `/srv/oa`, which holds the install; `/srv/oa/data` is.
-    expect(host.masks).toEqual(['/srv/oa/data'].map(canonicalPath));
+    // Nor the install for the socket in it, so the proxy sockets' directory there is, itself.
+    expect(host.masks).toEqual(
+      ['/srv/oa/data', '/srv/oa/checkout/core.sock.net'].map(canonicalPath),
+    );
     expect(host.ro_binds).toEqual(
       ['/srv/oa/checkout', '/home/dev/.nvm/versions/node/v22.0.0'].map(canonicalPath),
     );

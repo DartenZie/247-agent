@@ -1,13 +1,26 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
+import { createServer as createHttpServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentDefaults } from '../actions/agent-config.js';
+import { NET_BRIDGE_SOURCE, SANDBOX_NET_SOCKET } from '../actions/sandbox-net.js';
+import { isInsidePath } from '../actions/sandbox.js';
 import type { ConnectorConfig } from '../config/connector.js';
 import { parseManifest } from '../config/connector.js';
 import { createLogger } from '../log.js';
+import { Metrics } from '../metrics.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import {
   ConnectorDownError,
@@ -541,14 +554,22 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
   let dir: string;
   let logFile: string;
   let work: string;
+  let metrics: Metrics;
+  let origin: Server | undefined;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'oa-sbx-'));
     logFile = join(dir, 'bwrap.log');
     work = join(dir, 'work');
     mkdirSync(join(dir, 'cfg'));
+    metrics = new Metrics();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    const open = origin;
+    origin = undefined;
+    if (open !== undefined) {
+      await new Promise((r) => open.close(r));
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -567,7 +588,7 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
           sandbox,
         }),
       ],
-      socketPath: '/tmp/oa-test.sock',
+      socketPath: join(dir, 'core.sock'),
       secrets: staticSecrets({ model_key: 'sk-not-real' }),
       log: createLogger({
         level: 'debug',
@@ -582,8 +603,23 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
       },
       agents: { defaults: AgentDefaults.parse({}), workDir: work },
       sandboxHost: { protected: [], masks: [join(dir, 'cfg'), '/nonexistent'], ro_binds: [] },
+      metrics,
     });
     return sup;
+  };
+  /** One turn of the fake agent in `dir`. */
+  const turn = async (s: ConnectorSupervisor, text: string): Promise<void> => {
+    const session = await s.open('claude', {
+      cwd: dir,
+      signal: signal(),
+      log: createLogger({ sink: () => undefined }),
+      onPermission: () => 'cancelled',
+    });
+    const gen = session.prompt(`${text} [[no-cost]]`);
+    while (!(await gen.next()).done) {
+      // drain the updates
+    }
+    session.close();
   };
   const recorded = (): string[][] =>
     readFileSync(logFile, 'utf8')
@@ -682,7 +718,98 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
   it('reports an unsandboxed agent as such and keeps it out of bwrap', async () => {
     const s = makeSandboxed('none');
     await s.start();
-    expect(s.status()[0]).toMatchObject({ state: 'up', sandbox: 'none' });
+    expect(s.status()[0]).toMatchObject({ state: 'up', sandbox: 'none', network: 'host' });
     expect(existsSync(logFile)).toBe(false);
+  });
+
+  it('leaves a sandbox with a network allowlist one way out, the proxy, which filters', async () => {
+    origin = createHttpServer((req, res) => res.end(`origin saw ${req.url ?? ''}`));
+    await new Promise<void>((r) => origin?.listen(0, '127.0.0.1', r));
+    const port = String((origin.address() as AddressInfo).port);
+    const s = makeSandboxed({ backend: 'bwrap', network: { allow: [`127.0.0.1:${port}`] } });
+    await s.start();
+    expect(s.status()[0]).toMatchObject({ state: 'up', sandbox: 'bwrap', network: 'allowlist' });
+    expect(lines).toContainEqual(
+      expect.objectContaining({ msg: 'connector.up', connector: 'claude', network: 'allowlist' }),
+    );
+
+    // No network of its own; the proxy's socket bound in from the daemon's own directory
+    // beside the core socket, which no sandbox sees.
+    const a = recorded()[0] ?? [];
+    expect(a).toContain('--unshare-net');
+    const socket = pairs(a, '--ro-bind').find(([, dest]) => dest === SANDBOX_NET_SOCKET)?.[0] ?? '';
+    expect(socket).toBe(join(dir, 'core.sock.net', `${String(process.pid)}-1.sock`));
+    expect(existsSync(socket)).toBe(true);
+    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
+    expect(isInsidePath(work, socket)).toBe(false);
+    expect(a.slice(a.indexOf('--') + 1)).toEqual([
+      ...[process.execPath, '-e', NET_BRIDGE_SOURCE, '--', SANDBOX_NET_SOCKET],
+      ...['node', `${FIXTURES}fake-acp.ts`],
+    ]);
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        msg: 'sandbox.net_proxy',
+        connector: 'claude',
+        socket,
+        allow: `127.0.0.1:${port}`,
+      }),
+    );
+
+    // The agent behind the bridge reaches the allowed host through its loopback proxy…
+    const result = (): Record<string, unknown> =>
+      JSON.parse(readFileSync(join(dir, 'FETCH_RESULT.json'), 'utf8')) as Record<string, unknown>;
+    await turn(s, `[[fetch: http://127.0.0.1:${port}/hello]]`);
+    expect(result()).toEqual({
+      proxy: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/) as string,
+      status: 200,
+      body: 'origin saw /hello',
+    });
+    // …and nothing else, which the daemon logs and counts.
+    await turn(s, `[[fetch: http://localhost:${port}/hello]]`);
+    expect(result()).toMatchObject({
+      status: 403,
+      body: `247-agent: localhost:${port} is not in this sandbox's network allowlist\n`,
+    });
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'sandbox.net_denied',
+        connector: 'claude',
+        host: 'localhost',
+        port: Number(port),
+      }),
+    );
+    const requests = (result: string): number | undefined =>
+      metrics.registry.value('oa_sandbox_net_requests_total', { connector: 'claude', result });
+    expect([requests('allowed'), requests('denied')]).toEqual([1, 1]);
+
+    // A respawn gets a proxy of its own; the old socket goes with the old process.
+    await s.restart('claude');
+    const next = pairs(recorded()[1] ?? [], '--ro-bind').find(
+      ([, dest]) => dest === SANDBOX_NET_SOCKET,
+    )?.[0];
+    expect(next).not.toBe(socket);
+    await until(() => !existsSync(socket));
+    expect(existsSync(next ?? '')).toBe(true);
+    await s.stop();
+    expect(existsSync(dirname(socket))).toBe(false);
+  });
+
+  it('cuts the network off entirely for an empty allowlist: no proxy, no bridge', async () => {
+    const s = makeSandboxed({ backend: 'bwrap', network: { allow: [] } });
+    await s.start();
+    expect(s.status()[0]).toMatchObject({ state: 'up', sandbox: 'bwrap', network: 'none' });
+    const a = recorded()[0] ?? [];
+    expect(a).toContain('--unshare-net');
+    expect(a).not.toContain(SANDBOX_NET_SOCKET);
+    expect(a.slice(a.indexOf('--') + 1)).toEqual(['node', `${FIXTURES}fake-acp.ts`]);
+    expect(lines.some((l) => l.msg === 'sandbox.net_proxy')).toBe(false);
+  });
+
+  it('shares the host network when the sandbox says nothing about it', async () => {
+    const s = makeSandboxed();
+    await s.start();
+    expect(s.status()[0]).toMatchObject({ sandbox: 'bwrap', network: 'host' });
+    expect(recorded()[0]).not.toContain('--unshare-net');
   });
 });

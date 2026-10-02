@@ -384,7 +384,7 @@ plus `PATH`, `HOME` and `LANG`. The daemon's socket, database, config directory 
 `file` secrets backend) and other processes are out of reach: their directories are
 hidden even where `/etc` would show them. `ro_binds`/`rw_binds` mount more host paths
 at the same location, `extra_args` passes raw bwrap flags (`--unshare-net` for an
-offline step). The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox:
+offline step; the `network` allowlist of 6.1 is for agent programs only). The default comes from `defaults.sandbox` in `agent.yaml`; `sandbox:
 none` on an action opts out. Needs the `bubblewrap` package (9.2).
 
 ### 5.2 `connector`
@@ -571,7 +571,8 @@ worktree or temp directory, with `tools`, `bash_allow`, `max_tool_calls`, a `bud
 ARCHITECTURE §5.4 has the full field list and the permission policy. Two layers confine
 it: the task's policy answers what the agent asks and judges what it did not ask, and
 the connector's `sandbox: bwrap` (6.1) keeps the program itself away from the daemon's
-socket, database, config and other processes. Use both: the policy alone only binds an
+socket, database, config and other processes, and with `network.allow` away from every
+host but the ones listed. Use both: the policy alone only binds an
 agent that asks before acting.
 
 ## 6. Connectors
@@ -611,10 +612,14 @@ name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
-sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }
+sandbox:
+  backend: bwrap
+  ro_binds: [/var/lib/247-agent/repos/website]
+  network: { allow: [api.anthropic.com, registry.npmjs.org] }
 ```
 
-`sandbox: bwrap` (same forms as on a `shell` action, 5.1; `acp` connectors only) runs
+`sandbox: bwrap` (same forms as on a `shell` action, 5.1, plus `network`; `acp`
+connectors only) runs
 the program in bubblewrap for its whole life: the OS and the install read-only,
 `defaults.agent.work_dir` the only writable path (every run's workspace, plus the
 program's own home `<work_dir>/home/<name>` where npm and Claude Code keep their
@@ -624,10 +629,46 @@ environment holds only `PATH`, `HOME`, `LANG`, `OA_HOME`, `OA_CONNECTOR_NAME` an
 manifest's `env`. List every repository the tasks' `git-worktree` workspaces come from in
 `ro_binds` (`rw_binds` only if the agent itself must commit; the reference workflow
 commits in a `post` gate instead): `oa validate` refuses a repository the sandbox cannot
-see, and a bind or `work_dir` that would show it the database, the socket, `agent.yaml`
-or the secrets file. The network is not restricted (the agent needs its model API).
-`oa connector list` shows `sandbox=bwrap`; without the `bubblewrap` package the spawn
-fails and the connector stays down with the error there.
+see, and a bind or `work_dir` that would show it the database, the socket (or the
+allowlist proxies' sockets beside it, in `<socket>.net/`), `agent.yaml` or the secrets
+file. `oa connector list` shows `sandbox=bwrap`; without the `bubblewrap`
+package the spawn fails and the connector stays down with the error there.
+
+Without `network` the sandbox shares the host's network. `network: { allow: […] }`
+takes that away and leaves one way out, a filtering proxy the daemon runs for this
+sandbox, to the listed targets only. An entry is `host[:port]`:
+
+| Entry | Lets through |
+|---|---|
+| `api.anthropic.com` | that host, port 443 (the default) |
+| `*.npmjs.org` | every name below `npmjs.org` (not `npmjs.org` itself), port 443 |
+| `mirror.example.com:80` | that host on that port; plain HTTP needs its port named |
+| `gitea.internal:*` | that host on any port |
+| `10.0.0.5:8080`, `[fd00::5]:8080` | an address |
+
+Everything else is answered with a 403 and logged as `sandbox.net_denied` with the
+connector, host and port, which is how to find out what an agent wants: start with the
+model API and the package registry, run a task, and add what the log shows you agree
+with. `allow: []` means no network at all. A changed list takes effect on `oa reload`,
+which respawns the agent; `oa connector list` shows `net=allowlist` (or `net=none`).
+
+What to know before relying on it:
+
+- The proxy sees host and port, never the content: HTTPS stays encrypted end to end. An
+  allowed host that takes uploads (a paste site, a storage bucket, the model API with
+  someone else's key) is still a way out, so list hosts, not whole clouds.
+- A wildcard entry never reaches a loopback, private or link-local address (nor a 6to4
+  or Teredo one, which tunnels to an IPv4 host), whatever the name resolves to; an entry
+  that names the host or the address does. To let the agent reach a service on the
+  daemon's own machine, name it (`build-cache.internal:8080`).
+- A sandbox holds at most 256 connections open through its proxy; one more is closed
+  unanswered and logged as `sandbox.net_dropped`.
+- Only programs that honour `HTTPS_PROXY`/`HTTP_PROXY` get out: Claude Code, Node, npm,
+  curl and git over HTTPS do; git over SSH and raw sockets do not. The variables are set
+  for the agent by the sandbox and override the manifest's `env`.
+- `localhost` inside the sandbox is the sandbox's own; nothing on it goes to the proxy.
+- Claude Code needs `api.anthropic.com`; started with `npx`, also `registry.npmjs.org`;
+  logged in with a claude.ai account instead of an API key, also `platform.claude.com`.
 
 ### 6.2 Lifecycle
 
@@ -859,7 +900,8 @@ oa connector restart <name> [--json]
 ```
 
 `list` shows every connector with its state, transport, pid and restart count, plus
-`sandbox=bwrap` for an agent program the core runs in bubblewrap (6.1); built-in pollers
+`sandbox=bwrap` for an agent program the core runs in bubblewrap and `net=allowlist` or
+`net=none` when that sandbox restricts the network (6.1); built-in pollers
 appear with `builtin`. `restart` kills one supervised connector, resolves its secrets
 again and respawns it, so it is the step after rotating a secret. It exits 1 when the
 connector is not up afterwards. A built-in poller is refused, since it re-reads its
@@ -936,10 +978,10 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
 | `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
-| `GET /v1/connectors` | `{connectors: [{name, transport, state, pid, restarts, error, health, builtin}]}`; `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
+| `GET /v1/connectors` | `{connectors: [{name, transport, managed_by, sandbox, network, state, pid, restarts, error, health, builtin}]}`; `network` is `host`, `none` or `allowlist` (6.1); `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
 | `POST /v1/reload` | Re-read and apply `agent.yaml`, manifests and tasks files together (9.3). Always 200: `{ok, files: [{file, ok, issues?}], restart_required, connectors?: {added, removed, changed}, tasks}`; `ok: false` means nothing changed |
-| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}` (`type` is `other` unless the core or a task's trigger, `wait` or `emit` names it exactly, so connectors and `oa emit` cannot grow it without bound), `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
+| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}` (`type` is `other` unless the core or a task's trigger, `wait` or `emit` names it exactly, so connectors and `oa emit` cannot grow it without bound), `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `sandbox_net_requests_total{connector,result}` (what sandboxed agents asked their network allowlist proxy for: `allowed`, `denied`, `failed`, and `dropped` for a connection past the limit), `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
 
 Errors are `{error, issues?}` with status 400, 404, 405, 409 or 413.
 
@@ -1107,8 +1149,11 @@ Done since as well: `batch: true` on `llm` actions (Message Batches at half pric
 
 Done since as well: the `webhook`, `github` and `jira` connectors.
 
-Not implemented yet: a network allowlist for sandboxed agents, end-to-end encrypted
-Matrix rooms (the Matrix backend of `chat` reads unencrypted rooms).
+Done since as well: the network allowlist for sandboxed agent programs
+(`sandbox.network.allow`, 6.1).
+
+Not implemented yet: end-to-end encrypted Matrix rooms (the Matrix backend of `chat`
+reads unencrypted rooms).
 
 ## 11. Troubleshooting
 
@@ -1127,6 +1172,10 @@ Matrix rooms (the Matrix backend of `chat` reads unencrypted rooms).
   needs an openrouter provider".** Jev is only reachable through OpenRouter's Decisions
   API; point `provider:` (or `defaults.decide.provider`) at a provider of type
   `openrouter`.
+- **A sandboxed agent cannot reach a host (`CONNECT tunnel failed, response 403`, npm
+  `E403`, a connector that stays down after adding `network`).** The host is not in the
+  manifest's `sandbox.network.allow`. The daemon logs each refusal as
+  `sandbox.net_denied` with the host and port; add the entry and `oa reload`.
 - **A `wait` resumed with the wrong event.** Tighten `for.filter`; match on
   `correlation_id` as the examples do.
 - **Templates render as literal text.** Inside a YAML flow mapping the `${…}` must be

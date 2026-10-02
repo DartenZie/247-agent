@@ -9,9 +9,20 @@
 # listed here; the daemon's config, database, socket and other processes are out of reach.
 # List every `workspace.repo` the tasks use (read-only: the post gates commit, not the
 # agent); `oa validate` refuses a repo it cannot see. Needs the `bubblewrap` package.
+#
+# `network.allow` takes the host's network away from the sandbox and lets the program
+# reach only these hosts (`host[:port]`, port 443 unless named, `*.suffix` for every name
+# below one), through a filtering proxy the daemon runs for it: the model API, and the npm
+# registry that `npx` fetches the agent from. A claude.ai login instead of an API key also
+# needs `platform.claude.com`. Whatever else the agent asks for is refused and logged as
+# `sandbox.net_denied` with the host; add what you agree with. Without `network` the
+# sandbox shares the host's network.
 name: claude
 exec: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
 transport: acp
 env: { ANTHROPIC_API_KEY: "${secrets.anthropic_api_key}" }
-sandbox: { backend: bwrap, ro_binds: [/var/lib/247-agent/repos/website] }
+sandbox:
+  backend: bwrap
+  ro_binds: [/var/lib/247-agent/repos/website]
+  network: { allow: [api.anthropic.com, registry.npmjs.org] }
 restart: { base: 1s, max: 60s }
