@@ -358,7 +358,7 @@ export class Metrics {
   );
   readonly sandboxNetRequests = this.registry.counter(
     'oa_sandbox_net_requests_total',
-    'Requests of a sandboxed agent program through its network allowlist proxy, by connector and result (allowed, denied, failed)',
+    'Requests of a sandboxed agent program through its network allowlist proxy, by connector and result (allowed, denied, failed; dropped for a connection past the limit)',
     ['connector', 'result'],
   );
 

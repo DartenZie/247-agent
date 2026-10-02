@@ -32,11 +32,16 @@ const SandboxObject = z.strictObject({
   rw_binds: z.array(z.string().min(1)).default([]),
 });
 
+/** The short form, `sandbox: bwrap`: that backend with nothing added. */
+const BackendOnly = Backend.transform((backend) => ({
+  backend,
+  extra_args: [],
+  ro_binds: [],
+  rw_binds: [],
+}));
+
 /** `sandbox: bwrap` or `sandbox: { backend: bwrap, ro_binds: [...], ... }`. */
-export const Sandbox = z.union([
-  Backend.transform((backend) => ({ backend, extra_args: [], ro_binds: [], rw_binds: [] })),
-  SandboxObject,
-]);
+export const Sandbox = z.union([BackendOnly, SandboxObject]);
 
 export type SandboxConfig = z.infer<typeof SandboxObject>;
 export type SandboxBackend = z.infer<typeof Backend>;
@@ -69,10 +74,7 @@ const AgentSandboxObject = SandboxObject.extend({
  * agent program has (its proxy lives as long as the process; a `shell` action cuts the
  * network with `extra_args: [--unshare-net]`).
  */
-export const AgentSandbox = z.union([
-  Backend.transform((backend) => ({ backend, extra_args: [], ro_binds: [], rw_binds: [] })),
-  AgentSandboxObject,
-]);
+export const AgentSandbox = z.union([BackendOnly, AgentSandboxObject]);
 
 export type AgentSandboxConfig = z.infer<typeof AgentSandboxObject>;
 
@@ -141,26 +143,35 @@ function maskable(path: string): boolean {
  * (ARCHITECTURE §11). `masks` are directories replaced by an empty tmpfs so the daemon's
  * own files never show through the read-only `/etc` or a wide bind: the directories of
  * the config file (tasks, manifests, prompts, a `file` secrets backend), the database and
- * the socket. `ro_binds` are what a child needs to run at all: the install root
- * (`OA_HOME`: `bin/` and the bundled connectors) and the prefix of the daemon's Node
- * (`node`, `npm`, `npx`), since both are first on the `PATH` every child gets. Both lists
- * hold canonical paths; a mask is skipped when it is `/`, would cover an OS directory or
- * the install itself. A protected file left uncovered that way but shown by an OS or
- * install mount (`/etc/agent.yaml`, a database beside a checkout) is bound to `/dev/null`
- * by `buildSandboxArgv` instead.
+ * the socket, plus a protected directory itself where none of those covers it (the proxy
+ * sockets' directory when the core socket lies in the install root). `ro_binds` are what
+ * a child needs to run at all: the install root (`OA_HOME`: `bin/` and the bundled
+ * connectors) and the prefix of the daemon's Node (`node`, `npm`, `npx`), since both are
+ * first on the `PATH` every child gets. Both lists hold canonical paths; a mask is skipped
+ * when it is `/`, would cover an OS directory or the install itself. A protected file left
+ * uncovered that way but shown by an OS or install mount (`/etc/agent.yaml`, a database
+ * beside a checkout) is bound to `/dev/null` by `buildSandboxArgv` instead.
  */
 export interface SandboxHost {
-  /** Files that must stay out of every sandbox: the db, the socket, `agent.yaml`, the secrets file. */
+  /**
+   * What must stay out of every sandbox: the db, the socket, `agent.yaml`, the secrets
+   * file, the directory of the network allowlist proxies' sockets.
+   */
   readonly protected: readonly ProtectedPath[];
   readonly masks: readonly string[];
   readonly ro_binds: readonly string[];
 }
 
-/** One file the daemon keeps out of every sandbox, with what to call it in a message. */
+/** One path the daemon keeps out of every sandbox, with what to call it in a message. */
 export interface ProtectedPath {
   path: string;
-  /** `database`, `socket`, `config file`, `secrets file`. */
+  /** `database`, `socket`, `config file`, `secrets file`, `proxy socket directory`. */
   what: string;
+  /**
+   * A directory that is the daemon's alone, not a file: masked itself rather than only
+   * through its parent, and no bind may lie inside it either.
+   */
+  dir?: boolean | undefined;
 }
 
 export interface SandboxHostOptions {
@@ -184,9 +195,10 @@ export function sandboxHost(opts: SandboxHostOptions): SandboxHost {
   // The Node prefix of a release tree lives inside the install root: one bind is enough.
   const ro_binds = wanted.filter((p, i) => !wanted.some((q, j) => j !== i && isInsidePath(q, p)));
   // A mask over the install would hide `bin/` and Node from every child: hide the file instead.
-  const masks = unique(protectedPaths.map((p) => dirname(p.path))).filter(
-    (d) => maskable(d) && !ro_binds.some((b) => isInsidePath(d, b)),
-  );
+  const masks = unique(protectedPaths.map((p) => (p.dir === true ? p.path : dirname(p.path))))
+    .filter((d) => maskable(d) && !ro_binds.some((b) => isInsidePath(d, b)))
+    // What lies inside another mask is hidden already.
+    .filter((d, _i, all) => !all.some((o) => o !== d && isInsidePath(o, d)));
   return { protected: protectedPaths, masks, ro_binds };
 }
 

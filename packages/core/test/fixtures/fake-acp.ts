@@ -98,9 +98,13 @@ function flag(prompt: string, name: string): boolean {
 }
 
 /** GET `url` the way an HTTP client behind `HTTP_PROXY` does: in absolute form, to the proxy. */
-function fetchViaProxy(proxy: string, url: string): Promise<{ status: number; body: string }> {
+async function fetchViaProxy(
+  proxy: string,
+  url: string,
+): Promise<{ status: number; body: string }> {
+  // async: without `HTTP_PROXY` this throws, which must reject, not escape the caller's catch.
   const p = new URL(proxy);
-  return new Promise((done, fail) => {
+  return await new Promise((done, fail) => {
     const req = httpRequest(
       { host: p.hostname, port: p.port, path: url, headers: { host: new URL(url).host } },
       (res) => {

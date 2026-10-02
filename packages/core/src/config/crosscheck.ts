@@ -187,7 +187,7 @@ export interface SandboxCheckContext {
   defaultConnector: string | undefined;
   /** `defaults.agent.work_dir`, resolved: the sandboxed agents' one writable path. */
   workDir: string;
-  /** The db, the socket, `agent.yaml`, the secrets file: nothing may bind them in. */
+  /** The db, the socket, the proxy sockets, `agent.yaml`, the secrets file: never bound in. */
   protected: readonly ProtectedPath[];
   /** `defaults.sandbox`: what a `shell` action without its own `sandbox` runs in. */
   defaultSandbox?: SandboxConfig | undefined;
@@ -209,9 +209,10 @@ export interface SandboxCheckResult {
  * A sandboxed agent program (a `transport: acp` manifest with `sandbox: bwrap`, §5.4,
  * §11) sees the OS, the install, `work_dir` and the manifest's own binds, nothing else. So:
  * no bind (nor `work_dir`) may contain the database, the socket, `agent.yaml` or the
- * secrets file, which the sandbox exists to hide; the manifest's `cwd` must lie inside a
- * bind; and the repository of every `git-worktree` workspace an `agent` task opens on
- * that connector must lie inside a bind, or the worktree's `.git` link points nowhere.
+ * secrets file, which the sandbox exists to hide, nor touch the directory of the network
+ * allowlist proxies' sockets; the manifest's `cwd` must lie inside a bind; and the
+ * repository of every `git-worktree` workspace an `agent` task opens on that connector
+ * must lie inside a bind, or the worktree's `.git` link points nowhere.
  * A sandboxed `shell` action (§5.1) binds its `cwd` read-write and its binds likewise, so
  * the same rule holds for them. Paths are compared with symlinks resolved on both sides,
  * as bwrap mounts what a bind's source really is. Run at daemon start, on reload and by
@@ -224,9 +225,12 @@ export function checkSandboxes(
   const out: SandboxCheckResult = { tasks: [], manifests: [], agent: [] };
   const inside = (dir: string, target: string): boolean =>
     isInside(canonicalPath(dir), canonicalPath(target));
+  /** A mount of `dir` shows `p`: it holds it, or lies in a directory protected as a whole. */
+  const shows = (dir: string, p: ProtectedPath): boolean =>
+    inside(dir, p.path) || (p.dir === true && inside(p.path, dir));
   const exposes: Exposes = (bind, path, who) =>
     ctx.protected
-      .filter((p) => inside(bind, p.path))
+      .filter((p) => shows(bind, p))
       .map((p) => ({ path, message: `${bind} would expose the ${p.what} ${p.path} to ${who}` }));
   checkShellSandboxes(tasks, ctx, exposes, out);
   const sandboxed = ctx.manifests.filter(
@@ -236,7 +240,7 @@ export function checkSandboxes(
     return out;
   }
   for (const p of ctx.protected) {
-    if (inside(ctx.workDir, p.path)) {
+    if (shows(ctx.workDir, p)) {
       out.agent.push({
         path: 'defaults.agent.work_dir',
         message: `${ctx.workDir} contains the ${p.what} ${p.path}, which a sandboxed agent program (connector "${sandboxed.map((m) => m.name).join('", "')}") could then read: move it`,

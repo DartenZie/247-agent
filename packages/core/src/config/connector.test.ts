@@ -403,6 +403,29 @@ describe('oa validate with a sandboxed agent program', () => {
     ]);
   });
 
+  it('reports a bind over the directory of the network allowlist proxies, beside the socket', () => {
+    tasks('/srv/repos/site');
+    write(
+      'claude.yaml',
+      `name: claude\nexec: [claude-agent-acp]\ntransport: acp\nsandbox: { backend: bwrap, ro_binds: [/srv/repos/site, ${dir}/run/core.sock.net] }\n`,
+    );
+    const agent = write(
+      'agent.yaml',
+      'db: state.db\nsocket: run/core.sock\ntasks: tasks.yaml\nconnectors: [claude.yaml]\ndefaults: { agent: { connector: claude } }\n',
+    );
+    const byFile = Object.fromEntries(
+      checkConfigFile(agent).map((c) => [c.file.slice(dir.length + 1), c.ok ? 'ok' : c.issues]),
+    );
+    expect(byFile['claude.yaml']).toEqual([
+      {
+        path: 'sandbox.ro_binds[1]',
+        message: expect.stringMatching(
+          /would expose the proxy socket directory .*run\/core\.sock\.net /,
+        ) as string,
+      },
+    ]);
+  });
+
   it('checks an inline manifest and does not care about unsandboxed agents', () => {
     tasks('/srv/repos/site');
     const agent = write(

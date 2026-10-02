@@ -146,14 +146,14 @@ describe('buildSandboxArgv', () => {
       writable: '/work',
       env: { KEY: 'v' },
       hostEnv: {},
-      net: { proxySocket: '/tmp/247-agent-net-x/1.sock', execPath: '/opt/node/bin/node' },
+      net: { proxySocket: '/run/247-agent/core.sock.net/1.sock', execPath: '/opt/node/bin/node' },
       probe,
     });
     expect(argv).toContain('--unshare-net');
     // After every other mount, so nothing shadows it; the socket only, read-only.
     expect(argv.slice(argv.indexOf('/srv/repos/site') + 2, argv.indexOf('--chdir'))).toEqual([
       '--ro-bind',
-      '/tmp/247-agent-net-x/1.sock',
+      '/run/247-agent/core.sock.net/1.sock',
       SANDBOX_NET_SOCKET,
     ]);
     expect(argv.slice(argv.indexOf('--hostname'))).toEqual([
@@ -293,12 +293,14 @@ describe('sandboxHost', () => {
       protected: [
         { path: '/var/lib/247-agent/state.db', what: 'database' },
         { path: '/run/247-agent/core.sock', what: 'socket' },
+        { path: '/run/247-agent/core.sock.net', what: 'proxy socket directory', dir: true },
         { path: '/etc/247-agent/agent.yaml', what: 'config file' },
         { path: '/etc/247-agent/secrets.yaml', what: 'secrets file' },
       ],
       env: { OA_HOME: '/opt/247-agent' },
       execPath: '/opt/247-agent/node/bin/node',
     });
+    // The proxy sockets' directory lies in the socket's, which is masked: no mask of its own.
     expect(host.masks).toEqual(
       ['/var/lib/247-agent', '/run/247-agent', '/etc/247-agent'].map(canonicalPath),
     );
@@ -307,6 +309,7 @@ describe('sandboxHost', () => {
     expect(host.protected.map((p) => p.what)).toEqual([
       'database',
       'socket',
+      'proxy socket directory',
       'config file',
       'secrets file',
     ]);
@@ -319,12 +322,17 @@ describe('sandboxHost', () => {
         { path: '/etc/agent.yaml', what: 'config file' },
         { path: '/srv/oa/data/state.db', what: 'database' },
         { path: '/srv/oa/state.db', what: 'database' },
+        { path: '/srv/oa/checkout/core.sock', what: 'socket' },
+        { path: '/srv/oa/checkout/core.sock.net', what: 'proxy socket directory', dir: true },
       ],
       env: { OA_HOME: '/srv/oa/checkout' },
       execPath: '/home/dev/.nvm/versions/node/v22.0.0/bin/node',
     });
     // `/` and `/etc` are never masked, nor `/srv/oa`, which holds the install; `/srv/oa/data` is.
-    expect(host.masks).toEqual(['/srv/oa/data'].map(canonicalPath));
+    // Nor the install for the socket in it, so the proxy sockets' directory there is, itself.
+    expect(host.masks).toEqual(
+      ['/srv/oa/data', '/srv/oa/checkout/core.sock.net'].map(canonicalPath),
+    );
     expect(host.ro_binds).toEqual(
       ['/srv/oa/checkout', '/home/dev/.nvm/versions/node/v22.0.0'].map(canonicalPath),
     );

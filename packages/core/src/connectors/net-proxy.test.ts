@@ -5,7 +5,12 @@ import {
   type IncomingHttpHeaders,
   type Server,
 } from 'node:http';
-import type { AddressInfo, LookupFunction, Socket } from 'node:net';
+import {
+  createServer as createNetServer,
+  type AddressInfo,
+  type LookupFunction,
+  type Socket,
+} from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +24,7 @@ import {
   openNetProxy,
   publicOnly,
   type NetProxy,
+  type NetProxyOptions,
   type NetProxyResult,
 } from './net-proxy.js';
 
@@ -85,12 +91,13 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function open(allow: string[]): Promise<NetProxy> {
+async function open(allow: string[], over: Partial<NetProxyOptions> = {}): Promise<NetProxy> {
   proxy = await openNetProxy({
     allow,
     socket,
     lookup,
     connectTimeoutMs: 2000,
+    ...over,
     onRequest: (r) => results.push(r),
     log: createLogger({
       level: 'debug',
@@ -296,6 +303,96 @@ describe('openNetProxy', () => {
     expect(results).toEqual(['denied', 'denied']);
   });
 
+  it('refuses what it cannot read as a target instead of throwing', async () => {
+    await open(['api.test', '[fe80::1]:443']);
+    // `isIPv6` takes a zone id, the URL parser does not: no entry names it, so it is refused.
+    const zone = await tunnel('[fe80::1%eth0]:443');
+    expect(zone.status).toBe(403);
+    expect((await tunnel('api.test')).status).toBe(400);
+    expect(results).toEqual(['denied']);
+  });
+
+  it('answers 502 for a status line it cannot relay', async () => {
+    const odd = createNetServer((sock) => {
+      sock.once('data', () => sock.end('HTTP/1.1 099 Odd\r\nContent-Length: 0\r\n\r\n'));
+    });
+    await new Promise<void>((r) => odd.listen(0, '127.0.0.1', r));
+    try {
+      const oddPort = String((odd.address() as AddressInfo).port);
+      await open([`127.0.0.1:${oddPort}`]);
+      const res = await send('GET', `http://127.0.0.1:${oddPort}/x`);
+      expect(res.status).toBe(502);
+      expect(res.body).toContain(`cannot reach 127.0.0.1:${oddPort}`);
+      expect(results).toEqual(['failed']);
+    } finally {
+      await new Promise((r) => odd.close(r));
+    }
+  });
+
+  it('does not count a client that leaves before the answer as a failed upstream', async () => {
+    const silent = createHttpServer(() => undefined);
+    await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r));
+    try {
+      const silentPort = String((silent.address() as AddressInfo).port);
+      await open([`127.0.0.1:${silentPort}`]);
+      await new Promise<void>((done) => {
+        const req = request({
+          socketPath: socket,
+          path: `http://127.0.0.1:${silentPort}/slow`,
+        });
+        req.on('error', () => undefined);
+        req.on('close', done);
+        req.end();
+        setTimeout(() => req.destroy(), 100);
+      });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(results).toEqual([]);
+      expect(logged('sandbox.net_failed')).toEqual([]);
+    } finally {
+      silent.closeAllConnections();
+      await new Promise((r) => silent.close(r));
+    }
+  });
+
+  it('says once that it stops warning about new targets, after 256 of them', async () => {
+    await open(['api.test']);
+    for (let i = 0; i < 257; i++) {
+      expect((await tunnel(`h${String(i)}.test:443`)).status).toBe(403);
+    }
+    const denied = logged('sandbox.net_denied');
+    expect(denied.filter((l) => l.level === 'warn')).toHaveLength(256);
+    expect(denied[256]).toMatchObject({ level: 'debug', host: 'h256.test' });
+    expect(logged('sandbox.net_log_limit')).toEqual([
+      expect.objectContaining({ level: 'warn', targets: 256 }),
+    ]);
+    // Counted all the same, which is where the rest still shows.
+    expect(results).toHaveLength(257);
+  });
+
+  it('closes a connection past its limit unanswered, and takes one again when there is room', async () => {
+    const target = `api.test:${String(port)}`;
+    await open([target], { maxConnections: 2 });
+    const held = [await tunnel(target), await tunnel(target)];
+    await expect(tunnel(target)).rejects.toThrow();
+    await expect(send('GET', `http://${target}/x`)).rejects.toThrow();
+    expect(results).toEqual(['allowed', 'allowed', 'dropped', 'dropped']);
+    expect(logged('sandbox.net_dropped').map((l) => [l.level, l.limit])).toEqual([
+      ['warn', 2],
+      ['debug', 2],
+    ]);
+    held[0]?.sock.destroy();
+    const retried = async (): Promise<number> => {
+      for (;;) {
+        try {
+          return (await tunnel(target)).status;
+        } catch {
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      }
+    };
+    expect(await retried()).toBe(200);
+  });
+
   it('drops open tunnels when it closes', async () => {
     const p = await open([`api.test:${String(port)}`]);
     const t = await tunnel(`api.test:${String(port)}`);
@@ -377,6 +474,17 @@ describe('isNonPublicAddress', () => {
       'ff02::1',
       '::ffff:127.0.0.1',
       '::ffff:10.0.0.1',
+      'fec0::1',
+      // NAT64: an IPv4 address behind the well-known prefix is judged as that address.
+      '64:ff9b::10.0.0.5',
+      '64:ff9b::a9fe:a9fe',
+      '64:ff9b::7f00:1',
+      '64:ff9b::',
+      '64:ff9b:1::1',
+      // 6to4 and Teredo: tunnels to an IPv4 host, whatever address they embed.
+      '2002:a00:5::1',
+      '2002:808:808::1',
+      '2001:0:4136:e378:8000:63bf:3fff:fdd2',
     ]) {
       expect(isNonPublicAddress(a), a).toBe(true);
     }
@@ -385,7 +493,9 @@ describe('isNonPublicAddress', () => {
       '172.32.0.1',
       '160.79.104.10',
       '2606:4700:4700::1111',
+      '2001:4860:4860::8888',
       '::ffff:8.8.8.8',
+      '64:ff9b::808:808',
     ]) {
       expect(isNonPublicAddress(a), a).toBe(false);
     }

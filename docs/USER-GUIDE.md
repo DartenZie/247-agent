@@ -629,8 +629,9 @@ environment holds only `PATH`, `HOME`, `LANG`, `OA_HOME`, `OA_CONNECTOR_NAME` an
 manifest's `env`. List every repository the tasks' `git-worktree` workspaces come from in
 `ro_binds` (`rw_binds` only if the agent itself must commit; the reference workflow
 commits in a `post` gate instead): `oa validate` refuses a repository the sandbox cannot
-see, and a bind or `work_dir` that would show it the database, the socket, `agent.yaml`
-or the secrets file. `oa connector list` shows `sandbox=bwrap`; without the `bubblewrap`
+see, and a bind or `work_dir` that would show it the database, the socket (or the
+allowlist proxies' sockets beside it, in `<socket>.net/`), `agent.yaml` or the secrets
+file. `oa connector list` shows `sandbox=bwrap`; without the `bubblewrap`
 package the spawn fails and the connector stays down with the error there.
 
 Without `network` the sandbox shares the host's network. `network: { allow: […] }`
@@ -656,9 +657,12 @@ What to know before relying on it:
 - The proxy sees host and port, never the content: HTTPS stays encrypted end to end. An
   allowed host that takes uploads (a paste site, a storage bucket, the model API with
   someone else's key) is still a way out, so list hosts, not whole clouds.
-- A wildcard entry never reaches a loopback, private or link-local address, whatever the
-  name resolves to; an entry that names the host or the address does. To let the agent
-  reach a service on the daemon's own machine, name it (`build-cache.internal:8080`).
+- A wildcard entry never reaches a loopback, private or link-local address (nor a 6to4
+  or Teredo one, which tunnels to an IPv4 host), whatever the name resolves to; an entry
+  that names the host or the address does. To let the agent reach a service on the
+  daemon's own machine, name it (`build-cache.internal:8080`).
+- A sandbox holds at most 256 connections open through its proxy; one more is closed
+  unanswered and logged as `sandbox.net_dropped`.
 - Only programs that honour `HTTPS_PROXY`/`HTTP_PROXY` get out: Claude Code, Node, npm,
   curl and git over HTTPS do; git over SSH and raw sockets do not. The variables are set
   for the agent by the sandbox and override the manifest's `env`.
@@ -974,10 +978,10 @@ what you use for anything the CLI does not cover yet.
 | `GET /v1/state/{ns}` | All keys in a namespace |
 | `GET`, `PUT`, `DELETE /v1/state/{ns}/{key}` | One state value (`PUT` body `{"value": ...}`) |
 | `GET /v1/cost?since=&by=` | The ledger since a duration (`7d`) or ISO timestamp, grouped by `task`, `model`, `provider` or `day`: `{since, by, rows: [{key, calls, in_tok, out_tok, cache_read, cache_write, usd}], total_usd}` |
-| `GET /v1/connectors` | `{connectors: [{name, transport, state, pid, restarts, error, health, builtin}]}`; `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
+| `GET /v1/connectors` | `{connectors: [{name, transport, managed_by, sandbox, network, state, pid, restarts, error, health, builtin}]}`; `network` is `host`, `none` or `allowlist` (6.1); `health` is `{ok, checked_at, failures}` for a manifest with `health:`, else `null` |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn; returns the new status. 409 for a built-in |
 | `POST /v1/reload` | Re-read and apply `agent.yaml`, manifests and tasks files together (9.3). Always 200: `{ok, files: [{file, ok, issues?}], restart_required, connectors?: {added, removed, changed}, tasks}`; `ok: false` means nothing changed |
-| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}` (`type` is `other` unless the core or a task's trigger, `wait` or `emit` names it exactly, so connectors and `oa emit` cannot grow it without bound), `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `sandbox_net_requests_total{connector,result}` (what sandboxed agents asked their network allowlist proxy for: `allowed`, `denied`, `failed`), `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
+| `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). `oa_` metrics: `runs_queued_total`, `run_attempts_total`, `runs_finished_total{task,status}`, `run_duration_seconds`, `runs_pending|in_flight|waiting`, `events_published_total{type,result}` (`type` is `other` unless the core or a task's trigger, `wait` or `emit` names it exactly, so connectors and `oa emit` cannot grow it without bound), `events_dropped_total`, `waits_ended_total`, `cron_ticks_total`, `cron_next_run_timestamp_seconds`, `model_calls_total`, `model_tokens_total{direction}`, `model_cost_usd_total`, `model_spend_today_usd`, `model_daily_budget_usd`, `budget_exceeded_total{scope}`, `connector_up{connector,transport}`, `connector_restarts_total`, `connector_ops_total{result}`, `connector_op_duration_seconds`, `connector_health_checks_total{result}`, `sandbox_net_requests_total{connector,result}` (what sandboxed agents asked their network allowlist proxy for: `allowed`, `denied`, `failed`, and `dropped` for a connection past the limit), `retention_deleted_total{kind}`, `retention_runs_total`, `retention_last_success_timestamp_seconds`, `config_reloads_total{result}`, `config_tasks`, `api_requests_total{method,status}`, `db_size_bytes`, `uptime_seconds`, `build_info{version}`. Counters reset with the process |
 
 Errors are `{error, issues?}` with status 400, 404, 405, 409 or 413.
 

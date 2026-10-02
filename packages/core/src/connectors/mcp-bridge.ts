@@ -86,7 +86,7 @@ sock.on('close', () => process.stdin.destroy());
 `;
 
 /** Longest Unix socket path the platform accepts (`sun_path` less the terminating NUL). */
-const MAX_SOCKET_PATH = process.platform === 'linux' ? 107 : 103;
+export const MAX_SOCKET_PATH = process.platform === 'linux' ? 107 : 103;
 /** A client that has not said hello by then is dropped. */
 const HELLO_TIMEOUT_MS = 10_000;
 const HELLO_MAX_BYTES = 4096;

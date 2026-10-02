@@ -7,10 +7,11 @@ import { z } from 'zod';
  * ARCHITECTURE §6, §11). bwrap can only share the host's network or cut it off, so an
  * allowlist is three parts: the sandbox gets its own, empty network namespace
  * (`--unshare-net`); the daemon runs a filtering HTTP proxy on a Unix socket outside it
- * (`connectors/net-proxy.ts`) and binds that one socket in; and a small bridge inside the
- * sandbox (`NET_BRIDGE_SOURCE`) listens on its loopback, pipes every connection to the
- * socket and starts the agent with the proxy variables pointing at itself. This file holds
- * what the config and the proxy share: the entry grammar and the matcher.
+ * (`connectors/net-proxy.ts`, in `netProxyDir`) and binds that one socket in; and a small
+ * bridge inside the sandbox (`NET_BRIDGE_SOURCE`) listens on its loopback, pipes every
+ * connection to the socket and starts the agent with the proxy variables pointing at
+ * itself. This file holds what the config and the proxy share: the entry grammar and the
+ * matcher.
  */
 
 /** One `allow` entry, parsed. */
@@ -26,26 +27,36 @@ export interface NetRule {
 export const DEFAULT_NET_PORT = 443;
 
 const LABEL = '[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?';
-const HOSTNAME = new RegExp(`^(\\*\\.)?${LABEL}(?:\\.${LABEL})*$`);
+/** A hostname: what an entry names (after `*.` for a wildcard) and what a wildcard covers. */
+const NAME = new RegExp(`^${LABEL}(?:\\.${LABEL})*$`);
 const ENTRY = /^(\[[^\]]+\]|[^:[\]]+)(?::(\*|\d{1,5}))?$/;
 
-/** An IPv6 address as Node and the URL parser spell it, so both sides of a match agree. */
-function canonicalV6(address: string): string {
-  return new URL(`http://[${address}]`).hostname.slice(1, -1);
+/**
+ * An IPv6 address as Node and the URL parser spell it, so both sides of a match agree.
+ * `undefined` for one the URL parser refuses although `isIPv6` takes it (a zone id,
+ * `fe80::1%eth0`): no entry can name it.
+ */
+function canonicalV6(address: string): string | undefined {
+  try {
+    return new URL(`http://[${address}]`).hostname.slice(1, -1);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * A host as the matcher compares it: lower case, without the brackets of an IPv6 literal
- * and without the trailing dot of a fully qualified name.
+ * and without the trailing dot of a fully qualified name. Never throws: the proxy calls it
+ * on what a sandboxed program sent.
  */
 export function normaliseHost(host: string): string {
   const h = host.toLowerCase();
   if (h.startsWith('[') && h.endsWith(']')) {
     const inner = h.slice(1, -1);
-    return isIPv6(inner) ? canonicalV6(inner) : inner;
+    return isIPv6(inner) ? (canonicalV6(inner) ?? inner) : inner;
   }
   if (isIPv6(h)) {
-    return canonicalV6(h);
+    return canonicalV6(h) ?? h;
   }
   return h.endsWith('.') ? h.slice(0, -1) : h;
 }
@@ -75,28 +86,31 @@ export function parseNetRule(entry: string): NetRule {
   const host = rawHost.toLowerCase();
   if (host.startsWith('[')) {
     const inner = host.slice(1, -1);
-    if (!isIPv6(inner)) {
-      throw new Error(`"${entry}": [${inner}] is not an IPv6 address`);
+    const address = isIPv6(inner) ? canonicalV6(inner) : undefined;
+    if (address === undefined) {
+      throw new Error(`"${entry}": [${inner}] is not an IPv6 address (a zone id is not taken)`);
     }
-    return { host: canonicalV6(inner), wildcard: false, port };
+    return { host: address, wildcard: false, port };
   }
   if (isIPv4(host)) {
     return { host, wildcard: false, port };
   }
-  if (!HOSTNAME.test(host)) {
+  const wildcard = host.startsWith('*.');
+  const name = wildcard ? host.slice(2) : host;
+  if (!NAME.test(name)) {
     throw new Error(
       `"${entry}": the host must be a hostname, "*." and a suffix (*.example.com) or an IP address`,
     );
   }
-  const wildcard = host.startsWith('*.');
-  return { host: wildcard ? host.slice(2) : host, wildcard, port };
+  return { host: name, wildcard, port };
 }
 
 /**
  * The rule that lets `host:port` through, if any. A rule that names the host wins over a
  * wildcard that covers it, because the proxy trusts the two differently (a wildcard never
  * reaches a private address); for the same reason a wildcard covers names only, never an
- * address, which is connected to without a lookup to check. `host` is normalised here.
+ * address, which is connected to without a lookup to check, and only what is spelled like
+ * a hostname (`evil.test/x.example.com` ends like one and is not). `host` is normalised here.
  */
 export function matchNetRule(
   rules: readonly NetRule[],
@@ -107,7 +121,9 @@ export function matchNetRule(
   const onPort = rules.filter((r) => r.port === '*' || r.port === port);
   return (
     onPort.find((r) => !r.wildcard && r.host === h) ??
-    (isIP(h) === 0 ? onPort.find((r) => r.wildcard && h.endsWith(`.${r.host}`)) : undefined)
+    (isIP(h) === 0 && NAME.test(h)
+      ? onPort.find((r) => r.wildcard && h.endsWith(`.${r.host}`))
+      : undefined)
   );
 }
 
@@ -133,6 +149,16 @@ export const SandboxNetwork = z.strictObject({
 });
 
 export type SandboxNetworkConfig = z.infer<typeof SandboxNetwork>;
+
+/**
+ * Where the daemon's proxies listen on the host: `<core socket>.net/`, so in the runtime
+ * directory and under a name that is this daemon's alone. It is one of the daemon's
+ * protected paths (`protectedPaths`), a directory no sandbox sees and no bind may show,
+ * or one agent could use another's list.
+ */
+export function netProxyDir(coreSocket: string): string {
+  return `${coreSocket}.net`;
+}
 
 /** Where the proxy's socket is bound inside the sandbox: its private `/tmp`, which always exists. */
 export const SANDBOX_NET_SOCKET = '/tmp/.247-agent-net.sock';

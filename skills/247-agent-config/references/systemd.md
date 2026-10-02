@@ -154,6 +154,6 @@ interrupted runs are retried per policy or failed as interrupted.
   [api.anthropic.com, registry.npmjs.org] }`: then the program reaches only those hosts,
   through a filtering proxy in the daemon, and refusals are logged as
   `sandbox.net_denied`. Nothing to install for it and no unit change: the proxy's socket
-  lives in the daemon's private `/tmp`.
+  lives beside the core socket (`core.sock.net/`), so in the unit's `RuntimeDirectory`.
 - Inbound content is untrusted data; the capability surface, not the prompt, limits
   damage.

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -12,6 +12,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
+import { netProxyDir } from '../actions/sandbox-net.js';
 import { buildSandboxArgv, type SandboxBackend, type SandboxHost } from '../actions/sandbox.js';
 import {
   NonRetryableError,
@@ -212,14 +213,15 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private readonly baseEnv: Record<string, string>;
   private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
-  /** Where the allowlist proxies listen: private to the daemon, made on first use. */
-  private netDir: string | undefined;
+  /** Where the allowlist proxies listen (`netProxyDir`): made on first use, 0700. */
+  private readonly netDir: string;
   private netSeq = 0;
   private readonly netProxies = new Set<NetProxy>();
   private stopping = false;
 
   constructor(opts: SupervisorOptions) {
     this.socketPath = opts.socketPath;
+    this.netDir = netProxyDir(opts.socketPath);
     this.secrets = opts.secrets;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
@@ -360,9 +362,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     this.stopping = true;
     await Promise.all([...this.managed.values()].map((m) => this.kill(m)));
     await Promise.all([...this.netProxies].map((p) => p.close()));
-    if (this.netDir !== undefined) {
-      rmSync(this.netDir, { recursive: true, force: true });
-      this.netDir = undefined;
+    try {
+      // Each proxy removed its socket; the directory goes only if nothing else is in it.
+      rmdirSync(this.netDir);
+    } catch {
+      // never made, or not empty
     }
   }
 
@@ -534,16 +538,21 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
 
   /**
    * The filtering proxy of a sandbox with a network allowlist (`connectors/net-proxy.ts`):
-   * a socket in a directory of the daemon's own, outside `work_dir`, so no sandbox sees it
-   * unless bwrap binds it in, and one agent cannot borrow another's allowlist. The caller
-   * closes it when the program is gone.
+   * a socket in the daemon's runtime directory, which every sandbox masks and no bind may
+   * show (`sandboxHost`, `checkSandboxes`), so no sandbox sees it unless bwrap binds it in
+   * and one agent cannot borrow another's allowlist. The pid in the name keeps a second
+   * daemon started on the same config, which fails only once it binds the core socket,
+   * off this one's sockets. The caller closes it when the program is gone.
    */
   private async openNetProxy(m: Managed, allow: readonly string[], log: Logger): Promise<NetProxy> {
-    this.netDir ??= mkdtempSync(join(tmpdir(), '247-agent-net-'));
+    if (!existsSync(this.netDir)) {
+      // Not recursive: the runtime directory is the operator's to make, with its own mode.
+      mkdirSync(this.netDir, { mode: 0o700 });
+    }
     const connector = m.manifest.name;
     const proxy = await openNetProxy({
       allow,
-      socket: join(this.netDir, `${String(++this.netSeq)}.sock`),
+      socket: join(this.netDir, `${String(process.pid)}-${String(++this.netSeq)}.sock`),
       log,
       onRequest: (result) => {
         this.metrics.sandboxNetRequests.inc({ connector, result });
@@ -690,6 +699,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       try {
         const spawn = await this.agentSpawn(m, env, log);
         proxy = spawn.proxy;
+        if (!this.stillWanted(m, epoch)) {
+          // Stopped, killed or replaced while the proxy was opening: start nothing.
+          void proxy?.close();
+          return;
+        }
         agent = await AcpAgent.spawn({ exec: spawn.exec, cwd: spawn.cwd, env: spawn.env, log });
       } catch (err) {
         void proxy?.close();

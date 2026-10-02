@@ -53,9 +53,12 @@ describe('parseNetRule', () => {
       '-x.com',
       'x..com',
       'x.com.',
+      '*.*.com',
     ]) {
       expect(() => parseNetRule(bad), bad).toThrow();
     }
+    // `isIPv6` takes a zone id, the URL parser that canonicalises the address does not.
+    expect(() => parseNetRule('[fe80::1%eth0]:443')).toThrow(/not an IPv6 address/);
   });
 });
 
@@ -106,6 +109,21 @@ describe('matchNetRule', () => {
     expect(matchNetRule([parseNetRule('*.0.1')], '127.0.0.1', 443)).toBeUndefined();
     expect(matchNetRule([parseNetRule('*.0.1')], 'x.0.1', 443)).toBeDefined();
     expect(normaliseHost('[::FFFF:1.2.3.4]')).toBe('::ffff:102:304');
+  });
+
+  it('never throws on a host and keeps a wildcard to what is spelled like a hostname', () => {
+    // What a sandboxed program sends reaches these as it is.
+    expect(normaliseHost('[fe80::1%eth0]')).toBe('fe80::1%eth0');
+    expect(allowed('[fe80::1%eth0]', 443)).toBe(false);
+    for (const host of [
+      'evil.test/x.npmjs.org',
+      'evil.test#.npmjs.org',
+      '.npmjs.org',
+      'x..npmjs.org',
+      '*.npmjs.org',
+    ]) {
+      expect(allowed(host, 443), host).toBe(false);
+    }
   });
 });
 

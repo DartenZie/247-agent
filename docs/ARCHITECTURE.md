@@ -658,7 +658,8 @@ untrusted content. The network is the host's unless the sandbox has a `network` 
 paragraph). Because the process is shared by concurrent runs, the
 sandbox is per program, not per run: an agent can see other runs' workspaces under
 `work_dir`, as it already could in one process. `oa validate` refuses a `sandbox` bind or
-a `work_dir` that contains the database, the socket, `agent.yaml` or the secrets file, a
+a `work_dir` that contains the database, the socket, `agent.yaml` or the secrets file
+(or touches the allowlist proxies' sockets beside the core socket, next paragraph), a
 `cwd` outside every bind, and an `agent` task whose `workspace.repo` the sandboxed
 connector cannot see; a changed `work_dir` on reload respawns sandboxed agents, since
 they mount the old one. An `acp` connector (sandboxed or not) gets no `OA_CORE_SOCKET`
@@ -672,33 +673,40 @@ program may reach; without it the sandbox shares the host's network, since the a
 needs its model API. bwrap can only share the network or cut it off, so an allowlist is
 built from three parts. The sandbox gets an empty network namespace of its own
 (`--unshare-net`: a loopback, no route, no DNS). The core serves a **filtering proxy**
-for it (`connectors/net-proxy.ts`): an HTTP proxy on a Unix socket in a directory only
-the daemon can enter, outside `work_dir`, bound read-only into this one sandbox, so
-another agent cannot borrow the list. And since clients take a proxy as a TCP address,
-the first process inside is a **bridge** (the daemon's Node running an inline script,
-`actions/sandbox-net.ts`) that listens on the sandbox's loopback, pipes every connection
-to the socket and starts the agent with `HTTP_PROXY`/`HTTPS_PROXY` (both spellings)
-pointing at itself, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`; it filters
-nothing, and the agent's stdio (the ACP stream) is inherited, not relayed.
+for it (`connectors/net-proxy.ts`): an HTTP proxy on a Unix socket in `<socket>.net/`
+beside the core socket, a directory only the daemon can enter, in the runtime directory
+every sandbox masks (`oa validate` refuses a bind or a `work_dir` that touches it), bound
+read-only into this one sandbox, so another agent cannot borrow the list. And since
+clients take a proxy as a TCP address, the first process inside is a **bridge** (the
+daemon's Node running an inline script, `actions/sandbox-net.ts`) that listens on the
+sandbox's loopback, pipes every connection to the socket and starts the agent with
+`HTTP_PROXY`/`HTTPS_PROXY` (both spellings) pointing at itself, `NO_PROXY` for loopback
+and `NODE_USE_ENV_PROXY=1`; it filters nothing, and the agent's stdio (the ACP stream)
+is inherited, not relayed.
 
 An entry is `host[:port]`: a hostname, `*.suffix` for every name below one (not the
 suffix itself), an IPv4 address or `[IPv6]`; the port is a number or `*` and defaults to
 443. The proxy serves `CONNECT` (HTTPS and whatever else tunnels) and absolute-form
 `http://` requests to listed targets; anything else gets a 403, a `sandbox.net_denied`
 log line with the connector, host and port (`warn` the first time per target, `debug`
-after: read these to learn what an agent wants) and a count in
+after: read these to learn what an agent wants; past 256 targets new ones are `debug`
+too, which one `sandbox.net_log_limit` at `warn` says) and a count in
 `oa_sandbox_net_requests_total{connector,result}` (`allowed`, `denied`, `failed` for a
-listed target that could not be reached). Names are resolved by the proxy, on the host,
-and the connection goes to the address that was checked. A name let through by a
-wildcard is refused when it resolves to a loopback, private or link-local address: a
-name anyone can register under an allowed suffix must not point the agent at the host's
-own services or a cloud metadata endpoint. An entry that names the host or the address
-itself is the operator's word and resolves anywhere. `allow: []` is no network at all
-(no proxy, no bridge). The proxy lives as long as the process, a respawn gets a new one,
-and a changed list is a changed manifest, so a reload respawns the agent; `oa connector
-list` shows `net=allowlist` or `net=none`.
+listed target that could not be reached). A sandbox holds at most 256 connections open
+on its proxy, tunnels included, so it cannot run the daemon out of file descriptors:
+one more is closed unanswered, logged as `sandbox.net_dropped` (`warn` once) and counted
+as `dropped`. Names are resolved by the proxy, on the host, and the connection goes to
+the address that was checked. A name let through by a wildcard is refused when it
+resolves to a loopback, private or link-local address, or to a 6to4 or Teredo one, which
+tunnels to an IPv4 host the check cannot see (behind NAT64 the embedded IPv4 address is
+judged): a name anyone can register under an allowed suffix must not point the agent at
+the host's own services or a cloud metadata endpoint. An entry that names the host or
+the address itself is the operator's word and resolves anywhere. `allow: []` is no
+network at all (no proxy, no bridge). The proxy lives as long as the process, a respawn
+gets a new one, and a changed list is a changed manifest, so a reload respawns the
+agent; `oa connector list` shows `net=allowlist` or `net=none`.
 
-What it does not do: the proxy never opens a tunnel, so TLS stays end to end and the
+What it does not do: the proxy never reads a tunnel, so TLS stays end to end and the
 list limits where the agent talks, not what it says there (an allowed host that accepts
 uploads is still a way out: list hosts, not whole clouds). Only what honours the proxy
 variables gets out at all: Claude Code, Node, npm, curl and git over HTTPS do; git over

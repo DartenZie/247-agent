@@ -29,9 +29,13 @@ import type { Duplex } from 'node:stream';
 
 import { matchNetRule, normaliseHost, parseNetRule } from '../actions/sandbox-net.js';
 import type { Logger } from '../log.js';
+import { MAX_SOCKET_PATH } from './mcp-bridge.js';
 
-/** How one request ended, for the metric. */
-export type NetProxyResult = 'allowed' | 'denied' | 'failed';
+/**
+ * How one request ended, for the metric; `dropped` is a connection closed at the limit,
+ * before it could ask for anything.
+ */
+export type NetProxyResult = 'allowed' | 'denied' | 'failed' | 'dropped';
 
 export interface NetProxyOptions {
   /** `sandbox.network.allow`, as validated by the manifest schema. */
@@ -39,12 +43,17 @@ export interface NetProxyOptions {
   /** Where to listen: a path in a directory only the daemon can enter. */
   socket: string;
   log: Logger;
-  /** Called once per request (`CONNECT` or plain HTTP) with how it ended. */
+  /**
+   * Called once per request (`CONNECT` or plain HTTP) with how it ended, and once per
+   * connection dropped at the limit.
+   */
   onRequest?: ((result: NetProxyResult) => void) | undefined;
   /** Name resolution; defaults to `dns.lookup` (tests point names at a local server). */
   lookup?: LookupFunction | undefined;
   /** How long an upstream may take to accept a connection. */
   connectTimeoutMs?: number | undefined;
+  /** Connections the sandbox may hold open at once, tunnels included. */
+  maxConnections?: number | undefined;
 }
 
 export interface NetProxy {
@@ -54,13 +63,22 @@ export interface NetProxy {
   close(): Promise<void>;
 }
 
-/** Longest Unix socket path the platform accepts (`sun_path` less the terminating NUL). */
-const MAX_SOCKET_PATH = process.platform === 'linux' ? 107 : 103;
 const CONNECT_TIMEOUT_MS = 30_000;
+/**
+ * Connections one sandbox may hold open on its proxy, tunnels included; the next one is
+ * closed unanswered. Each costs the daemon up to two descriptors (the client's and the
+ * upstream's), so this is what keeps a sandboxed program from running it out of them.
+ * Far above what an agent needs: npm keeps 15 connections per registry.
+ */
+const MAX_CONNECTIONS = 256;
 /** Distinct targets whose first refusal or failure is logged at `warn`; later ones at `debug`. */
 const MAX_NOTED = 256;
 
-/** Addresses that are not the public internet: loopback, private, link-local, multicast, reserved. */
+/**
+ * Addresses that are not the public internet: loopback, private, link-local, multicast,
+ * reserved, and the IPv6 tunnel prefixes whose addresses stand for an IPv4 host this list
+ * cannot vouch for (Teredo `2001::/32`, 6to4 `2002::/16`; nothing public is served there).
+ */
 const NON_PUBLIC = new BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8],
@@ -78,16 +96,53 @@ for (const [address, prefix] of [
 }
 for (const [address, prefix] of [
   ['::', 96],
+  ['64:ff9b:1::', 48],
+  ['2001::', 32],
+  ['2002::', 16],
   ['fc00::', 7],
   ['fe80::', 10],
+  ['fec0::', 10],
   ['ff00::', 8],
 ] as const) {
   NON_PUBLIC.addSubnet(address, prefix, 'ipv6');
 }
 
-/** True for an address a wildcard entry must not reach (IPv4-mapped IPv6 is judged as IPv4). */
+/** The well-known NAT64 prefix (RFC 6052): its last 32 bits are an IPv4 address. */
+const NAT64 = new BlockList();
+NAT64.addSubnet('64:ff9b::', 96, 'ipv6');
+
+/** The IPv4 address in the last 32 bits of an IPv6 one, e.g. `64:ff9b::a00:5` → `10.0.0.5`. */
+function embeddedV4(address: string): string | undefined {
+  let groups: string[];
+  try {
+    groups = new URL(`http://[${address}]`).hostname.slice(1, -1).split(':');
+  } catch {
+    return undefined;
+  }
+  const [high, low] = groups.slice(-2).map((g) => (g === '' ? 0 : parseInt(g, 16)));
+  if (high === undefined || low === undefined) {
+    return undefined;
+  }
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.');
+}
+
+/**
+ * True for an address a wildcard entry must not reach. IPv4-mapped IPv6 is judged as IPv4,
+ * and so is an address behind NAT64 (`64:ff9b::/96`), which on an IPv6-only network is how
+ * every IPv4 host is reached, the private ones included.
+ */
 export function isNonPublicAddress(address: string): boolean {
-  return NON_PUBLIC.check(address, isIPv6(address) ? 'ipv6' : 'ipv4');
+  if (!isIPv6(address)) {
+    return NON_PUBLIC.check(address, 'ipv4');
+  }
+  if (NON_PUBLIC.check(address, 'ipv6')) {
+    return true;
+  }
+  if (!NAT64.check(address, 'ipv6')) {
+    return false;
+  }
+  const v4 = embeddedV4(address);
+  return v4 === undefined || NON_PUBLIC.check(v4, 'ipv4');
 }
 
 /** A name allowed by a wildcard resolved to nothing but non-public addresses. */
@@ -214,7 +269,10 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
     sock.on('close', () => sockets.delete(sock));
   };
   const noted = new Set<string>();
-  /** `warn` the first time a target is refused or fails, `debug` after: an agent retries. */
+  /**
+   * `warn` the first time a target is refused or fails, `debug` after: an agent retries.
+   * Past `MAX_NOTED` targets every one is `debug`, which is said once, at `warn`.
+   */
   const note = (msg: string, target: Target, reason: string): void => {
     const key = `${msg} ${target.host}:${String(target.port)}`;
     const first = !noted.has(key) && noted.size < MAX_NOTED;
@@ -222,6 +280,12 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
       noted.add(key);
     }
     log[first ? 'warn' : 'debug'](msg, { host: target.host, port: target.port, reason });
+    if (first && noted.size === MAX_NOTED) {
+      log.warn('sandbox.net_log_limit', {
+        targets: MAX_NOTED,
+        reason: 'refusals and failures of further targets are logged at debug',
+      });
+    }
   };
   const denied = (target: Target): string =>
     `247-agent: ${target.host}:${String(target.port)} is not in this sandbox's network allowlist\n`;
@@ -241,9 +305,17 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
   };
 
   const server = createServer();
+  server.maxConnections = opts.maxConnections ?? MAX_CONNECTIONS;
   server.on('connection', track);
+  let dropped = false;
+  server.on('drop', () => {
+    count('dropped');
+    // `warn` once: a program at the limit keeps arriving.
+    log[dropped ? 'debug' : 'warn']('sandbox.net_dropped', { limit: server.maxConnections });
+    dropped = true;
+  });
 
-  server.on('connect', (req: IncomingMessage, client: Duplex, head: Buffer) => {
+  const onConnect = (req: IncomingMessage, client: Duplex, head: Buffer): void => {
     const target = connectTarget(req.url ?? '');
     if (target === undefined) {
       client.on('error', () => undefined);
@@ -297,9 +369,9 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
         upstream.destroy();
       }
     });
-  });
+  };
 
-  server.on('request', (req: IncomingMessage, res: ServerResponse) => {
+  const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
     const text = (status: number, body: string): void => {
       res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', connection: 'close' });
       res.end(body);
@@ -336,6 +408,14 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
       upstream.destroy(new Error(`no connection after ${String(connectTimeoutMs)}ms`));
     });
     upstream.on('response', (up) => {
+      try {
+        res.writeHead(up.statusCode ?? 502, up.statusMessage, endToEnd(up.headers));
+      } catch (err) {
+        // A status line this server cannot send on (below 100): the upstream's failure.
+        const { status, body } = unreachable(target, err);
+        text(status, body);
+        return;
+      }
       count('allowed');
       log.debug('sandbox.net_request', {
         host: target.host,
@@ -343,20 +423,46 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
         method: req.method ?? null,
         status: up.statusCode ?? null,
       });
-      res.writeHead(up.statusCode ?? 502, up.statusMessage, endToEnd(up.headers));
       up.pipe(res);
       up.on('error', () => res.destroy());
     });
+    // The client left before an answer: that is not the upstream failing.
+    let gone = false;
     upstream.on('error', (err) => {
-      if (res.headersSent) {
+      if (gone || res.headersSent) {
         res.destroy();
         return;
       }
       const { status, body } = unreachable(target, err);
       text(status, body);
     });
-    res.on('close', () => upstream.destroy());
+    res.on('close', () => {
+      gone = true;
+      upstream.destroy();
+    });
     req.pipe(upstream);
+  };
+
+  // What a sandboxed program sends must never take the daemon down: a throw in a handler
+  // ends that one connection.
+  const thrown = (err: unknown): void => {
+    log.warn('sandbox.net_proxy_error', { error: errorMessage(err) });
+  };
+  server.on('connect', (req: IncomingMessage, client: Duplex, head: Buffer) => {
+    try {
+      onConnect(req, client, head);
+    } catch (err) {
+      thrown(err);
+      client.destroy();
+    }
+  });
+  server.on('request', (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      onRequest(req, res);
+    } catch (err) {
+      thrown(err);
+      res.destroy();
+    }
   });
 
   rmSync(opts.socket, { force: true });
@@ -367,7 +473,13 @@ export async function openNetProxy(opts: NetProxyOptions): Promise<NetProxy> {
       resolve();
     });
   });
-  chmodSync(opts.socket, 0o600);
+  try {
+    chmodSync(opts.socket, 0o600);
+  } catch (err) {
+    server.close();
+    rmSync(opts.socket, { force: true });
+    throw err;
+  }
   server.on('error', (err) => {
     log.warn('sandbox.net_proxy_error', { error: err.message });
   });

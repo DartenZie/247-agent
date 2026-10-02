@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -580,7 +588,7 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
           sandbox,
         }),
       ],
-      socketPath: '/tmp/oa-test.sock',
+      socketPath: join(dir, 'core.sock'),
       secrets: staticSecrets({ model_key: 'sk-not-real' }),
       log: createLogger({
         level: 'debug',
@@ -725,11 +733,14 @@ describe('ConnectorSupervisor with a sandboxed acp connector', () => {
       expect.objectContaining({ msg: 'connector.up', connector: 'claude', network: 'allowlist' }),
     );
 
-    // No network of its own; the proxy's socket bound in from a directory no sandbox sees.
+    // No network of its own; the proxy's socket bound in from the daemon's own directory
+    // beside the core socket, which no sandbox sees.
     const a = recorded()[0] ?? [];
     expect(a).toContain('--unshare-net');
     const socket = pairs(a, '--ro-bind').find(([, dest]) => dest === SANDBOX_NET_SOCKET)?.[0] ?? '';
+    expect(socket).toBe(join(dir, 'core.sock.net', `${String(process.pid)}-1.sock`));
     expect(existsSync(socket)).toBe(true);
+    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
     expect(isInsidePath(work, socket)).toBe(false);
     expect(a.slice(a.indexOf('--') + 1)).toEqual([
       ...[process.execPath, '-e', NET_BRIDGE_SOURCE, '--', SANDBOX_NET_SOCKET],

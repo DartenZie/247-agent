@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { AgentDefaults } from '../actions/agent-config.js';
+import { netProxyDir } from '../actions/sandbox-net.js';
 import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
@@ -82,14 +83,16 @@ export interface AgentConfig extends Omit<AgentFileConfig, 'tasks' | 'connectors
 }
 
 /**
- * The files no sandbox may see (ARCHITECTURE §11): the database, the socket, `agent.yaml`
- * and, with the `file` backend, the secrets file. The daemon hides them (`sandboxHost`)
- * and `checkSandboxes` refuses a bind or `work_dir` that would show one.
+ * What no sandbox may see (ARCHITECTURE §11): the database, the socket, the directory of
+ * the network allowlist proxies' sockets beside it, `agent.yaml` and, with the `file`
+ * backend, the secrets file. The daemon hides them (`sandboxHost`) and `checkSandboxes`
+ * refuses a bind or `work_dir` that would show one.
  */
 export function protectedPaths(config: AgentConfig): ProtectedPath[] {
   return [
     { path: config.db, what: 'database' },
     { path: config.socket, what: 'socket' },
+    { path: netProxyDir(config.socket), what: 'proxy socket directory', dir: true },
     { path: config.file, what: 'config file' },
     ...(config.secrets.backend === 'file'
       ? [{ path: resolve(dirname(config.file), config.secrets.path), what: 'secrets file' }]
