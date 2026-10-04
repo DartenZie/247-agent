@@ -34,13 +34,17 @@ truth for concepts, action semantics, the connector protocol and the config form
 
 ```
 bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>, 247-agent-connector-host); same files in a checkout and a release
-scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release)
+scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release); linux-test.sh (lint on the host; build, test, validate in a Debian 13 container with bwrap)
 packaging/               247-agent.service, 247-agent-connector@.service (a connector with managed_by: systemd), etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, ftp, chat, webhook, github, jira)
+test/smoke/connectors/   connector smoke rig: real servers per connector in podman (connectors/<name>/test/smoke/smoke.mjs + compose.yaml: chat (Synapse), email, ftp; webhook needs no server), a daemon on the real connectors (npm run smoke:connectors)
+test/smoke/acp/          ACP smoke rig: daemon + one pinned ACP agent (agents/<name>.yaml: claude-acp, codex-acp, opencode-acp), four scripted agent tasks (npm run smoke:acp -- <agent>)
+test/smoke/lib.mjs       what both rigs share: exit codes, the RESULT line, host lock, orphan-daemon cleanup, file scan
+.claude/skills/verify/   how to prove a change before reporting it: scripts/plan.mjs maps a diff to the rungs above
 docs/                        ARCHITECTURE.md, examples/ (agent.yaml, website-updates.yaml, connectors.d/)
 skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
 ```
@@ -93,7 +97,10 @@ skills/                      agent skills for working with 247-agent (linked fro
 npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
+npm run test:linux     # scripts/linux-test.sh: lint on the host, then npm ci, build, test (OA_REQUIRE_BWRAP=1), validate in a Debian 13 container with bwrap (docker or podman; exit 3 = environment); --systemd=always also installs the .deb and runs `oa run hello --wait`
 npm run lint           # eslint + prettier check
+npm run smoke:acp -- <agent>   # test/smoke/acp/run.mjs, agent required: claude-acp (Claude login), codex-acp (ChatGPT login), opencode-acp (free, no login); done/blocked/mcp_servers/model+effort runs, redaction scan of the whole DB, oa cost; caps $0.50/run, $3/day; exit 3 = provider outage
+npm run smoke:connectors [-- <connector>…] [--keep]   # test/smoke/connectors/run.mjs: podman compose up per connector (chat: Synapse; email: GreenMail + Dovecot STARTTLS proxy; ftp: atmoz/sftp, vsftpd FTP and FTPS; webhook: none, real requests in), every op and event through a daemon, refusals, secret scan of the whole DB, compose down; one run per host (lock)
 npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
 npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
@@ -113,6 +120,9 @@ bin/oa …, bin/247-agent-core …                                         # the
 
 ## Conventions
 
+- Before reporting a change done, prove it with the `verify` skill: run the rungs its
+  `scripts/plan.mjs` lists for the diff and end the report with what each showed. Never
+  ask the user to check something a rung can observe.
 - Small modules, one action runner per file under `packages/core/src/actions/`.
 - Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and fake
   connectors (`packages/core/test/fixtures/`), never the network or a real model.

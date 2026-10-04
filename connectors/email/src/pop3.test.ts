@@ -2,7 +2,7 @@ import { createServer, type AddressInfo, type Server, type Socket } from 'node:n
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { Pop3Client, Pop3Mailbox, unstuff } from './pop3.js';
+import { Pop3Client, Pop3Mailbox, serverName, unstuff } from './pop3.js';
 import { incomingConfig, MemoryState } from './test-helpers.js';
 
 interface StoredMail {
@@ -178,6 +178,14 @@ describe('Pop3Client', () => {
     });
     await expect(c.login('u', 'wrong')).rejects.toThrow(/PASS \*\*\*\* failed: -ERR bad password/);
     c.close();
+  });
+});
+
+describe('serverName', () => {
+  it('sends SNI for a host name only; Node refuses an IP address', () => {
+    expect(serverName('mail.example.com')).toEqual({ servername: 'mail.example.com' });
+    expect(serverName('127.0.0.1')).toEqual({});
+    expect(serverName('::1')).toEqual({});
   });
 });
 

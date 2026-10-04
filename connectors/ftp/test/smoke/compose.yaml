@@ -1,0 +1,63 @@
+# Real file servers for the ftp connector's smoke run (`npm run smoke:connectors`,
+# test/smoke/connectors/README.md): OpenSSH's SFTP, vsftpd in plain FTP, and a second
+# vsftpd that forces explicit FTPS (AUTH TLS, TLS on logins and data) with a self-signed
+# certificate. Every port is bound to 127.0.0.1 only; each vsftpd announces 127.0.0.1 for
+# passive mode and publishes its own passive range one to one.
+#
+#   SFTP  2222                      user smoke, writable directory `upload`
+#   FTP   2121, passive 21000-21009 user smoke, home /ftp/smoke
+#   FTPS  2122, passive 21010-21019 user smoke, home /ftp/smoke
+#
+# The password is the one the runner hands the daemon as `smoke_ftp_pass`.
+services:
+  # A self-signed certificate for the FTPS server, written once into the `certs` volume.
+  certs:
+    image: docker.io/alpine/openssl:3.5.9
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >-
+        test -f /certs/tls.crt ||
+        openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost
+        -addext subjectAltName=DNS:localhost,IP:127.0.0.1
+        -keyout /certs/tls.key -out /certs/tls.crt
+    volumes: ['certs:/certs']
+
+  # atmoz/sftp, built from its repository at a pinned commit: the published images are
+  # amd64 only, and building keeps the rig native on arm64 too.
+  sftp:
+    image: localhost/oa-smoke/atmoz-sftp:46a8b3d
+    build:
+      context: https://github.com/atmoz/sftp.git#46a8b3db48a99257249a79fcbdf1cd9f666e161b
+      dockerfile: Dockerfile-alpine
+    command: ['smoke:smoke-ftp-pass:1001:1001:upload']
+    ports: ['127.0.0.1:2222:22']
+
+  ftp:
+    image: docker.io/delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac # only latest is published, so pinned by digest
+    environment:
+      USERS: 'smoke|smoke-ftp-pass'
+      ADDRESS: 127.0.0.1
+      MIN_PORT: '21000'
+      MAX_PORT: '21009'
+    ports:
+      - '127.0.0.1:2121:21'
+      - '127.0.0.1:21000-21009:21000-21009'
+
+  ftps:
+    image: docker.io/delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac # only latest is published, so pinned by digest
+    depends_on:
+      certs: { condition: service_completed_successfully }
+    environment:
+      USERS: 'smoke|smoke-ftp-pass'
+      ADDRESS: 127.0.0.1
+      MIN_PORT: '21010'
+      MAX_PORT: '21019'
+      TLS_CERT: /certs/tls.crt
+      TLS_KEY: /certs/tls.key
+    volumes: ['certs:/certs:ro']
+    ports:
+      - '127.0.0.1:2122:21'
+      - '127.0.0.1:21010-21019:21010-21019'
+
+volumes:
+  certs:

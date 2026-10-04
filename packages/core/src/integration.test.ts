@@ -66,9 +66,11 @@ connectors:
 
 const TASKS = `
 tasks:
-  # 1. Poll the mailbox (as in the example).
+  # 1. Poll the mailbox (as in the example, where it is a */2 cron). Manual here: the test
+  #    runs it by hand, and a cron would fire a second poll whenever the test crosses an
+  #    even minute.
   - name: fetch_email
-    trigger: { kind: cron, schedule: "*/2 * * * *", overlap: skip }
+    trigger: { kind: manual }
     action:
       kind: connector
       connector: email

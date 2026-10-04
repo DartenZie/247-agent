@@ -1,0 +1,20 @@
+# Codex through codex-acp, on the Codex (ChatGPT) login of whoever runs the rig: no API
+# key, so a run is billed to that plan. 1.12.0 is the version ARCHITECTURE.md §5.4 was
+# verified against. It reads your own config.toml: `notify=[]` keeps its notifier out, but
+# MCP servers and `approvals_reviewer = "guardian_subagent"` still apply (1.12.0 ignores
+# the override from `-c` and CODEX_CONFIG); a Guardian review shows up as a `think` call.
+# codex-acp reports tokens but no cost, so every task names a model the built-in price
+# table knows; the cheapest one Codex offers is gpt-5.6-luna.
+login:
+  dir: { env: CODEX_HOME, default: ~/.codex }
+  requires: auth.json
+  hint: run `codex login`, with the same CODEX_HOME
+connector:
+  exec: ['npx', '-y', '@agentclientprotocol/codex-acp@1.12.0', '-c', 'notify=[]']
+  transport: acp
+  env:
+    CODEX_CONFIG: '{"model":"gpt-5.6-luna","model_reasoning_effort":"low","approval_policy":"on-request"}'
+  restart: { base: 1s, max: 60s }
+# Codex runs commands inside its own sandbox without asking (ARCHITECTURE §5.4).
+tasks: { model: gpt-5.6-luna, unasked_execute: sandboxed }
+override: { model: gpt-5.6-terra, effort: medium }

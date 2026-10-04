@@ -1,0 +1,9 @@
+# A stdio connector the smoke_mcp task grants to the agent through `mcp_servers`: its one
+# op, `stamp`, returns SMOKE_PROBE_STAMP (set by run.mjs per run), which the agent has to
+# copy into RESULT.json, so a matching stamp proves the call went through the tool bridge.
+name: probe
+exec: ['node', 'probe.mjs']
+cwd: .
+transport: stdio
+ops: [stamp]
+restart: { base: 1s, max: 60s }

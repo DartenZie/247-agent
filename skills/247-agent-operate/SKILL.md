@@ -1,6 +1,6 @@
 ---
 name: 247-agent-operate
-description: "Run, inspect and debug a 247-agent daemon and its workflows, locally or on a server. Use it whenever the user wants to start the daemon, validate config, trigger a task by hand (`oa run`), inject an event (`oa emit`), see why a run failed or a task never ran, list runs or events, read or change state (`/v1/state`), tail the JSON logs, test a workflow end to end with fake connectors, reload config (SIGHUP), or asks anything like \"is it running\", \"what happened to X\", \"replay this email\", \"the cron never fires\", \"cannot connect to the socket\". Also use it before and after editing tasks or connectors to prove the change works on a real daemon."
+description: "Run, inspect and debug a 247-agent daemon and its workflows, locally or on a server. Use it whenever the user wants to start the daemon, validate config, trigger a task by hand (`oa run`), inject an event (`oa emit`), see why a run failed or a task never ran, list runs or events, read or change state (`/v1/state`), tail the JSON logs, test a workflow end to end with fake connectors, reload config (SIGHUP), or asks anything like \"is it running\", \"what happened to X\", \"replay this email\", \"the cron never fires\", \"cannot connect to the socket\". Also use it before and after editing tasks or connectors to prove the change works on a real daemon, and to test a change on Linux from a Mac (`scripts/linux-test.sh`, or CI via `gh run watch` when no container engine is available). In a checkout of the 247-agent repo, a code change is proven before it is reported with the `verify` skill (.claude/skills/verify)."
 ---
 
 # Operate a 247-agent daemon
@@ -114,5 +114,38 @@ oa validate <changed files> docs/examples/*.yaml docs/examples/connectors.d/*.ya
 ```
 
 For code changes: `npm run build && npm test && npm run lint`.
+
+### On Linux, from a Mac
+
+On macOS the tests that need a real bubblewrap (`sandbox: bwrap` in `shell.test.ts`, the
+net-proxy sandbox test) are skipped, and systemd and the `.deb` are not there at all. For
+a change to sandboxing, packaging, the unit, install scripts or anything Linux-only, run
+the checkout in a Debian 13 container (Docker or Podman; the working tree is copied in,
+uncommitted changes included):
+
+```
+scripts/linux-test.sh                    # lint on the host; npm ci, build, test, validate in the container, with bwrap
+scripts/linux-test.sh --systemd=always   # also: release tree, .deb, install, `oa run hello --wait`
+scripts/linux-test.sh --keep             # leave the container running to look inside
+```
+
+The last line is `RESULT: PASS`, `RESULT: FAIL <step>` or `RESULT: ERROR <reason>`.
+Exit 0 passed, 1 a step failed (a regression), 2 usage, 3 the environment: no container
+engine (Docker not running, no podman machine), or the image, container or systemd could
+not be set up, or a step was OOM-killed (a small podman machine: stop other containers,
+free its disk). The tests run with `OA_REQUIRE_BWRAP=1`, so a bwrap that does not work
+fails them instead of skipping them. Run it alone, not next to the smoke rigs. On 3, CI is
+the Linux run (it installs bubblewrap and does the same steps on ubuntu-latest):
+
+1. Commit on a branch, never `main`. Pushing publishes the code: do it only when the
+   user has asked for it or agrees.
+2. `git push -u origin HEAD`. With an open PR for the branch the push starts CI; without
+   one, `gh pr create --draft`. (`gh workflow run ci.yml --ref <branch>` works only once a
+   `ci.yml` with `workflow_dispatch` is on `main`.)
+3. Find the run for this commit: `gh run list --workflow ci.yml --branch <branch> -L 3
+   --json databaseId,headSha,status`, the one whose `headSha` is `git rev-parse HEAD`
+   (it can take a few seconds to appear).
+4. `gh run watch <id> --exit-status` (exit status is the run's).
+5. On failure: `gh run view <id> --log-failed`, fix, commit, push, and watch the new run.
 
 Source of truth: `docs/USER-GUIDE.md` §3, §7–§9, §11; `docs/ARCHITECTURE.md` §4, §10, §12.

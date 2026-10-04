@@ -407,6 +407,10 @@ describe('openNetProxy', () => {
 const hasBwrap =
   execaSync('bwrap', ['--unshare-net', '--ro-bind', '/', '/', 'true'], { reject: false })
     .exitCode === 0;
+// CI and scripts/linux-test.sh set this, so a broken bwrap fails instead of skipping silently.
+if (!hasBwrap && process.env.OA_REQUIRE_BWRAP === '1') {
+  throw new Error('OA_REQUIRE_BWRAP=1 but bwrap cannot make a network namespace here');
+}
 
 describe('behind real bubblewrap', () => {
   it.skipIf(!hasBwrap)(

@@ -1,0 +1,22 @@
+# OpenCode's own ACP server (`opencode acp`) on free OpenCode Zen models: no login and no
+# key, so anyone can run it. It runs with its own config and data under .state/opencode,
+# so your OpenCode setup (providers, plugins, MCP servers) stays out of the run, and
+# OPENCODE_CONFIG_CONTENT makes it ask before edits and commands, so the task's policy
+# judges them up front. The free roster changes over time: when a model below is gone,
+# pick another (`opencode models opencode`), keeping a $0 pricing entry for it.
+connector:
+  exec: ['npx', '-y', 'opencode-ai@1.18.34', 'acp']
+  transport: acp
+  env:
+    XDG_CONFIG_HOME: '{state}/opencode/config'
+    XDG_DATA_HOME: '{state}/opencode/data'
+    XDG_CACHE_HOME: '{state}/opencode/cache'
+    XDG_STATE_HOME: '{state}/opencode/state'
+    OPENCODE_CONFIG_CONTENT: '{"model":"opencode/big-pickle","autoupdate":false,"share":"disabled","permission":{"edit":"ask","bash":"ask"}}'
+  restart: { base: 1s, max: 60s }
+tasks: { model: opencode/big-pickle }
+# big-pickle has no effort levels; ling-3.1-flash-free has low, medium and high.
+override: { model: opencode/ling-3.1-flash-free, effort: medium }
+pricing:
+  opencode/big-pickle: { input: 0, output: 0 }
+  opencode/ling-3.1-flash-free: { input: 0, output: 0 }

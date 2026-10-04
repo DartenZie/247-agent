@@ -1,0 +1,7 @@
+{
+  "name": "smoke-fixture",
+  "private": true,
+  "scripts": {
+    "check": "node -e \"const l=require('fs').readFileSync('items.txt','utf8').trim().split('\\n');if(l.some(x=>!x.trim())||l.join()!==[...l].sort().join())throw new Error('items.txt: empty or unsorted line');console.log('check ok')\""
+  }
+}

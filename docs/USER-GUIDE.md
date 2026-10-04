@@ -137,6 +137,12 @@ release tarball for this machine into `dist-release/`; `scripts/build-release.sh
 `scripts/build-package.sh --target linux-x64` turns that tree into the `.deb` and `.rpm`
 (`packaging/nfpm.yaml`; nfpm is downloaded on first use).
 
+On macOS the tests that need a real bubblewrap are skipped. `npm run test:linux`
+(`scripts/linux-test.sh`) copies the working tree into a Debian 13 container with Node and
+bubblewrap (Docker or Podman) and runs `npm ci`, the build, the tests and `oa validate` on
+the examples there; `scripts/linux-test.sh --systemd=always` boots systemd in the
+container and also builds the `.deb`, installs it and runs `oa run hello --wait`, as CI does.
+
 ## 3. Five-minute start
 
 1. Create a config directory (anywhere; `/etc/247-agent` in production).

@@ -1087,9 +1087,9 @@ oa metrics                      # GET /metrics
 ```
 package.json                 # workspaces: packages/*, connectors/*
 bin/                         # launchers: 247-agent-core, oa, 247-agent-connector-<name>; the same files in a checkout and a release
-scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), build-package.sh (.deb/.rpm), install.sh + uninstall.sh
+scripts/                     # bundle.mjs (esbuild, one .mjs per program), build-release.sh (the tarball), build-package.sh (.deb/.rpm), install.sh + uninstall.sh, linux-test.sh (CI in a Debian container)
 packaging/                   # 247-agent.service, 247-agent-connector@.service, etc/ (the starter config), nfpm.yaml + scripts/ (the .deb/.rpm)
-.github/workflows/           # ci (build, lint, test, tarball smoke), release (tarballs on v* tags)
+.github/workflows/           # ci (build, lint, test with bwrap, tarball smoke, .deb install), release (tarballs on v* tags)
 packages/core/           # the daemon: config, store, scheduler, matcher, executor, api
   src/config/                # zod schemas for agent.yaml (incl. retention.ts), tasks, connectors; loader
   metrics.ts, retention.ts   # the Prometheus registry and the daemon's metrics; the retention pass (store/retention.ts does the SQL)
@@ -1116,6 +1116,8 @@ connectors/chat/         # Telegram Bot API over fetch (long polling) or the Mat
 connectors/webhook/      # node:http receiver: routes, HMAC/token verification, body parsing, one event per request
 connectors/github/       # GitHub REST over fetch, confined to configured repos
 connectors/jira/         # Jira REST (Cloud v3 with ADF, Data Center v2) over fetch, confined to configured projects
+connectors/<name>/test/smoke/  # smoke.mjs (manifests, tasks, checks) + compose.yaml (real servers in podman, when needed) for npm run smoke:connectors; chat (Synapse), email, ftp, webhook
+test/smoke/                  # connectors/run.mjs (the connector smoke rig), acp/ (the ACP smoke rig)
 docs/                        # ARCHITECTURE.md, examples/
 ```
 

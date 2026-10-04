@@ -1,0 +1,56 @@
+# Real mail servers for the email connector's smoke run (`npm run smoke:connectors`,
+# test/smoke/connectors/README.md). GreenMail holds every mailbox and serves IMAP, POP3 and
+# SMTP in plain text and with implicit TLS (its own self-signed certificate). It has no
+# STARTTLS, so Dovecot sits in front of it as a proxy that does: on 31143, 31110 and 31587
+# it advertises STARTTLS/STLS, refuses to log in before the upgrade (`ssl = required`)
+# and then hands the session to GreenMail, so mail sent through either front lands in the
+# same store. Every port is bound to 127.0.0.1 only.
+#
+#   GreenMail plain       SMTP 3025   IMAP 3143    POP3 3110
+#   GreenMail TLS         SMTP 3465   IMAP 3993    POP3 3995
+#   Dovecot STARTTLS      SMTP 31587  IMAP 31143   POP3 31110
+#
+# The users are the smoke connectors' names, one mailbox each, all with the password the
+# runner hands the daemon as `smoke_mail_pass`.
+services:
+  # A self-signed certificate for Dovecot, written once into the `certs` volume.
+  certs:
+    image: docker.io/alpine/openssl:3.5.9
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >-
+        test -f /certs/tls.crt ||
+        (openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost
+        -addext subjectAltName=DNS:localhost,IP:127.0.0.1
+        -keyout /certs/tls.key -out /certs/tls.crt && chmod 644 /certs/tls.key)
+    volumes: ['certs:/certs']
+
+  greenmail:
+    image: docker.io/greenmail/standalone:2.1.14
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=mail_imap:smoke-mail-pass@example.com,mail_imaps:smoke-mail-pass@example.com,mail_imap_starttls:smoke-mail-pass@example.com,mail_pop3:smoke-mail-pass@example.com,mail_pop3s:smoke-mail-pass@example.com,mail_pop3_stls:smoke-mail-pass@example.com,mail_cleartext:smoke-mail-pass@example.com,mail_verify:smoke-mail-pass@example.com
+    ports:
+      - '127.0.0.1:3025:3025'
+      - '127.0.0.1:3143:3143'
+      - '127.0.0.1:3110:3110'
+      - '127.0.0.1:3465:3465'
+      - '127.0.0.1:3993:3993'
+      - '127.0.0.1:3995:3995'
+
+  dovecot:
+    image: docker.io/dovecot/dovecot:2.4.5
+    depends_on:
+      certs: { condition: service_completed_successfully }
+      greenmail: { condition: service_started }
+    volumes:
+      - 'certs:/certs:ro'
+      - './dovecot.conf:/etc/dovecot/dovecot.conf:ro,z'
+    ports:
+      - '127.0.0.1:31587:31587'
+      - '127.0.0.1:31143:31143'
+      - '127.0.0.1:31110:31110'
+
+volumes:
+  certs:

@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -117,7 +118,8 @@ let api: ApiClient;
 let lines: Record<string, unknown>[];
 
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'oa-ia-'));
+  // Real path: workspaces are created under the resolved work_dir (macOS: /private/var).
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'oa-ia-')));
   writeFileSync(join(dir, 'agent.yaml'), AGENT);
   writeFileSync(join(dir, 'tasks.yaml'), TASKS);
   writeFileSync(join(dir, 'secrets.yaml'), 'model_key: "sk-model-not-real"\nchat_token: "tok"\n', {

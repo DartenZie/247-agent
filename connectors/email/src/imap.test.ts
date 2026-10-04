@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ImapMailbox, type ImapClient } from './imap.js';
+import { imapFlowOptions, ImapMailbox, type ImapClient } from './imap.js';
 import { incomingConfig, MemoryState } from './test-helpers.js';
 
 const rfc822 = (id: string, subject: string): Buffer =>
@@ -172,5 +172,16 @@ describe('ImapMailbox.markRead', () => {
       supported: true,
     });
     await expect(mailbox.markRead({})).rejects.toThrow(/uid or message_id/);
+  });
+});
+
+describe('imapFlowOptions', () => {
+  it('requires STARTTLS on a plain port unless starttls is off', () => {
+    expect(imapFlowOptions(incomingConfig({ port: 143 })).doSTARTTLS).toBe(true);
+    expect(imapFlowOptions(incomingConfig({ port: 143, starttls: false })).doSTARTTLS).toBe(
+      undefined,
+    );
+    const tls = imapFlowOptions(incomingConfig());
+    expect([tls.secure, tls.port, tls.doSTARTTLS]).toEqual([true, 993, undefined]);
   });
 });

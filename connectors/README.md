@@ -77,6 +77,10 @@ Where things are documented:
    servers or transports, and a fake connector under `packages/core/test/fixtures/` for
    the core's integration tests. Node runs a fake straight from TypeScript source when
    the manifest says `exec: [node, path/to/fake.ts]`.
+   For a connector that speaks a wire protocol with an off-the-shelf server, or that is
+   a server itself, add a smoke run: `test/smoke/smoke.mjs` (manifests, tasks, checks)
+   and, for the servers, `test/smoke/compose.yaml` (ports on 127.0.0.1), run by
+   `npm run smoke:connectors -- <name>` (`test/smoke/connectors/README.md`).
 
 ```
 npm install

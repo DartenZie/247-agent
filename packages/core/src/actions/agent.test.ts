@@ -1,5 +1,13 @@
 /* eslint-disable require-yield, @typescript-eslint/require-await -- scripted turns are generators by contract, whatever they do */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -163,7 +171,8 @@ function ctx(agents: AgentClients, over: Partial<ActionContext> = {}): ActionCon
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'oa-agent-'));
+  // Real path: workspaces are created under the resolved work_dir (macOS: /private/var).
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'oa-agent-')));
   workDir = join(dir, 'work');
   llm = fakeLlmPort({ systemFiles: { 'prompts/sys.md': 'You are careful.' } });
 });
