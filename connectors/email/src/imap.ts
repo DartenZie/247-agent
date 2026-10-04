@@ -7,7 +7,7 @@
  * mean something for one UIDVALIDITY value, so that is stored too and the cursor is reset
  * when the server reports a new one.
  */
-import { ImapFlow } from 'imapflow';
+import { ImapFlow, type ImapFlowOptions } from 'imapflow';
 
 import type { IncomingConfig } from './config.js';
 import { parseMessage } from './parse.js';
@@ -42,18 +42,28 @@ export interface ImapClient {
 
 export type ImapClientFactory = (config: IncomingConfig) => ImapClient;
 
-export const defaultImapClientFactory: ImapClientFactory = (config) =>
-  new ImapFlow({
+/**
+ * `doSTARTTLS: true` makes imapflow fail before login when a plain-text server offers no
+ * STARTTLS; left unset it upgrades only when offered, as nodemailer does with `starttls`
+ * off. Without it `starttls: true` was not enforced for IMAP (found by the smoke run).
+ */
+export function imapFlowOptions(config: IncomingConfig): ImapFlowOptions {
+  return {
     host: config.host,
     port: config.port,
     secure: config.secure,
+    ...(!config.secure && config.starttls ? { doSTARTTLS: true } : {}),
     ...(config.user === undefined || config.password === undefined
       ? {}
       : { auth: { user: config.user, pass: config.password } }),
     tls: { rejectUnauthorized: config.reject_unauthorized },
     logger: false,
     disableAutoIdle: true,
-  });
+  };
+}
+
+export const defaultImapClientFactory: ImapClientFactory = (config) =>
+  new ImapFlow(imapFlowOptions(config));
 
 /** `search` yields `false`/`undefined` for no match on some servers. */
 function asList(found: number[] | false | undefined): number[] {

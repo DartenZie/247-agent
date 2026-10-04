@@ -21,3 +21,6 @@ dist-release/
 
 # state of the ACP smoke rig (npm run smoke:acp): database, socket, site repo, workspaces, log
 /test/smoke/acp/.state/
+
+# state of the connector smoke rig (npm run smoke:connectors): config, database, log, sync trees
+/test/smoke/connectors/.state/

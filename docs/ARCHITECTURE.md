@@ -1116,6 +1116,8 @@ connectors/chat/         # Telegram Bot API over fetch (long polling) or the Mat
 connectors/webhook/      # node:http receiver: routes, HMAC/token verification, body parsing, one event per request
 connectors/github/       # GitHub REST over fetch, confined to configured repos
 connectors/jira/         # Jira REST (Cloud v3 with ADF, Data Center v2) over fetch, confined to configured projects
+connectors/<name>/test/smoke/  # compose.yaml (real servers in podman) + smoke.mjs (manifests, tasks, checks) for npm run smoke:connectors; email and ftp
+test/smoke/                  # connectors/run.mjs (the connector smoke rig), acp/ (the ACP smoke rig)
 docs/                        # ARCHITECTURE.md, examples/
 ```
 

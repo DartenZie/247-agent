@@ -135,6 +135,17 @@ added to `References` so replies thread. `attachments` are
 
 Tests run without the network: `pop3.test.ts` starts a fake POP3 server in-process,
 `imap.test.ts` drives `ImapMailbox` with a fake client, `send.test.ts` renders through
-nodemailer's stream transport. STLS/STARTTLS upgrades are not covered by tests.
+nodemailer's stream transport. TLS, STARTTLS/STLS and the real servers' behaviour are
+covered by the smoke run in containers (podman): `test/smoke/compose.yaml` (GreenMail,
+with Dovecot in front of it as the STARTTLS proxy) and `test/smoke/smoke.mjs`:
+
+```
+npm run build
+npm run smoke:connectors -- email
+```
+
+It sends and fetches over IMAP and POP3, each plain, with TLS and with STARTTLS, checks
+`mark_read`, threading, attachments and `limit`, and that the connector refuses a plain
+port without STARTTLS and an unverified certificate. See `test/smoke/connectors/README.md`.
 `packages/core/test/fixtures/fake-email.ts` stays the fake for the core's integration
 test; it returns the same shape as `fetch_new`.

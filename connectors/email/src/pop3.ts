@@ -7,7 +7,7 @@
  * set of UIDLs already delivered, kept in the connector's state (`seen_uidls`). Deletions
  * (`delete_after_fetch`) take effect at QUIT, as the RFC says.
  */
-import { connect as netConnect, type Socket } from 'node:net';
+import { isIP, connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 
 import type { IncomingConfig } from './config.js';
@@ -28,6 +28,14 @@ const MULTILINE_END = Buffer.from('\r\n.\r\n');
 
 /** How many delivered UIDLs to remember when the server keeps messages. */
 const MAX_SEEN = 20_000;
+
+/**
+ * SNI for a TLS connection: the host name, or nothing for an IP address, which Node refuses
+ * as a servername (found by the smoke run). The certificate is checked against `host` either way.
+ */
+export function serverName(host: string): { servername?: string } {
+  return isIP(host) === 0 ? { servername: host } : {};
+}
 
 export interface Pop3ConnectOptions {
   host: string;
@@ -65,7 +73,7 @@ export class Pop3Client {
         ? tlsConnect({
             host: opts.host,
             port: opts.port,
-            servername: opts.host,
+            ...serverName(opts.host),
             rejectUnauthorized: opts.rejectUnauthorized,
           })
         : netConnect({ host: opts.host, port: opts.port });
@@ -143,7 +151,8 @@ export class Pop3Client {
     this.socket = await new Promise<Socket>((resolve, reject) => {
       const s = tlsConnect({
         socket: plain,
-        servername: opts.host,
+        host: opts.host,
+        ...serverName(opts.host),
         rejectUnauthorized: opts.rejectUnauthorized,
       });
       s.setTimeout(this.timeoutMs);

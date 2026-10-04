@@ -171,22 +171,19 @@ Tests run without the network: `ops.test.ts` drives every op against an in-memor
 `FileClient`; `sftp.test.ts` and `ftp.test.ts` inject fake library objects through the
 factories and assert the calls, option mapping and error handling. Neither a real SFTP
 server (ssh2's `Server` needs hand-written request handlers) nor a fake FTP server (PASV
-and TLS choreography) is worth the code; the wire is covered by a manual check:
+and TLS choreography) is worth the code; the wire is covered by the smoke run against real
+servers in containers (podman), `test/smoke/compose.yaml` (OpenSSH via atmoz/sftp, vsftpd
+plain and with forced FTPS) and `test/smoke/smoke.mjs`:
 
 ```
-docker run --rm -p 2222:22 atmoz/sftp foo:pass:1001
-OA_CORE_SOCKET=/tmp/x.sock OA_CONNECTOR_NAME=ftp \
-OA_CONFIG_JSON='{"protocol":"sftp","host":"127.0.0.1","port":2222,"user":"foo","password":"pass","root":"upload"}' \
-bin/247-agent-connector-ftp
+npm run build
+npm run smoke:connectors -- ftp
 ```
 
-then send MCP JSON-RPC on stdin (`initialize`, then `tools/call` with `{"name":"list","arguments":{}}`),
-or point a local `agent.yaml` at the built connector and use `oa run … --wait`. For FTP,
-`delfer/alpine-ftp-server` with `-e USERS="foo|pass" -e ADDRESS=127.0.0.1` and ports
-21 and 21000-21010 does the same. Things worth checking by hand: `../x` is refused before
-any connection, a file over `max_bytes` fails with `too_large`, and `write` with
-`parents: true` into a new directory works on FTP (where `ensureDir` changes the working
-directory, which the adapter restores).
+It runs every op on all three protocols through a daemon, including `write` with
+`parents` into a new directory on FTP (where `ensureDir` changes the working directory,
+which the adapter restores), `max_bytes` on `write` and `read`, `sync` with `prune`, and
+`../x` refused before any connection. See `test/smoke/connectors/README.md`.
 
 `packages/core/test/fixtures/fake-ftp.ts` is the fake for the core's integration test
 and for trying task files without a server: it serves the same seven ops over the files
