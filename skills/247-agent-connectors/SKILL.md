@@ -73,5 +73,5 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
 | Events never arrive | Check the emitting `POST /v1/events` response: `201` inserted, `200` duplicate by `dedup_key`. Check `type` matches the trigger and any `filter`. |
 | Secret is empty in config | `${secrets.x}` in the manifest, but the backend has no `x`. See the `247-agent-config` skill. |
 
-Source of truth: `docs/ARCHITECTURE.md` §6, `docs/USER-GUIDE.md` §6,
-`packages/connector-sdk/src/index.ts`.
+Source of truth: `docs/connectors/` (one page per connector, `custom.md` for your own),
+`docs/internal/connectors.md`, `packages/connector-sdk/src/index.ts`.

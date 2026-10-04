@@ -23,7 +23,7 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const PREFIX = 'openai';
 
 /**
- * The `openai` provider type (ARCHITECTURE §5.2, llm-action.md "Adapter notes"): one
+ * The `openai` provider type (docs/internal/model-actions.md, llm-action.md "Adapter notes"): one
  * non-streaming Responses API call per request. The static system prompt goes in
  * `instructions` (prompt caching is automatic for prefixes of 1024+ tokens), the input as
  * the single user turn, the schema as a strict `text.format`, `reasoning.effort` only on

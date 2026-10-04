@@ -5,7 +5,7 @@ import { Budget } from '../llm/config.js';
 const NAME = /^[a-z][a-z0-9_-]*$/;
 
 /**
- * `defaults.agent` in agent.yaml (ARCHITECTURE §7): what an `agent` action falls back to.
+ * `defaults.agent` in agent.yaml (docs/internal/config.md): what an `agent` action falls back to.
  * `work_dir` is resolved by `parseAgent` (default `<db dir>/work`); runs get
  * `<work_dir>/<run_id>` as their workspace.
  */

@@ -24,10 +24,11 @@ defaults:
   timeout: 15m                      # per attempt, for tasks without their own
   retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }
   sandbox: none                     # bwrap: shell actions run in bubblewrap unless they say otherwise
-  llm:   { model: claude-haiku-4-5, max_tokens: 1024 }             # accepted, not applied yet
+  llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
+  decide: { provider: openrouter }     # model defaults to typesafe/jev-1.13
   agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # agent actions; work_dir defaults to work/ next to db
 secrets: { backend: systemd-credentials }
-budgets: { daily_usd: 10 }          # accepted, applied once the ledger exists
+budgets: { daily_usd: 10 }          # global cap per UTC day on model spend
 retention: { events: 90d, runs: 90d, workspaces: 7d, interval: 1h }   # + ledger (defaults to runs); `never` keeps a kind forever
 ```
 
@@ -85,5 +86,5 @@ When an agent edits the daemon's own configuration:
   human asked; it will be retried from a fresh worktree or fail as interrupted.
 - Budgets and caps go down easily and up only with the human's say-so.
 
-Source of truth: `docs/USER-GUIDE.md` §4.1, §4.6, §9; `docs/ARCHITECTURE.md` §7, §11, §12;
-`packages/core/src/config/agent.ts`.
+Source of truth: `docs/reference/agent-yaml.md`, `docs/operations/production.md`,
+`docs/internal/config.md`, `docs/internal/security.md`; `packages/core/src/config/agent.ts`.

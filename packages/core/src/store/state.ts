@@ -22,7 +22,7 @@ function rowToEntry(row: unknown): StateEntry {
 export type StateSnapshot = Record<string, Record<string, JsonValue>>;
 
 /**
- * The KV store (ARCHITECTURE §4): `state(namespace, key, value)`. Connectors use it through
+ * The KV store (docs/internal/architecture.md): `state(namespace, key, value)`. Connectors use it through
  * `GET/PUT /v1/state/{ns}/{key}`; tasks read it as `${state.<ns>.<key>}` and write it with
  * `state_updates`.
  */

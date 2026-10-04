@@ -21,7 +21,7 @@ export interface TranscriptWriterOptions {
 }
 
 /**
- * Persists an `agent` run's session as transcript rows (ARCHITECTURE §5.4): the prompt,
+ * Persists an `agent` run's session as transcript rows (docs/internal/agent-action.md): the prompt,
  * the agent's messages and thoughts (chunks coalesced per kind), each tool call and
  * update, every permission decision, usage, the stop, a cancel and the result. Best
  * effort: a failing sink is logged once and the run goes on. Secret values are replaced

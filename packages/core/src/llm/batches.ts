@@ -27,7 +27,7 @@ const Usage = z.strictObject({
 });
 
 /**
- * The payload of `llm.batch.ended` (ARCHITECTURE §5.2). `succeeded` carries the result as
+ * The payload of `llm.batch.ended` (docs/internal/model-actions.md). `succeeded` carries the result as
  * the ledger priced it; `errored`, `expired` and `canceled` carry the provider's reason and
  * whether resubmitting can help. An `errored` batch with `usd` was billed but unusable (a
  * structured output that is not JSON).
@@ -75,7 +75,7 @@ export interface BatchPollerOptions {
 }
 
 /**
- * The timer behind `batch: true` (ARCHITECTURE §5.2): once at start and then every
+ * The timer behind `batch: true` (docs/internal/model-actions.md): once at start and then every
  * `batches.poll`, the service checks every batch in flight. A pass never overlaps the
  * previous one, errors are logged and retried next pass, and `stop()` aborts the pass in
  * flight (a batch fetched but not settled is fetched again after the restart).

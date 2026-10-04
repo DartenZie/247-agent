@@ -1,10 +1,11 @@
 # Task field reference
 
-Condensed from `docs/ARCHITECTURE.md` §3, §5 and the zod schema in
+Condensed from `docs/reference/task.md`, `docs/tasks/` and the zod schema in
 `packages/core/src/config/schema.ts`. The schema is strict: unknown keys are rejected.
 
 ## Tasks file
 
+<!-- check: skip -->
 ```yaml
 tasks:
   - name: fetch_email                 # [a-z][a-z0-9_]*, unique across all tasks files
@@ -15,8 +16,7 @@ tasks:
     retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }
     state_updates: { email.last_uid: "${result.last_uid}" }   # after success only
     emit: [ ... ]                     # routing, see below
-    budget: { max_usd: 0.5 }          # accepted, applied once the ledger exists
-    on_failure: ...                   # accepted, not applied yet
+    budget: { max_usd: 0.5 }          # per run, for llm/decide/agent actions; the smaller of this and the action's own applies
 ```
 
 Defaults for `timeout` and `retry` come from `defaults:` in `agent.yaml`
@@ -26,7 +26,7 @@ Defaults for `timeout` and `retry` come from `defaults:` in `agent.yaml`
 
 | kind | fields | behaviour |
 |---|---|---|
-| `cron` | `schedule` (5-field cron), `tz` (IANA name, optional), `overlap: skip\|allow` (default `skip`) | Each tick publishes `cron.tick` with `payload: {task, scheduled_at}` and `dedup_key: cron:<task>:<scheduled_at>`. One run per tick; skipped while a run is queued/running/waiting unless `overlap: allow`. Missed ticks while the daemon was down are not replayed. |
+| `cron` | `schedule` (cron with 5, 6 or 7 fields: optional seconds first, optional year last; 6 and 7 fields fire on seconds), `tz` (IANA name, optional), `overlap: skip\|allow` (default `skip`) | Each tick publishes `cron.tick` with `payload: {task, scheduled_at}` and `dedup_key: cron:<task>:<scheduled_at>`. One run per tick; skipped while a run is queued/running/waiting unless `overlap: allow`. Missed ticks while the daemon was down are not replayed. |
 | `event` | exactly one of `type` or `type_any: [...]`; optional `filter` (JMESPath over the whole event) | One run per matching event. `*` in a type pattern matches exactly one dot-separated segment. A filter that throws counts as no match and is logged. |
 | `manual` | none | Only `oa run <task>`. |
 
@@ -129,8 +129,9 @@ and event.
 ### `llm`, `decide` and `agent`
 
 `llm` (one model call, JSON out) and `decide` (typed questions to a classification-only
-model, probabilities back) run today through the budgeted `ctx.llm` port; `agent` is
-validated for `kind` only and has no runner yet. A `decide` result is the answers map
+model, probabilities back) run through the budgeted `ctx.llm` port; `agent` opens one
+session on an ACP agent connector in a fresh workspace and ends in a `RESULT.json`
+(`status: done | blocked`). A `decide` result is the answers map
 (`result.<question>.choice`, `.confidence`, `.noul`, `.score`), so `emit.when` is where
 the threshold lives. Full shapes and design rules in the `247-agent-model-actions`
 skill.

@@ -1,6 +1,6 @@
 # `llm` action
 
-One model call, structured output, no loop. `docs/ARCHITECTURE.md` §5.2 and §9.
+One model call, structured output, no loop. `docs/tasks/llm.md`, `docs/internal/model-actions.md`.
 
 ## Fields
 

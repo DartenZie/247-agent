@@ -9,7 +9,7 @@ export const CRON_TICK = 'cron.tick';
 export const MANUAL_RUN = 'manual.run';
 /** Published by the llm service when a call would cross a task budget or the daily cap. */
 export const BUDGET_EXCEEDED = 'budget.exceeded';
-/** Published by the llm service when a `batch: true` request has ended (ARCHITECTURE §5.2). */
+/** Published by the llm service when a `batch: true` request has ended (docs/internal/model-actions.md). */
 export const LLM_BATCH_ENDED = 'llm.batch.ended';
 
 /** The `type` label of events no task names exactly (see `labelledEventTypes`). */

@@ -1,5 +1,5 @@
 /**
- * Helpers for TypeScript connectors (ARCHITECTURE §6). A connector is a process the core
+ * Helpers for TypeScript connectors (docs/internal/connectors.md). A connector is a process the core
  * spawns with `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and `OA_CONFIG_JSON`; it emits events
  * to the core over the socket and, when it has ops, serves them as an MCP server on stdio.
  *

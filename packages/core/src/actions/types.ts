@@ -30,7 +30,7 @@ export interface AgentOpenOptions extends AgentSessionOptions {
 
 /**
  * ACP agents (`transport: acp` connectors) as the `agent` action opens sessions on them
- * (ARCHITECTURE §5.4). The supervisor implements it next to `ConnectorClients`.
+ * (docs/internal/agent-action.md). The supervisor implements it next to `ConnectorClients`.
  */
 export interface AgentClients {
   /** `defaults.agent` from agent.yaml. */
@@ -48,7 +48,7 @@ export interface AgentClients {
   info(connector: string): AgentInfo | undefined;
 }
 
-/** What a `wait` suspends the run for (ARCHITECTURE §5.6). */
+/** What a `wait` suspends the run for (docs/internal/actions.md). */
 export interface WaitSpec {
   /** Event type pattern (`*` = one segment). */
   type: string;

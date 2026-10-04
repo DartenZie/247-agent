@@ -1,134 +1,99 @@
 # 247-agent
 
 A 24/7, config-driven automation daemon for a single Linux server. Tasks are declared in
-YAML: each has a trigger (cron, event, manual) and an action (`shell`, `connector`, `llm`,
-`decide`, `agent`, `wait`, `sequence`). Deterministic work never touches a model; model calls are
-tiered and budgeted per task. Sub-programs ("connectors") emit events to the core and
-expose operations as MCP servers.
+YAML, each a trigger (cron, event, manual) plus one action (`shell`, `connector`, `wait`,
+`sequence`, `llm`, `decide`, `agent`) plus `emit` routing; everything between tasks is an
+event; connectors are sub-programs (MCP servers for ops, ACP agents for `agent`
+actions); SQLite holds events, runs, state and the cost ledger. TypeScript on Node.js 22,
+npm workspaces, strict ESM.
 
-Read `docs/ARCHITECTURE.md` before changing anything structural. It is the source of
-truth for concepts, action semantics, the connector protocol and the config format.
+## Read before you change
+
+The internal docs under `docs/internal/` are the source of truth for design and
+contracts. Open the one for what you touch; `docs/internal/README.md` is the index.
+
+| Touching | Read first |
+|---|---|
+| anything structural: dispatch, run lifecycle, durability, the module map | `docs/internal/architecture.md` |
+| why a dependency, protocol or design was chosen, or proposing another | `docs/internal/decisions.md` |
+| `packages/core/src/actions/{shell,connector,wait,sequence}.ts`, `expr/`, `emit`, templating | `docs/internal/actions.md` |
+| `packages/core/src/llm/`, `actions/llm.ts`, `actions/decide.ts`, pricing, budgets, batches | `docs/internal/model-actions.md` |
+| `packages/core/src/actions/agent*.ts`, `connectors/acp*.ts`, `connectors/mcp-bridge.ts` | `docs/internal/agent-action.md` |
+| `packages/core/src/connectors/`, `packages/connector-sdk/`, `connectors/<name>/`, a manifest | `docs/internal/connectors.md` |
+| `packages/core/src/config/`, reload, `oa validate` cross-checks | `docs/internal/config.md` |
+| `packages/core/src/store/`, migrations, retention | `docs/internal/store.md` |
+| sandboxing, secrets, the trust boundary | `docs/internal/security.md` |
+| `bin/`, `scripts/`, `packaging/`, `.github/`, the version | `docs/internal/packaging.md` |
+| a test, a fixture, a smoke rig | `docs/internal/testing.md` |
+| `docs/`, a connector `README.md`, a skill, this file | `docs/internal/writing.md` |
+| adding a connector, an action kind, a provider adapter or a metric; cutting a release | `docs/internal/howto/` |
+
 `docs/examples/website-updates.yaml` is the reference workflow; keep it valid.
-
-## Stack (decided)
-
-- TypeScript, Node.js 22 LTS, npm workspaces. Strict TS, ESM.
-- SQLite via `better-sqlite3` (WAL). Config schemas with `zod`. Cron with `croner`.
-  Expressions with `jmespath`. YAML with `yaml`. Subprocesses with `execa`.
-- LLM: `llm` actions go through the `ctx.llm` port (`packages/core/src/llm/`), which
-  budgets and ledgers every call and dispatches to one adapter per provider type:
-  `@anthropic-ai/sdk` (structured outputs via `client.messages.parse()` /
-  `output_config.format`), `openai` for OpenAI and OpenRouter. Providers are named in
-  `agent.yaml` (`providers:`), keys are `${secrets.<name>}` refs. `decide` actions go
-  through the same port (`ctx.llm.decide`) to OpenRouter's Decisions API
-  (`POST /api/alpha/decisions`, plain `fetch`, TypeSafe's Jev classifier); only the
-  `openrouter` provider type serves it. `agent` actions open a session on an ACP agent
-  (Agent Client Protocol, `@agentclientprotocol/sdk`, protocol v1): a connector with
-  `transport: acp` such as `claude-agent-acp`; the core is the client
-  (`packages/core/src/connectors/acp.ts`), the agent runs the model with its own key, and
-  the turn is ledgered from what it reports (`ctx.llm.record`). MCP client from
-  `@modelcontextprotocol/sdk`.
-- Target runtime: systemd service on Linux, HTTP API over a Unix socket.
-
-## Layout
-
-```
-bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>, 247-agent-connector-host); same files in a checkout and a release
-scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release); linux-test.sh (lint on the host; build, test, validate in a Debian 13 container with bwrap)
-packaging/               247-agent.service, 247-agent-connector@.service (a connector with managed_by: systemd), etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
-packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
-packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
-packages/cli/            `oa` command, talks to the core socket
-packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
-connectors/<name>/       one package per connector (email, ftp, chat, webhook, github, jira)
-test/smoke/connectors/   connector smoke rig: real servers per connector in podman (connectors/<name>/test/smoke/smoke.mjs + compose.yaml: chat (Synapse), email, ftp; webhook needs no server), a daemon on the real connectors (npm run smoke:connectors)
-test/smoke/acp/          ACP smoke rig: daemon + one pinned ACP agent (agents/<name>.yaml: claude-acp, codex-acp, opencode-acp), four scripted agent tasks (npm run smoke:acp -- <agent>)
-test/smoke/lib.mjs       what both rigs share: exit codes, the RESULT line, host lock, orphan-daemon cleanup, file scan
-.claude/skills/verify/   how to prove a change before reporting it: scripts/plan.mjs maps a diff to the rungs above
-docs/                        ARCHITECTURE.md, examples/ (agent.yaml, website-updates.yaml, connectors.d/)
-skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
-```
 
 ## Rules
 
-- Everything goes through events. Tasks reference event types, never other tasks.
-  Do not add direct task-to-task calls.
+- Everything goes through events. Tasks reference event types, never other tasks. Do
+  not add direct task-to-task calls.
 - No LLM in the core's control flow. Matching, dedup, routing, retries, publishing are
   code. A model call happens only inside an `llm`, `decide` or `agent` action.
-- Every model call records usage in the ledger and respects the task's `budget` and the
-  global daily cap. Never add an unbudgeted call.
+- Every model call goes through the `ctx.llm` port, records usage in the ledger and
+  respects the task's `budget` and the global daily cap. Never add an unbudgeted call.
 - Agents run in a fresh workspace (git worktree or temp dir) with an explicit tool-kind
-  and command allowlist enforced through ACP permission requests, produce a `RESULT.json`
-  with `status: done | blocked` and `summary` (plus the task's schema), and pass
-  deterministic `post` gates only when `done`; `blocked` still succeeds so `emit` can
-  route it. Agents never hold deploy secrets and never publish. The agent program itself
-  runs in bubblewrap when its `acp` manifest says `sandbox: bwrap` (`work_dir` writable,
-  the daemon's config, db and socket hidden); only `acp` connectors may be sandboxed.
-  `sandbox.network.allow` leaves it no network but the core's filtering proxy
-  (`connectors/net-proxy.ts`), which lets through the listed `host[:port]` only.
-- Secrets are resolved by name from the configured backend at run time. Never write them
-  to the DB, run logs, or event payloads.
-- Config changes must keep `oa validate` passing on `docs/examples/*.yaml` and
+  and command allowlist enforced through ACP permission requests, produce a
+  `RESULT.json` with `status: done | blocked` and `summary`, and pass deterministic
+  `post` gates only when `done`; `blocked` still succeeds so `emit` can route it. Agents
+  never hold deploy secrets and never publish. Only `acp` connectors may be sandboxed
+  (`sandbox: bwrap` on the manifest); `sandbox.network.allow` leaves the program no
+  network but the core's filtering proxy.
+- Secrets are resolved by name from the configured backend at run time. Never write
+  them to the DB, run logs, event payloads or transcripts.
+- Config changes keep `oa validate` passing on `docs/examples/*.yaml` and
   `docs/examples/connectors.d/*.yaml`.
 - Anything worth graphing is a metric on the shared `Metrics` registry
   (`packages/core/src/metrics.ts`): counters where the thing happens, gauges from a
-  `collect` callback in `core.ts`. Labels stay bounded (task, connector, model), never ids.
-- Settings from `agent.yaml` must survive a reload: a component reads them through a
-  `configure()` seam (executor, dispatcher, llm service, supervisor, retention), never a
-  constructor-only copy. Only `db`, `socket` and `secrets` are fixed for the process.
+  `collect` callback in `core.ts`. Labels stay bounded (task, connector, model), never
+  ids.
+- Settings from `agent.yaml` survive a reload: a component reads them through a
+  `configure()` seam, never a constructor-only copy. Only `db`, `socket` and `secrets`
+  are fixed for the process.
 - Manifests name the bundled connectors by launcher (`exec: ["247-agent-connector-email"]`),
-  never by a `dist/` path: the daemon puts `<install root>/bin` and its own Node first on
-  `PATH` for every child (`packages/core/src/home.ts`). New bundled connectors need a
-  launcher in `bin/` and an entry in `scripts/bundle.mjs`.
-- The version lives in `packages/core/src/version.ts` and the root `package.json` (a test
-  keeps them equal); release tags are `v<version>` and CI builds the tarballs from them.
-- Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Use adaptive thinking
+  never by a `dist/` path. A new bundled connector needs a launcher in `bin/` and an
+  entry in `scripts/bundle.mjs`.
+- The version lives in `packages/core/src/version.ts` and the root `package.json`
+  (a test keeps them equal); release tags are `v<version>`.
+- Model IDs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`. Adaptive thinking
   and `output_config.effort` on Sonnet/Opus 5; Haiku 4.5 has no effort parameter. No
-  assistant prefill (rejected on current models). Don't append date suffixes to IDs.
-  Other providers' ids are used verbatim and need a `pricing:` entry unless the built-in
-  table knows them (current OpenAI models, `typesafe/jev-1.13`) or the provider reports
-  cost (OpenRouter); a model without a price fails `oa validate`. `decide` defaults to
-  `typesafe/jev-1.13`, which is classification-only and lives behind the Decisions API,
-  never Chat Completions.
+  assistant prefill. No date suffixes. Other providers' ids verbatim; a model without a
+  price fails `oa validate` unless the provider reports cost. `decide` defaults to
+  `typesafe/jev-1.13`, classification-only, served by OpenRouter's Decisions API, never
+  Chat Completions.
 
 ## Commands
 
 ```
-npm install
-npm run build          # tsc -b across workspaces
-npm test               # vitest
-npm run test:linux     # scripts/linux-test.sh: lint on the host, then npm ci, build, test (OA_REQUIRE_BWRAP=1), validate in a Debian 13 container with bwrap (docker or podman; exit 3 = environment); --systemd=always also installs the .deb and runs `oa run hello --wait`
-npm run lint           # eslint + prettier check
-npm run smoke:acp -- <agent>   # test/smoke/acp/run.mjs, agent required: claude-acp (Claude login), codex-acp (ChatGPT login), opencode-acp (free, no login); done/blocked/mcp_servers/model+effort runs, redaction scan of the whole DB, oa cost; caps $0.50/run, $3/day; exit 3 = provider outage
-npm run smoke:connectors [-- <connector>…] [--keep]   # test/smoke/connectors/run.mjs: podman compose up per connector (chat: Synapse; email: GreenMail + Dovecot STARTTLS proxy; ftp: atmoz/sftp, vsftpd FTP and FTPS; webhook: none, real requests in), every op and event through a daemon, refusals, secret scan of the whole DB, compose down; one run per host (lock)
-npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
-npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
+npm install && npm run build       # tsc -b across workspaces
+npm test                           # vitest; never the network or a real model
+npm run lint                       # eslint + prettier (prettier skips Markdown and docs/)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
-node packages/core/dist/main.js --config docs/examples/agent.yaml   # the daemon
-node packages/cli/dist/main.js run <task> --wait --socket <path>       # or OA_CORE_SOCKET
-node packages/cli/dist/main.js emit <type> [payload.json|-]
-node packages/cli/dist/main.js runs ls|show <id>|logs <id> [--follow]   # logs = the agent transcript
-node packages/cli/dist/main.js events tail [--type t] [--follow]|show <id>
-node packages/cli/dist/main.js connector list|restart <name>            # restart re-resolves secrets
-node packages/cli/dist/main.js cost [--by task|model|provider|day] [--since 7d]
-node packages/cli/dist/main.js reload                                   # like SIGHUP: agent.yaml + manifests + tasks, all or nothing
-node packages/cli/dist/main.js metrics                                  # GET /metrics (Prometheus text)
-bin/oa …, bin/247-agent-core …                                         # the launchers; same commands, in a checkout or /opt/247-agent
+node scripts/check-docs.mjs        # links and YAML blocks in every Markdown file
+npm run test:linux                 # the suite on Debian 13 with bwrap in a container; --systemd=always adds the .deb
+npm run smoke:connectors [-- <name>…]   # real servers in podman
+npm run smoke:acp -- <agent>       # claude-acp | codex-acp | opencode-acp
+node packages/core/dist/main.js --config <agent.yaml>    # the daemon; bin/247-agent-core is the same
+node packages/cli/dist/main.js …   # oa; bin/oa is the same; docs/reference/cli.md lists the commands
 ```
-
-(Keep this list in sync with `package.json`.)
 
 ## Conventions
 
 - Before reporting a change done, prove it with the `verify` skill: run the rungs its
-  `scripts/plan.mjs` lists for the diff and end the report with what each showed. Never
-  ask the user to check something a rung can observe.
+  `scripts/plan.mjs` lists for the diff and end the report with what each showed.
+  Never ask the user to check something a rung can observe.
 - Small modules, one action runner per file under `packages/core/src/actions/`.
-- Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and fake
-  connectors (`packages/core/test/fixtures/`), never the network or a real model.
+- Tests next to code as `*.test.ts`; integration tests use a temp SQLite file and the
+  fakes in `packages/core/test/fixtures/`, never the network or a real model.
 - Templates: `${…}` is JMESPath over `{event, result, state, secrets, env, run, item,
-  steps}`; a whole-string template yields the raw value. `secrets` are allowed in actions
-  only, as `secrets.<name>`.
+  steps}`; a whole-string template yields the raw value. `secrets` only in actions, as
+  `secrets.<name>`.
 - Log lines are structured JSON with `run_id`, `task`, `correlation_id`.
-- When the architecture and the code disagree, fix one of them in the same change and say
-  which.
+- When a doc and the code disagree, fix one of them in the same change and say which.
+  Docs follow `docs/internal/writing.md`; the user site never mentions status or plans.

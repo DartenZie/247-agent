@@ -47,6 +47,7 @@ scope above. `emit.when` sees `{event, result, state, env, run}`.
 
 ## Examples
 
+<!-- check: skip -->
 ```yaml
 # Trigger filter: only the trusted sender's mail
 trigger: { kind: event, type: email.received, filter: "payload.from == 'editor@example.com'" }

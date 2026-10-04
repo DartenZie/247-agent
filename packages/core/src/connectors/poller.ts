@@ -25,7 +25,7 @@ const NAME = /^[a-z][a-z0-9_-]*$/;
 export const SEEN_KEY = 'seen';
 
 /**
- * The `config` of a `builtin: poller` manifest (ARCHITECTURE §6): on `schedule`, call
+ * The `config` of a `builtin: poller` manifest (docs/internal/connectors.md): on `schedule`, call
  * `connector.op` with `args`, take `items` (a JMESPath over the result; the result itself
  * when omitted), key each item with `item_key`, and emit `event` once per key not seen
  * before. Seen keys live in the state KV as `<poller name>/seen`, newest last, at most
@@ -147,7 +147,7 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * The built-in `poller` connector (ARCHITECTURE §6): turns any connector op into an event
+ * The built-in `poller` connector (docs/internal/connectors.md): turns any connector op into an event
  * source without a process of its own. Runs inside the core; polling, dedup and the seen
  * list stay observable in the log and the state KV. A poll that fails (connector down,
  * op error, result of the wrong shape) is logged and left to the next tick; a tick while a

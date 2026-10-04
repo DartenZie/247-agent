@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `247-agent-core --config /etc/247-agent/agent.yaml` (ARCHITECTURE §12).
+ * `247-agent-core --config /etc/247-agent/agent.yaml` (docs/internal/packaging.md).
  * SIGTERM/SIGINT stop the daemon; SIGHUP reloads agent.yaml, the connector manifests and
  * the tasks files. Logs are JSON lines on stdout for journald.
  */

@@ -7,7 +7,7 @@ import {
 } from '../connectors/acp-types.js';
 
 /**
- * What an `agent` action lets its ACP agent do (ARCHITECTURE §5.4, §11): the tool kinds
+ * What an `agent` action lets its ACP agent do (docs/internal/agent-action.md, docs/internal/security.md): the tool kinds
  * in `tools`, shell commands that start with a `bash_allow` entry, and paths inside the
  * workspace. Everything else is refused when the agent asks.
  */

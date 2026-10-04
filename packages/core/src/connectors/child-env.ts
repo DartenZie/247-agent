@@ -16,13 +16,14 @@ export function sandboxOf(m: ConnectorConfig): AgentSandboxConfig | undefined {
 }
 
 /**
- * A connector process's environment, secrets rendered (ARCHITECTURE §6): the base
+ * A connector process's environment, secrets rendered (docs/internal/connectors.md): the base
  * environment, the manifest's `env`, `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and
  * `OA_CONFIG_JSON`. An acp agent gets the manifest's `env` and its name but no
  * `OA_CORE_SOCKET` and no `OA_CONFIG_JSON`: it runs sessions, not ops, and a sandboxed one
  * cannot reach the socket anyway. A sandboxed agent gets no base environment either (bwrap
- * clears it and sets `PATH`, `HOME` and `LANG` itself); `OA_HOME` is kept so bundled
- * launchers still resolve. Shared by the supervisor and `247-agent-connector-host`.
+ * clears it and sets `PATH`, `HOME` and, when the daemon has one, `LANG` itself); `OA_HOME`
+ * is passed through when the base environment carries it, so bundled launchers still
+ * resolve. Shared by the supervisor and `247-agent-connector-host`.
  */
 export function connectorChildEnv(opts: {
   manifest: ConnectorConfig;

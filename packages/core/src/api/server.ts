@@ -76,7 +76,7 @@ function bind(server: Server, path: string): Promise<void> {
   });
 }
 
-/** HTTP over a Unix socket (ARCHITECTURE §4); the CLI and connectors talk to this. */
+/** HTTP over a Unix socket (docs/internal/architecture.md); the CLI and connectors talk to this. */
 export function createApiServer(opts: ApiServerOptions): ApiServer {
   const { log, socketPath } = opts;
   const maxBody = opts.maxBodyBytes ?? 1024 * 1024;
@@ -135,7 +135,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
         await bind(server, socketPath);
       }
       // Owner and group may connect: a connector in its own unit runs as another user in
-      // the daemon's group (ARCHITECTURE §6) and must still reach /v1/events. Best effort:
+      // the daemon's group (docs/internal/connectors.md) and must still reach /v1/events. Best effort:
       // a path over the platform's limit is bound truncated and cannot be chmod'ed by name.
       try {
         await chmod(socketPath, 0o660);

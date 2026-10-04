@@ -196,7 +196,7 @@ function newManaged(manifest: ConnectorConfig): Managed {
 }
 
 /**
- * Connector supervisor (ARCHITECTURE §4, §6): spawns each configured connector, keeps one
+ * Connector supervisor (docs/internal/architecture.md, docs/internal/connectors.md): spawns each configured connector, keeps one
  * MCP client per `stdio` connector and one ACP connection per `acp` connector, restarts
  * crashed processes with exponential backoff, and serves `op` calls and agent sessions to
  * the executor. Secrets named in a manifest's `config`/`env` are resolved at spawn time
@@ -371,7 +371,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   }
 
   /**
-   * Reload seam (ARCHITECTURE §4): makes the supervised set match `manifests`. A connector
+   * Reload seam (docs/internal/architecture.md): makes the supervised set match `manifests`. A connector
    * whose manifest is unchanged keeps running; a changed one is killed and respawned with
    * its new manifest and freshly resolved secrets; a removed one is stopped; a new one is
    * spawned. Ops on a connector being replaced fail as "not running" meanwhile.
@@ -424,7 +424,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
 
   /**
    * Kills one connector and spawns it again, re-resolving its secrets: how a rotated
-   * secret reaches a running connector (ARCHITECTURE §6). Deliberate, so the backoff
+   * secret reaches a running connector (docs/internal/connectors.md). Deliberate, so the backoff
    * counter resets. Throws for an unknown name.
    */
   async restart(name: string, reason = 'requested'): Promise<ConnectorStatus> {
@@ -526,7 +526,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     return m.client;
   }
 
-  /** The child's environment, secrets rendered (ARCHITECTURE §6); see `connectorChildEnv`. */
+  /** The child's environment, secrets rendered (docs/internal/connectors.md); see `connectorChildEnv`. */
   private childEnv(m: Managed): Record<string, string> {
     return connectorChildEnv({
       manifest: m.manifest,

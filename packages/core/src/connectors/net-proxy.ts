@@ -1,6 +1,6 @@
 /**
  * The filtering proxy behind a sandboxed agent program's network allowlist
- * (`sandbox.network.allow` on an `acp` manifest; ARCHITECTURE §6, §11). The sandbox has no
+ * (`sandbox.network.allow` on an `acp` manifest; docs/internal/connectors.md, docs/internal/security.md). The sandbox has no
  * network of its own (`--unshare-net`): the one way out is this HTTP proxy, which the
  * daemon serves on a Unix socket bound into that sandbox alone and the bridge inside
  * (`actions/sandbox-net.ts`) offers the agent as `HTTP(S)_PROXY`. It serves `CONNECT

@@ -102,7 +102,7 @@ export interface TasksLoadResult {
 }
 
 /**
- * Loads and merges tasks files and `tasks.d` directories (ARCHITECTURE §4, §7). A task
+ * Loads and merges tasks files and `tasks.d` directories (docs/internal/architecture.md, docs/internal/config.md). A task
  * name defined in two files is an issue on the second file. At least one task is required.
  */
 export function loadTasks(paths: readonly string[]): TasksLoadResult {

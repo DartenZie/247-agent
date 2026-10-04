@@ -115,7 +115,7 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * The action context's `event` for a run (ARCHITECTURE §3, `manual`): a `manual.run`
+ * The action context's `event` for a run (docs/internal/architecture.md, `manual`): a `manual.run`
  * event with `payload.event` presents that event's type and payload under the
  * `manual.run` event's own ids, so correlation and depth are unchanged.
  */
@@ -148,7 +148,7 @@ export function backoffDelay(policy: RetryConfig, attempt: number): number {
 }
 
 /**
- * Renders a task's `emit` rules (ARCHITECTURE §5.8) into events to publish. Throws
+ * Renders a task's `emit` rules (docs/internal/actions.md) into events to publish. Throws
  * `NonRetryableError` when a rule cannot be rendered.
  */
 export function renderEmits(
@@ -221,7 +221,7 @@ interface Slot {
 }
 
 /**
- * Worker pool over queued runs (ARCHITECTURE §4, §10). The dispatcher hands runs over via
+ * Worker pool over queued runs (docs/internal/architecture.md). The dispatcher hands runs over via
  * `bus.onQueued`; on `start()` the executor also adopts whatever is `queued` in the store
  * and recovers whatever was left `running` or `waiting` by a previous process. Per-task
  * `concurrency` and the global `workers` cap are enforced here, never by the dispatcher.

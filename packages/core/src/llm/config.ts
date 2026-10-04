@@ -15,7 +15,7 @@ export type Effort = (typeof EFFORTS)[number];
 const usdPerMtok = z.number().nonnegative();
 
 /**
- * One entry of `providers:` in agent.yaml (ARCHITECTURE §7). The key is a secret reference,
+ * One entry of `providers:` in agent.yaml (docs/internal/config.md). The key is a secret reference,
  * never a literal, so it is resolved per call and never written anywhere.
  */
 export const ProviderConfig = z
@@ -108,7 +108,7 @@ export type LlmDefaultsConfig = z.infer<typeof LlmDefaults>;
 /** TypeSafe's Jev on OpenRouter: the classification model a `decide` action uses unless told otherwise. */
 export const DEFAULT_DECIDE_MODEL = 'typesafe/jev-1.13';
 
-/** `defaults.decide` in agent.yaml: what a `decide` action falls back to (ARCHITECTURE §5.3). */
+/** `defaults.decide` in agent.yaml: what a `decide` action falls back to (docs/internal/model-actions.md). */
 export const DecideDefaults = z
   .strictObject({
     /** Must name an `openrouter` provider: only OpenRouter serves the Decisions API. */
@@ -122,13 +122,13 @@ export type DecideDefaultsConfig = z.infer<typeof DecideDefaults>;
 export const Budget = z.strictObject({ max_usd: z.number().positive() });
 export type BudgetConfig = z.infer<typeof Budget>;
 
-/** `budgets:` in agent.yaml: the global circuit breaker (ARCHITECTURE §9). */
+/** `budgets:` in agent.yaml: the global circuit breaker (docs/internal/model-actions.md). */
 export const Budgets = z.strictObject({ daily_usd: z.number().positive().optional() }).prefault({});
 export type BudgetsConfig = z.infer<typeof Budgets>;
 
 /**
  * `batches:` in agent.yaml: how often the batches of `batch: true` llm actions are polled
- * (ARCHITECTURE §5.2). At least 1s (each pass hits the provider once per batch) and at most
+ * (docs/internal/model-actions.md). At least 1s (each pass hits the provider once per batch) and at most
  * 1h: a run waits 25h for a batch that ends within 24h, so a longer interval would time
  * out runs whose batch succeeded (and was billed).
  */

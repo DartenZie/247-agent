@@ -10,7 +10,7 @@ import { NonRetryableError, type ActionContext } from './types.js';
 const NAME = /^[a-z][a-z0-9_]*$/;
 
 /**
- * ARCHITECTURE §5.2: one model call, optional structured output, no loop. `provider` and
+ * docs/internal/model-actions.md: one model call, optional structured output, no loop. `provider` and
  * `model` fall back to `defaults.llm`. The system prompt is static (it is prompt-cached);
  * everything volatile goes in `input`, which is rendered last. `batch: true` sends the call
  * through the provider's Message Batches API at half price and parks the run until the

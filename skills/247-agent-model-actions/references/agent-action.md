@@ -2,7 +2,7 @@
 
 One session on an ACP agent (Agent Client Protocol) in a fresh workspace, under a policy,
 a tool-call cap and a budget, ending in a RESULT.json that routing reads.
-`docs/ARCHITECTURE.md` §5.4, §6, §11, §13.
+`docs/tasks/agent.md`, `docs/internal/agent-action.md`, `docs/internal/security.md`.
 
 ## Fields
 
@@ -87,7 +87,7 @@ read `${result.summary}`, `${result.missing}`.
 emit:
   - type: site.change_blocked
     when: "result.status == 'blocked'"
-    payload: { summary: ${result.summary}, missing: ${result.missing}, email: ${event.payload.email} }
+    payload: { summary: "${result.summary}", missing: "${result.missing}", email: "${event.payload.email}" }
 ```
 
 and a deterministic task on `site.change_blocked` replies to the sender (`email.send`),

@@ -27,7 +27,7 @@ export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
 
 /**
- * `agent.yaml` (ARCHITECTURE §7). Relative paths are resolved against the file's own
+ * `agent.yaml` (docs/internal/config.md). Relative paths are resolved against the file's own
  * directory.
  */
 export const AgentFile = z.strictObject({
@@ -55,7 +55,7 @@ export const AgentFile = z.strictObject({
     })
     .prefault({}),
   secrets: SecretsConfig.prefault({ backend: 'env' }),
-  /** Model providers by name; an `llm` action picks one with `provider:` (ARCHITECTURE §5.2). */
+  /** Model providers by name; an `llm` action picks one with `provider:` (docs/internal/model-actions.md). */
   providers: Providers,
   /** Per-model USD per Mtok, merged over the built-in table (`llm/pricing.ts`). */
   pricing: Pricing,
@@ -83,7 +83,7 @@ export interface AgentConfig extends Omit<AgentFileConfig, 'tasks' | 'connectors
 }
 
 /**
- * What no sandbox may see (ARCHITECTURE §11): the database, the socket, the directory of
+ * What no sandbox may see (docs/internal/security.md): the database, the socket, the directory of
  * the network allowlist proxies' sockets beside it, `agent.yaml` and, with the `file`
  * backend, the secrets file. The daemon hides them (`sandboxHost`) and `checkSandboxes`
  * refuses a bind or `work_dir` that would show one.

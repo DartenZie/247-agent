@@ -42,7 +42,7 @@ export interface LlmResponse {
   stopReason: StopReason;
 }
 
-/** What a `decide` action asks the model to judge: text, or a JSON document (ARCHITECTURE §5.3). */
+/** What a `decide` action asks the model to judge: text, or a JSON document (docs/internal/model-actions.md). */
 export type DecideState = string | JsonValue[] | Record<string, JsonValue>;
 
 /**
@@ -213,7 +213,7 @@ export type BatchCallResult =
     };
 
 /**
- * A turn an ACP agent ran on its own model (ARCHITECTURE §5.4): the core only sees what the
+ * A turn an ACP agent ran on its own model (docs/internal/agent-action.md): the core only sees what the
  * agent reported. `provider` is the connector's name; `usage.reportedUsd` is the agent's
  * cumulative cost when it sends one, else the tokens are priced from the table for `model`.
  */
@@ -250,7 +250,7 @@ export interface LlmPort {
    */
   decide(req: DecideCall, ctx: LlmCallContext): Promise<DecideCallResult>;
   /**
-   * `batch: true` (ARCHITECTURE §5.2): the same checks as `call` with the worst case at the
+   * `batch: true` (docs/internal/model-actions.md): the same checks as `call` with the worst case at the
    * batch price, then one request submitted to the provider's Message Batches API. Nothing
    * is ledgered yet: the service polls the batch and, once it ended, writes the row and
    * publishes `llm.batch.ended` with the result. A run that already has a batch in flight

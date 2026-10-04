@@ -3,7 +3,7 @@ import type { Database, Statement } from 'better-sqlite3';
 import type { JsonValue } from './types.js';
 
 /**
- * What one transcript row records (ARCHITECTURE §5.4). The kinds follow the ACP session:
+ * What one transcript row records (docs/internal/agent-action.md). The kinds follow the ACP session:
  * the prompt the core sent, what the agent said and thought, each tool call and its
  * later status, every permission decision, the reported usage, how the turn stopped,
  * why the core cancelled it, and the RESULT.json it read.

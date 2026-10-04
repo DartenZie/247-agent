@@ -30,7 +30,7 @@ export interface AnthropicAdapterOptions {
 const HTTP_TIMEOUT_MS = 60 * 60 * 1000;
 
 /**
- * The `anthropic` provider type (ARCHITECTURE §5.2, llm-action.md "Adapter notes"): one
+ * The `anthropic` provider type (docs/internal/model-actions.md, llm-action.md "Adapter notes"): one
  * `messages.parse()` (with a schema) or `messages.create()` (without) per call, the static
  * system prompt as a cached block, the input as the single user turn, adaptive thinking and
  * `output_config.effort` on Sonnet/Opus 5 only. No prefill, no SDK-level retries: whether to

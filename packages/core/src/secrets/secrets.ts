@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 /**
- * Secrets (ARCHITECTURE §7, §11) are referenced by name (`${secrets.ftp_pass}`) and
+ * Secrets (docs/internal/config.md, docs/internal/security.md) are referenced by name (`${secrets.ftp_pass}`) and
  * resolved from one backend at run time, only for the runs whose templates name them. A
  * resolved value lives in the action context and in a connector's environment; it never
  * reaches the store, the log or an event payload.

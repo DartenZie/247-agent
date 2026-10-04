@@ -149,7 +149,7 @@ action:
 emit:
   - type: site.change_blocked           # the agent could not do it: say what is missing
     when: "result.status == 'blocked'"
-    payload: { summary: ${result.summary}, missing: ${result.missing}, email: ${event.payload.email} }
+    payload: { summary: "${result.summary}", missing: "${result.missing}", email: "${event.payload.email}" }
 ```
 
 Non-negotiables, because they are what make an agent safe to run unattended:
@@ -213,4 +213,5 @@ the core's tool bridge (`packages/core/src/connectors/mcp-bridge.ts`). `model` a
 swept `retention.workspaces` (default 7d) after it finished.
 When adding an adapter or changing a runner, follow `references/llm-action.md`,
 `references/decide-action.md` and `references/agent-action.md` and keep
-`docs/ARCHITECTURE.md` §5.2, §5.3, §5.4, §9 and §14 in sync with the code.
+`docs/internal/model-actions.md`, `docs/internal/agent-action.md` and the user pages under
+`docs/tasks/` in sync with the code.

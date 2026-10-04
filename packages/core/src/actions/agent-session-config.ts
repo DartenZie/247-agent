@@ -1,6 +1,6 @@
 /**
  * The `model` and `effort` of an `agent` action, applied to the session as ACP config
- * options (ARCHITECTURE §5.4) before the first prompt. Agents name their options freely
+ * options (docs/internal/agent-action.md) before the first prompt. Agents name their options freely
  * (claude-agent-acp `effort`, codex-acp `reasoning_effort`), so an option is found by its
  * protocol category: `model` and `thought_level`.
  */

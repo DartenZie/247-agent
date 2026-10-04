@@ -11,7 +11,7 @@ import {
 } from './sandbox-net.js';
 
 /**
- * Sandbox for `shell` actions (ARCHITECTURE §5.1) and for the agent program behind a
+ * Sandbox for `shell` actions (docs/internal/actions.md) and for the agent program behind a
  * `transport: acp` connector (§5.4, §6, §11). `none` runs the command as the daemon
  * itself. `bwrap` wraps it in bubblewrap: its own pid and ipc namespaces, a read-only view
  * of the OS (`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`) and of the install (`SandboxHost`),
@@ -140,7 +140,7 @@ function maskable(path: string): boolean {
 
 /**
  * What every sandbox on this host hides and shows, fixed for the daemon's lifetime
- * (ARCHITECTURE §11). `masks` are directories replaced by an empty tmpfs so the daemon's
+ * (docs/internal/security.md). `masks` are directories replaced by an empty tmpfs so the daemon's
  * own files never show through the read-only `/etc` or a wide bind: the directories of
  * the config file (tasks, manifests, prompts, a `file` secrets backend), the database and
  * the socket, plus a protected directory itself where none of those covers it (the proxy

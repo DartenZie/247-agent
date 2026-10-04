@@ -45,7 +45,7 @@ export const DecideQuestionSchema = z.discriminatedUnion('type', [
 ]);
 
 /**
- * ARCHITECTURE §5.3: one Decisions API call (TypeSafe's Jev via an `openrouter` provider),
+ * docs/internal/model-actions.md: one Decisions API call (TypeSafe's Jev via an `openrouter` provider),
  * typed answers with probabilities, no text. `state` is templated; the questions are static
  * policy, so a `${…}` in them is refused the way `llm` refuses a templated system prompt.
  */

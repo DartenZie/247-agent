@@ -74,14 +74,12 @@ never invent a way for one task to reference another by name.
 - `state_updates` and `emit` apply only after success, in one transaction with the
   lifecycle event. A rule that cannot be rendered fails the run without retry.
 
-## What is runnable today
+## Testing without a model
 
-`shell`, `connector`, `wait`, `sequence`, `llm`, `decide` and all three trigger kinds run
-end to end. `agent` validates (only `kind` is checked) but has no runner, so a run of one
-fails with "no runner". When a workflow needs an agent step now, keep the real `agent`
-task in the file for the intended shape and, for testing, use the stand-in pattern in
-`references/patterns.md` (a `shell` task with the same trigger and `emit`); the same
-stand-in keeps a model out of any test.
+Every action kind runs end to end. To exercise a workflow offline, replace each
+`llm`/`decide`/`agent` task with the stand-in pattern in `references/patterns.md`: a
+`shell` task with the same name, trigger, filter and `emit`, so the downstream tasks run
+unchanged.
 
 ## Review checklist
 
@@ -99,5 +97,5 @@ Before declaring a task done, check:
 - `oa validate` passes on the file **and** on `docs/examples/*.yaml` plus
   `docs/examples/connectors.d/*.yaml` if you touched anything shared.
 
-Source of truth when in doubt: `docs/ARCHITECTURE.md` §3, §5, §5.8 and
-`docs/USER-GUIDE.md` §4–§5 in this repo.
+Source of truth when in doubt: `docs/tasks/` (the user pages per action, routing and
+templates), `docs/reference/task.md`, and `docs/internal/actions.md` in this repo.

@@ -1,5 +1,5 @@
 /**
- * What an `agent` action sees of an ACP session (ARCHITECTURE §5.4): the protocol's
+ * What an `agent` action sees of an ACP session (docs/internal/agent-action.md): the protocol's
  * updates and permission requests, normalised so the runner and its tests never touch the
  * `@agentclientprotocol/sdk` types. `connectors/acp.ts` maps the wire shapes to these.
  */

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { NonRetryableError } from './types.js';
 
 /**
- * Where an `agent` run works (ARCHITECTURE §5.4): a fresh git worktree of `repo` at
+ * Where an `agent` run works (docs/internal/agent-action.md): a fresh git worktree of `repo` at
  * `branch` on its own `agent/<run_id>` branch, or an empty directory. Either lives at
  * `<work_dir>/<run_id>`, is removed when the run fails and kept when it succeeds (for
  * `post` gates, `${run.workspace}` and inspection) until the retention pass sweeps it

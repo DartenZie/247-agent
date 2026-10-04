@@ -1,5 +1,5 @@
 /**
- * Prometheus metrics for `GET /metrics` (ARCHITECTURE §4, §12), without a dependency: a
+ * Prometheus metrics for `GET /metrics` (docs/internal/architecture.md, docs/internal/packaging.md), without a dependency: a
  * registry of counters, gauges and histograms rendered in the text exposition format.
  * Counters live in the process (they reset on restart, as Prometheus expects); gauges
  * that mirror live state are set by collectors at scrape time. Every component that

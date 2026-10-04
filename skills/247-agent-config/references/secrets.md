@@ -46,7 +46,7 @@ the new value. Runs already in flight keep the value they resolved at start.
 
 ## Trust model
 
-The daemon's uid is the boundary (ARCHITECTURE §11): every process running as the
+The daemon's uid is the boundary (`docs/internal/security.md`): every process running as the
 service user can read the others' environments and call the socket API. Never run an
 `agent` action or untrusted shell work unconfined as that user: the agent program gets
 `sandbox: bwrap` on its `acp` manifest and untrusted shell steps `sandbox: bwrap` on the

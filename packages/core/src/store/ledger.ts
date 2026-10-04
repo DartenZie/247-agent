@@ -1,6 +1,6 @@
 import type { Database, Statement } from 'better-sqlite3';
 
-/** How a row's `usd` was determined (ARCHITECTURE §9): no call goes unpriced silently. */
+/** How a row's `usd` was determined (docs/internal/model-actions.md): no call goes unpriced silently. */
 export type PricedBy = 'table' | 'provider' | 'unpriced';
 
 export interface LedgerEntry {
@@ -41,7 +41,7 @@ const GROUP_EXPR: Record<CostGroup, string> = {
 };
 
 /**
- * The cost ledger (ARCHITECTURE §9): one row per model call. Budgets are derived from it
+ * The cost ledger (docs/internal/model-actions.md): one row per model call. Budgets are derived from it
  * (`sumSince` for the daily cap, `sumForRun` for a run's `max_usd`), so a restart loses nothing.
  */
 export class LedgerStore {

@@ -1,7 +1,7 @@
 # `agent.yaml` key reference
 
-From `packages/core/src/config/agent.ts` and `docs/USER-GUIDE.md` §4.1. The schema is
-strict; unknown keys are rejected.
+From `packages/core/src/config/agent.ts` and `docs/reference/agent-yaml.md`. The schema
+is strict; unknown keys are rejected.
 
 | Key | Meaning | Default |
 |---|---|---|

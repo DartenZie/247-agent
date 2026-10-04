@@ -1,5 +1,5 @@
 /**
- * The core as an ACP client (Agent Client Protocol, agentclientprotocol.com; ARCHITECTURE
+ * The core as an ACP client (Agent Client Protocol, agentclientprotocol.com; docs/internal/architecture.md
  * §5.4, §6). An `acp` connector is an agent program speaking JSON-RPC over stdio: the
  * supervisor spawns it once, `AcpAgent` initialises the connection, and every `agent` run
  * opens its own session with the workspace as `cwd`. Permission requests are routed by

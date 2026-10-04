@@ -30,7 +30,7 @@ export interface RetentionReport extends PurgeCounts {
 }
 
 /**
- * The retention pass (ARCHITECTURE §7, `retention:`): once at start and then every
+ * The retention pass (docs/internal/config.md, `retention:`): once at start and then every
  * `interval`, delete what the policy says is old: finished runs with their ledger rows,
  * stale ledger rows, dispatched events nothing references, and `work/<run_id>` directories
  * of runs finished long enough ago (or of no run at all). Workspaces of runs still queued,

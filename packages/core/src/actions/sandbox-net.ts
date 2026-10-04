@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 /**
  * The network of a sandboxed agent program (`sandbox.network` on an `acp` manifest;
- * ARCHITECTURE §6, §11). bwrap can only share the host's network or cut it off, so an
+ * docs/internal/connectors.md, docs/internal/security.md). bwrap can only share the host's network or cut it off, so an
  * allowlist is three parts: the sandbox gets its own, empty network namespace
  * (`--unshare-net`); the daemon runs a filtering HTTP proxy on a Unix socket outside it
  * (`connectors/net-proxy.ts`, in `netProxyDir`) and binds that one socket in; and a small

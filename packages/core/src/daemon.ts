@@ -50,7 +50,7 @@ export interface ReloadFile {
 }
 
 /**
- * What `reload()` did (ARCHITECTURE §4, §12). `ok: false` means nothing changed: the
+ * What `reload()` did (docs/internal/architecture.md, docs/internal/packaging.md). `ok: false` means nothing changed: the
  * files with issues are listed and the previous config stays active.
  */
 export interface ReloadReport {

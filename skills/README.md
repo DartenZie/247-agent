@@ -19,8 +19,7 @@ them up in this repo.
 
 To use them elsewhere, copy or symlink a skill directory into the agent's skills
 location (`.claude/skills/<name>` for Claude Code, or the skills directory the runtime
-is configured with). Each skill is self-contained; where it cites `docs/ARCHITECTURE.md`
-or `docs/USER-GUIDE.md` those are the sources of truth in this repo, not required
-reading at run time.
+is configured with). Each skill is self-contained; where it cites a page under `docs/`
+that is the source of truth in this repo, not required reading at run time.
 
 When the architecture or the CLI changes, update the affected skill in the same change.

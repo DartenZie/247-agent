@@ -1,7 +1,7 @@
 # `decide` action
 
 One call to a classification-only model, typed answers with probabilities, no text.
-`docs/ARCHITECTURE.md` §5.3 and §9; reference task in `docs/examples/decide-triage.yaml`.
+`docs/tasks/decide.md`, `docs/internal/model-actions.md`; reference task in `docs/examples/decide-triage.yaml`.
 
 ## Fields
 

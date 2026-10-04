@@ -1,5 +1,5 @@
 /**
- * `247-agent-connector-host`: what a `247-agent-connector@<name>` unit runs (ARCHITECTURE
+ * `247-agent-connector-host`: what a `247-agent-connector@<name>` unit runs (docs/internal/architecture.md
  * §6). It reads the same agent.yaml and manifests as the daemon, finds the connector
  * `<name>` (which must say `managed_by: systemd`), resolves its secrets from the unit's
  * own secrets backend (its `LoadCredential=` lines with `systemd-credentials`) and runs

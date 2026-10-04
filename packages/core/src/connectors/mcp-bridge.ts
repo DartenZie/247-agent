@@ -1,5 +1,5 @@
 /**
- * Connector ops as agent tools (`mcp_servers` on an `agent` action; ARCHITECTURE §5.4,
+ * Connector ops as agent tools (`mcp_servers` on an `agent` action; docs/internal/agent-action.md,
  * §6). The agent must never hold a connector's secrets, so it is not handed the connector
  * itself: per run, the core listens on a private Unix socket under `work_dir` and serves
  * one MCP server per granted connector there, forwarding each call over the supervisor's

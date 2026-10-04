@@ -148,4 +148,5 @@ the Linux run (it installs bubblewrap and does the same steps on ubuntu-latest):
 4. `gh run watch <id> --exit-status` (exit status is the run's).
 5. On failure: `gh run view <id> --log-failed`, fix, commit, push, and watch the new run.
 
-Source of truth: `docs/USER-GUIDE.md` §3, §7–§9, §11; `docs/ARCHITECTURE.md` §4, §10, §12.
+Source of truth: `docs/reference/cli.md`, `docs/reference/api.md`, `docs/operations/`,
+`docs/internal/architecture.md`, `docs/internal/testing.md`.

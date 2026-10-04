@@ -16,7 +16,7 @@ import type { TranscriptEntry } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 
 /**
- * The HTTP API (ARCHITECTURE §4), transport-free: `route()` takes a parsed request and
+ * The HTTP API (docs/internal/architecture.md), transport-free: `route()` takes a parsed request and
  * returns a status + JSON body, so the handlers are testable without a socket and the
  * server file is plumbing only. `/v1/state` arrives with the KV store.
  */

@@ -6,7 +6,7 @@ import { buildSandboxArgv, Sandbox } from './sandbox.js';
 import type { ActionContext } from './types.js';
 
 /**
- * ARCHITECTURE §5.1. `cmd`, `cwd`, `env` and `stdin` take `${…}` templates; `cmd`, `cwd`
+ * docs/internal/actions.md. `cmd`, `cwd`, `env` and `stdin` take `${…}` templates; `cmd`, `cwd`
  * and `env` values render to strings, `stdin` to its raw value. `user:` is not supported.
  * `sandbox` (default from `defaults.sandbox` in agent.yaml) wraps the command in bwrap.
  */

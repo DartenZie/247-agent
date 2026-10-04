@@ -64,7 +64,7 @@ const McpGrant = z.union([
 ]);
 
 /**
- * ARCHITECTURE §5.4: one prompt turn on an ACP agent (`connector`, a `transport: acp`
+ * docs/internal/agent-action.md: one prompt turn on an ACP agent (`connector`, a `transport: acp`
  * manifest) in a fresh workspace, under a tool-kind allowlist, a shell-command allowlist,
  * a tool-call cap and a budget, ending in a RESULT.json that `emit` rules route on.
  */

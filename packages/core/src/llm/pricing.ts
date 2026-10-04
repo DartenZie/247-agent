@@ -108,7 +108,7 @@ export function estimateInputTokens(text: string): number {
   return Math.ceil(text.length / 3);
 }
 
-/** `YYYY-MM-DD` of the UTC day; the daily budget window (ARCHITECTURE §9). */
+/** `YYYY-MM-DD` of the UTC day; the daily budget window (docs/internal/model-actions.md). */
 export function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }

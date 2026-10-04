@@ -82,7 +82,7 @@ export type LlmServiceSettings = Pick<
   'providers' | 'pricing' | 'defaults' | 'decideDefaults' | 'budgets' | 'configDir'
 >;
 
-/** The event the daily circuit breaker emits, once per UTC day (ARCHITECTURE §9). */
+/** The event the daily circuit breaker emits, once per UTC day (docs/internal/model-actions.md). */
 export { BUDGET_EXCEEDED };
 
 /** What `execute` needs to know about a call before and after the adapter runs it. */

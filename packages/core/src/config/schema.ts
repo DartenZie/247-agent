@@ -95,7 +95,7 @@ export const Action = z.discriminatedUnion('kind', [
   AgentAction,
 ]);
 
-/** ARCHITECTURE §5.8: one domain event (or one per `each` item) after a successful run. */
+/** docs/internal/actions.md: one domain event (or one per `each` item) after a successful run. */
 export const EmitRule = z
   .strictObject({
     type: z.string().min(1),
@@ -131,7 +131,7 @@ export const EmitRule = z
     }
   });
 
-/** ARCHITECTURE §10. Retries are attempts of the same run; `task.<name>.failed` fires after the last. */
+/** docs/internal/architecture.md. Retries are attempts of the same run; `task.<name>.failed` fires after the last. */
 export const Retry = z.strictObject({
   attempts: z.number().int().min(1).max(100).default(1),
   backoff: z.enum(['fixed', 'exponential']).default('exponential'),

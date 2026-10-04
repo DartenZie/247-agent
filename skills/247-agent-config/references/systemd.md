@@ -137,7 +137,7 @@ interrupted runs are retried per policy or failed as interrupted.
   capabilities and its `LoadCredential=` lines (keep `Group=247-agent`), then
   `systemctl enable --now 247-agent-connector@<name>` and `oa reload`. Its secrets go on
   that unit, not on `247-agent.service`; the daemon never resolves them. See
-  USER-GUIDE §6.7.
+  `docs/connectors/own-unit.md`.
 - Trust model: anything running as the `247-agent` uid can reach the socket and every
   process's environment, so it is trusted. Untrusted work runs under `sandbox: bwrap`:
   `shell` steps that build or test what an agent produced set it on the action (or

@@ -19,7 +19,7 @@ env: { NODE_ENV: production }                 # extra environment for the proces
 restart: { base: 1s, max: 60s }               # crash backoff, doubling; reset after 30s up
 health: { interval: 60s, timeout: 10s, failures: 3 }   # stdio only: MCP ping every interval; 3 misses in a row = crash, respawn
 managed_by: core                              # or systemd: runs in its own 247-agent-connector@email unit (below)
-socket: /run/247-agent-connector/email/mcp.sock   # managed_by: systemd + stdio only; this is the default
+# socket: /run/247-agent-connector/email/mcp.sock   # with managed_by: systemd and stdio only: where the unit serves ops (this is the default)
 ```
 
 - `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only.
@@ -50,7 +50,7 @@ secret the daemon must not hold. The daemon never resolves its secrets.
   backoff, `health` and `ops` allowlist, and `oa connector restart` reconnects, which
   respawns the process in the unit with fresh secrets.
 - Not for `acp` agents (use `sandbox: bwrap`) or built-ins. Drop-ins keep
-  `Group=247-agent` (config and core socket access). USER-GUIDE §6.7 has the steps.
+  `Group=247-agent` (config and core socket access). `docs/connectors/own-unit.md` has the steps.
 
 ## An ACP agent as a connector
 
@@ -74,7 +74,7 @@ shows `acp` as its transport, `sandbox=bwrap` when sandboxed and `net=allowlist`
 `net=none`) when the sandbox restricts the network.
 
 `sandbox` takes the same forms as on a `shell` action (`bwrap` or `{ backend: bwrap,
-ro_binds, rw_binds, extra_args }`), plus `network`, and is the trust boundary ARCHITECTURE §11 asks for:
+ro_binds, rw_binds, extra_args }`), plus `network`, and is the trust boundary `docs/internal/security.md` asks for:
 the program runs for its whole life inside bubblewrap with the OS and the install
 read-only, `defaults.agent.work_dir` the only writable path (every run's workspace and
 the program's home, `<work_dir>/home/<name>`, for npm and Claude Code caches), the

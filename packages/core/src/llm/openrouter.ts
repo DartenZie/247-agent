@@ -39,14 +39,14 @@ type Params = OpenAI.ChatCompletionCreateParamsNonStreaming & {
 };
 
 /**
- * The `openrouter` provider type (ARCHITECTURE §5.2, llm-action.md "Adapter notes"): the
+ * The `openrouter` provider type (docs/internal/model-actions.md, llm-action.md "Adapter notes"): the
  * `openai` SDK against OpenRouter's Chat Completions endpoint. System prompt as the system
  * message, the input as the single user turn, the schema as a strict `response_format`,
  * `effort` passed through as OpenRouter's `reasoning.effort`. Every response carries
  * `usage.cost` in USD, which becomes `reportedUsd` so the ledger needs no price table for
  * OpenRouter models. Retries are the task's `retry` policy.
  *
- * `decide` (ARCHITECTURE §5.3) is OpenRouter's Decisions API (`POST /api/alpha/decisions`),
+ * `decide` (docs/internal/model-actions.md) is OpenRouter's Decisions API (`POST /api/alpha/decisions`),
  * which the `openai` SDK does not know, so it is a plain `fetch` with the same key, headers
  * and error rules.
  */

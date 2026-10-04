@@ -1,7 +1,7 @@
 import { compile, search } from 'jmespath';
 
 /**
- * `${ <JMESPath> }` templating (ARCHITECTURE §5). Expressions are evaluated against a
+ * `${ <JMESPath> }` templating (docs/internal/actions.md). Expressions are evaluated against a
  * scope of `{event, result, state, secrets, env, item, run, steps}`; which keys are present
  * depends on where the template appears. A string that is exactly one `${…}` renders to the
  * expression's raw value (so `stdin: ${event.payload}` stays JSON); a string with text

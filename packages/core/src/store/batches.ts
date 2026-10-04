@@ -2,7 +2,7 @@ import type { Database, Statement } from 'better-sqlite3';
 
 /**
  * One Message Batches request an `llm` action with `batch: true` submitted and whose
- * result has not been ledgered yet (ARCHITECTURE §5.2). The row outlives the run's wait:
+ * result has not been ledgered yet (docs/internal/model-actions.md). The row outlives the run's wait:
  * the provider bills a batch however the run ended, so the poller settles it regardless.
  */
 export interface BatchRecord {

@@ -8,7 +8,7 @@ import type { JsonValue } from '../store/types.js';
 import { NonRetryableError } from './types.js';
 
 /**
- * The RESULT.json contract (ARCHITECTURE §5.4): what every agent run must leave in its
+ * The RESULT.json contract (docs/internal/agent-action.md): what every agent run must leave in its
  * workspace. `status` is the deterministic outcome downstream `emit` rules route on:
  * `done` (the change is in the workspace; `post` gates run) or `blocked` (it could not be
  * done and `summary` says what is missing; gates are skipped, the run still succeeds).

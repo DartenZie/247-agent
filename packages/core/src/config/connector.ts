@@ -124,7 +124,7 @@ function effectiveTransport(m: {
 }
 
 /**
- * A connector manifest (ARCHITECTURE §6): `connectors.d/<name>.yaml` or an entry of the
+ * A connector manifest (docs/internal/connectors.md): `connectors.d/<name>.yaml` or an entry of the
  * `connectors:` list in agent.yaml. `config` and `env` values take `${secrets.<name>}`;
  * they are rendered at spawn time and reach the child only through its environment. A
  * manifest with `builtin` instead of `exec` configures a connector the core runs itself

@@ -120,7 +120,7 @@ export interface CoreLlmOptions {
 }
 
 /**
- * What a reload may change (ARCHITECTURE §4, §12): everything from agent.yaml except the
+ * What a reload may change (docs/internal/architecture.md, docs/internal/packaging.md): everything from agent.yaml except the
  * database, the socket and the secrets backend. Fields left out keep their current value.
  */
 export interface CoreReloadOptions {

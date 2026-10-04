@@ -11,7 +11,7 @@ const keepFor = z.union([
 ]);
 
 /**
- * `retention:` in agent.yaml (ARCHITECTURE §7): how long finished runs, ledger rows,
+ * `retention:` in agent.yaml (docs/internal/config.md): how long finished runs, ledger rows,
  * events and agent workspaces are kept before the retention pass deletes them. A run's
  * ledger rows go with the run at the latest, so `ledger` cannot exceed `runs`; an event
  * stays as long as a kept run references it, whatever `events` says.
