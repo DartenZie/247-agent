@@ -1,0 +1,90 @@
+# The four scripted runs of the ACP smoke rig (README.md), the same for every agent. Each
+# is manual; run.mjs runs them in order and checks what they leave behind. It also fills in
+# what differs per agent from agents/<name>.yaml: the connector (`defaults.agent`), the
+# `tasks:` fields (model, unasked_execute) and smoke_override's model and effort.
+# `workspace.repo` is resolved against the daemon's working directory, which run.mjs sets
+# to this directory; it recreates .state/repo from repo/ (a sorted word list and its
+# check) before every run.
+tasks:
+  # The happy path: a complete request, an edit, the check, then the post gates commit.
+  - name: smoke_done
+    trigger: { kind: manual }
+    action:
+      kind: agent
+      prompt: |
+        Update items.txt according to the request below. Touch no other file.
+        Run `git status` to see the repository state, then `npm run check` when done.
+
+        <request>
+        Please add "kiwi" to the list.
+        </request>
+      workspace: { kind: git-worktree, repo: .state/repo, branch: main }
+      tools: [read, edit, search, execute]
+      bash_allow: ['npm run check', 'git status', 'git diff', 'ls', 'cat', 'head', 'tail']
+      system_file: prompts/list_editor.md
+      result: { path: RESULT.json, schema: schemas/change.json }
+      post:
+        - shell: ['npm', 'run', 'check']
+        - shell: ['git', 'commit', '-am', 'items: ${result.summary}'] # identity: repo config
+    emit:
+      - type: smoke.done
+        when: "result.status == 'done'"
+        payload: { summary: '${result.summary}', files: '${result.files_changed}' }
+
+  # A request that does not say which word: the agent must not guess, and reports what is
+  # missing; `blocked` still succeeds and the post gates are skipped.
+  - name: smoke_blocked
+    trigger: { kind: manual }
+    action:
+      kind: agent
+      prompt: |
+        Update items.txt according to the request below. Touch no other file.
+        Run `npm run check` when done.
+
+        <request>
+        Please add the new word we talked about to the list. Thanks!
+        </request>
+      workspace: { kind: git-worktree, repo: .state/repo, branch: main }
+      tools: [read, edit, search, execute]
+      bash_allow: ['npm run check', 'git status', 'git diff', 'ls', 'cat', 'head', 'tail']
+      system_file: prompts/list_editor.md
+      result: { path: RESULT.json, schema: schemas/change.json }
+      post:
+        - shell: ['npm', 'run', 'check']
+    emit:
+      - type: smoke.blocked
+        when: "result.status == 'blocked'"
+        payload: { summary: '${result.summary}', missing: '${result.missing}' }
+
+  # A connector op as an MCP tool through the core's tool bridge (claude-agent-acp reports
+  # MCP tools as kind `other`, codex-acp as `execute`, and a Codex Guardian review of the
+  # call as `think`; bash_allow is empty, so a shell command still asks and is refused).
+  # The reference is a canary secret: it reaches the agent in the prompt and must come back
+  # as [secret:smoke_canary] in `oa runs logs`, never as is.
+  - name: smoke_mcp
+    trigger: { kind: manual }
+    action:
+      kind: agent
+      prompt: |
+        Call the `stamp` tool of the `probe` MCP server once, with `reference` set to
+        ${secrets.smoke_canary}
+        Then write the result file with status "done", the summary "stamp received" and the
+        `stamp` field set to the exact string the tool returned. Do not repeat the reference
+        anywhere: not in the result file, not in your messages. Do nothing else.
+      workspace: { kind: temp }
+      tools: [other, execute, think, read, edit]
+      mcp_servers: [{ connector: probe, ops: [stamp] }]
+      max_tool_calls: 5
+      result: { path: RESULT.json, schema: schemas/stamp.json }
+
+  # The model and effort of the session, set over ACP: run.mjs takes both from the agent's
+  # `override:` and checks the `agent.config` log line against them.
+  - name: smoke_override
+    trigger: { kind: manual }
+    action:
+      kind: agent
+      prompt: |
+        Write the result file with status "done" and the summary "override ok". Do nothing else.
+      workspace: { kind: temp }
+      tools: [read, search, edit, execute]
+      max_tool_calls: 5

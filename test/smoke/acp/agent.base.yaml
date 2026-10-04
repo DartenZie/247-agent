@@ -1,0 +1,16 @@
+# The settings every smoke run shares (README.md). Not a complete agent.yaml: run.mjs adds
+# the tasks, the probe connector, the agent under test (agents/<name>.yaml) and its
+# pricing, and writes the result to .state/<name>/agent.yaml. Everything the daemon writes
+# stays under .state/ (gitignored); the database is shared by every agent and kept between
+# runs, so the daily cap below counts every smoke run of the day.
+db: .state/state.db
+socket: .state/core.sock
+workers: 2
+log: { level: debug }
+defaults:
+  timeout: 10m
+  retry: { attempts: 1 }
+  agent: { max_tool_calls: 25, budget: { max_usd: 0.50 } }
+# run.mjs sets OA_SECRET_SMOKE_CANARY to a fresh value per run.
+secrets: { backend: env }
+budgets: { daily_usd: 3 }

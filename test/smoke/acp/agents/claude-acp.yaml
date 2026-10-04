@@ -1,0 +1,16 @@
+# Claude Code through claude-agent-acp, on the Claude login of whoever runs the rig: no
+# API key, so a run is billed to that plan, not to an API account. Pinned so a new adapter
+# release does not change the rig under you; bump on purpose.
+login:
+  dir: { env: CLAUDE_CONFIG_DIR, default: ~/.claude }
+  hint: run `claude` and /login, with the same CLAUDE_CONFIG_DIR
+connector:
+  exec: ['npx', '-y', '@agentclientprotocol/claude-agent-acp@0.80.0']
+  transport: acp
+  env: { ANTHROPIC_MODEL: claude-haiku-4-5 }
+  restart: { base: 1s, max: 60s }
+# Set on every task's action unless the task sets it.
+tasks: { model: claude-haiku-4-5 }
+# smoke_override: Haiku 4.5 has no effort levels, so it switches to Sonnet 5. The adapter
+# reports the model by its picker alias, `sonnet`.
+override: { model: claude-sonnet-5, effort: low, reports: sonnet }

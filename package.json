@@ -17,6 +17,7 @@
     "clean": "tsc -b --clean",
     "test": "vitest run --passWithNoTests",
     "test:linux": "scripts/linux-test.sh",
+    "smoke:acp": "node test/smoke/acp/run.mjs",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "release": "scripts/build-release.sh",

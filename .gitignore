@@ -18,3 +18,6 @@ dist-release/
 
 # editor settings (local)
 .zed/
+
+# state of the ACP smoke rig (npm run smoke:acp): database, socket, site repo, workspaces, log
+/test/smoke/acp/.state/

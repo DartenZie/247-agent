@@ -41,6 +41,7 @@ packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (No
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, ftp, chat, webhook, github, jira)
+test/smoke/acp/          ACP smoke rig: daemon + one pinned ACP agent (agents/<name>.yaml: claude-acp, codex-acp, opencode-acp), four scripted agent tasks (npm run smoke:acp -- <agent>)
 docs/                        ARCHITECTURE.md, examples/ (agent.yaml, website-updates.yaml, connectors.d/)
 skills/                      agent skills for working with 247-agent (linked from .claude/skills; ship with builds)
 ```
@@ -95,6 +96,7 @@ npm run build          # tsc -b across workspaces
 npm test               # vitest
 npm run test:linux     # scripts/linux-test.sh: npm ci, build, test, validate in a Debian 13 container with bwrap (docker or podman; exit 3 = none); --systemd=always also installs the .deb and runs `oa run hello --wait`
 npm run lint           # eslint + prettier check
+npm run smoke:acp -- <agent>   # test/smoke/acp/run.mjs, agent required: claude-acp (Claude login), codex-acp (ChatGPT login), opencode-acp (free, no login); done/blocked/mcp_servers/model+effort runs, redaction scan, oa cost; caps $0.50/run, $3/day
 npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
 npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
