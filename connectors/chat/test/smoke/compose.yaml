@@ -1,0 +1,27 @@
+# A real Matrix homeserver for the chat connector's smoke run (`npm run smoke:connectors`,
+# test/smoke/connectors/README.md): Synapse, the reference implementation, with open
+# registration and no rate limits (homeserver.yaml, mounted read-only; the signing key, the
+# SQLite database and the media store go to the `data` volume). The client API is on
+# 127.0.0.1 only; federation is not served.
+#
+#   Synapse client API   http://127.0.0.1:38008   server name smoke.local
+#
+# The users and rooms are made by smoke.mjs before the daemon starts: a `bot` user whose
+# access token the runner hands the daemon as `smoke_matrix_token`, and a `human` user who
+# invites the bot to the rooms, posts and reacts.
+services:
+  synapse:
+    image: ghcr.io/element-hq/synapse:v1.162.0
+    environment:
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+      # The image drops to user 991, which cannot write a fresh volume; a throwaway server
+      # may run as the container's root instead.
+      UID: '0'
+      GID: '0'
+    volumes:
+      - './homeserver.yaml:/config/homeserver.yaml:ro,z'
+      - 'data:/data'
+    ports: ['127.0.0.1:38008:8008']
+
+volumes:
+  data:

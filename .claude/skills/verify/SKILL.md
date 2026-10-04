@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Prove a change to the 247-agent repo works before reporting it done, without handing checks to the user. Picks the verification rungs a change needs from its diff (scripts/plan.mjs), then runs them: build/lint/test/validate, a real daemon, Linux with bubblewrap and systemd in a container (npm run test:linux), the connector smoke rig against real mail and FTP servers in podman (npm run smoke:connectors), the ACP smoke rig against real agents (npm run smoke:acp), or CI via gh. Use it whenever you finish a code, config, packaging or docs change in this repo, before writing \"done\", \"not verified\", \"untested\", \"please check\", \"you can confirm\", or \"worth trying on the server\"; when the user asks to verify, test, prove or smoke-test something; and when a check is skipped on macOS (bwrap, systemd, Linux-only tests)."
+description: "Prove a change to the 247-agent repo works before reporting it done, without handing checks to the user. Picks the verification rungs a change needs from its diff (scripts/plan.mjs), then runs them: build/lint/test/validate, a real daemon, Linux with bubblewrap and systemd in a container (npm run test:linux), the connector smoke rig against a real Matrix homeserver, mail and FTP servers in podman and the real webhook listener (npm run smoke:connectors), the ACP smoke rig against real agents (npm run smoke:acp), or CI via gh. Use it whenever you finish a code, config, packaging or docs change in this repo, before writing \"done\", \"not verified\", \"untested\", \"please check\", \"you can confirm\", or \"worth trying on the server\"; when the user asks to verify, test, prove or smoke-test something; and when a check is skipped on macOS (bwrap, systemd, Linux-only tests)."
 ---
 
 # Verify a change
@@ -35,7 +35,7 @@ and 17 GB of disk), and the user's own containers run on it too.
 | daemon | a scratch daemon, `oa run`/`oa emit`, then `oa runs show`, `oa runs logs` and the log (`247-agent-operate` skill) | build | 1 min | the change on the real binary: wiring, API, CLI output, reload |
 | linux | `npm run test:linux` | podman or docker | 1 min cached, 5 min after a Dockerfile or Node change | lint, then the suite on Debian 13 with real bwrap: the bwrap tests run (`OA_REQUIRE_BWRAP=1` fails them if they can't) |
 | linux-systemd | `npm run test:linux -- --systemd=always` | podman or docker | 2 min | also the release tree, `.deb` install, unit active, `oa run hello --wait`, purge |
-| connectors | `npm run smoke:connectors -- <names>` | podman with compose | 1.5 min, longer on the first run (image pulls) | every op of email and ftp against real servers, TLS/STARTTLS refusals, a password scan of the whole database |
+| connectors | `npm run smoke:connectors -- <names>` | podman with compose (webhook alone: nothing) | 2 min for all four, longer on the first run (image pulls) | every op and event of chat (Matrix on Synapse), email and ftp against real servers, webhook on real signed requests, TLS/STARTTLS and auth refusals, a secret scan of the whole database |
 | acp | `npm run smoke:acp -- opencode-acp`, then `-- claude-acp` | build; claude-acp: the Claude login | 1–3 min each | done/blocked/mcp_servers/model+effort on a real agent, what the agent committed, a canary-secret scan of the whole database, `oa cost` |
 | ci | push the branch and watch the run (`247-agent-operate` skill, "Linux") | `gh` auth, the user's go-ahead to push | 5–10 min | the workflow itself, or Linux when no container engine works |
 
@@ -137,7 +137,8 @@ Rules:
 
 When you find yourself writing "not verified" about something a script could check,
 propose the rig to the user. A new connector rig is
-`connectors/<name>/test/smoke/{compose.yaml,smoke.mjs}` (see
-`test/smoke/connectors/README.md`). A new ACP agent is `test/smoke/acp/agents/<name>.yaml`.
+`connectors/<name>/test/smoke/smoke.mjs`, plus a `compose.yaml` when it needs servers (see
+`test/smoke/connectors/README.md`); github and jira have none, because their services
+cannot run in a container. A new ACP agent is `test/smoke/acp/agents/<name>.yaml`.
 A new rig follows the exit contract and the RESULT line in `test/smoke/lib.mjs`. Then
 teach `scripts/plan.mjs` the paths it covers.

@@ -1,0 +1,48 @@
+# Synapse for the chat connector's smoke run (compose.yaml): one client listener, SQLite,
+# registration open without verification so smoke.mjs can make its two users, and every
+# rate limit lifted so a question with its reactions and the answers never wait. The
+# signing key is generated into /data on the first start. Nothing here is a secret.
+server_name: smoke.local
+pid_file: /data/homeserver.pid
+report_stats: false
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: false
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+media_store_path: /data/media_store
+signing_key_path: /data/smoke.local.signing.key
+macaroon_secret_key: smoke-macaroon-key-not-a-secret
+form_secret: smoke-form-key-not-a-secret
+trusted_key_servers: []
+
+enable_registration: true
+enable_registration_without_verification: true
+presence:
+  enabled: false
+
+rc_message: { per_second: 1000, burst_count: 10000 }
+rc_registration: { per_second: 1000, burst_count: 10000 }
+rc_login:
+  address: { per_second: 1000, burst_count: 10000 }
+  account: { per_second: 1000, burst_count: 10000 }
+  failed_attempts: { per_second: 1000, burst_count: 10000 }
+rc_joins:
+  local: { per_second: 1000, burst_count: 10000 }
+  remote: { per_second: 1000, burst_count: 10000 }
+rc_joins_per_room: { per_second: 1000, burst_count: 10000 }
+rc_invites:
+  per_room: { per_second: 1000, burst_count: 10000 }
+  per_user: { per_second: 1000, burst_count: 10000 }
+  per_issuer: { per_second: 1000, burst_count: 10000 }

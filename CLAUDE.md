@@ -41,7 +41,7 @@ packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (No
 packages/cli/            `oa` command, talks to the core socket
 packages/connector-sdk/  helpers for writing TS connectors (single file, no local imports)
 connectors/<name>/       one package per connector (email, ftp, chat, webhook, github, jira)
-test/smoke/connectors/   connector smoke rig: real servers per connector in podman (connectors/<name>/test/smoke/compose.yaml + smoke.mjs: email, ftp), a daemon on the real connectors (npm run smoke:connectors)
+test/smoke/connectors/   connector smoke rig: real servers per connector in podman (connectors/<name>/test/smoke/smoke.mjs + compose.yaml: chat (Synapse), email, ftp; webhook needs no server), a daemon on the real connectors (npm run smoke:connectors)
 test/smoke/acp/          ACP smoke rig: daemon + one pinned ACP agent (agents/<name>.yaml: claude-acp, codex-acp, opencode-acp), four scripted agent tasks (npm run smoke:acp -- <agent>)
 test/smoke/lib.mjs       what both rigs share: exit codes, the RESULT line, host lock, orphan-daemon cleanup, file scan
 .claude/skills/verify/   how to prove a change before reporting it: scripts/plan.mjs maps a diff to the rungs above
@@ -100,7 +100,7 @@ npm test               # vitest
 npm run test:linux     # scripts/linux-test.sh: lint on the host, then npm ci, build, test (OA_REQUIRE_BWRAP=1), validate in a Debian 13 container with bwrap (docker or podman; exit 3 = environment); --systemd=always also installs the .deb and runs `oa run hello --wait`
 npm run lint           # eslint + prettier check
 npm run smoke:acp -- <agent>   # test/smoke/acp/run.mjs, agent required: claude-acp (Claude login), codex-acp (ChatGPT login), opencode-acp (free, no login); done/blocked/mcp_servers/model+effort runs, redaction scan of the whole DB, oa cost; caps $0.50/run, $3/day; exit 3 = provider outage
-npm run smoke:connectors [-- <connector>…] [--keep]   # test/smoke/connectors/run.mjs: podman compose up per connector (email: GreenMail + Dovecot STARTTLS proxy; ftp: atmoz/sftp, vsftpd FTP and FTPS), every op through a daemon, refusals, password scan of the whole DB, compose down; one run per host (lock)
+npm run smoke:connectors [-- <connector>…] [--keep]   # test/smoke/connectors/run.mjs: podman compose up per connector (chat: Synapse; email: GreenMail + Dovecot STARTTLS proxy; ftp: atmoz/sftp, vsftpd FTP and FTPS; webhook: none, real requests in), every op and event through a daemon, refusals, secret scan of the whole DB, compose down; one run per host (lock)
 npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
 npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml

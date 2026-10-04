@@ -1,14 +1,17 @@
 // The connector smoke run (`npm run smoke:connectors [-- <connector>…] [--keep]`, README.md):
-// for every connector with a connectors/<name>/test/smoke/compose.yaml (or the ones named),
-// brings its servers up with podman, starts a daemon on the real connectors its smoke.mjs
-// declares, runs that module's checks through `oa run`, scans what the runs left behind for
-// the servers' passwords, stops the daemon and tears the servers down.
+// for every connector with a connectors/<name>/test/smoke/smoke.mjs (or the ones named),
+// brings its servers up with podman (its compose.yaml, when it has one: a connector that is
+// itself the server, like webhook, needs none), lets the module provision them, starts a
+// daemon on the real connectors the module declares, runs its checks through `oa run` and
+// the daemon's API, scans what the runs left behind for the servers' secrets, stops the
+// daemon and tears the servers down.
 // Exit codes and the final RESULT line: ../lib.mjs (0 pass, 1 a check failed, 2 the rig
 // could not start, 130 interrupted). One run at a time per host: the servers' container
 // names and ports are global, so a second checkout waits for the lock instead.
 // Needs `npm run build` and podman with a compose provider (`podman compose`).
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { connect } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
@@ -61,9 +64,12 @@ function oa(args, opts = {}) {
   }
 }
 
+const composeFile = (name) => join(ROOT, 'connectors', name, 'test/smoke/compose.yaml');
+const hasServers = (name) => existsSync(composeFile(name));
+
 /** `podman compose` for one connector's servers; the provider's output is kept for errors. */
 function compose(name, args) {
-  const file = join(ROOT, 'connectors', name, 'test/smoke/compose.yaml');
+  const file = composeFile(name);
   const r = spawnSync('podman', ['compose', '-p', `oa-smoke-${name}`, '-f', file, ...args], {
     encoding: 'utf8',
     env: { ...process.env, PODMAN_COMPOSE_WARNING_LOGS: 'false' },
@@ -91,12 +97,29 @@ function greets(port) {
   });
 }
 
+/** Resolves once an HTTP GET of `url` is answered with a 2xx (a server without a banner). */
+function answers(url) {
+  return new Promise((done) => {
+    const req = request(url, { method: 'GET', timeout: 2000 }, (res) => {
+      res.resume();
+      done(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300);
+    });
+    req.once('timeout', () => req.destroy(new Error('timeout')));
+    req.once('error', () => done(false));
+    req.end();
+  });
+}
+
+/** `ports`: a number is a port that greets, a string an http URL that answers 2xx. */
 async function waitForPorts(name, ports) {
   const deadline = Date.now() + SERVERS_MS;
   for (const port of ports) {
-    while (!(await greets(port))) {
+    const ready = typeof port === 'number' ? () => greets(port) : () => answers(port);
+    while (!(await ready())) {
       if (Date.now() > deadline) {
-        throw new Error(`${name}: nothing greets on 127.0.0.1:${port} after ${SERVERS_MS / 1000}s`);
+        throw new Error(
+          `${name}: ${typeof port === 'number' ? `nothing greets on 127.0.0.1:${port}` : `${port} does not answer`} after ${SERVERS_MS / 1000}s`,
+        );
       }
       await sleep(500);
     }
@@ -106,12 +129,15 @@ async function waitForPorts(name, ports) {
 // --- arguments and preflight -----------------------------------------------------------
 
 const AVAILABLE = readdirSync(join(ROOT, 'connectors'))
-  .filter((c) => existsSync(join(ROOT, 'connectors', c, 'test/smoke/compose.yaml')))
+  .filter((c) => existsSync(join(ROOT, 'connectors', c, 'test/smoke/smoke.mjs')))
   .sort();
 const USAGE = `usage: npm run smoke:connectors [-- [--keep] <connector>…]
 
 connectors: ${AVAILABLE.join(', ')} (connectors/<name>/test/smoke/); default: all
 --keep      leave the servers running afterwards (podman compose -p oa-smoke-<name> down -v)
+
+A connector's smoke.mjs declares its manifests, tasks and checks; its compose.yaml (optional)
+the servers it needs. Those are the only two files a connector adds.
 `;
 const argv = process.argv.slice(2);
 if (argv.includes('-h') || argv.includes('--help')) {
@@ -136,7 +162,7 @@ for (const [file, what] of [
     die(`${what} is not built (${file}); run npm run build first`);
   }
 }
-{
+if (SELECTED.some(hasServers)) {
   const r = spawnSync('podman', ['compose', 'version'], {
     encoding: 'utf8',
     env: { ...process.env, PODMAN_COMPOSE_WARNING_LOGS: 'false' },
@@ -184,7 +210,7 @@ const rig = {
    * schema rejects, so `call` must pass exactly these fields; declare one task per shape.
    */
   op(name, connector, op, fields) {
-    tasks.push({
+    this.task({
       name,
       trigger: { kind: 'manual' },
       action: {
@@ -195,6 +221,28 @@ const rig = {
       },
     });
     fieldsOf.set(name, [...fields].sort());
+  },
+  /** Adds a task as written in a tasks file (an event-triggered one, say). */
+  task(task) {
+    if (tasks.some((t) => t.name === task.name)) {
+      throw new Error(`rig: task ${task.name} is declared twice`);
+    }
+    tasks.push(task);
+  },
+  /** The newest `limit` events of `type` (a type or a pattern), oldest first. */
+  events(type, limit = 200) {
+    return oa(['events', 'tail', '--type', type, '-n', String(limit), '--json'])
+      .split('\n')
+      .filter((l) => l !== '')
+      .map((l) => JSON.parse(l));
+  },
+  /** The newest `limit` runs of `task`. */
+  runs(task, limit = 50) {
+    return JSON.parse(oa(['runs', 'ls', '--task', task, '-n', String(limit), '--json'])).runs;
+  },
+  /** `oa connector restart <name>`: the connector's status afterwards. */
+  restart(connector) {
+    return JSON.parse(oa(['connector', 'restart', connector, '--json'], { failedOk: true }));
   },
   /** Runs a declared task with `payload` and waits; returns the run record. */
   call(task, payload = {}) {
@@ -331,13 +379,20 @@ let phase = 'start';
 let exitCode = 2;
 let summary = '';
 try {
-  for (const { name, mod } of modules) {
-    say(`smoke:connectors: starting the ${name} servers (podman compose -p oa-smoke-${name})`);
-    // A clean slate: a previous run killed before its teardown leaves containers behind.
-    compose(name, ['down', '-v', '-t', '1']);
-    up.push(name);
-    compose(name, ['up', '-d']);
-    await waitForPorts(name, mod.ports);
+  for (const { name, mod, dir } of modules) {
+    if (hasServers(name)) {
+      say(`smoke:connectors: starting the ${name} servers (podman compose -p oa-smoke-${name})`);
+      // A clean slate: a previous run killed before its teardown leaves containers behind.
+      compose(name, ['down', '-v', '-t', '1']);
+      up.push(name);
+      compose(name, ['up', '-d']);
+    }
+    await waitForPorts(name, mod.ports ?? []);
+    if (typeof mod.prepare === 'function') {
+      // Users, rooms, tokens: what must exist on the servers before the connectors start.
+      rig.dir = dir;
+      await mod.prepare(rig);
+    }
   }
 
   const header = '# Generated by test/smoke/connectors/run.mjs; edits are overwritten.\n';
