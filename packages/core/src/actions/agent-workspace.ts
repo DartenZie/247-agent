@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { execa } from 'execa';
@@ -56,8 +56,10 @@ export async function createWorkspace(
   workDir: string,
   runId: string,
 ): Promise<WorkspaceHandle> {
-  const path = workspacePath(workDir, runId);
   mkdirSync(workDir, { recursive: true });
+  // The real path: an agent reports the paths it touches resolved (macOS's /var is
+  // /private/var), and the policy compares them with this one.
+  const path = workspacePath(realpathSync(workDir), runId);
   if (cfg.kind === 'temp') {
     rmSync(path, { recursive: true, force: true });
     mkdirSync(path);
