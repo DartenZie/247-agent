@@ -1,4 +1,4 @@
-// The `probe` connector of the ACP smoke rig (connectors.d/probe.yaml): one op, `stamp`,
+// The `probe` connector of the ACP smoke rig (probe.yaml): one op, `stamp`,
 // answering with SMOKE_PROBE_STAMP. Needs `npm run build` (it imports the SDK's dist/).
 import process from 'node:process';
 

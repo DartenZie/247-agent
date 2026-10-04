@@ -34,6 +34,12 @@ describe('ShellAction schema', () => {
 });
 
 const hasBwrap = execaSync('bwrap', ['--version'], { reject: false }).exitCode === 0;
+// CI and scripts/linux-test.sh set this, so a broken bwrap fails instead of skipping silently.
+if (!hasBwrap && process.env.OA_REQUIRE_BWRAP === '1') {
+  throw new Error(
+    'OA_REQUIRE_BWRAP=1 but bwrap does not run here; the sandbox tests would be skipped',
+  );
+}
 const bwrapDefault: SandboxConfig = {
   backend: 'bwrap',
   extra_args: [],

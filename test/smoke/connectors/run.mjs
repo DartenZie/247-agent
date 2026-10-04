@@ -3,18 +3,12 @@
 // brings its servers up with podman, starts a daemon on the real connectors its smoke.mjs
 // declares, runs that module's checks through `oa run`, scans what the runs left behind for
 // the servers' passwords, stops the daemon and tears the servers down.
-// Exits 0 when every check passed, 1 when one failed, 2 when the rig could not start.
+// Exit codes and the final RESULT line: ../lib.mjs (0 pass, 1 a check failed, 2 the rig
+// could not start, 130 interrupted). One run at a time per host: the servers' container
+// names and ports are global, so a second checkout waits for the lock instead.
 // Needs `npm run build` and podman with a compose provider (`podman compose`).
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
@@ -22,6 +16,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { stringify } from 'yaml';
+
+import { finish, hostLock, nodeWarning, reclaimDaemon, scanFiles } from '../lib.mjs';
 
 const RIG = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(RIG, '../../..');
@@ -38,7 +34,7 @@ const CONNECTORS_MS = 30_000;
 const say = (line) => process.stdout.write(`${line}\n`);
 const die = (msg) => {
   process.stderr.write(`smoke:connectors: ${msg}\n`);
-  process.exit(2);
+  finish('smoke:connectors', 2, msg.split('\n')[0]);
 };
 
 /** `oa <args>` against the rig's socket; returns stdout. Exit 1 with `failedOk` still returns it. */
@@ -126,8 +122,8 @@ const KEEP = argv.includes('--keep');
 const named = argv.filter((a) => a !== '--keep');
 const unknown = named.filter((a) => !AVAILABLE.includes(a));
 if (unknown.length > 0) {
-  process.stderr.write(`smoke:connectors: unknown connector "${unknown.join(' ')}"\n${USAGE}`);
-  process.exit(2);
+  process.stderr.write(USAGE);
+  die(`unknown connector "${unknown.join(' ')}"`);
 }
 const SELECTED = named.length === 0 ? AVAILABLE : [...new Set(named)].sort();
 
@@ -151,17 +147,15 @@ for (const [file, what] of [
     );
   }
 }
-if (existsSync(SOCKET)) {
-  let live = false;
-  try {
-    oa(['connector', 'list']);
-    live = true;
-  } catch {
-    // A stale socket from a killed run: the daemon replaces it.
-  }
-  if (live) {
-    die(`a daemon is already running on ${SOCKET}; stop it first`);
-  }
+const NODE_WARNING = nodeWarning(ROOT);
+if (NODE_WARNING !== '') {
+  say(`smoke:connectors: warning: ${NODE_WARNING}`);
+}
+try {
+  hostLock('oa-smoke-connectors', ROOT);
+  await reclaimDaemon(STATE, CONFIG, SOCKET, (l) => say(`smoke:connectors: ${l}`));
+} catch (err) {
+  die(err.message);
 }
 
 // --- the rig each smoke.mjs works against ----------------------------------------------
@@ -282,6 +276,7 @@ async function teardown() {
 
 let daemon;
 let exited = true;
+let interrupted = false;
 async function stop() {
   if (!exited) {
     daemon.kill('SIGTERM');
@@ -295,9 +290,15 @@ async function stop() {
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
+    if (interrupted) {
+      return;
+    }
+    interrupted = true;
     void stop()
       .then(teardown)
-      .then(() => process.exit(130));
+      .then(() =>
+        finish('smoke:connectors', 130, `interrupted by ${sig}; daemon and servers stopped`),
+      );
   });
 }
 
@@ -324,7 +325,11 @@ async function waitForConnectors() {
   throw new Error(`connectors not up after ${CONNECTORS_MS / 1000}s (${last}); see ${LOG}`);
 }
 
-let exitCode;
+// Up to the first check, a failure means the rig could not run (exit 2). From then on a
+// throw is a FAIL of the module that threw, and the rest still runs, the scan included.
+let phase = 'start';
+let exitCode = 2;
+let summary = '';
 try {
   for (const { name, mod } of modules) {
     say(`smoke:connectors: starting the ${name} servers (podman compose -p oa-smoke-${name})`);
@@ -373,34 +378,32 @@ try {
   daemon.on('exit', () => {
     exited = true;
   });
+  // A run killed without its cleanup leaves this daemon; the next run stops it by this pid.
+  writeFileSync(join(STATE, 'daemon.pid'), String(daemon.pid));
   await waitForConnectors();
 
+  phase = 'checks';
   for (const { name, mod, dir } of modules) {
     rig.dir = dir;
     say(`\n== ${name}`);
-    await mod.run(rig);
+    try {
+      await mod.run(rig);
+    } catch (err) {
+      // A changed result shape or a daemon that died mid-run: a regression, not the setup.
+      rig.check(
+        `${name}: the checks ran to the end`,
+        false,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
-
-  // The servers' passwords reach the connectors as rendered config only: never a run
-  // record, an event or a line of the daemon's log (which carries the connectors' stderr).
-  rig.section('redaction');
-  const records = JSON.stringify(runs);
-  const events = oa(['events', 'tail', '--json']);
-  const log = readFileSync(LOG, 'utf8');
-  for (const [name, value] of Object.entries(secrets)) {
-    rig.check(`${name} in no run record`, !records.includes(value));
-    rig.check(`${name} in no event`, !events.includes(value));
-    rig.check(`${name} not in the daemon log`, !log.includes(value));
+  if (exited) {
+    rig.check('the daemon stayed up', false, `it exited during the checks; see ${LOG}`);
   }
-
-  const failed = results.filter((r) => !r.ok);
-  say(
-    `\nsmoke:connectors: ${SELECTED.join(', ')}: ${results.length - failed.length}/${results.length} checks passed; daemon log ${LOG}`,
-  );
-  exitCode = failed.length === 0 ? 0 : 1;
 } catch (err) {
-  process.stderr.write(`smoke:connectors: ${err instanceof Error ? err.message : String(err)}\n`);
-  exitCode = 2;
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`smoke:connectors: ${msg}\n`);
+  summary = msg.split('\n')[0];
 } finally {
   if (!exited) {
     say('smoke:connectors: stopping the daemon');
@@ -408,4 +411,44 @@ try {
   await stop();
   await teardown();
 }
-process.exit(exitCode);
+
+if (phase === 'checks' && !interrupted) {
+  // The servers' passwords reach the connectors as rendered config only. With the daemon
+  // stopped, every file it wrote must be free of them: the whole database (every event,
+  // run, transcript and state row, not a window of it), its WAL, the daemon's log (which
+  // carries the connectors' stderr) and the connectors' scratch trees.
+  rig.section('redaction');
+  const records = JSON.stringify(runs);
+  const needles = Object.entries(secrets).map(([label, value]) => ({ label, value }));
+  const hits = scanFiles(STATE, needles);
+  rig.check(
+    'the database file was scanned',
+    existsSync(join(STATE, 'state.db')),
+    join(STATE, 'state.db'),
+  );
+  for (const { label, value } of needles) {
+    rig.check(`${label} in no run record`, !records.includes(value));
+    const files = hits.filter((h) => h.needle === label).map((h) => h.file.slice(STATE.length + 1));
+    rig.check(`${label} in no file the daemon wrote`, files.length === 0, files.join(', '));
+  }
+
+  const failed = results.filter((r) => !r.ok);
+  say(
+    `\nsmoke:connectors: ${SELECTED.join(', ')}: ${results.length - failed.length}/${results.length} checks passed; daemon log ${LOG}`,
+  );
+  exitCode = failed.length === 0 ? 0 : 1;
+  summary =
+    `${SELECTED.join(', ')}: ${results.length - failed.length}/${results.length} checks passed` +
+    (failed.length === 0
+      ? ''
+      : `; failed: ${failed
+          .slice(0, 5)
+          .map((r) => r.name)
+          .join('; ')}${failed.length > 5 ? ` (+${failed.length - 5})` : ''}`) +
+    (NODE_WARNING === '' ? '' : ` (warning: ${NODE_WARNING})`);
+}
+if (interrupted) {
+  // The signal handler stops everything and exits 130.
+  await new Promise(() => {});
+}
+finish('smoke:connectors', exitCode, summary);

@@ -3,7 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # `gh workflow run ci.yml --ref <branch>` runs it on a branch without a PR.
+  # `gh workflow run ci.yml --ref <branch>` runs it on a branch without a PR (GitHub honours
+  # workflow_dispatch only once it is in the default branch's copy of this file).
   workflow_dispatch:
 
 jobs:
@@ -28,6 +29,8 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm test
+        env:
+          OA_REQUIRE_BWRAP: '1' # the bwrap tests fail instead of skipping
       - run: node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
       - name: Release tarball builds and passes its smoke test
         run: scripts/build-release.sh --skip-build
@@ -36,8 +39,8 @@ jobs:
       - name: The .deb installs, starts the service and runs the starter task
         run: |
           sudo apt-get install -y ./dist-release/247-agent_*_amd64.deb
-          sleep 3
-          systemctl is-active 247-agent
+          for _ in $(seq 30); do systemctl is-active --quiet 247-agent && break; sleep 1; done
+          systemctl is-active 247-agent || { sudo journalctl -u 247-agent --no-pager -n 50; exit 1; }
           oa --version
           sudo oa run hello --wait
           sudo apt-get purge -y 247-agent

@@ -43,11 +43,29 @@ with `ssl = required` and proxies each login to GreenMail with the client's cred
 mail sent through either front lands in the same mailboxes, and a session that logs in
 through Dovecot was upgraded first.
 
-Last, it scans every run record, the events and the daemon's log (which carries the
-connectors' stderr) for the servers' passwords, which reach the connectors only as
-`${secrets.<name>}` from the env backend. Exit 0: every check passed; 1: a check failed;
-2: the rig did not start (bad argument, missing build, no podman, a server that never came
-up).
+Last, with the daemon stopped, it scans every run record and every file the daemon wrote
+under `.state/` (the whole database with its WAL, so every event, run and state row, the
+daemon's log, which carries the connectors' stderr, and the sync trees) for the servers'
+passwords, which reach the connectors only as `${secrets.<name>}` from the env backend.
+
+A connector module that throws (a changed result shape, a daemon that died) is a FAIL of
+that module; the other modules and the scan still run. The last line is
+`RESULT: PASS|FAIL|ERROR smoke:connectors: …`. Exit codes:
+
+| exit | meaning |
+| ---- | ------- |
+| 0    | every check passed |
+| 1    | a check failed: a regression until shown otherwise |
+| 2    | the rig could not start: bad argument, missing build, no podman or compose provider, a server that never came up, or another run holds the lock |
+| 130  | interrupted; the daemon and the servers were stopped |
+
+One run at a time per host: the container names and ports are global, so a run takes a
+lock (`$TMPDIR/oa-smoke-connectors.lock`) and a second one, from any checkout, exits 2
+naming the holder. If a run is killed outright (SIGKILL, a tool timeout), its daemon and
+servers keep running; the next run stops the daemon (`.state/daemon.pid`) and recreates
+the servers. The rig warns when the Node running it is not the major in `.node-version`.
+Don't run it next to `test:linux` on a small podman machine: together they can exhaust its
+memory.
 
 ## How it fits together
 

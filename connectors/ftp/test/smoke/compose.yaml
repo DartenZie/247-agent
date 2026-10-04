@@ -33,7 +33,7 @@ services:
     ports: ['127.0.0.1:2222:22']
 
   ftp:
-    image: docker.io/delfer/alpine-ftp-server:latest
+    image: docker.io/delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac # only latest is published, so pinned by digest
     environment:
       USERS: 'smoke|smoke-ftp-pass'
       ADDRESS: 127.0.0.1
@@ -44,7 +44,7 @@ services:
       - '127.0.0.1:21000-21009:21000-21009'
 
   ftps:
-    image: docker.io/delfer/alpine-ftp-server:latest
+    image: docker.io/delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac # only latest is published, so pinned by digest
     depends_on:
       certs: { condition: service_completed_successfully }
     environment:

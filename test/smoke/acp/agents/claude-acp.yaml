@@ -4,6 +4,8 @@
 login:
   dir: { env: CLAUDE_CONFIG_DIR, default: ~/.claude }
   hint: run `claude` and /login, with the same CLAUDE_CONFIG_DIR
+  # Checked before the daemon starts; skipped when the claude CLI is not installed.
+  status: { cmd: ['claude', 'auth', 'status', '--json'], field: loggedIn }
 connector:
   exec: ['npx', '-y', '@agentclientprotocol/claude-agent-acp@0.80.0']
   transport: acp
