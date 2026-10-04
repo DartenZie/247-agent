@@ -2,7 +2,7 @@
 #
 # A cron task polls the mailbox and fans each message out as `email.received`; a second
 # task replies to it and marks it read. Drop this file next to an `agent.yaml` whose
-# `connectors:` includes the email manifest (connectors/email/examples/connectors.d/).
+# `connectors:` includes the email manifest (docs/examples/connectors.d/email.yaml).
 #
 #   node packages/cli/dist/main.js validate connectors/email/examples/auto-reply.yaml
 

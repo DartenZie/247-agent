@@ -1,4 +1,4 @@
-# Codex as an ACP agent (ARCHITECTURE §5.4, §6): `@agentclientprotocol/codex-acp` bundles the
+# Codex as an ACP agent (docs/tasks/agent.md, docs/connectors/index.md): `@agentclientprotocol/codex-acp` bundles the
 # Codex CLI and speaks ACP on stdio. Tasks name it with `connector: codex`.
 #
 # Codex has its own OS sandbox (bwrap + seccomp on Linux, Seatbelt on macOS) and asks only

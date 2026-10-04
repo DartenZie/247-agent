@@ -19,7 +19,7 @@
 #   --no-restart         do not restart a running daemon after an upgrade
 #   -h, --help
 #
-# Layout after `install.sh` (USER-GUIDE §9):
+# Layout after `install.sh` (docs/operations/production.md):
 #   /opt/247-agent -> /opt/247-agent-<version>   bin/ lib/ node/ node_modules/ share/
 #   /usr/local/bin/oa -> /opt/247-agent/bin/oa
 #   /etc/247-agent/{agent.yaml,tasks.d,connectors.d}   created once, never overwritten
@@ -164,7 +164,7 @@ if [ -L "$prefix" ]; then
   current=$(sed -n 's/^version=//p' "$prefix/VERSION" 2> /dev/null || true)
   previous=$(readlink "$prefix")
 elif [ -e "$prefix" ]; then
-  # A tree copied by hand (USER-GUIDE §2.1) sits where the symlink goes; it is moved
+  # A tree copied by hand (docs/getting-started/install.md) sits where the symlink goes; it is moved
   # aside once the new version has accepted the config.
   current=$(sed -n 's/^version=//p' "$prefix/VERSION" 2> /dev/null || true)
   [ -n "$current" ] || die "$prefix exists and is not a 247-agent install; move it away"

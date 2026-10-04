@@ -1,5 +1,5 @@
 # 247-agent daemon config with the production defaults; every key is documented in
-# /opt/247-agent/share/doc/USER-GUIDE.md §4.1. Tasks go in tasks.d/*.yaml, connector
+# /opt/247-agent/share/doc/reference/agent-yaml.md. Tasks go in tasks.d/*.yaml, connector
 # manifests in connectors.d/*.yaml; `oa validate agent.yaml` checks all of it and
 # `systemctl reload 247-agent` picks up task changes.
 db: /var/lib/247-agent/state.db

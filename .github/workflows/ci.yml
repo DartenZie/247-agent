@@ -32,6 +32,7 @@ jobs:
         env:
           OA_REQUIRE_BWRAP: '1' # the bwrap tests fail instead of skipping
       - run: node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
+      - run: node scripts/check-docs.mjs
       - name: Release tarball builds and passes its smoke test
         run: scripts/build-release.sh --skip-build
       - name: Packages build
@@ -41,6 +42,7 @@ jobs:
           sudo apt-get install -y ./dist-release/247-agent_*_amd64.deb
           for _ in $(seq 30); do systemctl is-active --quiet 247-agent && break; sleep 1; done
           systemctl is-active 247-agent || { sudo journalctl -u 247-agent --no-pager -n 50; exit 1; }
+          for _ in $(seq 30); do [ -S /run/247-agent/core.sock ] && break; sleep 1; done
           oa --version
           sudo oa run hello --wait
           sudo apt-get purge -y 247-agent

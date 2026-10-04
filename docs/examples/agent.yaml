@@ -1,4 +1,4 @@
-# Global daemon config (ARCHITECTURE §7). Paths are relative to this file.
+# Global daemon config (docs/reference/agent-yaml.md). Paths are relative to this file.
 # Start with: 247-agent-core --config docs/examples/agent.yaml
 
 db: /var/lib/247-agent/state.db
@@ -10,13 +10,13 @@ log: { level: info }
 limits: { max_event_depth: 32 }
 defaults:
   timeout: 15m
-  sandbox: none                   # bwrap: run shell actions in bubblewrap (ARCHITECTURE §5.1)
+  sandbox: none                   # bwrap: run shell actions in bubblewrap (docs/tasks/shell.md)
   llm:   { provider: anthropic, model: claude-haiku-4-5, max_tokens: 1024 }
-  decide: { provider: openrouter, model: typesafe/jev-1.13 }   # classification via the Decisions API (ARCHITECTURE §5.3)
-  agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # `agent` actions: which ACP connector, tool-call cap, budget; work_dir defaults to work/ next to the db (ARCHITECTURE §5.4)
+  decide: { provider: openrouter, model: typesafe/jev-1.13 }   # classification via the Decisions API (docs/tasks/decide.md)
+  agent: { connector: claude, max_tool_calls: 30, budget: { max_usd: 1.0 } }   # `agent` actions: which ACP connector, tool-call cap, budget; work_dir defaults to work/ next to the db (docs/tasks/agent.md)
   retry: { attempts: 3, backoff: exponential, base: 30s }
 secrets: { backend: systemd-credentials }   # or { backend: env, prefix: OA_SECRET_ } or { backend: file, path: secrets.yaml }
-# Model providers (ARCHITECTURE §5.2). Keys are secret references, resolved per call.
+# Model providers (docs/tasks/llm.md). Keys are secret references, resolved per call.
 providers:
   anthropic: { type: anthropic, api_key: "${secrets.anthropic_api_key}" }
   openai: { type: openai, api_key: "${secrets.openai_api_key}" }
@@ -27,4 +27,4 @@ providers:
 pricing: {}                       # e.g. { claude-sonnet-5: { output: 12 }, gpt-4.1-mini: { input: 0.4, output: 1.6 } }
 budgets: { daily_usd: 10 }        # global circuit breaker: over it, llm tasks fail fast until 00:00 UTC
 batches: { poll: 1m }             # how often llm actions with batch: true are checked for their result
-retention: { events: 90d, runs: 90d, workspaces: 7d }   # + ledger (defaults to runs), interval (1h); durations or `never` (USER-GUIDE §9.4)
+retention: { events: 90d, runs: 90d, workspaces: 7d }   # + ledger (defaults to runs), interval (1h); durations or `never` (docs/operations/monitoring.md)

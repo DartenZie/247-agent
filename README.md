@@ -1,93 +1,98 @@
 # 247-agent
 
 A small, always-on automation daemon for a Linux server. You describe *what should
-happen when* in a YAML file; the daemon runs it around the clock and calls an LLM only
-where judgement is actually needed.
+happen when* in YAML; the daemon runs it around the clock and calls a language model
+only where judgement is actually needed, with a budget you set.
 
-It exists because "everything goes through the model" agents are expensive. Here,
-polling a mailbox, filtering by sender, deduplicating, retrying and publishing over FTP
-are plain code. A model is called once to classify, and an agent loop runs only for the
-edit that needs it, with the model tier, turn count and dollar budget you chose.
-
-## How it works
+It exists because "everything goes through the model" agents are expensive and hard to
+trust. Here, polling a mailbox, filtering by sender, deduplicating, retrying and
+publishing over SFTP are plain code. A model is called once to classify, and an agent
+loop runs only for the edit that needs it, in a sandboxed worktree, with the model
+tier, command allowlist and dollar cap you chose.
 
 ```
-connector ──event──▶ trigger ──▶ task ──result──▶ more events ──▶ ...
+connector ──event──▶ trigger ──▶ task ──result──▶ more events ──▶ more tasks
 ```
 
-- **Connectors** are sub-programs (email, chat, GitHub, Jira, …) that push events into
-  the core and expose operations as MCP tools. Any language; existing MCP servers work.
-- **Triggers** are cron schedules or event matches with a cheap filter expression.
-- **Tasks** run one action and route the result as new events. Action kinds:
+- **Connectors** are sub-programs that push events into the daemon and expose
+  operations as MCP tools: email, SFTP/FTP, Telegram and Matrix, webhooks, GitHub,
+  Jira. Any existing MCP server works as one; any ACP agent program (Claude Code,
+  Codex) is one too.
+- **Triggers** are cron schedules or event matches with a cheap filter.
+- **Tasks** run one action and route the result as new events:
 
   | kind | what | model? |
   |---|---|---|
   | `shell` | run a command | no |
-  | `connector` | call one operation on a sub-program | no |
-  | `llm` | one model call with a JSON schema (classify, extract, summarise) | one call |
-  | `decide` | typed questions to a classification-only model, probabilities back (route, triage, gate) | one call, ~100× cheaper |
-  | `agent` | agentic loop in a sandboxed git worktree with tool allowlists | loop, budgeted |
-  | `wait` | pause until an event arrives (human approval) | no |
-  | `sequence` | a few of the above in one run | depends |
+  | `connector` | call one operation on a connector | no |
+  | `wait` | pause until an event arrives, such as a human's approval | no |
+  | `sequence` | a few of the above in one run | no |
+  | `decide` | typed questions to a classification-only model, probabilities back | one call, very cheap |
+  | `llm` | one model call with a JSON schema: classify, extract, summarise | one call |
+  | `agent` | an agent session in a sandboxed git worktree with tool and command allowlists | a budgeted loop |
 
-State, events, run history and per-run cost live in SQLite. The daemon runs under
-systemd; a CLI (`oa`) validates config, triggers tasks by hand and tails events.
+Events, runs, state and every model call's cost live in SQLite. The daemon runs under
+systemd; the `oa` CLI validates configuration, starts tasks by hand, injects events and
+shows you what happened.
 
 ## Example
 
-Maintaining a website from a trusted sender's emails:
+A website maintained from a trusted editor's emails, the reference workflow in
+[`docs/examples/website-updates.yaml`](docs/examples/website-updates.yaml):
 
-1. Every two minutes, fetch new mail (no model).
-2. Mail from the trusted sender's address triggers a one-shot Haiku classification:
-   event-list update, general change, or ignore.
-3. An event-list update runs a small, tightly scoped agent on Sonnet.
-4. A general change runs a larger agent on Opus, then asks you on chat before pushing.
-5. A successful update triggers an FTP mirror (no model), and a chat notification.
+1. Every two minutes, fetch new mail. No model.
+2. Mail from the editor's address gets one short classification call: events-list
+   update, general change, or ignore.
+3. An events-list update runs a small, tightly scoped agent on a mid-tier model.
+4. A general change runs a larger agent on the top model, then asks you on chat.
+5. A successful update is mirrored over SFTP. No model.
+6. Every failure, and every publish, is reported on chat.
 
-The full config is in [`docs/examples/website-updates.yaml`](docs/examples/website-updates.yaml).
+## Install
 
-## Status
+On Debian, Ubuntu or Fedora, the package from the
+[latest release](https://github.com/DartenZie/247-agent/releases/latest):
 
-The non-LLM path works end to end: triggers, `shell`, `connector`, `wait` and `sequence`
-actions, routing, state, secrets, retries, the connector supervisor and the `oa` CLI.
-The email connector (IMAP/POP3 in, SMTP out) is in. The `llm` action with the Anthropic,
-OpenAI and OpenRouter adapters, the `decide` action (TypeSafe's Jev via OpenRouter's
-Decisions API), the cost ledger and budgets are in. The `agent` action runs on any ACP
-agent (verified against claude-agent-acp); the chat connector is next.
-
-Install on a Linux server: the `.deb` or `.rpm` from the
-[latest release](https://github.com/DartenZie/247-agent/releases/latest), or on any other
-Linux the installer script, which downloads the release tarball and sets up the user,
-`/etc/247-agent` and the systemd unit:
-
+```sh
+sudo apt install ./247-agent_<version>-1_amd64.deb     # or: sudo dnf install ./247-agent-<version>-1.x86_64.rpm
 ```
-sudo apt install ./247-agent_<version>-1_amd64.deb
+
+On any other Linux, the installer script, which downloads the release tarball and sets
+up the user, `/etc/247-agent` and the systemd unit:
+
+```sh
 curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
 ```
 
-Read [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) to install, configure and operate it,
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, and
-[`CLAUDE.md`](CLAUDE.md) for the conventions the codebase follows.
+Then `sudo oa run hello --wait` runs the starter task. Every release is self-contained:
+bundled programs, a pinned Node.js, the SQLite addon, the docs, the examples and the
+agent skills. Nothing else has to be installed.
 
-## Planned stack
+## Documentation
 
-TypeScript on Node.js 22, SQLite, MCP for connector operations, the Anthropic and OpenAI
-SDKs behind one provider interface for single model calls (Anthropic, OpenAI,
-OpenRouter) and the Agent Client Protocol (ACP) for agent loops: any ACP agent program
-(claude-agent-acp, gemini, codex-acp, …) is a connector. See the architecture doc for
-why these and not an off-the-shelf workflow engine.
+- [User guide](docs/index.md): install, your first task, every action and connector,
+  recipes, production operations, the reference tables.
+- [Internal docs](docs/internal/README.md): architecture, design decisions, the
+  contracts each module keeps, how to add a connector or an action, how a change is
+  verified. Start at [`CLAUDE.md`](CLAUDE.md) if you are an agent working on the code.
+- [Agent skills](skills/README.md): skills that ship with every release so an agent
+  can write tasks, configure connectors and operate the daemon it runs under.
 
-## Roadmap
+## Development
 
-1. Core: config, event store, scheduler, matcher, executor, `shell` action, CLI.
-2. Connector supervisor, built-in poller, email connector.
-3. `llm` action with structured outputs, cost ledger and budgets (done), then the
-   Anthropic, OpenAI and OpenRouter adapters.
-4. `agent` action over ACP with worktrees, a permission policy, a `done | blocked`
-   result contract and post-run gates (done).
-5. `wait` action and chat connector for approvals.
-6. Hardening: retention, metrics, hot reload and connector health checks (done);
-   sandboxing of the agent program, with a network allowlist (done).
+Node.js 22, npm workspaces, TypeScript.
+
+```sh
+npm install
+npm run build
+npm test
+npm run lint
+node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
+```
+
+The launchers in `bin/` work the same in a checkout and in an installed release.
+`npm run test:linux` runs the suite on Debian with bubblewrap in a container, and the
+smoke rigs under `test/smoke/` exercise the real connectors and real agent programs.
 
 ## License
 

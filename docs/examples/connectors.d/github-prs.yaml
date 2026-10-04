@@ -1,4 +1,4 @@
-# The built-in poller (ARCHITECTURE §6): no process. Every 5 minutes it calls
+# The built-in poller (docs/connectors/index.md): no process. Every 5 minutes it calls
 # github.list_pull_requests (the connector in github.yaml), keys the result by PR number
 # and emits `github.pr_opened` once per PR it has not seen before. Seen keys:
 # GET /v1/state/github_prs/seen.

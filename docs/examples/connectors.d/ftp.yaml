@@ -1,6 +1,6 @@
-# (S)FTP connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
+# (S)FTP connector manifest (docs/connectors/index.md). Spawned by the core; an MCP server on stdio.
 # Files inside one remote directory over SFTP, FTP or FTPS. Full config reference:
-# connectors/ftp/README.md. It emits nothing itself; a task fans `list` results out.
+# docs/connectors/ftp.md. It emits nothing itself; a task fans `list` results out.
 name: ftp
 exec: ["247-agent-connector-ftp"]
 transport: stdio

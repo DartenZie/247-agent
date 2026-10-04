@@ -2,7 +2,7 @@
 # variables from a release tree built by scripts/build-release.sh). The package puts the
 # same tree as the tarball under /opt/247-agent, links /usr/bin/oa, ships the unit and a
 # starter /etc/247-agent as config files the package manager never overwrites, and
-# creates the 247-agent user in preinstall. USER-GUIDE §2.1.
+# creates the 247-agent user in preinstall. docs/getting-started/install.md.
 name: 247-agent
 arch: ${ARCH}
 platform: linux

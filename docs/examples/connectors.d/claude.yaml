@@ -1,4 +1,4 @@
-# An ACP agent as a connector (ARCHITECTURE §5.4, §6): the core is the client, this program
+# An ACP agent as a connector (docs/tasks/agent.md, docs/connectors/index.md): the core is the client, this program
 # is the agent. `agent` actions name it with `connector: claude` and open one session per
 # run with the run's workspace as cwd. It serves no ops and emits no events. The model key
 # goes to the agent, never to the tasks; deploy secrets never go to the agent.

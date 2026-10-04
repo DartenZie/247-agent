@@ -1,6 +1,6 @@
-# Jira connector manifest (ARCHITECTURE §6): a thin REST wrapper for Jira Cloud (API v3) or
+# Jira connector manifest (docs/connectors/index.md): a thin REST wrapper for Jira Cloud (API v3) or
 # Data Center (API v2), ops only, confined to the projects listed. The poller in
-# jira-issues.yaml turns a JQL search into events. Full reference: connectors/jira/README.md.
+# jira-issues.yaml turns a JQL search into events. Full reference: docs/connectors/jira.md.
 name: jira
 exec: ["247-agent-connector-jira"]
 transport: stdio

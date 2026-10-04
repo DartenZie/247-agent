@@ -1,6 +1,6 @@
-# Chat connector manifest (ARCHITECTURE §6): a Telegram bot that relays the chat's messages
+# Chat connector manifest (docs/connectors/index.md): a Telegram bot that relays the chat's messages
 # as chat.message events, asks questions with inline buttons and emits the answers as
-# chat.reply. Full config reference: connectors/chat/README.md.
+# chat.reply. Full config reference: docs/connectors/chat.md.
 #
 # For Matrix instead, replace the config with (same ops, events and task files):
 #   backend: matrix

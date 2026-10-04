@@ -1,4 +1,4 @@
-# Email triage with a classification-only model (ARCHITECTURE §5.3): TypeSafe's Jev through
+# Email triage with a classification-only model (docs/tasks/decide.md): TypeSafe's Jev through
 # OpenRouter's Decisions API. No text is generated; each question gets a typed answer with a
 # probability, and the task routes on it. Needs an `openrouter` provider in agent.yaml and
 # `defaults: { decide: { provider: openrouter } }` (or `provider:` on the action).

@@ -195,6 +195,9 @@ step "the .deb installs, starts the service and runs the starter task"
 apt-get install -y ./dist-release/247-agent_*_"$(dpkg --print-architecture)".deb
 for _ in $(seq 30); do systemctl is-active --quiet 247-agent && break; sleep 1; done
 systemctl is-active 247-agent || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
+# active means the process started; the socket appears once the daemon has loaded its config.
+for _ in $(seq 30); do [ -S /run/247-agent/core.sock ] && break; sleep 1; done
+[ -S /run/247-agent/core.sock ] || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
 oa --version
 oa run hello --wait
 apt-get purge -y 247-agent

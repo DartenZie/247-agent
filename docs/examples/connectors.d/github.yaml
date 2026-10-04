@@ -1,6 +1,6 @@
-# GitHub connector manifest (ARCHITECTURE §6): a thin REST wrapper, ops only, confined to the
+# GitHub connector manifest (docs/connectors/index.md): a thin REST wrapper, ops only, confined to the
 # repositories listed in `repos`. The poller in github-prs.yaml turns list_pull_requests into
-# events. Full reference: connectors/github/README.md (also how to use GitHub's official MCP
+# events. Full reference: docs/connectors/github.md (also how to use GitHub's official MCP
 # server, github-mcp-server, in its place).
 #
 # `ops` is the boundary: give an agent a copy of this manifest with the read ops only.

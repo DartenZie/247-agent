@@ -1,5 +1,5 @@
-# Email connector manifest (ARCHITECTURE §6). Spawned by the core; an MCP server on stdio.
-# IMAP or POP3 in, SMTP out. Full config reference: connectors/email/README.md.
+# Email connector manifest (docs/connectors/index.md). Spawned by the core; an MCP server on stdio.
+# IMAP or POP3 in, SMTP out. Full config reference: docs/connectors/email.md.
 name: email
 exec: ["247-agent-connector-email"]
 transport: stdio

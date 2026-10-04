@@ -1,4 +1,4 @@
-# systemd template unit for one 247-agent connector in its own unit (ARCHITECTURE §6): for
+# systemd template unit for one 247-agent connector in its own unit (docs/internal/connectors.md): for
 # a connector whose manifest says `managed_by: systemd`, because it needs privileges or
 # credentials the daemon should not have (a low port, a device, another user's files, a
 # secret only it may read). The instance name is the manifest's `name`:
@@ -22,7 +22,7 @@
 # daemon's socket (mode 0660), and how the daemon reaches the connector's socket.
 [Unit]
 Description=247-agent connector %i
-Documentation=file:///opt/247-agent/share/doc/ARCHITECTURE.md
+Documentation=file:///opt/247-agent/share/doc/connectors/own-unit.md https://github.com/DartenZie/247-agent/blob/main/docs/connectors/own-unit.md
 After=network-online.target 247-agent.service
 Wants=network-online.target
 PartOf=247-agent.service

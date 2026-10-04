@@ -1,6 +1,6 @@
-# Webhook connector manifest (ARCHITECTURE §6): generic HTTP in. An emit-only process
+# Webhook connector manifest (docs/connectors/index.md): generic HTTP in. An emit-only process
 # (transport none): each verified request to a route becomes one event. Full config
-# reference: connectors/webhook/README.md. Bind to loopback and publish the paths through
+# reference: docs/connectors/webhook.md. Bind to loopback and publish the paths through
 # the reverse proxy that terminates TLS.
 name: webhook
 exec: ["247-agent-connector-webhook"]

@@ -1,5 +1,5 @@
 # systemd unit for the 247-agent daemon, installed from a release tarball under
-# /opt/247-agent (USER-GUIDE §9, ARCHITECTURE §12). Copy to /etc/systemd/system/, then add
+# /opt/247-agent (docs/operations/production.md, docs/internal/packaging.md). Copy to /etc/systemd/system/, then add
 # the secrets the tasks name as LoadCredential= lines in a drop-in (`systemctl edit
 # 247-agent`), one per secret, and set `secrets: { backend: systemd-credentials }` in
 # agent.yaml:
@@ -11,7 +11,7 @@
 # Add ReadWritePaths= for any other directory a shell task writes to (a site checkout).
 [Unit]
 Description=247-agent core
-Documentation=file:///opt/247-agent/share/doc/USER-GUIDE.md
+Documentation=file:///opt/247-agent/share/doc/operations/production.md https://github.com/DartenZie/247-agent/blob/main/docs/operations/production.md
 After=network-online.target
 Wants=network-online.target
 

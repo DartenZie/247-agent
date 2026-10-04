@@ -5,43 +5,47 @@ executable with a manifest; it may **emit events** into the core (`POST /v1/even
 the Unix socket) and/or **expose operations** as an MCP server on stdio, which
 `connector` actions call and `agent` runs can be handed as tools (`mcp_servers`). A third
 kind, `transport: acp`, is an Agent Client Protocol agent that `agent` actions open
-sessions on (`docs/examples/connectors.d/claude.yaml`). Any language works; existing
-MCP servers (GitHub, filesystem, …) and ACP agents are connectors as-is.
+sessions on. Any language works; existing MCP servers (GitHub, filesystem, …) and ACP
+agents are connectors as-is.
 
 One npm workspace package per connector lives here (`connectors/*` in the root
-`package.json`). Each has its own `README.md` with the config reference for its
-manifest `config` block and the shape of its ops and events.
+`package.json`). Each `README.md` holds the development notes: source layout, tests, how
+to run it by hand. The user documentation for each is under `docs/connectors/`.
 
-| Package | Status | Events | Ops |
+| Package | Docs | Events | Ops |
 |---|---|---|---|
-| [`email`](email/README.md) | done | `email.received` (fanned out by a cron task) | `fetch_new`, `mark_read`, `send` |
-| [`ftp`](ftp/README.md) | done | none (a task fans `list` out, see its example) | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir` over SFTP, FTP or FTPS, confined to a `root` |
-| [`chat`](chat/README.md) | done (Telegram, or Matrix with `backend: matrix`) | `chat.message` (every message in the configured chat), `chat.reply` (the answer to an `ask`, with the `correlation_id`) | `send`, `ask` (inline buttons on Telegram, keycap reactions on Matrix) |
-| [`webhook`](webhook/README.md) | done | one per verified request, per route: `<event>` or `<event>.<type header>` (`github.push`) | none (`transport: none`) |
-| [`github`](github/README.md) | done (REST wrapper; GitHub's own MCP server documented as an alternative) | via `poller` | `list_pull_requests`, `get_pull_request(_diff)`, `list_issues`, `get_issue`, `list_comments`, `list_commits`, `list_workflow_runs`, `search_issues`, `create_issue`, `update_issue`, `add_comment`, `add_labels`, `remove_label`, `create_pull_request`, confined to `repos` |
-| [`jira`](jira/README.md) | done (REST wrapper, Cloud or Data Center) | via `poller` | `search` (JQL), `get_issue`, `list_comments`, `create_issue`, `update_issue`, `add_comment`, `list_transitions`, `transition_issue`, confined to `projects` |
-| `poller` | done, built into the core | one event per new item of any op | none |
+| `email` | [`docs/connectors/email.md`](../docs/connectors/email.md) | none itself; a cron task fans `fetch_new` out as `email.received` | `fetch_new`, `mark_read`, `send` |
+| `ftp` | [`docs/connectors/ftp.md`](../docs/connectors/ftp.md) | none; a task fans `list` out | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir`, `sync` over SFTP, FTP or FTPS, confined to a `root` |
+| `chat` | [`docs/connectors/chat.md`](../docs/connectors/chat.md) | `chat.message`, `chat.reply` (the answer to an `ask`, with the `correlation_id`) | `send`, `ask`; Telegram, or Matrix with `backend: matrix` |
+| `webhook` | [`docs/connectors/webhook.md`](../docs/connectors/webhook.md) | one per verified request, per route: `<event>` or `<event>.<type header>` | none (`transport: none`) |
+| `github` | [`docs/connectors/github.md`](../docs/connectors/github.md) | via the poller | pull requests, issues, comments, commits, workflow runs, search, labels; confined to `repos` |
+| `jira` | [`docs/connectors/jira.md`](../docs/connectors/jira.md) | via the poller | `search` (JQL), issues, comments, transitions; confined to `projects` |
+| `poller` | [`docs/connectors/poller.md`](../docs/connectors/poller.md) | one event per new item of any op | none; built into the core |
 
 Any of them can run in its own systemd unit instead of as the daemon's child
-(`managed_by: systemd` in the manifest, `247-agent-connector@<name>.service`): for a
-connector that needs its own user, capabilities or credentials. See
-`docs/USER-GUIDE.md` §6.7.
+(`managed_by: systemd`, `247-agent-connector@<name>.service`):
+[`docs/connectors/own-unit.md`](../docs/connectors/own-unit.md).
 
 Where things are documented:
 
-- `docs/ARCHITECTURE.md` §6: the protocol, lifecycle and environment (source of truth).
-- `docs/USER-GUIDE.md` §6: installing and configuring connectors on a server.
-- `skills/247-agent-connectors/`: the step-by-step workflow, manifest and SDK
-  references, a protocol reference for non-TypeScript connectors, and
-  `assets/connector-template.ts` to start from.
+- [`docs/connectors/`](../docs/connectors/index.md): configuring and using every
+  connector, the poller, agent programs, and [writing your own](../docs/connectors/custom.md).
+- [`docs/internal/connectors.md`](../docs/internal/connectors.md): the protocol,
+  supervisor, child environment, health checks, poller internals, `managed_by: systemd`,
+  sandbox and network proxy internals (source of truth for contributors).
+- [`docs/internal/howto/add-connector.md`](../docs/internal/howto/add-connector.md): the
+  procedure for a new bundled connector.
+- `skills/247-agent-connectors/`: the agent skill, with manifest, SDK and protocol
+  references and `assets/connector-template.ts` to start from.
 - `packages/connector-sdk/src/index.ts`: `runConnector`, `defineTool`, `CoreClient`.
-- `docs/examples/connectors.d/*.yaml`: example manifests; `oa validate` must keep
-  passing on them.
+- `docs/examples/connectors.d/*.yaml`: example manifests; `oa validate` must keep passing
+  on them.
 
 ## Rules that hold for every connector
 
 - Read config from `OA_CONFIG_JSON`, never from files. Secrets are already rendered into
-  it through `${secrets.<name>}` in the manifest and must never be logged.
+  it and must never be logged; delete the variable once read (the SDK's `connectorEnv()`
+  does) so a subprocess does not inherit it.
 - Keep cursors and other state in the core (`GET|PUT /v1/state/<name>/<key>`), so the
   process stays stateless and restart-safe.
 - Log to **stderr**; the daemon records it as `connector.output`. With
@@ -55,42 +59,12 @@ Where things are documented:
   emit nothing themselves; a cron task fans the result out with `emit … each` and a
   `dedup_key`. Push-style sources (bots, webhooks) emit as messages arrive, with a
   `dedup_key` and, for replies to a question, the `correlation_id` they were given.
+- Events carry `source: <manifest name>`, set by the SDK's client from
+  `OA_CONNECTOR_NAME`.
 
 ## Adding a connector
 
-1. Create `connectors/<name>/` with `package.json` (`@247-agent/connector-<name>`,
-   `"type": "module"`, `"main": "dist/main.js"`, depends on
-   `@247-agent/connector-sdk`) and a `tsconfig.json` that extends
-   `../../tsconfig.base.json` and references `../../packages/connector-sdk`. Use
-   `connectors/email` as the template.
-2. Add `{ "path": "connectors/<name>" }` to the root `tsconfig.json` references so
-   `npm run build` includes it, a launcher `bin/247-agent-connector-<name>` (copy one)
-   and an entry in `scripts/bundle.mjs` so the release bundles it.
-3. Implement `src/main.ts` with `runConnector({ tools })` from the SDK, or in any other
-   language following `skills/247-agent-connectors/references/protocol.md`.
-4. Write `connectors/<name>/README.md`: the manifest, every `config` key with its
-   default, each op's input and output, and the events it emits.
-5. Add an example manifest under `docs/examples/connectors.d/<name>.yaml` and mention
-   the connector in `docs/ARCHITECTURE.md` §6 and
-   `skills/247-agent-connectors/references/manifest.md`.
-6. Test without the network: unit tests next to the code as `*.test.ts` with fake
-   servers or transports, and a fake connector under `packages/core/test/fixtures/` for
-   the core's integration tests. Node runs a fake straight from TypeScript source when
-   the manifest says `exec: [node, path/to/fake.ts]`.
-   For a connector that speaks a wire protocol with an off-the-shelf server, or that is
-   a server itself, add a smoke run: `test/smoke/smoke.mjs` (manifests, tasks, checks)
-   and, for the servers, `test/smoke/compose.yaml` (ports on 127.0.0.1), run by
-   `npm run smoke:connectors -- <name>` (`test/smoke/connectors/README.md`).
-
-```
-npm install
-npm run build
-npm test
-node packages/cli/dist/main.js validate docs/examples/connectors.d/<name>.yaml
-```
-
-A changed manifest takes effect on `oa reload` (or SIGHUP): that connector is respawned
-with the new manifest and freshly resolved secrets. To debug a
-connector by hand, run it with `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and
-`OA_CONFIG_JSON` set and read its stderr. More symptoms and fixes are in the
-`247-agent-connectors` skill.
+Follow [`docs/internal/howto/add-connector.md`](../docs/internal/howto/add-connector.md):
+the package, the launcher in `bin/`, the bundle entry, the user page under
+`docs/connectors/`, the example manifest, the fake fixture, and the smoke rig when a
+server can run in a container.
