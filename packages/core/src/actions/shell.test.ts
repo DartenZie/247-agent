@@ -45,13 +45,14 @@ describe('runShell with sandbox: bwrap', () => {
   it.skipIf(!hasBwrap)('hides the daemon env and pids and keeps cwd writable', async () => {
     const dir = process.cwd();
     const out = await run({
-      cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$PWD|$FOO|$(ls /proc | grep -c "^[0-9]")"'],
+      cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$PWD|$FOO|$$|$(cat /proc/1/comm)"'],
       cwd: dir,
       env: { FOO: 'bar' },
       sandbox: 'bwrap',
     });
-    // No inherited secret, cwd bound at the same path, action env present, only own pids.
-    expect(out).toMatch(new RegExp(`^\\|${dir}\\|bar\\|[12]$`));
+    // No inherited secret, cwd bound at the same path, action env present, and a pid
+    // namespace of its own: bwrap's init is pid 1, the command pid 2.
+    expect(out).toBe(`|${dir}|bar|2|bwrap`);
   });
 
   it.skipIf(!hasBwrap)('applies the context default when the action has none', async () => {

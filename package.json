@@ -16,6 +16,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "test": "vitest run --passWithNoTests",
+    "test:linux": "scripts/linux-test.sh",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "release": "scripts/build-release.sh",

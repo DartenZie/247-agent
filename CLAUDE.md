@@ -34,7 +34,7 @@ truth for concepts, action semantics, the connector protocol and the config form
 
 ```
 bin/                     launchers (247-agent-core, oa, 247-agent-connector-<name>, 247-agent-connector-host); same files in a checkout and a release
-scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release)
+scripts/                 bundle.mjs (esbuild) + build-release.sh (self-contained tarball: bundles, vendored Node, SQLite addon); build-package.sh (.deb/.rpm via nfpm); install.sh + uninstall.sh (curl | sh from the GitHub release); linux-test.sh (build, test, validate in a Debian 13 container with bwrap)
 packaging/               247-agent.service, 247-agent-connector@.service (a connector with managed_by: systemd), etc/ (starter config shared by the packages and install.sh), nfpm.yaml + scripts/ (maintainer scripts)
 packages/core/           daemon: config, store, bus, actions, connectors, executor, secrets, api, expr
 packages/core/test/fixtures/  fake connectors and a fake ACP agent for tests (Node runs them from .ts source)
@@ -93,6 +93,7 @@ skills/                      agent skills for working with 247-agent (linked fro
 npm install
 npm run build          # tsc -b across workspaces
 npm test               # vitest
+npm run test:linux     # scripts/linux-test.sh: npm ci, build, test, validate in a Debian 13 container with bwrap (docker or podman; exit 3 = none); --systemd=always also installs the .deb and runs `oa run hello --wait`
 npm run lint           # eslint + prettier check
 npm run release        # scripts/build-release.sh: release tarball for this machine into dist-release/ (--target linux-x64 to cross-build)
 npm run package        # scripts/build-package.sh: .deb and .rpm from that tree (Linux targets; nfpm downloaded on first use)
