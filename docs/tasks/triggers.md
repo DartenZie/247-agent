@@ -63,8 +63,9 @@ logged by the daemon.
 
 > [!TIP]
 > Filters are bare JMESPath, not `${…}` templates. Compare numbers and booleans with
-> backtick literals: `` payload.approved == `true` ``, `` payload.uid > `10` ``. The
-> [Templates](templates.md) page has more examples.
+> backtick literals: `` payload.approved == `true` ``, `` payload.uid > `10` ``.
+> `oa validate` warns when a filter compares with a bare `true` or orders against a
+> quoted number. The [Templates](templates.md) page has more examples.
 
 ### What a task never triggers on
 

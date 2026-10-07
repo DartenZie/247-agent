@@ -111,3 +111,18 @@ these checks are added:
 
 Issues are printed one per line as `<file>: <path>: <message>`; the command exits 1
 when any check failed and 2 when it was given no file.
+
+Some expressions are valid but almost certainly wrong. `oa validate` prints these as
+`<file>: <path>: warning: <message>`, naming the task, and still exits 0. It warns
+about every `filter` and `when`, including a `wait`'s `for.filter` and a post gate's
+`when`, that:
+
+- compares with a bare `true`, `false` or `null`. JMESPath reads the bare word as a
+  field name, so `payload.approved == true` is true when `approved` is missing and
+  false when it is `true`. Write `` payload.approved == `true` ``.
+- orders against a quoted number, as in `payload.amount > '100'`. JMESPath orders only
+  numbers. Write `` payload.amount > `100` ``.
+
+A comparison such as `payload.zip == '01234'` gets no warning: equality with a quoted
+string is right when the field holds a string. A bare number such as
+`payload.amount > 100` is an error, not a warning; the message suggests the backticks.

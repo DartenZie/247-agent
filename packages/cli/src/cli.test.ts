@@ -69,6 +69,24 @@ describe('oa validate', () => {
     expect(err[0]).toMatch(/bad\.yaml: tasks:/);
     expect(await main(['validate'], io)).toBe(2);
   });
+
+  it('prints warnings for comparisons that cannot mean what they say, without failing', async () => {
+    const file = join(dir, 'warn.yaml');
+    writeFileSync(
+      file,
+      [
+        'tasks:',
+        '  - name: gate',
+        '    trigger: { kind: event, type: approval.answered, filter: "payload.approved == true" }',
+        '    action: { kind: shell, cmd: ["true"] }',
+      ].join('\n'),
+    );
+    expect(await main(['validate', file], io)).toBe(0);
+    expect(out).toEqual([`ok ${file} (1 tasks)`]);
+    expect(err).toEqual([
+      `${file}: tasks[0].trigger.filter: warning: task "gate": payload.approved == true: true here is a field named "true", not the literal; write \`true\``,
+    ]);
+  });
 });
 
 describe('oa run', () => {

@@ -95,6 +95,18 @@ task or connector names across files, a poller's target connector and op.
 **`check.ts`**: `pricing` is resolved and reported at `pricing.<model>`; the summary
 lines name the tasks files and manifests an `agent.yaml` pulls in.
 
+**Warnings** (`config/lint.ts`, `lintTasks`): valid but almost certainly wrong, carried
+in `FileCheck.warnings` of every parsed tasks file, printed by `formatWarnings` as
+`<file>: <path>: warning: task "<name>": <message>`, never failing the file or changing
+the exit code. `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST of every
+trigger `filter`, `emit` `when`, sequence step `when`, `wait` `for.filter` (as written,
+before templating) and post gate `when` for a comparison with a bare `true`/`false`/
+`null` (a `Field`, which reads as null) and an ordering comparison with a quoted number
+(the spec orders numbers only; jmespath.js 0.16 coerces, so it works by accident until the
+field is a string). Equality with a quoted number is not flagged: it is right for a string
+field. The daemon does not run the lint. Separately, `validateJmespath` appends a
+backtick hint to the parser's `Invalid token (Number)` error.
+
 What validation cannot see: a secret's existence (resolved at run time; a missing one
 fails the run non-retryably), a connector's own `config` schema (the connector validates
 it at start and exits 1), whether a `transport: acp` connector really speaks ACP.

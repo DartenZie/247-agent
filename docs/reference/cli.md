@@ -36,9 +36,11 @@ ok <file> (<n> tasks)
 ok <file> (connector <name>)
 ok <file> (tasks <path>; connectors <path>)
 <file>: <path>: <message>          # a problem, on stderr
+<file>: <path>: warning: <message> # valid, but almost certainly not what you meant, on stderr
 ```
 
-Exit 1 when any file has a problem, 2 with no arguments.
+Exit 1 when any file has a problem, 2 with no arguments. Warnings do not change the
+exit code; [Tasks reference](task.md#what-oa-validate-checks-on-a-tasks-file) lists what they flag.
 
 ### `oa run <task> [options]`
 

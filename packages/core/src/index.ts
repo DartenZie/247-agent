@@ -352,7 +352,13 @@ export {
   type AgentFileConfig,
   type AgentLoadResult,
 } from './config/agent.js';
-export { checkConfigFile, formatCheck, type FileCheck, type FileKind } from './config/check.js';
+export {
+  checkConfigFile,
+  formatCheck,
+  formatWarnings,
+  type FileCheck,
+  type FileKind,
+} from './config/check.js';
 export type { RunFilter } from './store/runs.js';
 export type { EventFilter } from './store/events.js';
 export {

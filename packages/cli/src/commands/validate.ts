@@ -1,11 +1,12 @@
-import { checkConfigFile, formatCheck } from '@247-agent/core';
+import { checkConfigFile, formatCheck, formatWarnings } from '@247-agent/core';
 
 import { EXIT, UsageError, type Io } from '../io.js';
 
 export const VALIDATE_USAGE = `usage: oa validate <file>...
 
 Validates tasks files and agent.yaml files against the schema. An agent.yaml also has its
-referenced tasks file checked.
+referenced tasks file checked. Warnings (a filter comparison that cannot mean what it
+says) are printed but do not fail the file.
 `;
 
 export function validate(files: string[], io: Io): number {
@@ -21,6 +22,9 @@ export function validate(files: string[], io: Io): number {
         } else {
           io.err(line);
         }
+      }
+      for (const line of formatWarnings(check)) {
+        io.err(line);
       }
       failed ||= !check.ok;
     }

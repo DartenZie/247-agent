@@ -12,14 +12,18 @@ import {
   checkSandboxes,
   type SandboxCheckContext,
 } from './crosscheck.js';
+import { lintTasks } from './lint.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
 
-/** One validated file, as `oa validate` reports it. */
+/**
+ * One validated file, as `oa validate` reports it. `warnings` (`config/lint.ts`) never
+ * fail the file.
+ */
 export type FileCheck =
-  | { ok: true; file: string; kind: FileKind; summary: string }
-  | { ok: false; file: string; kind: FileKind; issues: ConfigIssue[] };
+  | { ok: true; file: string; kind: FileKind; summary: string; warnings?: ConfigIssue[] }
+  | { ok: false; file: string; kind: FileKind; issues: ConfigIssue[]; warnings?: ConfigIssue[] };
 
 /**
  * Validates one config file of any kind. A document whose top-level `tasks` is a list is a
@@ -52,7 +56,13 @@ export function checkConfigFile(path: string): FileCheck[] {
     const r = parseTasks(text, path);
     return [
       r.ok
-        ? { ok: true, file: path, kind: 'tasks', summary: `${String(r.config.tasks.length)} tasks` }
+        ? {
+            ok: true,
+            file: path,
+            kind: 'tasks',
+            summary: `${String(r.config.tasks.length)} tasks`,
+            warnings: lintTasks(r.config.tasks),
+          }
         : fail(path, 'tasks', r.issues),
     ];
   }
@@ -119,16 +129,17 @@ export function checkConfigFile(path: string): FileCheck[] {
     });
     issues.push(...checkSandboxes(f.config.tasks, sandboxes).tasks);
     issues.push(...checkAgentTools(f.config.tasks, sandboxes.manifests));
-    out.push(
-      issues.length === 0
+    out.push({
+      ...(issues.length === 0
         ? {
             ok: true,
             file: f.file,
             kind: 'tasks',
             summary: `${String(f.config.tasks.length)} tasks`,
           }
-        : fail(f.file, 'tasks', issues),
-    );
+        : fail(f.file, 'tasks', issues)),
+      warnings: lintTasks(f.config.tasks),
+    });
   }
   for (const f of connectors.files) {
     const sandboxIssues = hostIssues.manifests
@@ -164,7 +175,16 @@ export function formatCheck(check: FileCheck): string[] {
   if (check.ok) {
     return [`ok ${check.file} (${check.summary})`];
   }
-  return check.issues.map((i) =>
-    i.path === '' ? `${check.file}: ${i.message}` : `${check.file}: ${i.path}: ${i.message}`,
-  );
+  return check.issues.map((i) => formatIssue(check.file, i, ''));
+}
+
+/** One line per warning: `<file>: <path>: warning: <message>`. */
+export function formatWarnings(check: FileCheck): string[] {
+  return (check.warnings ?? []).map((w) => formatIssue(check.file, w, 'warning: '));
+}
+
+function formatIssue(file: string, i: ConfigIssue, prefix: string): string {
+  return i.path === ''
+    ? `${file}: ${prefix}${i.message}`
+    : `${file}: ${i.path}: ${prefix}${i.message}`;
 }

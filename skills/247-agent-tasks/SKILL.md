@@ -70,7 +70,8 @@ never invent a way for one task to reference another by name.
 - `emit[].each` must be a single `${…}` that renders to an array; `null` emits nothing.
 - Inside a YAML flow mapping (`{ … }`) quote templates: `{ since_uid: "${state.email.last_uid}" }`.
 - `filter` and `when` are bare JMESPath (no `${…}`); compare numbers and booleans with
-  backticks: `` payload.approved == `true` ``.
+  backticks: `` payload.approved == `true` ``. `oa validate` warns about a bare
+  `true`/`false`/`null` or a quoted number in `<`/`>`; treat its warnings as bugs.
 - `state_updates` and `emit` apply only after success, in one transaction with the
   lifecycle event. A rule that cannot be rendered fails the run without retry.
 
