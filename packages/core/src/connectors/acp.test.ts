@@ -205,9 +205,14 @@ describe('AcpAgent', () => {
       log: log(),
       onPermission: () => 'yes',
     });
-    await expect(drain(session, '[[crash]]')).rejects.toThrow();
-    await a.exited;
-    await a.closed;
+    await expect(drain(session, '[[crash]]')).rejects.toThrow('ACP connection closed');
+    await expect(a.exited).resolves.toBeUndefined();
+    await expect(a.closed).resolves.toBeUndefined();
+    // The fake exits with code 3 after this stderr line; the pid is gone afterwards.
+    expect(lines.filter((l) => l.msg === 'connector.output').map((l) => l.line)).toContain(
+      'fake-acp crashing',
+    );
+    expect(() => process.kill(a.pid ?? -1, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
     agent = undefined;
   });
 });

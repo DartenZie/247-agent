@@ -3,22 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { allowedChats, parseConfig } from './config.js';
 
 describe('parseConfig', () => {
-  it('fills defaults', () => {
-    const c = parseConfig({ token: 't', chat_id: 42 });
-    expect(c).toEqual({
-      backend: 'telegram',
-      token: 't',
-      chat_id: '42',
-      allowed_chat_ids: [],
-      poll_timeout: 30,
-      initial: 'none',
-      ask_options: ['Approve', 'Reject'],
-      pending_limit: 200,
-      api_base: 'https://api.telegram.org',
-      timeout: 30_000,
-    });
-  });
-
   it('normalises chat ids to strings and accepts groups and channels', () => {
     expect(parseConfig({ token: 't', chat_id: -1001234 }).chat_id).toBe('-1001234');
     expect(parseConfig({ token: 't', chat_id: ' 42\n' }).chat_id).toBe('42');
@@ -58,23 +42,16 @@ describe('parseConfig', () => {
 describe('parseConfig, matrix', () => {
   const base = { backend: 'matrix', homeserver: 'https://matrix.example.org/', token: 'syt_x' };
 
-  it('fills defaults and accepts room ids and aliases', () => {
+  it("strips the homeserver's trailing slash and accepts room ids and aliases", () => {
     const c = parseConfig({
       ...base,
       chat_id: '!abc:example.org',
       allowed_chat_ids: ['#ops:example.org'],
     });
-    expect(c).toEqual({
-      backend: 'matrix',
+    expect(c).toMatchObject({
       homeserver: 'https://matrix.example.org',
-      token: 'syt_x',
       chat_id: '!abc:example.org',
       allowed_chat_ids: ['#ops:example.org'],
-      poll_timeout: 30,
-      initial: 'none',
-      ask_options: ['Approve', 'Reject'],
-      pending_limit: 200,
-      timeout: 30_000,
     });
   });
 

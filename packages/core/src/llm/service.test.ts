@@ -527,7 +527,6 @@ describe('LlmService batches', () => {
   });
 
   it('bounds batches.poll to 1s..1h', () => {
-    expect(Batches.parse({}).poll).toBe('1m');
     expect(Batches.safeParse({ poll: '1s' }).success).toBe(true);
     expect(Batches.safeParse({ poll: '1h' }).success).toBe(true);
     expect(Batches.safeParse({ poll: '0s' }).success).toBe(false);

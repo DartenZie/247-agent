@@ -96,5 +96,9 @@ describe('lintJmespath', () => {
     ]) {
       expect(lintJmespath(ok), ok).toEqual([]);
     }
+    // The first one without its backticks is flagged.
+    expect(lintJmespath('payload.approved == true')).toEqual([
+      'payload.approved == true: true here is a field named "true", not the literal; write `true`',
+    ]);
   });
 });

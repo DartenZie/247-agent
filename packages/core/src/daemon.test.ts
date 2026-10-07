@@ -477,8 +477,25 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 
   it('rejects oversized bodies', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: 'a'.repeat(2 * 1024 * 1024) });
-    const res = await raw('POST', '/v1/events', big).catch(() => ({ status: 413, body: null }));
-    expect(res.status).toBe(413);
+    // The server stops reading at the limit and drops the connection, so the client usually
+    // sees the reset instead of the answer; the daemon records its 413 either way.
+    const outcome = await raw('POST', '/v1/events', big).then(
+      (res) => res,
+      (err: unknown) => ({ code: (err as NodeJS.ErrnoException).code }),
+    );
+    if ('status' in outcome) {
+      expect(outcome).toEqual({
+        status: 413,
+        body: { error: 'request body exceeds 1048576 bytes' },
+      });
+    } else {
+      expect(['ECONNRESET', 'EPIPE']).toContain(outcome.code);
+    }
+    expect(
+      lines
+        .filter((l) => l.msg === 'api.request' && l.path === '/v1/events')
+        .map(({ method, status }) => ({ method, status })),
+    ).toEqual([{ method: 'POST', status: 413 }]);
   });
 });
 

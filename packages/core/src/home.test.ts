@@ -22,7 +22,7 @@ describe('findHome', () => {
     );
   });
 
-  it('walks up from the main script to the directory holding bin/247-agent-core', () => {
+  it('walks up from the main script to the directory holding bin/247-agent-core, if any', () => {
     mkdirSync(join(root, 'bin'));
     writeFileSync(join(root, 'bin', '247-agent-core'), '#!/bin/sh\n');
     const script = join(root, 'packages', 'core', 'dist', 'main.js');
@@ -30,9 +30,7 @@ describe('findHome', () => {
     writeFileSync(script, '');
     expect(findHome({ OA_HOME: '' }, script)).toBe(root);
     expect(findHome({}, join(root, 'lib', 'core.mjs'))).toBe(root);
-  });
-
-  it('is undefined without a marker or a script', () => {
+    rmSync(join(root, 'bin'), { recursive: true });
     expect(findHome({}, join(root, 'lib', 'core.mjs'))).toBeUndefined();
     expect(findHome({}, undefined)).toBeUndefined();
   });

@@ -97,7 +97,8 @@ describe('ConnectorSupervisor', () => {
       { tok: 'sekrit' },
     );
     await s.start();
-    expect(s.status()).toMatchObject([{ name: 'fake', state: 'up', restarts: 0 }]);
+    // No `health` in the manifest: none reported, unlike a manifest with one (below).
+    expect(s.status()).toMatchObject([{ name: 'fake', state: 'up', restarts: 0, health: null }]);
     expect(s.names()).toEqual(['fake']);
 
     await expect(s.call('fake', 'env', {}, { signal: signal() })).resolves.toEqual({
@@ -490,12 +491,6 @@ describe('ConnectorSupervisor health checks', () => {
     expect(msgs).toContain('connector.unhealthy');
     expect(msgs).toContain('connector.health_failed');
     expect(msgs.filter((m) => m === 'connector.health_ok').length).toBeGreaterThan(0);
-  });
-
-  it('reports no health for a manifest without it', async () => {
-    const s = make([manifest()]);
-    await s.start();
-    expect(s.status()[0]?.health).toBeNull();
   });
 });
 

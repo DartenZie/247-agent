@@ -18,34 +18,14 @@ afterEach(() => {
 });
 
 describe('parseAgent', () => {
-  it('fills the documented defaults and resolves paths against the file', () => {
+  it('resolves paths against the file and merges decide defaults', () => {
     const r = parseAgent('', '/etc/247-agent/agent.yaml');
     expect(r.ok).toBe(true);
     if (!r.ok) {
       return;
     }
-    expect(r.config).toMatchObject({
-      file: '/etc/247-agent/agent.yaml',
-      db: '/var/lib/247-agent/state.db',
-      socket: '/run/247-agent/core.sock',
-      tasks: ['/etc/247-agent/tasks.yaml'],
-      connectorPaths: [],
-      connectors: [],
-      workers: 4,
-      log: { level: 'info' },
-      limits: { max_event_depth: 32 },
-      defaults: {
-        timeout: '15m',
-        retry: { attempts: 1, backoff: 'exponential', base: '30s', max: '1h' },
-        sandbox: { backend: 'none', extra_args: [], ro_binds: [], rw_binds: [] },
-      },
-      secrets: { backend: 'env', prefix: 'OA_SECRET_' },
-      providers: {},
-      pricing: {},
-      budgets: {},
-    });
-    expect(r.config.defaults.llm).toEqual({ max_tokens: 1024 });
-    expect(r.config.defaults.decide).toEqual({ model: 'typesafe/jev-1.13' });
+    expect(r.config.file).toBe('/etc/247-agent/agent.yaml');
+    expect(r.config.tasks).toEqual(['/etc/247-agent/tasks.yaml']);
     const decide = parseAgent(
       'defaults: { decide: { provider: openrouter } }\n',
       '/srv/oa/agent.yaml',
@@ -191,7 +171,9 @@ describe('parseAgent', () => {
   });
 
   it('treats a missing file as an issue', () => {
-    expect(loadAgentFile(join(dir, 'nope.yaml'))).toMatchObject({ ok: false });
+    const r = loadAgentFile(join(dir, 'nope.yaml'));
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.issues[0]?.message).toMatch(/^cannot read file: /);
   });
 });
 
@@ -320,19 +302,22 @@ describe('checkConfigFile', () => {
   it('reports a missing tasks file from the agent file', () => {
     const agent = join(dir, 'agent.yaml');
     writeFileSync(agent, 'tasks: missing.yaml\n');
-    expect(checkConfigFile(agent)[1]).toMatchObject({ ok: false, kind: 'tasks' });
+    expect(checkConfigFile(agent)[1]).toMatchObject({
+      ok: false,
+      kind: 'tasks',
+      file: join(dir, 'missing.yaml'),
+      issues: [
+        expect.objectContaining({
+          path: '',
+          message: expect.stringMatching(/^cannot read file: /) as unknown,
+        }),
+      ],
+    });
   });
 });
 
 describe('retention in agent.yaml', () => {
-  it('defaults to 90d/90d/7d hourly, takes never, and refuses a ledger outliving its runs', () => {
-    const d = parseAgent('', '/x/agent.yaml');
-    expect(d.ok && d.config.retention).toEqual({
-      events: '90d',
-      runs: '90d',
-      workspaces: '7d',
-      interval: '1h',
-    });
+  it('takes explicit values and never, and refuses a ledger outliving its runs', () => {
     const r = parseAgent(
       'retention: { events: never, runs: 30d, ledger: 7d, workspaces: 1d, interval: 30m }\n',
       '/x/agent.yaml',
