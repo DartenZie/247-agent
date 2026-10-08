@@ -42,10 +42,12 @@ secrets, env, run, item, steps}`:
   attempt, event_id, correlation_id, workspace}`, `workspace` being
   `<work_dir>/<run_id>` or `null` without an agent supervisor.
 - `env` is the daemon's environment minus what the secrets backend reads through
-  (`secrets/secrets.ts`, `scrubEnv()`). For the `env` backend that is every variable
-  with its prefix. For `systemd-credentials` it is `CREDENTIALS_DIRECTORY`. The `file`
-  backend removes nothing. The same set is `ctx.childEnv`, the environment an
-  unsandboxed `shell` step or `post` gate starts from.
+  (`secrets/secrets.ts`, `SecretsBackend.scrub()`). For the `env` backend that is every
+  variable with its prefix. For `systemd-credentials` without a `dir` it is
+  `CREDENTIALS_DIRECTORY`. The `file` backend, and `systemd-credentials` with a `dir`,
+  remove nothing. The same set is `ctx.childEnv`, the environment an unsandboxed `shell`
+  step, a `post` gate and the workspace git start from; the executor builds it from the
+  backend when the core is given none.
 - A string that is exactly one `${…}` renders to the expression's raw value
   (`renderValue`); text around or between templates makes a string, with non-strings
   JSON-encoded and `null` rendered empty (`stringifyValue`).

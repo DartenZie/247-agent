@@ -56,12 +56,13 @@ export interface ExecutorOptions {
   secrets?: SecretsBackend;
   /** Connector ops for `connector` actions and sequence steps. */
   connectors?: ConnectorClients;
-  /**
-   * The `env` template scope and what an unsandboxed child starts from, already scrubbed
-   * of the secrets backend's variables (`scrubEnv`). Absent: an empty scope, and the
-   * shell runner scrubs `process.env` for its children.
-   */
+  /** The `env` template scope; defaults to none. */
   env?: Record<string, string>;
+  /**
+   * What an unsandboxed child (a `shell` step, a `post` gate) starts from; defaults to
+   * `secrets.scrub(process.env)`. The daemon passes its own environment scrubbed.
+   */
+  childEnv?: Record<string, string>;
   /** Model calls for `llm` actions. */
   llm?: LlmPort;
   /** ACP sessions for `agent` actions; its `workDir` names `${run.workspace}`. */
@@ -256,7 +257,7 @@ export class Executor {
   private readonly llm: LlmPort | undefined;
   private readonly agents: AgentClients | undefined;
   private readonly env: Record<string, string>;
-  private readonly childEnv: Record<string, string> | undefined;
+  private readonly childEnv: Record<string, string>;
 
   private readonly pending: RunRecord[] = [];
   private readonly known = new Set<string>();
@@ -283,7 +284,7 @@ export class Executor {
     this.llm = opts.llm;
     this.agents = opts.agents;
     this.env = opts.env ?? {};
-    this.childEnv = opts.env;
+    this.childEnv = opts.childEnv ?? this.secrets.scrub(process.env);
     this.metrics = opts.metrics ?? new Metrics();
     parseDuration(this.defaultTimeout); // fail fast on a bad default
   }
@@ -573,7 +574,7 @@ export class Executor {
       state: scope.state as ActionContext['state'],
       secrets,
       scope,
-      ...(this.childEnv === undefined ? {} : { childEnv: this.childEnv }),
+      childEnv: this.childEnv,
       render: () => null,
       renderText: () => '',
       connectors: this.connectors,

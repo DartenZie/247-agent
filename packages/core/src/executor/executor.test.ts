@@ -6,8 +6,9 @@ import { runTaskManually } from '../bus/manual.js';
 import { type CompiledConfig, taskSource } from '../bus/matcher.js';
 import { config, shell, testEnv, type TestEnv } from '../bus/testing.js';
 import { runShell } from '../actions/shell.js';
+import { createSecretsBackend, SecretsConfig } from '../secrets/secrets.js';
 import type { EventRecord } from '../store/types.js';
-import { Executor } from './executor.js';
+import { Executor, type ExecutorOptions } from './executor.js';
 
 const tasks = config([
   {
@@ -32,6 +33,11 @@ const tasks = config([
     name: 'model',
     trigger: { kind: 'event', type: 'x.model' },
     action: { kind: 'agent', workspace: { kind: 'temp' }, tools: ['read'], prompt: 'x' },
+  },
+  {
+    name: 'penv',
+    trigger: { kind: 'event', type: 'x.penv' },
+    action: { kind: 'shell', cmd: ['sh', '-c', 'echo "$MYAPP_X|$HOME"'] },
   },
 ]);
 
@@ -326,5 +332,58 @@ describe('Executor', () => {
       { id: withInput.event_id, type: 'x.custom', payload: { a: 1 }, source: 'manual' },
       { id: bare.event_id, type: 'manual.run', payload: { task: 'echo', event: null } },
     ]);
+  });
+});
+
+describe('the child environment of a shell step', () => {
+  afterEach(() => {
+    delete process.env.MYAPP_X;
+  });
+
+  async function penv(opts: Partial<ExecutorOptions>) {
+    executor = new Executor({
+      store: env.store,
+      bus,
+      clock: env.clock,
+      log: env.log,
+      config: () => current,
+      runners: { shell: runShell },
+      ...opts,
+    });
+    executor.start();
+    const trigger = publish('x.penv');
+    bus.dispatcher.drain();
+    await executor.idle();
+    const run = env.store.runs.getByTaskAndEvent('penv', trigger.id);
+    expect(run?.status).toBe('succeeded');
+    return (run?.result as string).split('|') as [string, string];
+  }
+
+  it('is scrubbed by the configured backend when no childEnv is given, whatever the prefix', async () => {
+    process.env.MYAPP_X = 'leaked';
+    const secrets = createSecretsBackend(
+      SecretsConfig.parse({ backend: 'env', prefix: 'MYAPP_' }),
+      '/etc/247-agent',
+      process.env,
+    );
+    const [secret, home] = await penv({ secrets });
+    expect(secret).toBe('');
+    expect(home).toBe(process.env.HOME);
+  });
+
+  it('is not the env template scope: a narrow scope leaves the child its environment', async () => {
+    // `sh` supplies a PATH of its own when none is set, so HOME is the observable one.
+    const [, home] = await penv({ env: {} });
+    expect(home).toBe(process.env.HOME);
+  });
+
+  it('is exactly childEnv plus the action env when given', async () => {
+    process.env.MYAPP_X = 'leaked';
+    const [secret, home] = await penv({
+      env: {},
+      childEnv: { PATH: process.env.PATH ?? '/usr/bin:/bin', MYAPP_X: 'from-childEnv' },
+    });
+    expect(secret).toBe('from-childEnv');
+    expect(home).toBe('');
   });
 });

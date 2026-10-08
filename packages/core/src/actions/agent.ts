@@ -460,7 +460,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
   };
 
   llm.checkBudget({ maxUsd }, cctx);
-  const ws = await createWorkspace(cfg.workspace, agents.workDir, ctx.run.id);
+  const ws = await createWorkspace(cfg.workspace, agents.workDir, ctx.run.id, ctx.childEnv);
   ctx.log.info('agent.workspace', { path: ws.path, kind: cfg.workspace.kind });
   let keep = false;
   try {

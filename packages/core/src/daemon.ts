@@ -21,7 +21,7 @@ import { PricingError, resolvePricing, type PricingTable } from './llm/pricing.j
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
 import { Metrics } from './metrics.js';
-import { createSecretsBackend, scrubEnv } from './secrets/secrets.js';
+import { createSecretsBackend } from './secrets/secrets.js';
 
 export interface DaemonOptions {
   /** Path of `agent.yaml`. */
@@ -191,6 +191,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const startedAt = clock.now();
   const env = opts.env ?? process.env;
   const secrets = createSecretsBackend(config.secrets, dirname(config.file), env);
+  // Templates and every unsandboxed child see this, never the daemon's own environment.
+  const scrubbed = secrets.scrub(env);
   const manifests = loadConnectors(config.connectorPaths, config.connectors);
   if (!manifests.ok) {
     throw new ConnectorConfigError(manifests);
@@ -209,7 +211,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     log,
     metrics,
     secrets,
-    env: scrubEnv(env, config.secrets),
+    env: scrubbed,
+    childEnv: scrubbed,
     socketPath: config.socket,
     connectors: opts.connectors ?? manifests.connectors ?? [],
     ...(opts.agents === undefined ? {} : { agents: opts.agents }),

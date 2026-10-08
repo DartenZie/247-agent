@@ -93,9 +93,10 @@ export interface ActionContext {
   /** Connector ops; absent when the core runs without a connector supervisor. */
   readonly connectors?: ConnectorClients | undefined;
   /**
-   * What an unsandboxed child process (a `shell` step, a `post` gate) starts from: the
-   * daemon's environment minus what the secrets backend reads through, the same set as the
-   * `env` template scope. Absent, the runner scrubs `process.env` itself (`scrubEnv`).
+   * What an unsandboxed child process (a `shell` step, a `post` gate, the workspace git)
+   * starts from: the daemon's environment minus what the secrets backend reads through
+   * (`SecretsBackend.scrub`). The executor always sets it; a runner called with a bare
+   * context scrubs `process.env` itself (`scrubEnv`).
    */
   readonly childEnv?: Readonly<Record<string, string>> | undefined;
   /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */

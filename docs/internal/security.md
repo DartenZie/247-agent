@@ -43,10 +43,11 @@ Where a value goes, and nowhere else:
   per attempt; they enter the `secrets` template scope of `action` only. `emit` and
   `state_updates` render without that scope (`config/schema.ts`), `${secrets}` as a
   whole is refused, and the `env` scope omits what the backend reads through
-  (`scrubEnv()`: the `env` backend's prefixed variables, or `CREDENTIALS_DIRECTORY`
-  under `systemd-credentials`).
+  (`SecretsBackend.scrub()`: the `env` backend's prefixed variables, or
+  `CREDENTIALS_DIRECTORY` under a `systemd-credentials` backend without a `dir`).
 - An unsandboxed `shell` step or `post` gate starts from that same scrubbed set
-  (`ctx.childEnv`) plus the action's `env`, never from the daemon's environment.
+  (`ctx.childEnv`) plus the action's `env`, never from the daemon's environment. The
+  git the daemon runs to create, remove or sweep a workspace starts from it too.
   Otherwise a command that prints its environment, by design or in a build tool's
   error output, would store every secret in the run result and the
   `task.<name>.succeeded` payload. The scrub limits accidental exposure. It is not a

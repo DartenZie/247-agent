@@ -13,6 +13,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 
 import { NonRetryableError } from './types.js';
+import { scrubEnv } from '../secrets/secrets.js';
 
 /**
  * Where an `agent` run works (docs/internal/agent-action.md): a fresh git worktree of `repo` at
@@ -73,10 +74,16 @@ export function workspacePath(workDir: string, runId: string): string {
   return join(workDir, runId);
 }
 
-async function git(args: string[], cwd?: string): Promise<void> {
+/**
+ * A git the daemon runs on an agent's behalf: hooks and programs off, and the given
+ * environment rather than the daemon's own, which holds the secrets
+ * (docs/internal/security.md).
+ */
+async function git(args: string[], env: Record<string, string>): Promise<void> {
   const safe = GIT_NO_PROGRAMS.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
   const r = await execa('git', [...safe, ...args], {
-    ...(cwd === undefined ? {} : { cwd }),
+    env,
+    extendEnv: false,
     reject: false,
     stripFinalNewline: true,
   });
@@ -88,11 +95,15 @@ async function git(args: string[], cwd?: string): Promise<void> {
   }
 }
 
-/** Creates the workspace; an existing directory from an earlier attempt is replaced. */
+/**
+ * Creates the workspace; an existing directory from an earlier attempt is replaced. `env`
+ * is what its git runs with (`ctx.childEnv`); without one, `process.env` scrubbed.
+ */
 export async function createWorkspace(
   cfg: WorkspaceConfig,
   workDir: string,
   runId: string,
+  env: Record<string, string> = scrubEnv(process.env),
 ): Promise<WorkspaceHandle> {
   mkdirSync(workDir, { recursive: true });
   // The real path: an agent reports the paths it touches resolved (macOS's /var is
@@ -112,9 +123,9 @@ export async function createWorkspace(
   }
   const repo = resolve(cfg.repo);
   const branch = `agent/${runId}`;
-  await git(['-C', repo, 'worktree', 'remove', '--force', path]).catch(() => undefined);
+  await git(['-C', repo, 'worktree', 'remove', '--force', path], env).catch(() => undefined);
   rmSync(path, { recursive: true, force: true });
-  await git(['-C', repo, 'worktree', 'add', '-B', branch, path, cfg.branch]);
+  await git(['-C', repo, 'worktree', 'add', '-B', branch, path, cfg.branch], env);
   const pointer = readFileSync(join(path, '.git'), 'utf8');
   return {
     path,
@@ -134,12 +145,12 @@ export async function createWorkspace(
       }
     },
     remove: async () => {
-      await git(['-C', repo, 'worktree', 'remove', '--force', path]).catch(() => undefined);
+      await git(['-C', repo, 'worktree', 'remove', '--force', path], env).catch(() => undefined);
       rmSync(path, { recursive: true, force: true });
       // `remove` refuses a directory that is no longer a worktree (the agent replaced its
       // `.git`); pruning the gone directory frees the branch for deletion either way.
-      await git(['-C', repo, 'worktree', 'prune']).catch(() => undefined);
-      await git(['-C', repo, 'branch', '-D', branch]).catch(() => undefined);
+      await git(['-C', repo, 'worktree', 'prune'], env).catch(() => undefined);
+      await git(['-C', repo, 'branch', '-D', branch], env).catch(() => undefined);
     },
   };
 }
@@ -208,10 +219,13 @@ function worktreeGitDir(path: string): string | undefined {
  * a git worktree is detached from its repository and its `agent/<run_id>` branch deleted,
  * then the directory goes. Never throws.
  */
-export async function removeWorkspaceDir(entry: WorkspaceEntry): Promise<void> {
+export async function removeWorkspaceDir(
+  entry: WorkspaceEntry,
+  env: Record<string, string> = scrubEnv(process.env),
+): Promise<void> {
   const gitDir = worktreeGitDir(entry.path);
   const inRepo = (args: string[]): Promise<unknown> =>
-    git([`--git-dir=${gitDir ?? ''}`, ...args]).catch(() => undefined);
+    git([`--git-dir=${gitDir ?? ''}`, ...args], env).catch(() => undefined);
   if (gitDir !== undefined) {
     await inRepo(['worktree', 'remove', '--force', entry.path]);
   }

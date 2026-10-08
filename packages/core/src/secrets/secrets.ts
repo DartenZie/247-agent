@@ -38,6 +38,11 @@ export interface SecretsBackend {
   readonly kind: SecretsConfigParsed['backend'];
   /** Resolves every name or throws `SecretError` for the first one it cannot. */
   resolve(names: readonly string[]): Record<string, string>;
+  /**
+   * `env` minus what this backend reads secrets through (`scrubEnv`): the `env` template
+   * scope and the environment a child of the daemon starts from.
+   */
+  scrub(env: NodeJS.ProcessEnv): Record<string, string>;
 }
 
 function check(name: string): void {
@@ -49,6 +54,7 @@ function check(name: string): void {
 function envBackend(prefix: string, env: NodeJS.ProcessEnv): SecretsBackend {
   return {
     kind: 'env',
+    scrub: (e) => scrubEnv(e, { backend: 'env', prefix }),
     resolve: (names) => {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -73,6 +79,7 @@ function isWideOpen(mode: number): boolean {
 function fileBackend(path: string): SecretsBackend {
   return {
     kind: 'file',
+    scrub: (e) => scrubEnv(e, { backend: 'file', path }),
     resolve: (names) => {
       names.forEach(check);
       if (names.length === 0) {
@@ -110,6 +117,7 @@ function fileBackend(path: string): SecretsBackend {
 function systemdBackend(dir: string | undefined, env: NodeJS.ProcessEnv): SecretsBackend {
   return {
     kind: 'systemd-credentials',
+    scrub: (e) => scrubEnv(e, { backend: 'systemd-credentials', dir }),
     resolve: (names) => {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -159,12 +167,14 @@ const CREDENTIALS_DIRECTORY = 'CREDENTIALS_DIRECTORY';
 const DEFAULT_PREFIX = 'OA_SECRET_';
 
 /**
- * The daemon's environment minus what the configured backend reads secrets through: the
- * `env` backend's prefixed variables, or `CREDENTIALS_DIRECTORY` for `systemd-credentials`;
- * the `file` backend reads nothing from the environment. It is the `env` template scope and
- * the environment an unsandboxed `shell` step or `post` gate starts from, so a child sees
- * exactly what a template sees (docs/internal/security.md). Without a configuration (the
- * core embedded without a daemon) both the default prefix and `CREDENTIALS_DIRECTORY` go.
+ * `env` minus what the configured backend reads secrets through: the `env` backend's
+ * prefixed variables, or `CREDENTIALS_DIRECTORY` for a `systemd-credentials` backend
+ * without a `dir` of its own. The `file` backend reads nothing from the environment. The
+ * result is the `env` template scope and the environment every child the daemon starts
+ * outside a sandbox gets (a `shell` step, a `post` gate, its own git), never the daemon's
+ * environment itself (docs/internal/security.md). Without a configuration, the default
+ * prefix and `CREDENTIALS_DIRECTORY` both go. Prefer `SecretsBackend.scrub()`, which knows
+ * the configuration; this form is for code with no backend at hand.
  */
 export function scrubEnv(
   env: NodeJS.ProcessEnv,
@@ -172,7 +182,8 @@ export function scrubEnv(
 ): Record<string, string> {
   const prefix =
     config === undefined ? DEFAULT_PREFIX : config.backend === 'env' ? config.prefix : undefined;
-  const credentials = config === undefined || config.backend === 'systemd-credentials';
+  const credentials =
+    config === undefined || (config.backend === 'systemd-credentials' && config.dir === undefined);
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) {
@@ -193,6 +204,7 @@ export function scrubEnv(
 export function staticSecrets(values: Record<string, string>): SecretsBackend {
   return {
     kind: 'env',
+    scrub: (e) => scrubEnv(e),
     resolve: (names) => {
       const out: Record<string, string> = {};
       for (const name of names) {

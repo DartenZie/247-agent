@@ -59,6 +59,7 @@ export {
   SecretError,
   SecretsConfig,
   type SecretsBackend,
+  scrubEnv,
 } from './secrets/secrets.js';
 export { formatLoadResult } from './config/format.js';
 export { parseDuration, DURATION } from './config/duration.js';

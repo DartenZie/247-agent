@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { execaSync } from 'execa';
@@ -114,5 +115,42 @@ describe('removeWorkspaceDir', () => {
     }
     expect(existsSync(ws.path)).toBe(false);
     expect(existsSync(hookRan)).toBe(false);
+  });
+});
+
+describe('the environment of the git the daemon runs', () => {
+  it('is the one given, not the daemon environment, for the retention sweep and a worktree remove', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'oa-ws-env-'));
+    try {
+      // A fake git on PATH that records its environment: the real one is not needed to
+      // see what it was started with.
+      const bin = join(base, 'bin');
+      mkdirSync(bin);
+      const seen = join(base, 'seen');
+      writeFileSync(join(bin, 'git'), `#!/bin/sh\nenv >> "${seen}"\nexit 0\n`);
+      chmodSync(join(bin, 'git'), 0o755);
+      const ws = join(base, 'work', 'run_X1');
+      mkdirSync(ws, { recursive: true });
+      writeFileSync(
+        join(ws, '.git'),
+        `gitdir: ${join(base, 'repo', '.git', 'worktrees', 'run_X1')}\n`,
+      );
+      process.env.OA_SECRET_X = 'leaked';
+      try {
+        const [entry] = listWorkspaces(join(base, 'work'));
+        if (entry === undefined) {
+          throw new Error('no entry');
+        }
+        await removeWorkspaceDir(entry, { PATH: `${bin}:/usr/bin:/bin`, MARK: 'given' });
+      } finally {
+        delete process.env.OA_SECRET_X;
+      }
+      const recorded = readFileSync(seen, 'utf8');
+      expect(recorded).toContain('MARK=given');
+      expect(recorded).not.toContain('OA_SECRET_X');
+      expect(existsSync(ws)).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

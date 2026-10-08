@@ -90,7 +90,7 @@ describe('secrets backends', () => {
   });
 });
 
-describe('scrubEnv', () => {
+describe('scrub', () => {
   const env: NodeJS.ProcessEnv = {
     PATH: '/bin',
     OA_SECRET_TOK: 't',
@@ -98,27 +98,29 @@ describe('scrubEnv', () => {
     CREDENTIALS_DIRECTORY: '/run/credentials/x',
     UNSET: undefined,
   };
+  const backend = (config: unknown) =>
+    createSecretsBackend(SecretsConfig.parse(config), '/etc/247-agent', env);
 
-  it('removes what the env backend reads through: variables with its prefix', () => {
-    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'env' }))).toEqual({
+  it('env: removes the variables with its prefix and nothing else', () => {
+    expect(backend({ backend: 'env' }).scrub(env)).toEqual({
       PATH: '/bin',
       T_TOK: 'u',
       CREDENTIALS_DIRECTORY: '/run/credentials/x',
     });
-    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'env', prefix: 'T_' }))).toEqual({
+    expect(backend({ backend: 'env', prefix: 'T_' }).scrub(env)).toEqual({
       PATH: '/bin',
       OA_SECRET_TOK: 't',
       CREDENTIALS_DIRECTORY: '/run/credentials/x',
     });
   });
 
-  it('removes CREDENTIALS_DIRECTORY for systemd-credentials and nothing for file', () => {
-    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'systemd-credentials' }))).toEqual({
+  it('systemd-credentials: removes CREDENTIALS_DIRECTORY only when it reads from it', () => {
+    expect(backend({ backend: 'systemd-credentials' }).scrub(env)).toEqual({
       PATH: '/bin',
       OA_SECRET_TOK: 't',
       T_TOK: 'u',
     });
-    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'file', path: 's.yaml' }))).toEqual({
+    expect(backend({ backend: 'systemd-credentials', dir: 'creds' }).scrub(env)).toEqual({
       PATH: '/bin',
       OA_SECRET_TOK: 't',
       T_TOK: 'u',
@@ -126,7 +128,14 @@ describe('scrubEnv', () => {
     });
   });
 
-  it('without a configuration removes both the default prefix and CREDENTIALS_DIRECTORY', () => {
+  it('file: removes nothing; staticSecrets removes the defaults', () => {
+    expect(backend({ backend: 'file', path: 's.yaml' }).scrub(env)).toEqual({
+      PATH: '/bin',
+      OA_SECRET_TOK: 't',
+      T_TOK: 'u',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+    });
+    expect(staticSecrets({}).scrub(env)).toEqual({ PATH: '/bin', T_TOK: 'u' });
     expect(scrubEnv(env)).toEqual({ PATH: '/bin', T_TOK: 'u' });
   });
 });
