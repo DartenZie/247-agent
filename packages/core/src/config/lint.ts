@@ -87,12 +87,11 @@ function templateExprs(text: string): string[] {
 }
 
 /**
- * A `wait` filter is rendered as text (`ctx.renderText`) and parsed only when the run
- * suspends, so its `${…}` values land in the JMESPath unquoted: a string as is, anything
- * else as JSON. The filter as written is linted with each template replaced by an
- * identifier, which parses wherever a value may stand; an identifier left as a comparison
- * operand is a template interpolated unquoted. A filter that does not parse even so is
- * reported too: at run time the dispatcher cannot compile it and the wait never matches.
+ * A `wait` filter is rendered (`expr/filter-template.ts`) and parsed only when the run
+ * suspends, each `${…}` value landing in the JMESPath as data. The filter as written is
+ * linted with each template replaced by an identifier, which parses wherever a value may
+ * stand. A filter that does not parse even so is reported too: at run time the
+ * dispatcher cannot compile it and the wait never matches.
  */
 function lintWaitFilter(filter: string): string[] {
   let parts;

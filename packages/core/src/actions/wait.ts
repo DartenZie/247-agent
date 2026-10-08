@@ -2,13 +2,17 @@ import { z } from 'zod';
 
 import { DURATION, parseDuration } from '../config/duration.js';
 import { validateTemplate, validateTypePattern } from '../config/validators.js';
+import { renderFilter } from '../expr/filter-template.js';
+import { collectTemplateRefs } from '../expr/template.js';
 import type { EventRecord, JsonValue } from '../store/types.js';
 import { NonRetryableError, type ActionContext, type ResumeInfo } from './types.js';
 
 /**
  * docs/internal/actions.md. The run goes to `waiting` until an event of `for.type` (a pattern)
  * passes `for.filter` (a JMESPath over the event, templated first: `${event.correlation_id}`
- * is the *current* run's event) or `timeout` elapses. The wait survives restarts.
+ * is the *current* run's event, and every value lands as data, `expr/filter-template.ts`)
+ * or `timeout` elapses. The wait survives restarts. The rendered filter is written to the
+ * wait record, so `secrets` are refused in it.
  */
 export const WaitAction = z.strictObject({
   kind: z.literal('wait'),
@@ -26,6 +30,12 @@ export const WaitAction = z.strictObject({
         const err = validateTemplate(f.filter);
         if (err !== null) {
           ctx.addIssue({ code: 'custom', path: ['filter'], message: err });
+        } else if (collectTemplateRefs(f.filter).roots.has('secrets')) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['filter'],
+            message: 'secrets cannot be used here: the rendered filter is written to the store',
+          });
         }
       }
     }),
@@ -71,7 +81,7 @@ export async function runWait(action: unknown, ctx: ActionContext): Promise<Json
   return ctx.suspend(
     {
       type: cfg.for.type,
-      filter: cfg.for.filter === undefined ? undefined : ctx.renderText(cfg.for.filter),
+      filter: cfg.for.filter === undefined ? undefined : renderFilter(cfg.for.filter, ctx.scope),
       timeoutMs: cfg.timeout === undefined ? undefined : parseDuration(cfg.timeout),
       on_timeout: cfg.on_timeout,
     },

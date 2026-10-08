@@ -148,11 +148,12 @@ describe('lintJmespath', () => {
     }
   });
 
-  it('names a placeholder left as an operand by its template', () => {
+  it('leaves a placeholder alone and shows its template in other messages', () => {
     const placeholders = new Map([['__oa_tpl_0__', '${event.payload.want}']]);
-    expect(lintJmespath('payload.ok == __oa_tpl_0__', { placeholders })).toEqual([
-      "payload.ok == ${event.payload.want}: ${event.payload.want} is rendered into the filter as plain text, so a string or true/false/null becomes a field name and a number breaks the filter; write '${event.payload.want}' for a string or `${event.payload.want}` for a number or boolean",
-    ]);
+    expect(lintJmespath('payload.ok == __oa_tpl_0__', { placeholders })).toEqual([]);
     expect(lintJmespath("payload.ok == '__oa_tpl_0__'", { placeholders })).toEqual([]);
+    expect(lintJmespath('__oa_tpl_0__ > `1` && payload.ok == true', { placeholders })).toEqual([
+      'payload.ok == true: true here is a field named "true", not the literal; write `true`',
+    ]);
   });
 });

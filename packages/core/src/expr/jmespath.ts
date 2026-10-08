@@ -280,8 +280,9 @@ function meantAs(name: string): string | undefined {
 
 export interface LintOptions {
   /**
-   * Identifiers standing in for `${…}` templates of a filter that is rendered as text
-   * before it is parsed (a `wait`'s `for.filter`), mapped to the template as written.
+   * Identifiers standing in for `${…}` templates of a filter that is rendered before it
+   * is parsed (a `wait`'s `for.filter`), mapped to the template as written, so messages
+   * show the template. A placeholder itself is never suspect: it renders as a value.
    */
   placeholders?: ReadonlyMap<string, string>;
 }
@@ -297,9 +298,7 @@ export interface LintOptions {
  *   field again, most likely meant as the string `'true'`;
  * - an ordering comparison (`<`, `<=`, `>`, `>=`) with a quoted number: the JMESPath spec
  *   orders numbers only (jmespath.js happens to coerce), so `payload.amount > '100'`
- *   depends on the library and turns lexical when the field holds a string;
- * - with `placeholders`, a template rendered unquoted as an operand: its value lands in the
- *   filter as plain text, so a string or a boolean becomes a field and a number breaks it.
+ *   depends on the library and turns lexical when the field holds a string.
  *
  * `==` with a quoted number is left alone: it is right when the field holds a string.
  * Operands are echoed as written, with each placeholder shown as its template.
@@ -317,9 +316,8 @@ export function lintJmespath(expr: string, opts: LintOptions = {}): string[] {
   const suspect = (cmp: JmesNode, side: JmesNode): string | undefined => {
     if (side.type === 'Field' && typeof side.name === 'string') {
       const name = side.name;
-      const template = placeholders.get(name);
-      if (template !== undefined) {
-        return `${template} is rendered into the filter as plain text, so a string or true/false/null becomes a field name and a number breaks the filter; write '${template}' for a string or \`${template}\` for a number or boolean`;
+      if (placeholders.has(name)) {
+        return undefined;
       }
       const meant = meantAs(name);
       const w = meant === undefined ? undefined : forms().get(side);

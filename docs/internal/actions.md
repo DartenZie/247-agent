@@ -58,8 +58,9 @@ secrets, env, run, item, steps}`:
   let `*` match exactly one dot-separated segment.
 
 `oa validate` checks the syntax of every template and expression, except a `wait`'s
-`for.filter` as a whole, which only exists once rendered; the lint warns when it cannot
-parse even with each template standing for a value ([`config.md`](config.md)).
+`for.filter` as a whole, which only exists once rendered (`expr/filter-template.ts`);
+the lint warns when it cannot parse even with each template standing for a value
+([`config.md`](config.md)).
 Rendering happens at run time against the run's scope; a template that fails to render
 fails the attempt.
 
@@ -119,12 +120,18 @@ string otherwise; several texts → an array; none → `null`. Every call counts
 
 ## `wait`
 
-`actions/wait.ts`. `for.type` is a type pattern; `for.filter` is rendered as a
-template first with `renderText` (so `${event.correlation_id}` is the waiting run's
-own, and every value lands unquoted: a string as is, anything else as JSON) and stored
-on the wait record; the dispatcher (`bus/dispatcher.ts`) evaluates it as JMESPath over
-each incoming event (minus `seq`), a throwing filter logging `wait.filter_error` and
-not matching. Arming happens inside the suspend transaction, which also checks events
+`actions/wait.ts`. `for.type` is a type pattern. `for.filter` is rendered first with
+`renderFilter` (`expr/filter-template.ts`) and stored on the wait record. The
+dispatcher (`bus/dispatcher.ts`) evaluates it as JMESPath over each incoming event
+(minus `seq`), a throwing filter logging `wait.filter_error` and not matching.
+`renderFilter` keeps the invariant behind GHSA-6xm2-r635-x33f: a `${…}` value lands in
+the expression as data, never as syntax. `${event.correlation_id}` is the waiting run's
+own. A value inside `'…'` is that string. When the value holds a quote or a backslash,
+the literal is rewritten as a backtick JSON string, because jmespath.js unescapes only
+the first `\'`. A value inside backticks is JSON. A value inside `"…"` is a field name.
+A bare value is a backtick JSON literal. A backtick in a value becomes `\u0060`. The
+schema refuses `secrets` in the filter, because the rendered text is written to the
+store. Arming happens inside the suspend transaction, which also checks events
 published after the run's trigger up to the dispatch cursor, so a reply that raced the
 asking step re-queues the run on the spot. The result is the matched event (minus
 `seq`); on timeout `on_timeout: succeed` returns `{timed_out: true}`, else

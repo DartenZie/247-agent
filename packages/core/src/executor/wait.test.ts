@@ -47,6 +47,15 @@ const tasks = config([
     trigger: { kind: 'event', type: 'x.wait' },
     action: { kind: 'wait', for: { type: 'chat.*' }, timeout: '1h' },
   },
+  {
+    name: 'gate_by_name',
+    trigger: { kind: 'event', type: 'x.ask_name' },
+    action: {
+      kind: 'wait',
+      for: { type: 'chat.reply', filter: "payload.name == '${event.payload.name}'" },
+      timeout: '24h',
+    },
+  },
 ]);
 
 let env: TestEnv;
@@ -256,5 +265,55 @@ describe('standalone wait', () => {
       id: reply.id,
       payload: { text: 'hi' },
     });
+  });
+});
+
+describe('a wait keyed on a value from the trigger (GHSA-6xm2-r635-x33f)', () => {
+  /** Starts a `gate_by_name` run for `name` and lets it reach its wait. */
+  async function askFor(ex: Executor, name: string): Promise<EventRecord> {
+    const trigger = publish('x.ask_name', { name });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate_by_name', trigger)?.status).toBe('waiting');
+    return trigger;
+  }
+
+  it('resumes on the reply that carries the same name, apostrophe included', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = await askFor(ex, "O'Brien");
+
+    publish('chat.reply', { name: 'OBrien', approved: true });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate_by_name', trigger)?.status).toBe('waiting');
+
+    const reply = publish('chat.reply', { name: "O'Brien", approved: true });
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('gate_by_name', trigger);
+    expect(run?.status).toBe('succeeded');
+    expect(run?.result).toMatchObject({ id: reply.id, payload: reply.payload });
+    expect(env.lines.filter((l) => l.msg === 'wait.invalid')).toEqual([]);
+  });
+
+  it('keeps waiting when the name is crafted to match everything', async () => {
+    const ex = make();
+    ex.start();
+    const crafted = "x' || 'a' == 'a";
+    const legit = await askFor(ex, 'ABC-1');
+    const attacker = await askFor(ex, crafted);
+
+    publish('chat.reply', { name: 'someone else', approved: true });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate_by_name', attacker)?.status).toBe('waiting');
+    expect(runOf('gate_by_name', legit)?.status).toBe('waiting');
+
+    publish('chat.reply', { name: 'ABC-1', approved: true });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate_by_name', legit)?.status).toBe('succeeded');
+    expect(runOf('gate_by_name', attacker)?.status).toBe('waiting');
   });
 });
