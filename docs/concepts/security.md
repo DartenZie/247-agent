@@ -62,9 +62,10 @@ An `agent` action is confined on four levels. Use all of them.
    filtering proxy; a request anywhere else is refused and logged, which is also how
    you learn what an agent wanted.
 4. **Deterministic gates and a human.** After the agent reports `done`, the gates run:
-   a build, the tests, a commit. A failing gate fails the run. For anything
-   high-impact, a `wait` for your approval on chat sits between the agent and the task
-   that publishes.
+   a build, the tests, a commit. A failing gate fails the run. Git in a gate ignores
+   hooks and the fsmonitor program, and a workspace whose `.git` the agent replaced
+   fails before the gates. For anything high-impact, a `wait` for your approval on
+   chat sits between the agent and the task that publishes.
 
 Hard limits back all of this: a cap on tool calls, a dollar budget, and a wall-clock
 timeout, each of which cancels the session.

@@ -134,6 +134,27 @@ const writeResult = (cwd: string, doc: unknown): void => {
   writeFileSync(join(cwd, 'RESULT.json'), JSON.stringify(doc));
 };
 
+/** A base checkout with one commit on `main` and an identity in its config, for worktrees. */
+function seedRepo(repo: string): string {
+  mkdirSync(repo);
+  const git = (...args: string[]): void => {
+    execaSync('git', args, { cwd: repo });
+  };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 't');
+  git('config', 'user.email', 't@x');
+  writeFileSync(join(repo, 'a.txt'), 'one\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+  return repo;
+}
+
+/** A git hook (or fsmonitor program) that records that it ran in `marker` and then fails. */
+function plantHook(path: string, marker: string): void {
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, `#!/bin/sh\n: > "${marker}"\nexit 1\n`, { mode: 0o755 });
+}
+
 const action = {
   kind: 'agent',
   connector: 'claude',
@@ -817,6 +838,64 @@ describe('runAgent', () => {
     expect(existsSync(ws)).toBe(false);
     expect(git('worktree', 'list')).not.toContain(ws);
     expect(git('branch', '--list', 'agent/run_test')).toBe('');
+  });
+  it('runs post gates with the repository hooks and fsmonitor disabled, whatever its config says', async () => {
+    const repo = seedRepo(join(dir, 'repo'));
+    const hookRan = join(dir, 'hook-ran');
+    const monitorRan = join(dir, 'monitor-ran');
+    plantHook(join(repo, '.git', 'hooks', 'pre-commit'), hookRan);
+    plantHook(join(dir, 'fsmonitor'), monitorRan);
+    execaSync('git', ['config', 'core.fsmonitor', join(dir, 'fsmonitor')], { cwd: repo });
+    const agents = fakeAgents(async function* (env) {
+      writeFileSync(join(env.cwd, 'a.txt'), 'two\n');
+      writeResult(env.cwd, { status: 'done', summary: 'changed a' });
+      return stop();
+    }, workDir);
+    const cfg = {
+      ...action,
+      workspace: { kind: 'git-worktree', repo, branch: 'main' },
+      post: [{ shell: ['git', 'commit', '-qam', 'agent: ${result.summary}'] }],
+    };
+    await expect(runAgent(cfg, ctx(agents))).resolves.toMatchObject({ status: 'done' });
+    const ws = join(workDir, 'run_test');
+    expect(execaSync('git', ['log', '-1', '--format=%s'], { cwd: ws }).stdout).toBe(
+      'agent: changed a',
+    );
+    expect(existsSync(hookRan)).toBe(false);
+    expect(existsSync(monitorRan)).toBe(false);
+  });
+
+  it('fails without running the post gates when the agent replaced the workspace .git', async () => {
+    const repo = seedRepo(join(dir, 'repo'));
+    const hookRan = join(dir, 'hook-ran');
+    const agents = fakeAgents(async function* (env) {
+      // The agent swaps the worktree's `.git` pointer for a repository of its own that
+      // carries a hook, then leaves a change for the post gate's commit to pick up.
+      rmSync(join(env.cwd, '.git'));
+      const git = (...args: string[]): void => {
+        execaSync('git', ['-c', 'user.name=a', '-c', 'user.email=a@x', ...args], { cwd: env.cwd });
+      };
+      git('init', '-q');
+      git('add', '.');
+      git('commit', '-q', '-m', 'mine');
+      plantHook(join(env.cwd, '.git', 'hooks', 'pre-commit'), hookRan);
+      writeFileSync(join(env.cwd, 'a.txt'), 'two\n');
+      writeResult(env.cwd, { status: 'done', summary: 'changed a' });
+      return stop();
+    }, workDir);
+    const cfg = {
+      ...action,
+      workspace: { kind: 'git-worktree', repo, branch: 'main' },
+      post: [{ shell: ['git', 'commit', '-qam', 'agent: ${result.summary}'] }],
+    };
+    const err = await runAgent(cfg, ctx(agents)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(isRetryable(err)).toBe(false);
+    expect(String(err)).toMatch(/\.git/);
+    expect(existsSync(hookRan)).toBe(false);
+    expect(lines.filter((l) => l.msg === 'agent.post_gate')).toEqual([]);
+    expect(existsSync(join(workDir, 'run_test'))).toBe(false);
+    expect(execaSync('git', ['branch', '--list', 'agent/run_test'], { cwd: repo }).stdout).toBe('');
   });
 });
 

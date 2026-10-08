@@ -227,6 +227,14 @@ and nothing leaves the workspace; with `retry.attempts` of two or more the next 
 starts fresh with the gate's error in its prompt, so a build the agent broke gets a
 second try. `defaults.sandbox` in `agent.yaml` applies to gates as to any shell action.
 
+A gate runs as the daemon, so it must not take orders from files the agent wrote. Git
+in a gate runs with hooks and the fsmonitor program disabled, whatever the repository
+or the workspace configures, and a `git-worktree` workspace whose `.git` pointer the
+agent replaced fails the run before any gate starts. A gate that executes project
+code by design, `npm run build` or `npm test`, runs what the agent left in the
+workspace; put such gates under `sandbox: bwrap` when the agent works on content you
+do not trust.
+
 Publishing is not a gate. It is a separate task triggered by `task.<name>.succeeded`,
 the only task holding the deploy secret, with an approval gate in front of it when the
 change is high-impact. The agent never publishes and never sees that secret.

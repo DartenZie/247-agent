@@ -163,7 +163,12 @@ prompt.
 `done`: the `post` gates run in order, each a `shell` argv in the workspace with the
 scope gaining `result`, skipped when its `when` is falsy (`agent.post_gate`); a
 non-zero exit is rethrown as `post[i] (<cmd>) failed: exit code N: <stderr tail>`,
-retryable. `blocked`: the gates are skipped and the run **succeeds** with the document
+retryable. Before the first gate, `WorkspaceHandle.assertIntact()` fails the run
+non-retryably when a `git-worktree` workspace's `.git` is no longer the pointer file
+the worktree was created with (the agent replaced it with a repository of its own).
+Every gate's `env` starts from `gitNoProgramsEnv()`, `GIT_CONFIG_*` entries that set
+`core.hooksPath=/dev/null` and `core.fsmonitor=false`, so git in a gate runs no hook or
+program from the base repository's config or the workspace. `blocked`: the gates are skipped and the run **succeeds** with the document
 as its result, so `emit … when: "result.status == 'blocked'"` routes it. The run result
 is the `RESULT.json` document in both cases.
 
@@ -184,9 +189,15 @@ exposed as `${run.workspace}`. `git-worktree` runs `git -C <repo> worktree add -
 agent/<run_id> <path> <branch>` (`branch` default `main`); `temp` is an empty directory.
 A leftover from an earlier attempt is removed first. The workspace is kept only after
 the result was read and the gates passed (`blocked` included), for the gates, a later
-publishing task and inspection; otherwise `worktree remove --force`, `rmSync` and
-`branch -D agent/<run_id>` (`agent.workspace_removed`). Retention sweeps kept
-workspaces `retention.workspaces` after the run finished ([`store.md`](store.md)).
+publishing task and inspection; otherwise `worktree remove --force`, `rmSync`,
+`worktree prune` and `branch -D agent/<run_id>` (`agent.workspace_removed`); the prune
+frees the branch when `remove` refused a directory that was no longer a worktree.
+Retention sweeps kept workspaces `retention.workspaces` after the run finished
+([`store.md`](store.md)) with `removeWorkspaceDir`, which trusts the `.git` pointer only
+to find a git directory to tidy. Every git the module runs carries
+`-c core.hooksPath=/dev/null -c core.fsmonitor=false`: the agent can write the
+workspace's `.git`, point it at a git directory of its own, or (with `execute`) change
+the base repository's config, and none of that may choose a program the daemon runs.
 
 ## The transcript
 
@@ -224,3 +235,5 @@ real agents ([`testing.md`](testing.md)).
   a connector's secrets or a deploy credential.
 - `blocked` succeeds, `done` runs the gates, and nothing leaves the workspace unless a
   separate task takes it.
+- No git the daemon runs for a workspace, its own or a gate's, runs a hook or a program
+  named in git config; a gate never starts in a worktree whose `.git` the agent replaced.

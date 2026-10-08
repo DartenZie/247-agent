@@ -1,4 +1,12 @@
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { execa } from 'execa';
@@ -27,8 +35,37 @@ export type WorkspaceConfig = z.infer<typeof Workspace>;
 
 export interface WorkspaceHandle {
   readonly path: string;
+  /**
+   * Throws `NonRetryableError` when the agent changed what makes the directory a workspace
+   * of the configured repository: the `.git` pointer a worktree was created with. Anything
+   * git runs there afterwards (a `post` gate) would otherwise take hooks and configuration
+   * from a repository the agent wrote. A `temp` workspace has nothing to check.
+   */
+  assertIntact(): void;
   /** Deletes the directory (and the worktree's branch). Never throws. */
   remove(): Promise<void>;
+}
+
+/**
+ * Git configuration every git the daemon runs on an agent's behalf carries, as `-c` pairs
+ * for its own commands (`git()`) and as `GIT_CONFIG_*` for a `post` gate's: no hooks and
+ * no fsmonitor program, whatever the repository or the workspace configures. Both are
+ * commands git would run as the daemon user, from files the agent can write
+ * (docs/internal/security.md).
+ */
+const GIT_NO_PROGRAMS: readonly [string, string][] = [
+  ['core.hooksPath', '/dev/null'],
+  ['core.fsmonitor', 'false'],
+];
+
+/** The environment that applies `GIT_NO_PROGRAMS` to any git a `post` gate runs. */
+export function gitNoProgramsEnv(): Record<string, string> {
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(GIT_NO_PROGRAMS.length) };
+  GIT_NO_PROGRAMS.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${String(i)}`] = key;
+    env[`GIT_CONFIG_VALUE_${String(i)}`] = value;
+  });
+  return env;
 }
 
 /** The path a run's workspace has, whether or not it exists yet. */
@@ -37,7 +74,8 @@ export function workspacePath(workDir: string, runId: string): string {
 }
 
 async function git(args: string[], cwd?: string): Promise<void> {
-  const r = await execa('git', args, {
+  const safe = GIT_NO_PROGRAMS.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
+  const r = await execa('git', [...safe, ...args], {
     ...(cwd === undefined ? {} : { cwd }),
     reject: false,
     stripFinalNewline: true,
@@ -65,6 +103,7 @@ export async function createWorkspace(
     mkdirSync(path);
     return {
       path,
+      assertIntact: () => undefined,
       remove: () => {
         rmSync(path, { recursive: true, force: true });
         return Promise.resolve();
@@ -76,11 +115,30 @@ export async function createWorkspace(
   await git(['-C', repo, 'worktree', 'remove', '--force', path]).catch(() => undefined);
   rmSync(path, { recursive: true, force: true });
   await git(['-C', repo, 'worktree', 'add', '-B', branch, path, cfg.branch]);
+  const pointer = readFileSync(join(path, '.git'), 'utf8');
   return {
     path,
+    assertIntact: () => {
+      let current: string | undefined;
+      try {
+        if (lstatSync(join(path, '.git')).isFile()) {
+          current = readFileSync(join(path, '.git'), 'utf8');
+        }
+      } catch {
+        // missing: not intact either
+      }
+      if (current !== pointer) {
+        throw new NonRetryableError(
+          `the workspace's .git no longer points at the worktree of ${repo}: the agent replaced it`,
+        );
+      }
+    },
     remove: async () => {
       await git(['-C', repo, 'worktree', 'remove', '--force', path]).catch(() => undefined);
       rmSync(path, { recursive: true, force: true });
+      // `remove` refuses a directory that is no longer a worktree (the agent replaced its
+      // `.git`); pruning the gone directory frees the branch for deletion either way.
+      await git(['-C', repo, 'worktree', 'prune']).catch(() => undefined);
       await git(['-C', repo, 'branch', '-D', branch]).catch(() => undefined);
     },
   };

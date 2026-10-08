@@ -167,7 +167,13 @@ Layers, each one assuming the one before it can fail
 4. Deterministic `post` gates, a commit, and a `wait` for a human before a separate
    task publishes. The agent never publishes and never holds a deploy credential;
    `mcp_servers` grants named ops through the bridge, and never a connector that sends
-   or deploys on its own.
+   or deploys on its own. A gate runs as the daemon in a directory the agent wrote, so
+   the daemon takes nothing executable from it that the operator did not name: git
+   hooks and `core.fsmonitor` are off for every git the daemon runs there and for the
+   cleanup of the workspace, and a replaced `.git` pointer fails the run before the
+   gates. A gate whose command executes project code by design (`npm test`) runs what
+   the agent left; the documentation tells the operator to sandbox such gates when the
+   agent works on untrusted content.
 5. Hard stops: `max_tool_calls`, `budget.max_usd`, the task `timeout`, the daily cap.
 
 Inbound content (mail, chat, webhook bodies, tickets) is untrusted: it enters prompts

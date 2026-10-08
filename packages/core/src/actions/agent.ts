@@ -24,7 +24,12 @@ import {
 } from './agent-result.js';
 import { applySessionSettings } from './agent-session-config.js';
 import { TranscriptWriter } from './agent-transcript.js';
-import { createWorkspace, Workspace } from './agent-workspace.js';
+import {
+  createWorkspace,
+  gitNoProgramsEnv,
+  Workspace,
+  type WorkspaceHandle,
+} from './agent-workspace.js';
 import { runShell, ShellError } from './shell.js';
 import { NonRetryableError, withScope, type ActionContext } from './types.js';
 
@@ -367,10 +372,16 @@ function nudge(path: string, schema: Record<string, unknown> | undefined): strin
 
 async function runPostGates(
   gates: AgentActionConfig['post'],
-  workspace: string,
+  ws: WorkspaceHandle,
   result: AgentResult,
   ctx: ActionContext,
 ): Promise<void> {
+  if (gates.length === 0) {
+    return;
+  }
+  // A gate runs in the workspace as the daemon user: nothing the agent left there may
+  // decide what runs. Git hooks and programs are off, and a swapped `.git` fails the run.
+  ws.assertIntact();
   const scoped = withScope(ctx, { result });
   for (const [i, gate] of gates.entries()) {
     const label = `post[${String(i)}] (${gate.shell.join(' ').slice(0, 80)})`;
@@ -384,8 +395,8 @@ async function runPostGates(
         {
           kind: 'shell',
           cmd: gate.shell,
-          cwd: workspace,
-          ...(gate.env === undefined ? {} : { env: gate.env }),
+          cwd: ws.path,
+          env: { ...gitNoProgramsEnv(), ...gate.env },
         },
         scoped,
       );
@@ -582,7 +593,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         tool_calls: toolCalls,
       });
       if (result.status === 'done') {
-        await runPostGates(cfg.post, ws.path, result, ctx);
+        await runPostGates(cfg.post, ws, result, ctx);
       }
       keep = true;
       return result;
