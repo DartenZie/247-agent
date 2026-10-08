@@ -95,17 +95,38 @@ task or connector names across files, a poller's target connector and op.
 **`check.ts`**: `pricing` is resolved and reported at `pricing.<model>`; the summary
 lines name the tasks files and manifests an `agent.yaml` pulls in.
 
-**Warnings** (`config/lint.ts`, `lintTasks`): valid but almost certainly wrong, carried
-in `FileCheck.warnings` of every parsed tasks file, printed by `formatWarnings` as
-`<file>: <path>: warning: task "<name>": <message>`, never failing the file or changing
-the exit code. `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST of every
-trigger `filter`, `emit` `when`, sequence step `when`, `wait` `for.filter` (as written,
-before templating) and post gate `when` for a comparison with a bare `true`/`false`/
-`null` (a `Field`, which reads as null) and an ordering comparison with a quoted number
-(the spec orders numbers only; jmespath.js 0.16 coerces, so it works by accident until the
-field is a string). Equality with a quoted number is not flagged: it is right for a string
-field. The daemon does not run the lint. Separately, `validateJmespath` appends a
-backtick hint to the parser's `Invalid token (Number)` error.
+**Warnings** (`config/lint.ts`, `lintTasks`): valid but almost certainly wrong, never
+failing a file or a load. `oa validate` carries them in `FileCheck.warnings` of every
+parsed tasks file and prints them with `formatWarnings` as
+`<file>: <path>: warning: task "<name>": <message>` without changing the exit code; the
+core runs the same lint in `activate()` (`core.ts`), so at start and on every reload,
+and logs each as `core.config_warning` (`task`, `file`, `path`, `warning`).
+
+What is linted: every trigger `filter`, `emit` `when`, sequence step `when` and post gate
+`when`; the expression inside every `${…}` template of `action`, `emit` and
+`state_updates` (the strings the schema checks as templates, found with
+`forEachTemplate`, path down to the string); and each `wait` `for.filter` as a whole,
+with every template replaced by an identifier placeholder (`lintWaitFilter`). The wait
+runner renders that filter with `renderText`, so a value lands unquoted; a placeholder
+left as a comparison operand is flagged, and a filter that does not parse even with
+placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
+the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
+task's action and its sequence steps; the lint, `checkSandboxes` and the core's
+connector-reference check use it.
+
+`lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST (every node that holds a
+sub-expression, `KeyValuePair.value` included) for a comparison with a bare
+`true`/`false`/`null` (a `Field`, which reads as null), a double-quoted `"true"`/
+`"false"`/`"null"`/number (a `Field` too; the message offers the string), and an ordering
+comparison with a quoted number (the spec orders numbers only; jmespath.js 0.16 coerces,
+so it works by accident until the field is a string). Equality with a quoted number is
+not flagged: it is right for a string field. Operands are echoed as written: the lexer's
+tokens are lined up with the AST so each field and literal keeps its source text.
+
+`parseJmespath` caches each expression's parse (AST or message), so the schema's
+`validateJmespath`, the template compiler, `compileFilter` and the lint parse it once.
+Its message appends a backtick hint to the parser's `Invalid token (Number)` error,
+quoting the number from the source (the lexer keeps only the integer part of `100.5`).
 
 What validation cannot see: a secret's existence (resolved at run time; a missing one
 fails the run non-retryably), a connector's own `config` schema (the connector validates

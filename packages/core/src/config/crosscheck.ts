@@ -18,6 +18,7 @@ import type { PricingTable } from '../llm/pricing.js';
 import type { ConnectorConfig } from './connector.js';
 import type { ConfigIssue } from './load.js';
 import type { TaskConfig } from './schema.js';
+import { taskActions } from './walk.js';
 
 export interface LlmCheckContext {
   providers: Readonly<Record<string, ProviderConfigParsed>>;
@@ -294,15 +295,8 @@ type ShellLike = Pick<ShellActionConfig, 'cwd' | 'sandbox'>;
  * prefix of each.
  */
 function shellActions(task: TaskConfig, at: string): { shell: ShellLike; at: string }[] {
-  const a = task.action;
-  if (a.kind === 'shell') {
-    return [{ shell: a, at }];
-  }
-  if (a.kind !== 'sequence') {
-    return [];
-  }
-  return a.steps.flatMap((s, k) =>
-    s.kind === 'shell' ? [{ shell: s, at: `${at}.steps[${String(k)}]` }] : [],
+  return taskActions(task, at).flatMap((x) =>
+    x.action.kind === 'shell' ? [{ shell: x.action, at: x.at }] : [],
   );
 }
 

@@ -17,7 +17,8 @@ export type LoadResult =
   | { ok: true; file: string; config: TasksFileConfig }
   | { ok: false; file: string; issues: ConfigIssue[] };
 
-function formatPath(path: readonly PropertyKey[]): string {
+/** A zod-style path as an issue path: `tasks[1].trigger.filter`. */
+export function formatPath(path: readonly PropertyKey[]): string {
   let out = '';
   for (const p of path) {
     if (typeof p === 'number') {

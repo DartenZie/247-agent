@@ -51,6 +51,11 @@ own scope, and the rendered text is then evaluated as a JMESPath expression agai
 every incoming event. So `${event.correlation_id}` becomes the id of the event that
 started this run, and the filter reads: an event whose payload carries that id.
 
+The rendered value goes into the filter as plain text, so quote it the way JMESPath
+needs: `'${event.correlation_id}'` for a string, `` `${event.payload.min}` `` for a
+number or a boolean. `oa validate` warns about a template left unquoted as a
+comparison operand.
+
 > [!WARNING]
 > Always match on the correlation id, never on "the next reply". Two questions can be
 > open at once, and the wrong answer would resume the wrong run. The chat connector's

@@ -12,7 +12,7 @@ import {
   checkSandboxes,
   type SandboxCheckContext,
 } from './crosscheck.js';
-import { lintTasks } from './lint.js';
+import { lintIssues } from './lint.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
@@ -61,7 +61,7 @@ export function checkConfigFile(path: string): FileCheck[] {
             file: path,
             kind: 'tasks',
             summary: `${String(r.config.tasks.length)} tasks`,
-            warnings: lintTasks(r.config.tasks),
+            warnings: lintIssues(r.config.tasks),
           }
         : fail(path, 'tasks', r.issues),
     ];
@@ -138,7 +138,7 @@ export function checkConfigFile(path: string): FileCheck[] {
             summary: `${String(f.config.tasks.length)} tasks`,
           }
         : fail(f.file, 'tasks', issues)),
-      warnings: lintTasks(f.config.tasks),
+      warnings: lintIssues(f.config.tasks),
     });
   }
   for (const f of connectors.files) {

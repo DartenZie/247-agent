@@ -1,4 +1,6 @@
-import { compile, search } from 'jmespath';
+import { search } from 'jmespath';
+
+import { parseJmespath } from './jmespath.js';
 
 /**
  * `${ <JMESPath> }` templating (docs/internal/actions.md). Expressions are evaluated against a
@@ -227,16 +229,11 @@ export function compileTemplate(text: string): Template {
     if (!('expr' in part)) {
       continue;
     }
-    let ast: unknown;
-    try {
-      ast = compile(part.expr);
-    } catch (err) {
-      throw new TemplateSyntaxError(
-        text,
-        `invalid JMESPath "${part.expr}": ${err instanceof Error ? err.message : String(err)}`,
-      );
+    const p = parseJmespath(part.expr);
+    if (!p.ok) {
+      throw new TemplateSyntaxError(text, `invalid JMESPath "${part.expr}": ${p.message}`);
     }
-    collectRefs(ast as AstNode, refs);
+    collectRefs(p.ast as AstNode, refs);
   }
   const first = parts[0];
   const wholeExpr =
@@ -322,22 +319,41 @@ export interface TemplateRefs {
   errors: { template: string; message: string }[];
 }
 
+/**
+ * Calls `visit` with every template string inside a JSON-like value and its path from
+ * `value` (object keys and array indexes). Object keys are never templates.
+ */
+export function forEachTemplate(
+  value: unknown,
+  visit: (text: string, path: readonly (string | number)[]) => void,
+  path: (string | number)[] = [],
+): void {
+  if (isTemplate(value)) {
+    visit(value, path);
+  } else if (Array.isArray(value)) {
+    value.forEach((v: unknown, i) => {
+      forEachTemplate(v, visit, [...path, i]);
+    });
+  } else if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      forEachTemplate(v, visit, [...path, k]);
+    }
+  }
+}
+
 /** Walks a JSON-like value and reports what its templates reference. */
 export function collectTemplateRefs(value: unknown, refs?: TemplateRefs): TemplateRefs {
   const out: TemplateRefs = refs ?? { roots: new Set(), secrets: [], wholeSecrets: [], errors: [] };
-  if (typeof value === 'string') {
-    if (!isTemplate(value)) {
-      return out;
-    }
+  forEachTemplate(value, (text) => {
     let t: Template;
     try {
-      t = cached(value);
+      t = cached(text);
     } catch (err) {
       out.errors.push({
-        template: value,
+        template: text,
         message: err instanceof Error ? err.message : String(err),
       });
-      return out;
+      return;
     }
     for (const r of t.roots) {
       out.roots.add(r);
@@ -348,17 +364,9 @@ export function collectTemplateRefs(value: unknown, refs?: TemplateRefs): Templa
       }
     }
     if (t.wholeSecrets) {
-      out.wholeSecrets.push(value);
+      out.wholeSecrets.push(text);
     }
-  } else if (Array.isArray(value)) {
-    for (const v of value) {
-      collectTemplateRefs(v, out);
-    }
-  } else if (value !== null && typeof value === 'object') {
-    for (const v of Object.values(value as Record<string, unknown>)) {
-      collectTemplateRefs(v, out);
-    }
-  }
+  });
   return out;
 }
 

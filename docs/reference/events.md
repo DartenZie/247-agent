@@ -194,6 +194,7 @@ The names worth searching for:
 | `sandbox.net_dropped` | warn once | a connection past the 256-connection limit was closed |
 | `retention.purged` | info | what a retention pass deleted (`runs`, `ledger`, `transcripts`, `events`, `workspaces`) |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
+| `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
 | `api.stale_socket_removed` | warn | a dead daemon's socket file was removed at start |
