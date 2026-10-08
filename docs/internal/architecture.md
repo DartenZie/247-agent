@@ -154,7 +154,7 @@ packages/core/src/
   main.ts            the 247-agent-core binary: flags, OA_HOME, signals (SIGHUP reload, SIGTERM/SIGINT stop)
   daemon.ts          agent.yaml → secrets backend → manifests → core → API; reload with FIXED_KEYS
   core.ts            wires everything, defaultRunners, start/stop/reload, scrape-time gauges
-  config/            zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), load.ts, validators.ts, crosscheck.ts, check.ts
+  config/            zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), load.ts, validators.ts, crosscheck.ts, check.ts, lint.ts, walk.ts
   store/             better-sqlite3: db.ts, migrations.ts, events, runs, waits, state, ledger, transcripts, batches, cursors, retention.ts (the SQL)
   bus/               publish.ts, matcher.ts, dispatcher.ts, manual.ts, bus.ts
   scheduler/cron.ts  croner jobs → cron.tick

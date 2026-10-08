@@ -111,3 +111,33 @@ these checks are added:
 
 Issues are printed one per line as `<file>: <path>: <message>`; the command exits 1
 when any check failed and 2 when it was given no file.
+
+Some expressions are valid but almost certainly wrong. `oa validate` prints these as
+`<file>: <path>: warning: <message>`, naming the task, and still exits 0; the daemon
+logs the same warnings as `core.config_warning` when it starts and on every reload.
+Warnings cover every `filter` and `when` (a post gate's too) and the expression inside
+every `${…}` template, wherever a task holds one. They flag a comparison that:
+
+- uses a bare `true`, `false` or `null`. JMESPath reads the bare word as a field name,
+  so `payload.approved == true` is true when `approved` is missing and false when it is
+  `true`. Write `` payload.approved == `true` ``.
+- uses `"true"`, `"false"`, `"null"` or a number in double quotes. Double quotes make a
+  field name too. Write `'true'` for the string, or `` `true` `` for the boolean.
+- orders against a quoted number, as in `payload.amount > '100'`. JMESPath orders only
+  numbers. Write `` payload.amount > `100` ``.
+
+A `wait`'s `for.filter` is rendered as text before it is read as JMESPath, so it gets
+two more warnings:
+
+- a template used directly as a comparison operand, as in
+  `payload.ok == ${event.payload.want}`. The rendered value lands unquoted: a string
+  or `true` becomes a field name, and a number breaks the filter. Write
+  `'${event.payload.want}'` for a string or `` `${event.payload.want}` `` for a number
+  or a boolean.
+- a filter that is not valid JMESPath, even with each template standing for a value.
+  The wait would never match.
+
+A comparison such as `payload.zip == '01234'` gets no warning: equality with a quoted
+string is right when the field holds a string. A bare number such as
+`payload.amount > 100` is an error, not a warning; the message suggests the backticks,
+as in `` `100` ``.

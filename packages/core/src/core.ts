@@ -19,9 +19,11 @@ import {
   checkSandboxes,
   type SandboxCheckContext,
 } from './config/crosscheck.js';
+import { lintTasks } from './config/lint.js';
 import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
+import { taskActions } from './config/walk.js';
 import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor, manifestKey, type ApplyResult } from './connectors/supervisor.js';
 import { Executor } from './executor/executor.js';
@@ -415,17 +417,33 @@ export function createCore(opts: CoreOptions): Core {
     return result;
   };
 
-  /** Makes a loaded config the active one and warns about dangling connector references. */
+  /**
+   * Makes a loaded config the active one and warns about dangling connector references and
+   * about what `oa validate` warns about (`config/lint.ts`), at start and on every reload.
+   */
   const activate = (result: TasksLoadResult): void => {
     if (!result.ok || result.config === undefined) {
       return;
     }
     compiled = compileConfig(result.config);
     bus.setConfig(compiled);
+    for (const f of result.files) {
+      if (!f.ok) {
+        continue;
+      }
+      for (const w of lintTasks(f.config.tasks)) {
+        log.warn('core.config_warning', {
+          task: w.task,
+          file: f.file,
+          path: w.path,
+          warning: w.message,
+        });
+      }
+    }
     const names = new Set(connectors?.names() ?? []);
     const agentNames = new Set(agents?.agentNames() ?? []);
     for (const task of compiled.tasks) {
-      for (const ref of connectorRefs(task.config.action)) {
+      for (const ref of connectorRefs(task.config)) {
         if (!names.has(ref)) {
           log.warn('core.unknown_connector', { task: task.name, connector: ref });
         }
@@ -661,12 +679,8 @@ function crossCheck(
 }
 
 /** Connector names an action (or its sequence steps) calls ops on; `agent` connectors are checked separately. */
-function connectorRefs(action: CompiledConfig['tasks'][number]['config']['action']): string[] {
-  if (action.kind === 'connector') {
-    return [action.connector];
-  }
-  if (action.kind === 'sequence') {
-    return action.steps.flatMap((s) => (s.kind === 'connector' ? [s.connector] : []));
-  }
-  return [];
+function connectorRefs(task: CompiledConfig['tasks'][number]['config']): string[] {
+  return taskActions(task, 'action').flatMap(({ action }) =>
+    action.kind === 'connector' ? [action.connector] : [],
+  );
 }

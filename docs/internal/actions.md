@@ -57,8 +57,11 @@ secrets, env, run, item, steps}`:
   that throws counts as no match and is logged. Event type patterns (`expr/glob.ts`)
   let `*` match exactly one dot-separated segment.
 
-`oa validate` checks the syntax of every template and expression. Rendering happens at
-run time against the run's scope; a template that fails to render fails the attempt.
+`oa validate` checks the syntax of every template and expression, except a `wait`'s
+`for.filter` as a whole, which only exists once rendered; the lint warns when it cannot
+parse even with each template standing for a value ([`config.md`](config.md)).
+Rendering happens at run time against the run's scope; a template that fails to render
+fails the attempt.
 
 ## `shell`
 
@@ -117,8 +120,9 @@ string otherwise; several texts → an array; none → `null`. Every call counts
 ## `wait`
 
 `actions/wait.ts`. `for.type` is a type pattern; `for.filter` is rendered as a
-template first (so `${event.correlation_id}` is the waiting run's own) and stored on
-the wait record; the dispatcher (`bus/dispatcher.ts`) evaluates it as JMESPath over
+template first with `renderText` (so `${event.correlation_id}` is the waiting run's
+own, and every value lands unquoted: a string as is, anything else as JSON) and stored
+on the wait record; the dispatcher (`bus/dispatcher.ts`) evaluates it as JMESPath over
 each incoming event (minus `seq`), a throwing filter logging `wait.filter_error` and
 not matching. Arming happens inside the suspend transaction, which also checks events
 published after the run's trigger up to the dispatch cursor, so a reply that raced the

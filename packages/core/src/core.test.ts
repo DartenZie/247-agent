@@ -154,6 +154,50 @@ describe('createCore with the reference workflow', () => {
     expect(core.scheduler.list().map((j) => j.task)).toEqual(['only']);
   });
 
+  it('logs what oa validate warns about at start and on every reload, without failing', async () => {
+    expect(lines.filter((l) => l.msg === 'core.config_warning')).toEqual([]);
+    const file = join(dir, 'tasks.yaml');
+    writeFileSync(
+      file,
+      [
+        'tasks:',
+        '  - name: gate',
+        '    trigger: { kind: event, type: approval.answered, filter: "payload.approved == true" }',
+        '    action: { kind: shell, cmd: ["true"] }',
+      ].join('\n'),
+    );
+    const warning = {
+      level: 'warn',
+      msg: 'core.config_warning',
+      task: 'gate',
+      file,
+      path: 'tasks[0].trigger.filter',
+      warning:
+        'payload.approved == true: true here is a field named "true", not the literal; write `true`',
+    };
+    expect((await core.reload()).ok).toBe(true);
+    expect(core.config().tasks.map((t) => t.name)).toEqual(['gate']);
+    expect(lines.filter((l) => l.msg === 'core.config_warning')).toEqual([
+      expect.objectContaining(warning),
+    ]);
+
+    const startLines: Record<string, unknown>[] = [];
+    const second = createCore({
+      tasksFiles: [file],
+      dbPath: join(dir, 'second.db'),
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => startLines.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      runners: hangAll,
+    });
+    await second.start();
+    await second.stop();
+    expect(startLines.filter((l) => l.msg === 'core.config_warning')).toEqual([
+      expect.objectContaining(warning),
+    ]);
+  });
+
   it('dispatches a backlog left from before a restart', async () => {
     core.bus.publish({
       type: 'task.update_event_list.succeeded',

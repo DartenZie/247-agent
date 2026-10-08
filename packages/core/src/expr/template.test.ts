@@ -4,6 +4,7 @@ import {
   collectTemplateRefs,
   compileTemplate,
   evaluateExpr,
+  forEachTemplate,
   parseTemplate,
   renderTemplate,
   renderText,
@@ -42,6 +43,7 @@ describe('parseTemplate', () => {
     expect(() => parseTemplate('a ${x')).toThrow(TemplateSyntaxError);
     expect(() => parseTemplate('${}')).toThrow(/empty/);
     expect(validateTemplate('${ event[ }')).toMatch(/invalid JMESPath/);
+    expect(validateTemplate('n=${ event.payload.n > 2.5 }')).toMatch(/as in `2\.5`$/);
     expect(validateTemplate('${event.type}')).toBeNull();
   });
 });
@@ -126,6 +128,20 @@ describe('collectTemplateRefs', () => {
     const refs = collectTemplateRefs({ a: '${ event[ }', b: 'ok' });
     expect(refs.errors).toEqual([
       { template: '${ event[ }', message: expect.stringMatching(/JMESPath/) as string },
+    ]);
+  });
+});
+
+describe('forEachTemplate', () => {
+  it('visits every template string with its path, and nothing else', () => {
+    const seen: [string, readonly (string | number)[]][] = [];
+    forEachTemplate(
+      { cmd: ['echo', '${event.type}'], env: { A: 'x${run.id}' }, n: 3, s: 'plain', z: null },
+      (text, path) => seen.push([text, path]),
+    );
+    expect(seen).toEqual([
+      ['${event.type}', ['cmd', 1]],
+      ['x${run.id}', ['env', 'A']],
     ]);
   });
 });
