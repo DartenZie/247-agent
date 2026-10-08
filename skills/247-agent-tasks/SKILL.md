@@ -73,8 +73,8 @@ never invent a way for one task to reference another by name.
   backticks: `` payload.approved == `true` ``. `oa validate` (and the daemon's log, as
   `core.config_warning`) warns about a bare `true`/`false`/`null`, a double-quoted
   `"true"` or number, a quoted number in `<`/`>`, in filters, `when`s and inside every
-  `${…}`, and about an unquoted `${…}` operand in a `wait` `for.filter`; treat its
-  warnings as bugs.
+  `${…}`, and about a `wait` `for.filter` that is not JMESPath even with each `${…}`
+  standing for a value; treat its warnings as bugs.
 - `state_updates` and `emit` apply only after success, in one transaction with the
   lifecycle event. A rule that cannot be rendered fails the run without retry.
 

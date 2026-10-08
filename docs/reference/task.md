@@ -78,8 +78,8 @@ wildcard. Templates are `${ <JMESPath> }`; see [Templates](../tasks/templates.md
 - An event trigger has exactly one of `type` or `type_any`, every pattern is
   well-formed, and `filter` is valid JMESPath.
 - A task does not trigger on its own `task.<name>.succeeded` or `task.<name>.failed`.
-- Every `${…}` template compiles. `secrets` appears only inside `action`, and only as
-  `secrets.<name>`, never as a whole.
+- Every `${…}` template compiles. `secrets` appears only inside `action`, never in a
+  `wait`'s `for.filter`, and only as `secrets.<name>`, never as a whole.
 - Every `emit` type is concrete, `when` is valid JMESPath, and `each` is a single
   whole `${…}` template.
 - Every `state_updates` key follows the grammar.
@@ -126,16 +126,9 @@ every `${…}` template, wherever a task holds one. They flag a comparison that:
 - orders against a quoted number, as in `payload.amount > '100'`. JMESPath orders only
   numbers. Write `` payload.amount > `100` ``.
 
-A `wait`'s `for.filter` is rendered as text before it is read as JMESPath, so it gets
-two more warnings:
-
-- a template used directly as a comparison operand, as in
-  `payload.ok == ${event.payload.want}`. The rendered value lands unquoted: a string
-  or `true` becomes a field name, and a number breaks the filter. Write
-  `'${event.payload.want}'` for a string or `` `${event.payload.want}` `` for a number
-  or a boolean.
-- a filter that is not valid JMESPath, even with each template standing for a value.
-  The wait would never match.
+A `wait`'s `for.filter` gets one more warning. `oa validate` parses the filter with
+each template replaced by a value. If the filter is not valid JMESPath even then, the
+wait would never match.
 
 A comparison such as `payload.zip == '01234'` gets no warning: equality with a quoted
 string is right when the field holds a string. A bare number such as

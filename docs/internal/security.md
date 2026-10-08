@@ -43,6 +43,11 @@ Where a value goes, and nowhere else:
   per attempt; they enter the `secrets` template scope of `action` only. `emit` and
   `state_updates` render without that scope (`config/schema.ts`), `${secrets}` as a
   whole is refused, and the `env` scope omits the `env` backend's prefixed variables.
+  A `wait`'s `for.filter` refuses `secrets` too (`actions/wait.ts`), because the
+  rendered filter is stored on the wait record.
+- A value rendered into a `wait` filter lands there as data, never as JMESPath
+  (`expr/filter-template.ts`, [`actions.md`](actions.md)). Whoever controls a trigger
+  payload cannot resume another run's gate.
 - A provider's `api_key` and `headers` are resolved per model call inside the
   `ctx.llm` service and handed to the adapter; never to a runner.
 - A connector's `config` and `env` are rendered at spawn (`connectors/child-env.ts`,
