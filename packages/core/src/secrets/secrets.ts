@@ -154,6 +154,41 @@ export function createSecretsBackend(
   }
 }
 
+/** The variable the `systemd-credentials` backend reads secrets under. */
+const CREDENTIALS_DIRECTORY = 'CREDENTIALS_DIRECTORY';
+const DEFAULT_PREFIX = 'OA_SECRET_';
+
+/**
+ * The daemon's environment minus what the configured backend reads secrets through: the
+ * `env` backend's prefixed variables, or `CREDENTIALS_DIRECTORY` for `systemd-credentials`;
+ * the `file` backend reads nothing from the environment. It is the `env` template scope and
+ * the environment an unsandboxed `shell` step or `post` gate starts from, so a child sees
+ * exactly what a template sees (docs/internal/security.md). Without a configuration (the
+ * core embedded without a daemon) both the default prefix and `CREDENTIALS_DIRECTORY` go.
+ */
+export function scrubEnv(
+  env: NodeJS.ProcessEnv,
+  config?: SecretsConfigParsed,
+): Record<string, string> {
+  const prefix =
+    config === undefined ? DEFAULT_PREFIX : config.backend === 'env' ? config.prefix : undefined;
+  const credentials = config === undefined || config.backend === 'systemd-credentials';
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) {
+      continue;
+    }
+    if (prefix !== undefined && k.startsWith(prefix)) {
+      continue;
+    }
+    if (credentials && k === CREDENTIALS_DIRECTORY) {
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 /** A backend for tests and for tasks that use no secrets. */
 export function staticSecrets(values: Record<string, string>): SecretsBackend {
   return {

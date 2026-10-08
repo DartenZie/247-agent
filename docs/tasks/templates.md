@@ -30,8 +30,10 @@ cmd: ["bash", "-c", 'printf "hello (run %s)\n" "$1"', "--", "${run.id}"]
 | `item` | the current element of an `emit … each` fan-out | that rule |
 | `steps` | the results of earlier steps in a `sequence`: `steps[0]`, `null` when skipped | later steps |
 
-With the `env` secrets backend, variables carrying its prefix are removed from `env`,
-so a template cannot read a secret around the rule.
+With the `env` secrets backend, variables carrying its prefix are removed from `env`.
+With `systemd-credentials`, `CREDENTIALS_DIRECTORY` is removed. A template cannot read
+a secret around the rule, and an unsandboxed `shell` command starts from the same
+reduced set.
 
 ### How a template renders
 

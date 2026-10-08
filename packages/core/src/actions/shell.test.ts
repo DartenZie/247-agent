@@ -1,5 +1,5 @@
 import { execaSync } from 'execa';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { JsonValue } from '../store/types.js';
 import type { SandboxConfig } from './sandbox.js';
@@ -138,5 +138,46 @@ describe('runShell', () => {
     const controller = new AbortController();
     controller.abort(new Error('already'));
     await expect(run({ cmd: ['true'] }, ctx(controller.signal))).rejects.toThrow('already');
+  });
+});
+
+describe('runShell without a sandbox', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    delete process.env.OA_SECRET_X;
+    delete process.env.NOT_FOR_CHILDREN;
+    delete process.env.CREDENTIALS_DIRECTORY;
+    delete process.env.PLAIN;
+    Object.assign(process.env, saved);
+  });
+
+  it('starts the command from the context child environment plus env, not the daemon environment', async () => {
+    process.env.OA_SECRET_X = 'leaked';
+    process.env.NOT_FOR_CHILDREN = 'daemon';
+    const c = testContext({
+      signal: new AbortController().signal,
+      childEnv: { PATH: process.env.PATH ?? '/usr/bin:/bin', FROM_DAEMON: 'yes' },
+    });
+    await expect(
+      run(
+        {
+          cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$NOT_FOR_CHILDREN|$FROM_DAEMON|$FOO"'],
+          env: { FOO: 'bar' },
+        },
+        c,
+      ),
+    ).resolves.toBe('||yes|bar');
+  });
+
+  it('without a context child environment removes the secret variables from the daemon environment', async () => {
+    process.env.OA_SECRET_X = 'leaked';
+    process.env.CREDENTIALS_DIRECTORY = '/run/credentials/test';
+    process.env.PLAIN = 'kept';
+    await expect(
+      run({
+        cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$CREDENTIALS_DIRECTORY|$PLAIN|$FOO"'],
+        env: { FOO: 'bar' },
+      }),
+    ).resolves.toBe('||kept|bar');
   });
 });

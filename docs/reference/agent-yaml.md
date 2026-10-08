@@ -74,7 +74,7 @@ of the process.
 | Key | Meaning | Default |
 |---|---|---|
 | `secrets.backend` | `env`, `file` or `systemd-credentials`. | `env` |
-| `secrets.prefix` (`env` only) | A secret `ftp_pass` is read from the environment variable `<prefix>FTP_PASS` (the name upper-cased). Variables starting with the prefix are hidden from `${env.…}` templates. | `OA_SECRET_` |
+| `secrets.prefix` (`env` only) | A secret `ftp_pass` is read from the environment variable `<prefix>FTP_PASS` (the name upper-cased). Variables starting with the prefix are hidden from `${env.…}` templates and from `shell` commands. | `OA_SECRET_` |
 | `secrets.path` (`file` only) | A YAML or JSON map of name to value, relative to this file, re-read on every use. It must be mode `0600`: a file readable by the group or others fails every resolve. | required |
 | `secrets.dir` (`systemd-credentials` only) | A directory with one file per secret; one trailing newline is stripped. | `$CREDENTIALS_DIRECTORY`, which systemd sets from the unit's `LoadCredential=` lines |
 

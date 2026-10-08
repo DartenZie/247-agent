@@ -21,7 +21,7 @@ import { PricingError, resolvePricing, type PricingTable } from './llm/pricing.j
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
 import { Metrics } from './metrics.js';
-import { createSecretsBackend } from './secrets/secrets.js';
+import { createSecretsBackend, scrubEnv } from './secrets/secrets.js';
 
 export interface DaemonOptions {
   /** Path of `agent.yaml`. */
@@ -104,20 +104,6 @@ export class ConnectorConfigError extends Error {
     );
     this.name = 'ConnectorConfigError';
   }
-}
-
-/** The `env` template scope: the daemon's environment minus the secrets backend's variables. */
-export function templateEnv(
-  env: NodeJS.ProcessEnv,
-  secretPrefix: string | undefined,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (v !== undefined && (secretPrefix === undefined || !k.startsWith(secretPrefix))) {
-      out[k] = v;
-    }
-  }
-  return out;
 }
 
 /** agent.yaml keys the core cannot swap while running. */
@@ -223,7 +209,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     log,
     metrics,
     secrets,
-    env: templateEnv(env, config.secrets.backend === 'env' ? config.secrets.prefix : undefined),
+    env: scrubEnv(env, config.secrets),
     socketPath: config.socket,
     connectors: opts.connectors ?? manifests.connectors ?? [],
     ...(opts.agents === undefined ? {} : { agents: opts.agents }),

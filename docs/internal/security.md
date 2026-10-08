@@ -42,7 +42,16 @@ Where a value goes, and nowhere else:
 - A run resolves only `task.secretNames`, the names the action's templates reference,
   per attempt; they enter the `secrets` template scope of `action` only. `emit` and
   `state_updates` render without that scope (`config/schema.ts`), `${secrets}` as a
-  whole is refused, and the `env` scope omits the `env` backend's prefixed variables.
+  whole is refused, and the `env` scope omits what the backend reads through
+  (`scrubEnv()`: the `env` backend's prefixed variables, or `CREDENTIALS_DIRECTORY`
+  under `systemd-credentials`).
+- An unsandboxed `shell` step or `post` gate starts from that same scrubbed set
+  (`ctx.childEnv`) plus the action's `env`, never from the daemon's environment.
+  Otherwise a command that prints its environment, by design or in a build tool's
+  error output, would store every secret in the run result and the
+  `task.<name>.succeeded` payload. The scrub limits accidental exposure. It is not a
+  boundary: the command runs as the daemon's uid and can still read the daemon's
+  `/proc/<pid>/environ` or the credentials directory. Only the sandbox is a boundary.
 - A provider's `api_key` and `headers` are resolved per model call inside the
   `ctx.llm` service and handed to the adapter; never to a runner.
 - A connector's `config` and `env` are rendered at spawn (`connectors/child-env.ts`,
@@ -185,7 +194,8 @@ damage.
 
 - Nothing that runs as the daemon's uid executes untrusted content outside a sandbox.
 - A secret value reaches exactly the process or call that named it, once, and is never
-  written to the store, a log, an event, a transcript or an error message.
+  written to the store, a log, an event, a transcript or an error message. No child of
+  the daemon inherits the daemon's environment unfiltered.
 - The protected set stays masked in every sandbox; a new daemon file that holds state
   or a credential is added to `protectedPaths()`.
 - Only `acp` manifests take `sandbox`; `config` is refused on them; no `acp` connector

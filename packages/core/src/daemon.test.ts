@@ -580,3 +580,41 @@ describe('/v1/state', () => {
     expect((await api.getState('email', 'last_uid'))?.value).toBe(9);
   });
 });
+
+describe('secrets and child processes (GHSA-7pxm-h374-rwf3)', () => {
+  it('keeps the env backend secrets out of an unsandboxed shell step, its result and its event', async () => {
+    await daemon.stop();
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      'db: state.db\nsocket: core.sock\nsecrets: { backend: env }\n',
+    );
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      [
+        'tasks:',
+        '  - name: show_env',
+        '    trigger: { kind: manual }',
+        '    action: { kind: shell, cmd: [sh, -c, "env | sort"], env: { MINE: "${env.PLAIN}" } }',
+        '',
+      ].join('\n'),
+    );
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      PLAIN: 'visible',
+      OA_SECRET_DEMO_TOKEN: 'not-a-real-secret',
+    };
+    daemon = await startDaemon({ configFile: join(dir, 'agent.yaml'), log: log(), env });
+    api = new ApiClient({ socketPath: daemon.config.socket });
+    const { run } = await api.run('show_env');
+    const done = await settled(run.id);
+    expect(done.status).toBe('succeeded');
+    const out = done.result as string;
+    expect(out).toContain('PLAIN=visible');
+    expect(out).toContain('MINE=visible');
+    expect(out).not.toContain('OA_SECRET_DEMO_TOKEN');
+    expect(out).not.toContain('not-a-real-secret');
+    const events = await api.listEvents({ type: 'task.show_env.succeeded' });
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events[0]?.payload)).not.toContain('not-a-real-secret');
+  });
+});

@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
+import { scrubEnv } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { buildSandboxArgv, Sandbox } from './sandbox.js';
 import type { ActionContext } from './types.js';
@@ -15,7 +16,7 @@ export const ShellAction = z.strictObject({
   /** argv; no shell unless you spell it out (`["bash", "-c", "…"]`). */
   cmd: z.array(z.string().min(1)).min(1),
   cwd: z.string().min(1).optional(),
-  /** Added to the daemon's environment. */
+  /** Added to the child's environment (the daemon's minus the secrets backend's variables). */
   env: z.record(z.string(), z.string()).optional(),
   /** Written to stdin: strings verbatim, anything else as JSON. */
   stdin: z.unknown().optional(),
@@ -84,11 +85,15 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
     stdin === undefined ? undefined : typeof stdin === 'string' ? stdin : JSON.stringify(stdin);
   const sandbox = cfg.sandbox ?? ctx.sandbox;
   const sandboxed = sandbox !== undefined && sandbox.backend !== 'none';
+  // Never the daemon's own environment: with the `env` secrets backend that is every
+  // secret, whether or not this task names one (GHSA-7pxm-h374-rwf3). The child starts
+  // from the scrubbed set the `env` template scope is built from, plus the action's `env`.
+  const baseEnv = ctx.childEnv ?? scrubEnv(process.env);
 
   const startedAt = Date.now();
   const spawn = sandboxed
-    ? // bwrap gets the daemon's env (to be found on PATH) and clears it for the child;
-      // cwd, env and the command travel as bwrap arguments.
+    ? // bwrap itself is found through the scrubbed base and clears the environment for the
+      // command; cwd, env and the command travel as bwrap arguments.
       {
         argv: buildSandboxArgv({
           sandbox,
@@ -97,16 +102,18 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
           env: env ?? {},
           host: ctx.sandboxHost,
         }),
+        env: baseEnv,
       }
     : {
         argv: [file, ...args],
         ...(cwd === undefined ? {} : { cwd }),
-        ...(env === undefined ? {} : { env }),
+        env: { ...baseEnv, ...env },
       };
   const [spawnFile, ...spawnArgs] = spawn.argv as [string, ...string[]];
   const subprocess = execa(spawnFile, spawnArgs, {
     ...('cwd' in spawn ? { cwd: spawn.cwd } : {}),
-    ...('env' in spawn ? { env: spawn.env } : {}),
+    env: spawn.env,
+    extendEnv: false,
     ...(input === undefined ? {} : { input }),
     maxBuffer: MAX_BUFFER,
     reject: false,

@@ -29,6 +29,8 @@ never writes them to the database, a log line, an event or an agent transcript.
 Three rules follow from that:
 
 - A connector receives only the secrets its manifest names, once, when it starts.
+- A `shell` command receives only the secrets its `env` names. The daemon removes
+  the variables the backend reads from before it starts the command.
 - A model provider's key is used inside the daemon for that one call.
 - An agent never receives a deploy credential. The agent program's own model key is
   in its manifest, nowhere else. Publishing is a separate task, the only one that holds

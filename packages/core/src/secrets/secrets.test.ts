@@ -4,7 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createSecretsBackend, SecretError, SecretsConfig, staticSecrets } from './secrets.js';
+import {
+  createSecretsBackend,
+  scrubEnv,
+  SecretError,
+  SecretsConfig,
+  staticSecrets,
+} from './secrets.js';
 
 let dir: string;
 beforeEach(() => {
@@ -81,5 +87,46 @@ describe('secrets backends', () => {
   it('staticSecrets serves tests', () => {
     expect(staticSecrets({ a: '1' }).resolve(['a'])).toEqual({ a: '1' });
     expect(() => staticSecrets({}).resolve(['a'])).toThrow(SecretError);
+  });
+});
+
+describe('scrubEnv', () => {
+  const env: NodeJS.ProcessEnv = {
+    PATH: '/bin',
+    OA_SECRET_TOK: 't',
+    T_TOK: 'u',
+    CREDENTIALS_DIRECTORY: '/run/credentials/x',
+    UNSET: undefined,
+  };
+
+  it('removes what the env backend reads through: variables with its prefix', () => {
+    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'env' }))).toEqual({
+      PATH: '/bin',
+      T_TOK: 'u',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+    });
+    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'env', prefix: 'T_' }))).toEqual({
+      PATH: '/bin',
+      OA_SECRET_TOK: 't',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+    });
+  });
+
+  it('removes CREDENTIALS_DIRECTORY for systemd-credentials and nothing for file', () => {
+    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'systemd-credentials' }))).toEqual({
+      PATH: '/bin',
+      OA_SECRET_TOK: 't',
+      T_TOK: 'u',
+    });
+    expect(scrubEnv(env, SecretsConfig.parse({ backend: 'file', path: 's.yaml' }))).toEqual({
+      PATH: '/bin',
+      OA_SECRET_TOK: 't',
+      T_TOK: 'u',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+    });
+  });
+
+  it('without a configuration removes both the default prefix and CREDENTIALS_DIRECTORY', () => {
+    expect(scrubEnv(env)).toEqual({ PATH: '/bin', T_TOK: 'u' });
   });
 });

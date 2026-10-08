@@ -92,6 +92,12 @@ export interface ActionContext {
   renderText(text: string): string;
   /** Connector ops; absent when the core runs without a connector supervisor. */
   readonly connectors?: ConnectorClients | undefined;
+  /**
+   * What an unsandboxed child process (a `shell` step, a `post` gate) starts from: the
+   * daemon's environment minus what the secrets backend reads through, the same set as the
+   * `env` template scope. Absent, the runner scrubs `process.env` itself (`scrubEnv`).
+   */
+  readonly childEnv?: Readonly<Record<string, string>> | undefined;
   /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */
   readonly sandbox?: SandboxConfig | undefined;
   /** What every sandbox hides (config, db) and shows (the install); absent = nothing. */

@@ -63,11 +63,13 @@ action:
 ## Working directory and environment
 
 `cwd` is where the command runs; `env` adds variables. Both are templated. Without a
-sandbox the command inherits the daemon's environment plus `env`, and `PATH` starts
-with the install's `bin/` and its own Node, so the bundled tools, `node`, `npm` and
-`npx` resolve wherever the daemon is installed.
+sandbox the command gets the daemon's environment plus `env`, minus the variables the
+secrets backend reads: `OA_SECRET_*` with the `env` backend, `CREDENTIALS_DIRECTORY`
+with `systemd-credentials`. `PATH` starts with the install's `bin/` and its own Node,
+so the bundled tools, `node`, `npm` and `npx` resolve wherever the daemon is installed.
 
-A secret goes into `env`, where it stays out of process listings:
+A command sees only the secrets its task names. A secret goes into `env`, where it
+stays out of process listings. Reading `$OA_SECRET_X` directly does not work:
 
 ```yaml
 action:

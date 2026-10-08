@@ -396,7 +396,6 @@ export {
 } from './api/client.js';
 export {
   startDaemon,
-  templateEnv,
   AgentConfigError,
   ConnectorConfigError,
   type Daemon,

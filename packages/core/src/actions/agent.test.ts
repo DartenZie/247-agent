@@ -897,6 +897,33 @@ describe('runAgent', () => {
     expect(existsSync(join(workDir, 'run_test'))).toBe(false);
     expect(execaSync('git', ['branch', '--list', 'agent/run_test'], { cwd: repo }).stdout).toBe('');
   });
+  it('runs post gates without the secret variables of the daemon environment', async () => {
+    const saved = process.env.OA_SECRET_X;
+    process.env.OA_SECRET_X = 'leaked';
+    try {
+      const agents = fakeAgents(async function* (env) {
+        writeResult(env.cwd, { status: 'done', summary: 'nothing to do' });
+        return stop();
+      }, workDir);
+      const cfg = {
+        ...action,
+        post: [
+          {
+            shell: ['sh', '-c', 'test -z "$OA_SECRET_X" && test "$FOO" = bar'],
+            env: { FOO: 'bar' },
+          },
+        ],
+      };
+      await expect(runAgent(cfg, ctx(agents))).resolves.toMatchObject({ status: 'done' });
+      expect(lines.filter((l) => l.msg === 'agent.post_gate')).toMatchObject([{ skipped: false }]);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.OA_SECRET_X;
+      } else {
+        process.env.OA_SECRET_X = saved;
+      }
+    }
+  });
 });
 
 describe('readAgentResult', () => {
