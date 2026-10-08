@@ -416,7 +416,9 @@ describe('sync loop', () => {
     mx.syncs.push(batch('s1', [msg('old')]));
     await bot.pollOnce();
     expect(mx.of('GET', '/sync')[0]?.query.since).toBeUndefined();
-    expect(core.ofType('chat.message')).toHaveLength(1);
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'old',
+    ]);
   });
 
   it('retries a failing batch without handling an event twice, then gives up on it', async () => {

@@ -180,9 +180,36 @@ describe('ask and reply', () => {
   it('rejects a forged callback whose nonce does not match', async () => {
     const { tg, core, bot } = setup();
     const asked = await bot.ask({ text: 'Deploy?', correlation_id: 'cor_4' });
-    await bot.handleUpdate(callbackUpdate('oa:00000000:0', { message_id: asked.message_id }));
-    expect(core.events).toHaveLength(0);
-    expect(tg.of('answerCallbackQuery')).toHaveLength(1);
+    await bot.handleUpdate(
+      callbackUpdate('oa:00000000:0', { message_id: asked.message_id, query_id: 'q1' }),
+    );
+    expect(core.events).toEqual([]);
+    expect(tg.of('answerCallbackQuery')[0]?.params).toEqual({
+      callback_query_id: 'q1',
+      text: 'This question has already been answered.',
+    });
+
+    // The genuine button on the same question still records the answer.
+    await bot.handleUpdate(
+      callbackUpdate(buttonData(tg), { message_id: asked.message_id, query_id: 'q2' }),
+    );
+    expect(core.events).toEqual([
+      {
+        type: 'chat.reply',
+        correlation_id: 'cor_4',
+        dedup_key: 'chat:reply:42:100',
+        payload: {
+          correlation_id: 'cor_4',
+          approved: true,
+          choice: 'Approve',
+          text: 'Approve',
+          from: { id: 7, name: 'Miro', username: 'miro' },
+          message_id: 100,
+          chat_id: '42',
+          answer_message_id: null,
+        },
+      },
+    ]);
   });
 
   it('keeps only the newest pending_limit questions', async () => {
@@ -274,7 +301,16 @@ describe('polling', () => {
     tg.updates.push([messageUpdate('old', { message_id: 1 })]);
     await bot.pollOnce();
     expect(tg.of('getUpdates')[0]?.params).not.toHaveProperty('offset');
-    expect(core.events).toHaveLength(1);
+    expect(core.events.map((e) => e.payload)).toEqual([
+      {
+        text: 'old',
+        from: { id: 7, name: 'Miro P', username: 'miro' },
+        message_id: 1,
+        chat_id: '42',
+        date: '2023-11-14T22:13:20.000Z',
+        reply_to: null,
+      },
+    ]);
   });
 
   it('does not advance past an update whose handling failed, then gives up on it', async () => {

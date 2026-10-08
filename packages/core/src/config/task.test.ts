@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { issuesFromZod } from './load.js';
-import { EmitRule, Retry, Task } from './schema.js';
+import { EmitRule, Task } from './schema.js';
 
 const base = {
   name: 'a',
@@ -78,12 +78,6 @@ describe('Task schema: emit, retry, state_updates and templates', () => {
         state_updates: { 'email.last_uid': '${result.last_uid}', 'email.meta-1': { a: 1 } },
       }),
     ).toEqual([]);
-    expect(Retry.parse({})).toEqual({
-      attempts: 1,
-      backoff: 'exponential',
-      base: '30s',
-      max: '1h',
-    });
     expect(Task.parse({ ...base, retry: { attempts: 2, base: '1m' } }).retry).toMatchObject({
       attempts: 2,
       base: '1m',

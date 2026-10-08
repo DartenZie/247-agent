@@ -334,7 +334,10 @@ describe('openNetProxy', () => {
     await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r));
     try {
       const silentPort = String((silent.address() as AddressInfo).port);
-      await open([`127.0.0.1:${silentPort}`]);
+      await open([`127.0.0.1:${silentPort}`, `api.test:${String(port)}`]);
+      // An upstream that answers is counted, so the proxy is up and recording.
+      expect((await send('GET', `http://api.test:${String(port)}/x`)).status).toBe(200);
+      expect(results).toEqual(['allowed']);
       await new Promise<void>((done) => {
         const req = request({
           socketPath: socket,
@@ -346,7 +349,7 @@ describe('openNetProxy', () => {
         setTimeout(() => req.destroy(), 100);
       });
       await new Promise((r) => setTimeout(r, 100));
-      expect(results).toEqual([]);
+      expect(results).toEqual(['allowed']);
       expect(logged('sandbox.net_failed')).toEqual([]);
     } finally {
       silent.closeAllConnections();

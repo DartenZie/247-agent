@@ -29,8 +29,11 @@ describe('validateTypePattern', () => {
   const allow = { allowWildcard: true };
   const deny = { allowWildcard: false };
 
-  it('accepts valid patterns', () => {
+  it('accepts valid patterns, wildcards only where allowed', () => {
     expect(validateTypePattern('task.*.failed', allow)).toBeNull();
+    expect(validateTypePattern('task.*.failed', deny)).toBe(
+      'wildcards are not allowed in emitted event types',
+    );
     expect(validateTypePattern('budget.exceeded', deny)).toBeNull();
     expect(validateTypePattern('a-b_c.d1', deny)).toBeNull();
   });

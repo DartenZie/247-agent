@@ -413,14 +413,28 @@ describe('anthropic adapter: message batches', () => {
   it('sends no output_config on Haiku without a schema and refuses an unsafe custom_id', async () => {
     const api = batchApi('in_progress');
     const adapter = createAnthropicProvider({ fetch: api.fetch })(provider);
-    await adapter.submitBatch?.({ ...request({ effort: 'high' }), customId: 'run_2' });
-    const params = (api.calls[0]?.body?.requests as { params: Record<string, unknown> }[])[0]
-      ?.params;
-    expect(params).not.toHaveProperty('output_config');
-    expect(params).not.toHaveProperty('thinking');
+    if (adapter.submitBatch === undefined) {
+      throw new Error('no submitBatch');
+    }
     await expect(
-      adapter.submitBatch?.({ ...request(), customId: "x' || true" }),
+      adapter.submitBatch({ ...request({ effort: 'high' }), customId: 'run_2' }),
+    ).resolves.toEqual({ batchId: 'msgbatch_01' });
+    expect(api.calls[0]?.body).toEqual({
+      requests: [
+        {
+          custom_id: 'run_2',
+          params: {
+            model: 'claude-haiku-4-5',
+            max_tokens: 256,
+            messages: [{ role: 'user', content: 'Subject: Spring event' }],
+          },
+        },
+      ],
+    });
+    await expect(
+      adapter.submitBatch({ ...request(), customId: "x' || true" }),
     ).rejects.toBeInstanceOf(NonRetryableError);
+    expect(api.calls).toHaveLength(1);
   });
 
   it('reports a batch in progress without fetching results', async () => {

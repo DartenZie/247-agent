@@ -195,7 +195,10 @@ describe('Dispatcher', () => {
       });
       dispatcher.start(10);
       vi.advanceTimersByTime(25);
-      expect(env.lines.filter((l) => l.msg === 'dispatch.failed').length).toBeGreaterThan(0);
+      expect(env.lines.filter((l) => l.msg === 'dispatch.failed').map((l) => l.error)).toEqual([
+        'boom',
+        'boom',
+      ]);
       dispatcher.stop();
       expect(vi.getTimerCount()).toBe(0);
     } finally {

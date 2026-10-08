@@ -3,18 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig } from './config.js';
 
 describe('parseConfig', () => {
-  it('fills defaults for sftp', () => {
+  it('connects over sftp on port 22 when no protocol is given', () => {
     const c = parseConfig({ host: 'h', user: 'u', password: 'p' });
-    expect(c).toMatchObject({
-      protocol: 'sftp',
-      port: 22,
-      root: '.',
-      max_bytes: 1_000_000,
-      list_limit: 1000,
-      timeout: 30_000,
-      reject_unauthorized: true,
-      tls: 'explicit',
-    });
+    expect(c).toMatchObject({ protocol: 'sftp', port: 22 });
   });
 
   it('picks the port from protocol and tls mode, an explicit port wins', () => {

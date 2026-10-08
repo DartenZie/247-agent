@@ -51,19 +51,6 @@ const shell = Task.parse({
 });
 
 describe('checkLlmTasks', () => {
-  it('passes a fully resolved task, an OpenRouter model without a price, and non-llm tasks', () => {
-    expect(
-      checkLlmTasks(
-        [
-          shell,
-          task({ system_file: 'prompts/p.md' }),
-          task({ provider: 'router', model: 'vendor/x' }),
-        ],
-        ctx(),
-      ),
-    ).toEqual([]);
-  });
-
   it('takes batch: true on an anthropic provider only', () => {
     expect(checkLlmTasks([task({ batch: true })], ctx())).toEqual([]);
     expect(
@@ -78,6 +65,8 @@ describe('checkLlmTasks', () => {
   });
 
   it('reports missing defaults, unknown providers, unpriced models and bad system files with task paths', () => {
+    // tasks[0] (not llm), tasks[6] (fully resolved) and tasks[7] (an OpenRouter model
+    // without a price) contribute no path.
     const issues = checkLlmTasks(
       [
         shell,
@@ -86,6 +75,8 @@ describe('checkLlmTasks', () => {
         task({ model: 'claude-9' }),
         task({ system_file: 'prompts/missing.md' }),
         task({ system_file: '../outside.md' }),
+        task({ provider: 'anthropic', model: 'claude-haiku-4-5', system_file: 'prompts/p.md' }),
+        task({ provider: 'router', model: 'vendor/x' }),
       ],
       ctx({ defaults: { max_tokens: 1024 } }),
     );
@@ -139,39 +130,37 @@ describe('checkLlmTasks: decide', () => {
       },
     });
 
-  it('passes an openrouter provider, from the action or defaults.decide, with any model', () => {
-    expect(
-      checkLlmTasks(
-        [
-          decide({ provider: 'router' }),
-          decide({ provider: 'router', model: '~typesafe/jev-latest' }),
-        ],
-        ctx(),
-      ),
-    ).toEqual([]);
-    expect(
-      checkLlmTasks(
-        [decide({})],
-        ctx({ decideDefaults: { provider: 'router', model: 'typesafe/jev-1.13' } }),
-      ),
-    ).toEqual([]);
-  });
-
-  it('reports a missing or unknown provider and a provider of the wrong type', () => {
-    expect(checkLlmTasks([decide({})], ctx())).toEqual([
-      {
-        path: 'tasks[0].action.provider',
-        message: 'no provider: set action.provider or defaults.decide.provider in agent.yaml',
-      },
-    ]);
-    expect(checkLlmTasks([decide({ provider: 'nope' })], ctx())[0]?.message).toMatch(
-      /unknown provider "nope"/,
+  it('reports a missing or unknown provider and a provider of the wrong type, not an openrouter one', () => {
+    // tasks[1] and tasks[2] name an openrouter provider, with any model: no path.
+    const issues = checkLlmTasks(
+      [
+        decide({}),
+        decide({ provider: 'router' }),
+        decide({ provider: 'router', model: '~typesafe/jev-latest' }),
+        decide({ provider: 'nope' }),
+        decide({ provider: 'anthropic' }),
+      ],
+      ctx(),
     );
-    const wrong = checkLlmTasks([decide({ provider: 'anthropic' })], ctx());
-    expect(wrong.map((i) => i.path)).toEqual(['tasks[0].action.provider']);
-    expect(wrong[0]?.message).toMatch(
+    expect(issues.map((i) => i.path)).toEqual([
+      'tasks[0].action.provider',
+      'tasks[3].action.provider',
+      'tasks[4].action.provider',
+    ]);
+    expect(issues[0]?.message).toBe(
+      'no provider: set action.provider or defaults.decide.provider in agent.yaml',
+    );
+    expect(issues[1]?.message).toMatch(/unknown provider "nope"/);
+    expect(issues[2]?.message).toMatch(
       /decide needs an openrouter provider.*"anthropic" is type anthropic/,
     );
+    // defaults.decide supplies the openrouter provider for tasks[0] only.
+    expect(
+      checkLlmTasks(
+        [decide({}), decide({ provider: 'anthropic' })],
+        ctx({ decideDefaults: { provider: 'router', model: 'typesafe/jev-1.13' } }),
+      ).map((i) => i.path),
+    ).toEqual(['tasks[1].action.provider']);
   });
 });
 
@@ -213,43 +202,48 @@ describe('checkAgentTools', () => {
       },
     });
 
-  it('accepts stdio connectors and ops their manifests allow', () => {
-    expect(
-      checkAgentTools([agent(['github', { connector: 'email', ops: ['send'] }]), shell], manifests),
-    ).toEqual([]);
-    expect(
-      checkAgentTools([agent([{ connector: 'github', ops: ['anything'] }])], manifests),
-    ).toEqual([]);
-  });
-
   it('refuses unknown connectors, ones that serve no ops and ops outside the manifest', () => {
+    // A stdio connector and ops its manifest lists (tasks[0]), a non-agent task (tasks[1])
+    // and any op of a manifest without an ops list (tasks[2].action.mcp_servers[1])
+    // contribute no path.
     expect(
       checkAgentTools(
-        [agent(['nope', 'claude', 'hook', 'prs', { connector: 'email', ops: ['send', 'delete'] }])],
+        [
+          agent(['github', { connector: 'email', ops: ['send'] }]),
+          shell,
+          agent([
+            'nope',
+            { connector: 'github', ops: ['anything'] },
+            'claude',
+            'hook',
+            'prs',
+            { connector: 'email', ops: ['send', 'delete'] },
+          ]),
+        ],
         manifests,
       ),
     ).toEqual([
-      { path: 'tasks[0].action.mcp_servers[0]', message: 'unknown connector "nope"' },
+      { path: 'tasks[2].action.mcp_servers[0]', message: 'unknown connector "nope"' },
       {
-        path: 'tasks[0].action.mcp_servers[1]',
+        path: 'tasks[2].action.mcp_servers[2]',
         message: expect.stringMatching(
           /^connector "claude" serves no ops \(transport acp\)/,
         ) as string,
       },
       {
-        path: 'tasks[0].action.mcp_servers[2]',
+        path: 'tasks[2].action.mcp_servers[3]',
         message: expect.stringMatching(
           /^connector "hook" serves no ops \(transport none\)/,
         ) as string,
       },
       {
-        path: 'tasks[0].action.mcp_servers[3]',
+        path: 'tasks[2].action.mcp_servers[4]',
         message: expect.stringMatching(
           /^connector "prs" serves no ops \(built-in poller\)/,
         ) as string,
       },
       {
-        path: 'tasks[0].action.mcp_servers[4].ops',
+        path: 'tasks[2].action.mcp_servers[5].ops',
         message:
           'not in the ops of connector "email" (/etc/247-agent/connectors.d/email.yaml): delete',
       },
@@ -294,28 +288,35 @@ describe('checkSandboxes', () => {
     ...over,
   });
 
-  it('passes a repo under a bind, a temp workspace, an unsandboxed connector and no sandbox at all', () => {
-    const empty = { tasks: [], manifests: [], agent: [] };
-    expect(checkSandboxes([agentTask(), shell], sctx())).toEqual(empty);
-    expect(
-      checkSandboxes([agentTask({ workspace: { kind: 'temp' } })], sctx({ manifests: [] })),
-    ).toEqual(empty);
-    expect(
-      checkSandboxes([agentTask({ connector: 'codex' })], sctx({ manifests: [manifest({})] })),
-    ).toEqual(empty);
-    expect(checkSandboxes([agentTask()], sctx({ manifests: [manifest({})] }))).toEqual(empty);
-  });
-
   it('reports a repo outside every bind, on the action or the default connector', () => {
     const ctx = sctx({ manifests: [manifest({ sandbox: 'bwrap' })] });
-    const r = checkSandboxes([agentTask(), agentTask({ connector: 'claude' })], ctx);
-    expect(r.tasks.map((i) => i.path)).toEqual([
-      'tasks[0].action.workspace.repo',
-      'tasks[1].action.workspace.repo',
-    ]);
+    // A temp workspace (tasks[1]), a connector without a manifest here (tasks[3]) and a
+    // non-agent task (tasks[4]) contribute no path.
+    const r = checkSandboxes(
+      [
+        agentTask(),
+        agentTask({ workspace: { kind: 'temp' } }),
+        agentTask({ connector: 'claude' }),
+        agentTask({ connector: 'codex' }),
+        shell,
+      ],
+      ctx,
+    );
+    expect(r).toEqual({
+      tasks: [
+        expect.objectContaining({ path: 'tasks[0].action.workspace.repo' }),
+        expect.objectContaining({ path: 'tasks[2].action.workspace.repo' }),
+      ],
+      manifests: [],
+      agent: [],
+    });
     expect(r.tasks[0]?.message).toMatch(
       /not visible to the sandboxed agent program "claude": add it to sandbox.ro_binds in \/etc\/247-agent\/connectors.d\/claude.yaml/,
     );
+    // The same repo is visible under a bind, or to a connector with no sandbox at all.
+    const empty = { tasks: [], manifests: [], agent: [] };
+    expect(checkSandboxes([agentTask()], sctx())).toEqual(empty);
+    expect(checkSandboxes([agentTask()], sctx({ manifests: [manifest({})] }))).toEqual(empty);
     // A repo under work_dir is visible without a bind.
     expect(
       checkSandboxes(

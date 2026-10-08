@@ -234,6 +234,12 @@ describe('a unit without ops', () => {
   it('exits non-zero when the process dies, so systemd restarts the unit', async () => {
     // No core socket: fake-plain's first emit fails and the process exits.
     const h = await host('plain');
-    await expect(h.done).resolves.not.toBe(0);
+    await expect(h.done).resolves.toBe(1);
+    expect(
+      hostLogs
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .filter((l) => l.msg === 'connector_host.exited')
+        .map(({ level, code }) => ({ level, code })),
+    ).toEqual([{ level: 'warn', code: 1 }]);
   });
 });

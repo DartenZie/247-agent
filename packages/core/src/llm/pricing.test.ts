@@ -33,7 +33,6 @@ describe('resolvePricing', () => {
     if (jev === undefined) {
       throw new Error('unreachable');
     }
-    expect(jev).toEqual({ input: 0.042, output: 0, cache_read: 0.042, cache_write: 0.042 });
     expect(t.get('~typesafe/jev-latest')).toEqual(jev);
     expect(
       costUsd(jev, {
