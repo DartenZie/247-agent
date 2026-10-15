@@ -41,9 +41,13 @@ secrets, env, run, item, steps}`:
   fan-out; `steps` inside a `sequence` (`withScope()` adds it); `run` is `{id, task,
   attempt, event_id, correlation_id, workspace}`, `workspace` being
   `<work_dir>/<run_id>` or `null` without an agent supervisor.
-- `env` is the daemon's environment minus the variables that start with the `env`
-  secrets backend's prefix (`daemon.ts`, `templateEnv()`); the `file` and
-  `systemd-credentials` backends remove nothing.
+- `env` is the daemon's environment minus what the secrets backend reads through
+  (`secrets/secrets.ts`, `SecretsBackend.scrub()`). For the `env` backend that is every
+  variable with its prefix. For `systemd-credentials` without a `dir` it is
+  `CREDENTIALS_DIRECTORY`. The `file` backend, and `systemd-credentials` with a `dir`,
+  remove nothing. The same set is `ctx.childEnv`, the environment an unsandboxed `shell`
+  step, a `post` gate and the workspace git start from; the executor builds it from the
+  backend when the core is given none.
 - A string that is exactly one `${…}` renders to the expression's raw value
   (`renderValue`); text around or between templates makes a string, with non-strings
   JSON-encoded and `null` rendered empty (`stringifyValue`).
@@ -73,8 +77,11 @@ and `cmd` render to strings; `stdin` is sent verbatim when a string, else as JSO
 failure for a non-zero exit). In the first two modes a non-zero exit is `ShellError`
 with the last 1024 characters of stderr. A spawn failure or a signal fails in every
 mode. Each of stdout and stderr is kept up to 8 MiB. An abort sends SIGTERM, then
-SIGKILL after 5 s. Unsandboxed, the action's `env` is added to the daemon's
-environment; `user:` is not supported.
+SIGKILL after 5 s. Unsandboxed, the child starts from `ctx.childEnv` plus the action's
+`env`; the context always carries one, there is no fallback to `process.env`.
+The child never gets the daemon's own environment, which with the `env` secrets
+backend holds every secret. bwrap is spawned from the same scrubbed set. `user:` is
+not supported.
 
 `sandbox` is the action's own, else `ctx.sandbox` (`defaults.sandbox`); `none` opts
 out. The `post` gates of an `agent` action run through this runner with no `sandbox` of

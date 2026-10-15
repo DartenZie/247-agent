@@ -1,7 +1,9 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -13,7 +15,11 @@ import { join } from 'node:path';
 import { execaSync } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { scrubEnv } from '../secrets/secrets.js';
 import { createWorkspace, listWorkspaces, removeWorkspaceDir } from './agent-workspace.js';
+
+/** What the executor would hand a runner here: the test process environment, scrubbed. */
+const hostEnv = scrubEnv(process.env);
 
 /** A base checkout with one commit on `main` and an identity in its config, for worktrees. */
 function seedRepo(repo: string): string {
@@ -52,7 +58,7 @@ describe('createWorkspace', () => {
     mkdirSync(real);
     const link = join(root, 'link');
     symlinkSync(real, link);
-    const ws = await createWorkspace({ kind: 'temp' }, link, 'run_01TEST');
+    const ws = await createWorkspace({ kind: 'temp' }, link, 'run_01TEST', hostEnv);
     expect(ws.path).toBe(join(realpathSync(real), 'run_01TEST'));
     expect(existsSync(ws.path)).toBe(true);
     await ws.remove();
@@ -64,7 +70,7 @@ describe('createWorkspace', () => {
     const hookRan = join(root, 'hook-ran');
     plantHook(join(repo, '.git', 'hooks', 'reference-transaction'), hookRan);
     const cfg = { kind: 'git-worktree' as const, repo, branch: 'main' };
-    const ws = await createWorkspace(cfg, join(root, 'work'), 'run_01TEST');
+    const ws = await createWorkspace(cfg, join(root, 'work'), 'run_01TEST', hostEnv);
     expect(git(repo, 'branch', '--list', 'agent/run_01TEST')).toContain('agent/run_01TEST');
     expect(existsSync(hookRan)).toBe(false);
     await ws.remove();
@@ -83,6 +89,7 @@ describe('removeWorkspaceDir', () => {
       { kind: 'git-worktree', repo, branch: 'main' },
       workDir,
       'run_01TEST',
+      hostEnv,
     );
     // The agent builds a git directory of its own that outlives the workspace, gives it the
     // branch the sweep will delete and a hook on reference updates, and repoints `.git` at it.
@@ -110,9 +117,46 @@ describe('removeWorkspaceDir', () => {
     const entries = listWorkspaces(workDir);
     expect(entries.map((e) => e.runId)).toEqual(['run_01TEST']);
     for (const entry of entries) {
-      await removeWorkspaceDir(entry);
+      await removeWorkspaceDir(entry, hostEnv);
     }
     expect(existsSync(ws.path)).toBe(false);
     expect(existsSync(hookRan)).toBe(false);
+  });
+});
+
+describe('the environment of the git the daemon runs', () => {
+  it('is the one given, not the daemon environment, for the retention sweep and a worktree remove', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'oa-ws-env-'));
+    try {
+      // A fake git on PATH that records its environment: the real one is not needed to
+      // see what it was started with.
+      const bin = join(base, 'bin');
+      mkdirSync(bin);
+      const seen = join(base, 'seen');
+      writeFileSync(join(bin, 'git'), `#!/bin/sh\nenv >> "${seen}"\nexit 0\n`);
+      chmodSync(join(bin, 'git'), 0o755);
+      const ws = join(base, 'work', 'run_X1');
+      mkdirSync(ws, { recursive: true });
+      writeFileSync(
+        join(ws, '.git'),
+        `gitdir: ${join(base, 'repo', '.git', 'worktrees', 'run_X1')}\n`,
+      );
+      process.env.OA_SECRET_X = 'leaked';
+      try {
+        const [entry] = listWorkspaces(join(base, 'work'));
+        if (entry === undefined) {
+          throw new Error('no entry');
+        }
+        await removeWorkspaceDir(entry, { PATH: `${bin}:/usr/bin:/bin`, MARK: 'given' });
+      } finally {
+        delete process.env.OA_SECRET_X;
+      }
+      const recorded = readFileSync(seen, 'utf8');
+      expect(recorded).toContain('MARK=given');
+      expect(recorded).not.toContain('OA_SECRET_X');
+      expect(existsSync(ws)).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

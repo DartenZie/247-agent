@@ -106,20 +106,6 @@ export class ConnectorConfigError extends Error {
   }
 }
 
-/** The `env` template scope: the daemon's environment minus the secrets backend's variables. */
-export function templateEnv(
-  env: NodeJS.ProcessEnv,
-  secretPrefix: string | undefined,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (v !== undefined && (secretPrefix === undefined || !k.startsWith(secretPrefix))) {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
 /** agent.yaml keys the core cannot swap while running. */
 const FIXED_KEYS = ['db', 'socket', 'secrets'] as const;
 
@@ -205,6 +191,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const startedAt = clock.now();
   const env = opts.env ?? process.env;
   const secrets = createSecretsBackend(config.secrets, dirname(config.file), env);
+  // Templates and every unsandboxed child see this, never the daemon's own environment.
+  const scrubbed = secrets.scrub(env);
   const manifests = loadConnectors(config.connectorPaths, config.connectors);
   if (!manifests.ok) {
     throw new ConnectorConfigError(manifests);
@@ -223,7 +211,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     log,
     metrics,
     secrets,
-    env: templateEnv(env, config.secrets.backend === 'env' ? config.secrets.prefix : undefined),
+    env: scrubbed,
+    childEnv: scrubbed,
     socketPath: config.socket,
     connectors: opts.connectors ?? manifests.connectors ?? [],
     ...(opts.agents === undefined ? {} : { agents: opts.agents }),

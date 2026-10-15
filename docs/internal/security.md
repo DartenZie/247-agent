@@ -33,7 +33,7 @@ the sandbox lives inside the unit's mount namespace.
 
 | Backend | Reads | Reload |
 |---|---|---|
-| `env` | `<prefix><NAME upper-cased>`, default prefix `OA_SECRET_` | daemon restart |
+| `env` | `<prefix><NAME upper-cased>`, default prefix `OA_SECRET_`; a prefix is letters, digits and `_` ending in `_`, so the scrub below can never take PATH or HOME | daemon restart |
 | `file` | a YAML or JSON map at `path` (relative to `agent.yaml`), re-read on every resolve, refused when any group or other mode bit is set ("mode must be 0600"); not read when a run needs no secrets | every resolve |
 | `systemd-credentials` | `$CREDENTIALS_DIRECTORY/<name>` from the unit's `LoadCredential=` lines, one trailing newline stripped | service restart |
 
@@ -42,12 +42,23 @@ Where a value goes, and nowhere else:
 - A run resolves only `task.secretNames`, the names the action's templates reference,
   per attempt; they enter the `secrets` template scope of `action` only. `emit` and
   `state_updates` render without that scope (`config/schema.ts`), `${secrets}` as a
-  whole is refused, and the `env` scope omits the `env` backend's prefixed variables.
+  whole is refused, and the `env` scope omits what the backend reads through
+  (`SecretsBackend.scrub()`: the `env` backend's prefixed variables, or
+  `CREDENTIALS_DIRECTORY` under a `systemd-credentials` backend without a `dir`).
   A `wait`'s `for.filter` refuses `secrets` too (`actions/wait.ts`), because the
   rendered filter is stored on the wait record.
 - A value rendered into a `wait` filter lands there as data, never as JMESPath
   (`expr/filter-template.ts`, [`actions.md`](actions.md)). Whoever controls a trigger
   payload cannot resume another run's gate.
+- An unsandboxed `shell` step or `post` gate starts from the scrubbed set the `env`
+  scope gets (`ctx.childEnv`) plus the action's `env`, never from the daemon's
+  environment. The git the daemon runs to create, remove or sweep a workspace starts
+  from it too.
+  Otherwise a command that prints its environment, by design or in a build tool's
+  error output, would store every secret in the run result and the
+  `task.<name>.succeeded` payload. The scrub limits accidental exposure. It is not a
+  boundary: the command runs as the daemon's uid and can still read the daemon's
+  `/proc/<pid>/environ` or the credentials directory. Only the sandbox is a boundary.
 - A provider's `api_key` and `headers` are resolved per model call inside the
   `ctx.llm` service and handed to the adapter; never to a runner.
 - A connector's `config` and `env` are rendered at spawn (`connectors/child-env.ts`,
@@ -190,7 +201,8 @@ damage.
 
 - Nothing that runs as the daemon's uid executes untrusted content outside a sandbox.
 - A secret value reaches exactly the process or call that named it, once, and is never
-  written to the store, a log, an event, a transcript or an error message.
+  written to the store, a log, an event, a transcript or an error message. No child of
+  the daemon inherits the daemon's environment unfiltered.
 - The protected set stays masked in every sandbox; a new daemon file that holds state
   or a credential is added to `protectedPaths()`.
 - Only `acp` manifests take `sandbox`; `config` is refused on them; no `acp` connector

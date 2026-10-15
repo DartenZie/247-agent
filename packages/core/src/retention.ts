@@ -21,6 +21,8 @@ export interface RetentionOptions {
   policy: RetentionPolicy;
   /** `<work_dir>` of agent runs; without it no workspace is swept. */
   workDir?: string | undefined;
+  /** The environment for the git that detaches a swept worktree (`ctx.childEnv`). */
+  env: Readonly<Record<string, string>>;
   metrics?: Metrics | undefined;
 }
 
@@ -43,6 +45,7 @@ export class RetentionJob {
   private readonly metrics: Metrics;
   private policy: RetentionPolicy;
   private workDir: string | undefined;
+  private readonly env: Readonly<Record<string, string>>;
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<RetentionReport | undefined> | undefined;
   private stopped = true;
@@ -54,6 +57,7 @@ export class RetentionJob {
     this.metrics = opts.metrics ?? new Metrics();
     this.policy = opts.policy;
     this.workDir = opts.workDir;
+    this.env = opts.env;
   }
 
   /** Arms the timer and runs a first pass in the background. */
@@ -155,7 +159,7 @@ export class RetentionJob {
       if (!this.stale(entry, cutoff)) {
         continue;
       }
-      await removeWorkspaceDir(entry);
+      await removeWorkspaceDir(entry, this.env);
       removed++;
       this.log.info('retention.workspace_removed', { run_id: entry.runId, path: entry.path });
     }

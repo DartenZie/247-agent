@@ -81,6 +81,11 @@ export interface CoreOptions {
   /** The `env` template scope; defaults to none. */
   env?: Record<string, string>;
   /**
+   * What a child the daemon starts outside a sandbox gets (`shell` steps, `post` gates,
+   * the workspace git); defaults to `secrets.scrub(process.env)`.
+   */
+  childEnv?: Record<string, string>;
+  /**
    * Connector manifests to supervise (needs `socketPath` for the children; built-in
    * pollers among them run in-process), or a ready-made `ConnectorClients` (tests).
    * Without either, `connector` actions fail.
@@ -230,6 +235,7 @@ export function createCore(opts: CoreOptions): Core {
   const log = opts.log ?? createLogger();
   const metrics = opts.metrics ?? new Metrics();
   const secrets = opts.secrets ?? staticSecrets({});
+  const childEnv = opts.childEnv ?? secrets.scrub(process.env);
   const store = openStore(opts.dbPath);
   const bus = createBus({
     store,
@@ -330,6 +336,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(connectors === undefined ? {} : { connectors }),
     ...(agents === undefined ? {} : { agents }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
+    childEnv,
     ...(opts.workers === undefined ? {} : { workers: opts.workers }),
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
     ...(opts.defaultRetry === undefined ? {} : { defaultRetry: opts.defaultRetry }),
@@ -347,6 +354,7 @@ export function createCore(opts: CoreOptions): Core {
           metrics,
           policy: opts.retention,
           workDir: agents?.workDir,
+          env: childEnv,
         });
 
   metrics.collect(() => {

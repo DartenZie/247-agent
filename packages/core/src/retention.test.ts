@@ -9,6 +9,7 @@ import { retentionPolicy } from './config/retention.js';
 import { createLogger } from './log.js';
 import { Metrics } from './metrics.js';
 import { RetentionJob } from './retention.js';
+import { scrubEnv } from './secrets/secrets.js';
 import { openStore, type Store } from './store/store.js';
 import type { RunStatus } from './store/types.js';
 
@@ -79,6 +80,7 @@ const job = (workDir: string | undefined, metrics = new Metrics()): RetentionJob
       interval: '1h',
     }),
     workDir,
+    env: scrubEnv(process.env),
   });
 
 describe('RetentionJob', () => {
