@@ -101,6 +101,20 @@ describe('scrub', () => {
   const backend = (config: unknown) =>
     createSecretsBackend(SecretsConfig.parse(config), '/etc/247-agent', env);
 
+  it('env: refuses a prefix that would strip more than its secrets', () => {
+    for (const prefix of ['', 'P', 'PATH', 'OA_SECRET', 'oa secret_', '_']) {
+      expect(SecretsConfig.safeParse({ backend: 'env', prefix }).success, prefix).toBe(false);
+    }
+    expect(SecretsConfig.parse({ backend: 'env' })).toEqual({
+      backend: 'env',
+      prefix: 'OA_SECRET_',
+    });
+    expect(SecretsConfig.parse({ backend: 'env', prefix: 'T_' })).toEqual({
+      backend: 'env',
+      prefix: 'T_',
+    });
+  });
+
   it('env: removes the variables with its prefix and nothing else', () => {
     expect(backend({ backend: 'env' }).scrub(env)).toEqual({
       PATH: '/bin',

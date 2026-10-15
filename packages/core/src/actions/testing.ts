@@ -1,5 +1,6 @@
 import type { TemplateScope } from '../expr/template.js';
 import { nullLogger } from '../log.js';
+import { scrubEnv } from '../secrets/secrets.js';
 import type { ActionContext } from './types.js';
 import { withScope } from './types.js';
 
@@ -22,6 +23,7 @@ export function testContext(
     log: nullLogger,
     state: {},
     secrets: {},
+    childEnv: scrubEnv(process.env),
     scope,
     render: () => null,
     renderText: () => '',

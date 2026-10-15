@@ -1,7 +1,6 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
-import { scrubEnv } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { buildSandboxArgv, Sandbox } from './sandbox.js';
 import type { ActionContext } from './types.js';
@@ -88,7 +87,7 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
   // Never the daemon's own environment: with the `env` secrets backend that is every
   // secret, whether or not this task names one (GHSA-7pxm-h374-rwf3). The child starts
   // from the scrubbed set the `env` template scope is built from, plus the action's `env`.
-  const baseEnv = ctx.childEnv ?? scrubEnv(process.env);
+  const baseEnv = ctx.childEnv;
 
   const startedAt = Date.now();
   const spawn = sandboxed

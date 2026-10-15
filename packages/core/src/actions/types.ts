@@ -95,10 +95,11 @@ export interface ActionContext {
   /**
    * What an unsandboxed child process (a `shell` step, a `post` gate, the workspace git)
    * starts from: the daemon's environment minus what the secrets backend reads through
-   * (`SecretsBackend.scrub`). The executor always sets it; a runner called with a bare
-   * context scrubs `process.env` itself (`scrubEnv`).
+   * (`SecretsBackend.scrub`). The executor builds it from the configured backend; a runner
+   * never falls back to `process.env`, scrubbed or not, since a fallback would not know the
+   * configured prefix.
    */
-  readonly childEnv?: Readonly<Record<string, string>> | undefined;
+  readonly childEnv: Readonly<Record<string, string>>;
   /** `defaults.sandbox` from agent.yaml, for `shell` actions without their own. */
   readonly sandbox?: SandboxConfig | undefined;
   /** What every sandbox hides (config, db) and shows (the install); absent = nothing. */

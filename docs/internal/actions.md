@@ -78,7 +78,7 @@ failure for a non-zero exit). In the first two modes a non-zero exit is `ShellEr
 with the last 1024 characters of stderr. A spawn failure or a signal fails in every
 mode. Each of stdout and stderr is kept up to 8 MiB. An abort sends SIGTERM, then
 SIGKILL after 5 s. Unsandboxed, the child starts from `ctx.childEnv` plus the action's
-`env`. When the context has no `childEnv`, the runner uses `scrubEnv(process.env)`.
+`env`; the context always carries one, there is no fallback to `process.env`.
 The child never gets the daemon's own environment, which with the `env` secrets
 backend holds every secret. bwrap is spawned from the same scrubbed set. `user:` is
 not supported.

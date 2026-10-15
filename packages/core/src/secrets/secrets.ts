@@ -4,6 +4,15 @@ import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+const DEFAULT_PREFIX = 'OA_SECRET_';
+/**
+ * A prefix is a variable-name stem that ends in `_`. The scrub (`scrubEnv`) drops every
+ * variable that starts with it from the `env` template scope and from every child, so an
+ * empty prefix would leave a `shell` step no PATH or HOME, and a bare word like `P` would
+ * take PATH with it.
+ */
+const PREFIX = /^[A-Za-z][A-Za-z0-9_]*_$/;
+
 /**
  * Secrets (docs/internal/config.md, docs/internal/security.md) are referenced by name (`${secrets.ftp_pass}`) and
  * resolved from one backend at run time, only for the runs whose templates name them. A
@@ -12,7 +21,13 @@ import { z } from 'zod';
  */
 export const SecretsConfig = z.discriminatedUnion('backend', [
   /** `OA_SECRET_<NAME>` (upper-cased) in the daemon's environment. */
-  z.strictObject({ backend: z.literal('env'), prefix: z.string().default('OA_SECRET_') }),
+  z.strictObject({
+    backend: z.literal('env'),
+    prefix: z
+      .string()
+      .regex(PREFIX, 'prefix must be letters, digits and "_", and end in "_" (like OA_SECRET_)')
+      .default(DEFAULT_PREFIX),
+  }),
   /** A YAML/JSON file mapping name → string, re-read on every resolve. */
   z.strictObject({ backend: z.literal('file'), path: z.string().min(1) }),
   /** One file per secret under `$CREDENTIALS_DIRECTORY` (systemd `LoadCredential=`). */
@@ -164,7 +179,6 @@ export function createSecretsBackend(
 
 /** The variable the `systemd-credentials` backend reads secrets under. */
 const CREDENTIALS_DIRECTORY = 'CREDENTIALS_DIRECTORY';
-const DEFAULT_PREFIX = 'OA_SECRET_';
 
 /**
  * `env` minus what the configured backend reads secrets through: the `env` backend's
@@ -174,7 +188,8 @@ const DEFAULT_PREFIX = 'OA_SECRET_';
  * outside a sandbox gets (a `shell` step, a `post` gate, its own git), never the daemon's
  * environment itself (docs/internal/security.md). Without a configuration, the default
  * prefix and `CREDENTIALS_DIRECTORY` both go. Prefer `SecretsBackend.scrub()`, which knows
- * the configuration; this form is for code with no backend at hand.
+ * the configuration; this form is for `staticSecrets` and tests, never for a runner: a
+ * runner takes `ctx.childEnv`, which the executor builds from the configured backend.
  */
 export function scrubEnv(
   env: NodeJS.ProcessEnv,

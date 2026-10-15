@@ -897,9 +897,14 @@ describe('runAgent', () => {
     expect(existsSync(join(workDir, 'run_test'))).toBe(false);
     expect(execaSync('git', ['branch', '--list', 'agent/run_test'], { cwd: repo }).stdout).toBe('');
   });
-  it('runs post gates without the secret variables of the daemon environment', async () => {
+  it('runs post gates from the context child environment, not the daemon environment', async () => {
     const saved = process.env.OA_SECRET_X;
     process.env.OA_SECRET_X = 'leaked';
+    const childEnv = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      ...(process.env.HOME === undefined ? {} : { HOME: process.env.HOME }),
+      MARK: 'given',
+    };
     try {
       const agents = fakeAgents(async function* (env) {
         writeResult(env.cwd, { status: 'done', summary: 'nothing to do' });
@@ -909,12 +914,18 @@ describe('runAgent', () => {
         ...action,
         post: [
           {
-            shell: ['sh', '-c', 'test -z "$OA_SECRET_X" && test "$FOO" = bar'],
+            shell: [
+              'sh',
+              '-c',
+              'test -z "$OA_SECRET_X" && test "$MARK" = given && test "$FOO" = bar',
+            ],
             env: { FOO: 'bar' },
           },
         ],
       };
-      await expect(runAgent(cfg, ctx(agents))).resolves.toMatchObject({ status: 'done' });
+      await expect(runAgent(cfg, ctx(agents, { childEnv }))).resolves.toMatchObject({
+        status: 'done',
+      });
       expect(lines.filter((l) => l.msg === 'agent.post_gate')).toMatchObject([{ skipped: false }]);
     } finally {
       if (saved === undefined) {

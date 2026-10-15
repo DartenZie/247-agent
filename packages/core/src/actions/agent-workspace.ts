@@ -13,7 +13,6 @@ import { execa } from 'execa';
 import { z } from 'zod';
 
 import { NonRetryableError } from './types.js';
-import { scrubEnv } from '../secrets/secrets.js';
 
 /**
  * Where an `agent` run works (docs/internal/agent-action.md): a fresh git worktree of `repo` at
@@ -97,13 +96,13 @@ async function git(args: string[], env: Record<string, string>): Promise<void> {
 
 /**
  * Creates the workspace; an existing directory from an earlier attempt is replaced. `env`
- * is what its git runs with (`ctx.childEnv`); without one, `process.env` scrubbed.
+ * is what its git runs with (`ctx.childEnv`), never the daemon's environment.
  */
 export async function createWorkspace(
   cfg: WorkspaceConfig,
   workDir: string,
   runId: string,
-  env: Record<string, string> = scrubEnv(process.env),
+  env: Readonly<Record<string, string>>,
 ): Promise<WorkspaceHandle> {
   mkdirSync(workDir, { recursive: true });
   // The real path: an agent reports the paths it touches resolved (macOS's /var is
@@ -221,7 +220,7 @@ function worktreeGitDir(path: string): string | undefined {
  */
 export async function removeWorkspaceDir(
   entry: WorkspaceEntry,
-  env: Record<string, string> = scrubEnv(process.env),
+  env: Readonly<Record<string, string>>,
 ): Promise<void> {
   const gitDir = worktreeGitDir(entry.path);
   const inRepo = (args: string[]): Promise<unknown> =>

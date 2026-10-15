@@ -33,7 +33,7 @@ the sandbox lives inside the unit's mount namespace.
 
 | Backend | Reads | Reload |
 |---|---|---|
-| `env` | `<prefix><NAME upper-cased>`, default prefix `OA_SECRET_` | daemon restart |
+| `env` | `<prefix><NAME upper-cased>`, default prefix `OA_SECRET_`; a prefix is letters, digits and `_` ending in `_`, so the scrub below can never take PATH or HOME | daemon restart |
 | `file` | a YAML or JSON map at `path` (relative to `agent.yaml`), re-read on every resolve, refused when any group or other mode bit is set ("mode must be 0600"); not read when a run needs no secrets | every resolve |
 | `systemd-credentials` | `$CREDENTIALS_DIRECTORY/<name>` from the unit's `LoadCredential=` lines, one trailing newline stripped | service restart |
 

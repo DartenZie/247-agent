@@ -1,20 +1,25 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { execaSync } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { scrubEnv } from '../secrets/secrets.js';
 import { createWorkspace, listWorkspaces, removeWorkspaceDir } from './agent-workspace.js';
+
+/** What the executor would hand a runner here: the test process environment, scrubbed. */
+const hostEnv = scrubEnv(process.env);
 
 /** A base checkout with one commit on `main` and an identity in its config, for worktrees. */
 function seedRepo(repo: string): string {
@@ -53,7 +58,7 @@ describe('createWorkspace', () => {
     mkdirSync(real);
     const link = join(root, 'link');
     symlinkSync(real, link);
-    const ws = await createWorkspace({ kind: 'temp' }, link, 'run_01TEST');
+    const ws = await createWorkspace({ kind: 'temp' }, link, 'run_01TEST', hostEnv);
     expect(ws.path).toBe(join(realpathSync(real), 'run_01TEST'));
     expect(existsSync(ws.path)).toBe(true);
     await ws.remove();
@@ -65,7 +70,7 @@ describe('createWorkspace', () => {
     const hookRan = join(root, 'hook-ran');
     plantHook(join(repo, '.git', 'hooks', 'reference-transaction'), hookRan);
     const cfg = { kind: 'git-worktree' as const, repo, branch: 'main' };
-    const ws = await createWorkspace(cfg, join(root, 'work'), 'run_01TEST');
+    const ws = await createWorkspace(cfg, join(root, 'work'), 'run_01TEST', hostEnv);
     expect(git(repo, 'branch', '--list', 'agent/run_01TEST')).toContain('agent/run_01TEST');
     expect(existsSync(hookRan)).toBe(false);
     await ws.remove();
@@ -84,6 +89,7 @@ describe('removeWorkspaceDir', () => {
       { kind: 'git-worktree', repo, branch: 'main' },
       workDir,
       'run_01TEST',
+      hostEnv,
     );
     // The agent builds a git directory of its own that outlives the workspace, gives it the
     // branch the sweep will delete and a hook on reference updates, and repoints `.git` at it.
@@ -111,7 +117,7 @@ describe('removeWorkspaceDir', () => {
     const entries = listWorkspaces(workDir);
     expect(entries.map((e) => e.runId)).toEqual(['run_01TEST']);
     for (const entry of entries) {
-      await removeWorkspaceDir(entry);
+      await removeWorkspaceDir(entry, hostEnv);
     }
     expect(existsSync(ws.path)).toBe(false);
     expect(existsSync(hookRan)).toBe(false);

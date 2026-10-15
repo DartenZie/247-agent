@@ -168,16 +168,4 @@ describe('runShell without a sandbox', () => {
       ),
     ).resolves.toBe('||yes|bar');
   });
-
-  it('without a context child environment removes the secret variables from the daemon environment', async () => {
-    process.env.OA_SECRET_X = 'leaked';
-    process.env.CREDENTIALS_DIRECTORY = '/run/credentials/test';
-    process.env.PLAIN = 'kept';
-    await expect(
-      run({
-        cmd: ['sh', '-c', 'echo "$OA_SECRET_X|$CREDENTIALS_DIRECTORY|$PLAIN|$FOO"'],
-        env: { FOO: 'bar' },
-      }),
-    ).resolves.toBe('||kept|bar');
-  });
 });
