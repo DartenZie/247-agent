@@ -194,7 +194,7 @@ describe('WaitStore', () => {
       on_timeout: 'fail' as const,
       resume: { step: 1, steps: [null] },
       created_at: now,
-      after_seq: 3,
+      consumed: ['evt_1'],
     };
     store.waits.insert({ ...base, type: 'old.type' });
     store.waits.insert(base);

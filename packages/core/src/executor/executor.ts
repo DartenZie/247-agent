@@ -613,9 +613,8 @@ export class Executor {
   /**
    * `ctx.suspend`: records the wait and parks the run. Events published since the run's
    * trigger are checked right away, so a reply that arrived while the asking step was still
-   * running is not missed. The check starts after the event that ended the run's previous
-   * wait, if later, so one reply never ends two waits (#12). Always rejects with
-   * `RunSuspendedError`.
+   * running is not missed. The check skips the events that ended the run's earlier waits,
+   * so one reply never ends two waits (#12). Always rejects with `RunSuspendedError`.
    */
   private suspend(
     run: RunRecord,
@@ -629,9 +628,11 @@ export class Executor {
       spec.timeoutMs === undefined ? null : new Date(now.getTime() + spec.timeoutMs).toISOString();
     this.store.transaction(() => {
       const previous = this.store.waits.get(run.id);
+      const consumed = [...(previous?.consumed ?? [])];
       const endedBy = previous?.event_id ?? null;
-      const ended = endedBy === null ? undefined : this.store.events.getById(endedBy);
-      const afterSeq = Math.max(trigger.seq, previous?.after_seq ?? 0, ended?.seq ?? 0);
+      if (endedBy !== null && !consumed.includes(endedBy)) {
+        consumed.push(endedBy);
+      }
       this.store.waits.insert({
         run_id: run.id,
         task: run.task,
@@ -641,10 +642,10 @@ export class Executor {
         on_timeout: spec.on_timeout,
         resume,
         created_at: now.toISOString(),
-        after_seq: afterSeq,
+        consumed,
       });
       this.store.runs.setStatus(run.id, 'waiting');
-      const matched = this.bus.dispatcher.matchWaitAgainstBacklog(run.id, afterSeq);
+      const matched = this.bus.dispatcher.matchWaitAgainstBacklog(run.id, trigger.seq);
       log.info('run.waiting', {
         wait_type: spec.type,
         expires_at: expiresAt,

@@ -68,6 +68,17 @@ const tasks = config([
     },
   },
   {
+    name: 'two_keys',
+    trigger: { kind: 'event', type: 'x.two_keys' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'a'" }, timeout: '1h' },
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'b'" }, timeout: '1h' },
+      ],
+    },
+  },
+  {
     name: 'gate_by_name',
     trigger: { kind: 'event', type: 'x.ask_name' },
     action: {
@@ -284,6 +295,26 @@ describe('several waits in one run (#12)', () => {
     expect(run?.status).toBe('succeeded');
     const steps = (run?.result as { steps: { id?: string }[] }).steps;
     expect(steps.map((s) => s.id ?? s)).toEqual([first.id, { timed_out: true }, third.id]);
+  });
+
+  it('lets a later wait take an event that arrived while an earlier wait was armed', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.two_keys');
+    bus.dispatcher.drain();
+    await ex.idle();
+    const b = publish('chat.reply', { k: 'b' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('two_keys', trigger)?.status).toBe('waiting');
+
+    const a = publish('chat.reply', { k: 'a' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('two_keys', trigger);
+    expect(run?.status).toBe('succeeded');
+    const steps = (run?.result as { steps: { id: string }[] }).steps;
+    expect(steps.map((s) => s.id)).toEqual([a.id, b.id]);
   });
 });
 
