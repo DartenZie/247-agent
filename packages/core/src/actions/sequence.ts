@@ -73,7 +73,8 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
   if (resume !== undefined) {
     const cp = checkpointOf(resume.resume);
     start = cp.step;
-    results = cp.steps;
+    // Every attempt gets the same checkpoint; a copy keeps this one's steps out of the next.
+    results = [...cp.steps];
   }
   for (let i = start; i < cfg.steps.length; i++) {
     const step = cfg.steps[i];
