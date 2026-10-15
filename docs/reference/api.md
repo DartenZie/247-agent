@@ -54,8 +54,8 @@ Publishes an event. Body:
 | `source` | string | who publishes it; default `api` (connectors send their name) |
 | `payload` | any JSON | the data |
 | `dedup_key` | string | a second event with the same key is dropped |
-| `parent_id` | string | an existing event; the new one inherits its correlation id and gets its depth + 1 |
-| `correlation_id` | string | used when no parent supplies one; else a new id is minted |
+| `parent_id` | string | an existing event; the new one gets its depth + 1 and, without `correlation_id`, its correlation id |
+| `correlation_id` | string | the correlation id; wins over the parent's; without either, a new id is minted |
 
 201 `{"status": "inserted", "event": <EventRecord>}` or 200
 `{"status": "duplicate", "dedup_key": "<key>"}`. An invalid type or an unknown parent is
