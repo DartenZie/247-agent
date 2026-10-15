@@ -269,8 +269,9 @@ export interface LlmPort {
     ctx: LlmCallContext,
   ): BatchCallResult;
   /**
-   * Before an agent turn: throws `BudgetExceededError` when the daily cap is reached or the
-   * run has already spent its `maxUsd`. No provider is contacted.
+   * Before an agent turn: throws `BudgetExceededError` when the daily cap is reached (counting
+   * the worst case of calls in flight) or the run has already spent its `maxUsd`. No provider
+   * is contacted.
    */
   checkBudget(req: { maxUsd?: number | undefined }, ctx: LlmCallContext): void;
   /**

@@ -90,8 +90,12 @@ overshoot it by one call at most. Batches in flight reserve their worst case in
 `llm_batches.worst_usd`. A `call`, `decide` or batch submit holds its worst case in
 memory (`LlmService.inFlight`) from the precheck until its ledger or `llm_batches` row
 is written, and drops it if the call fails. A call is refused once spent plus held
-reaches the cap; the breaker trips on spend alone. Agent turns have no estimate and
-hold nothing, but they are refused like any call once the cap is held.
+reaches the cap; the breaker trips on spend alone, so a refusal because the cap is held
+publishes no `budget.exceeded`. It is a `BudgetExceededError('daily')` like any other,
+so the run fails without retry. Two kinds of call hold nothing and can still overshoot
+together: an `openrouter` model without a table price, which has no worst case, and an
+agent session, whose spend `checkBudget` cannot know in advance. Both are refused like
+any call once the cap is held.
 
 ## The ledger row
 

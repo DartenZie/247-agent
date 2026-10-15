@@ -61,9 +61,10 @@ makes the call and writes a ledger row. There is no unbudgeted path.
   it would not fit; after the call it checks the real cost. An agent session is
   cancelled the moment its reported cost passes the cap.
 - **Per day**: `budgets.daily_usd` in `agent.yaml`, counted per UTC day from the
-  ledger, so a restart changes nothing. Once crossed, every model call fails fast until
-  midnight and one `budget.exceeded` event is published. Route that event to the task
-  that notifies you.
+  ledger, so a restart changes nothing. A call still running counts at its worst case,
+  so a call is refused once today's spend plus those worst cases reaches the cap. Once
+  the spend crosses it, every model call fails fast until midnight and one
+  `budget.exceeded` event is published. Route that event to the task that notifies you.
 
 A run that goes over its budget fails like any other failed run: `task.<name>.failed`
 is published, and the event that triggered it can be replayed later with

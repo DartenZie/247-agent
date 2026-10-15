@@ -110,7 +110,8 @@ interface ExecuteSpec {
  * row at the batch price and the `llm.batch.ended` event, in one transaction.
  * The daily cap counts what is spent, what batches in flight reserve, and the worst case
  * of calls and batch submissions still waiting on the provider, so concurrent calls
- * overshoot it by one call at most.
+ * overshoot it by one call at most. A model without a table price has no worst case and
+ * holds nothing, and neither does an agent session.
  */
 export class LlmService implements LlmPort, BatchSource {
   private o: LlmServiceOptions;
@@ -261,7 +262,7 @@ export class LlmService implements LlmPort, BatchSource {
     }
     const submitBatch = adapter.submitBatch.bind(adapter);
     // Held until the `llm_batches` row carries the reservation.
-    const batchId = await this.reserving(worst, async () => {
+    const batchId = await this.reserving(worst, async (release) => {
       const { batchId: id } = await submitBatch({
         model: req.model,
         system: req.system,
@@ -283,6 +284,7 @@ export class LlmService implements LlmPort, BatchSource {
         worst_usd: worst ?? 0,
         submitted_at: this.o.clock.now().toISOString(),
       });
+      release();
       return id;
     });
     this.metrics.llmBatches.inc({ provider: req.provider, status: 'submitted' });
@@ -555,17 +557,16 @@ export class LlmService implements LlmPort, BatchSource {
 
     const adapter = factory(this.resolveProvider(spec.provider, cfg));
     // Held until the ledger row replaces it.
-    const { res, settled } = await this.reserving(estimate, async () => {
+    const { res, settled } = await this.reserving(estimate, async (release) => {
       const startedAt = Date.now();
       const r = await invoke(adapter);
       const durationMs = Date.now() - startedAt;
-      return {
-        res: r,
-        settled: this.settle(spec, r.usage, price, spentRun, now, cctx, {
-          duration_ms: durationMs,
-          ...logFields(r),
-        }),
-      };
+      const s = this.settle(spec, r.usage, price, spentRun, now, cctx, {
+        duration_ms: durationMs,
+        ...logFields(r),
+      });
+      release();
+      return { res: r, settled: s };
     });
     if (settled.pricedBy === 'unpriced') {
       throw new UnpricedModelError(
@@ -606,14 +607,24 @@ export class LlmService implements LlmPort, BatchSource {
     return { cfg, factory };
   }
 
-  /** Holds `usd` (unknown counts as 0) against the daily cap while `fn` runs. */
-  private async reserving<T>(usd: number | undefined, fn: () => Promise<T>): Promise<T> {
+  /**
+   * Holds `usd` (unknown counts as 0) against the daily cap while `fn` runs. `fn` calls
+   * `release` right after it writes the row that replaces the hold, so no other call sees
+   * the spend twice; the hold is dropped anyway if `fn` throws.
+   */
+  private async reserving<T>(
+    usd: number | undefined,
+    fn: (release: () => void) => Promise<T>,
+  ): Promise<T> {
     const held = { usd: usd ?? 0 };
     this.inFlight.add(held);
-    try {
-      return await fn();
-    } finally {
+    const release = (): void => {
       this.inFlight.delete(held);
+    };
+    try {
+      return await fn(release);
+    } finally {
+      release();
     }
   }
 

@@ -240,7 +240,8 @@ describe('LlmService.call', () => {
       }
       return usage(1000, 100);
     });
-    const s = service({ budgets: { daily_usd: 0.0006 } });
+    // One worst case (~$0.000505) reaches this cap: a leaked hold would refuse the retry.
+    const s = service({ budgets: { daily_usd: 0.0005 } });
     await expect(call(s)).rejects.toThrow(/upstream down/);
     fail = false;
     await expect(call(s)).resolves.toBeDefined();

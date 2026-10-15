@@ -107,8 +107,10 @@ the call is refused. After the call, the real cost must fit too, or the run fail
 with the ledger row kept. The run's budget is the smaller of the task's and the
 action's `budget`, and it covers every attempt of the run together.
 
-The global `budgets.daily_usd` applies on top. Once the day's spend crosses it, every
-model call fails fast until 00:00 UTC and one `budget.exceeded` event is published.
+The global `budgets.daily_usd` applies on top. Calls in flight count against it at their
+worst case, so a call can be refused while others are still running. Once the day's
+spend crosses it, every model call fails fast until 00:00 UTC and one `budget.exceeded`
+event is published.
 [Models and cost](../concepts/models-and-cost.md) has the full picture;
 `oa cost --by task` shows the ledger.
 
