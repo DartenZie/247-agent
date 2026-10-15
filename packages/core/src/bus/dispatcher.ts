@@ -153,7 +153,8 @@ export class Dispatcher {
 
   /**
    * Executor seam, called inside its suspend transaction: checks the wait just recorded for
-   * `runId` against events already dispatched since `afterSeq` (the run's trigger). Returns
+   * `runId` against events already dispatched since `afterSeq` (the run's trigger), skipping the
+   * wait's `consumed` events. Returns
    * the matching event, if any; the run is then re-queued on the spot.
    */
   matchWaitAgainstBacklog(runId: string, afterSeq: number): EventRecord | undefined {
@@ -165,6 +166,7 @@ export class Dispatcher {
     if (compiled === undefined) {
       return undefined;
     }
+    const consumed = new Set(wait.consumed);
     const cursor = this.store.cursors.get('dispatch');
     let seq = afterSeq;
     while (seq < cursor) {
@@ -177,7 +179,7 @@ export class Dispatcher {
         if (event.seq > cursor) {
           break; // not dispatched yet; the dispatch loop will see it
         }
-        if (this.waitMatches(compiled, event)) {
+        if (!consumed.has(event.id) && this.waitMatches(compiled, event)) {
           const run = this.endWait(wait, 'matched', event);
           if (run !== undefined) {
             this.handOff([run]);

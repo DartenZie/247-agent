@@ -121,6 +121,11 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX llm_batches_run ON llm_batches(run_id);
   `,
+  `
+  -- Ids (a JSON array) of the events that ended the run's earlier waits; the backlog check
+  -- at arming skips them, so one event never ends two waits of a run.
+  ALTER TABLE waits ADD COLUMN consumed TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function migrate(db: Database): void {

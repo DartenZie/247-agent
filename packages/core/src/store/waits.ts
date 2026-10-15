@@ -17,19 +17,26 @@ export interface WaitRecord {
   /** Runner-private: where to continue (sequence step index and earlier results). */
   resume: JsonValue;
   created_at: string;
+  /** Ids of the events that ended the run's earlier waits; the backlog check skips them. */
+  consumed: string[];
   /** Set once the wait is over; the run is then resumed by the executor. */
   outcome: WaitOutcome | null;
   /** The matching event when `outcome` is `matched`. */
   event_id: string | null;
 }
 
-interface WaitRow extends Omit<WaitRecord, 'resume'> {
+interface WaitRow extends Omit<WaitRecord, 'resume' | 'consumed'> {
   resume: string;
+  consumed: string;
 }
 
 function rowToWait(row: unknown): WaitRecord {
   const r = row as WaitRow;
-  return { ...r, resume: JSON.parse(r.resume) as JsonValue };
+  return {
+    ...r,
+    resume: JSON.parse(r.resume) as JsonValue,
+    consumed: JSON.parse(r.consumed) as string[],
+  };
 }
 
 export class WaitStore {
@@ -44,8 +51,8 @@ export class WaitStore {
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
-      `INSERT INTO waits (run_id, task, type, filter, expires_at, on_timeout, resume, created_at)
-       VALUES (@run_id, @task, @type, @filter, @expires_at, @on_timeout, @resume, @created_at)`,
+      `INSERT INTO waits (run_id, task, type, filter, expires_at, on_timeout, resume, created_at, consumed)
+       VALUES (@run_id, @task, @type, @filter, @expires_at, @on_timeout, @resume, @created_at, @consumed)`,
     );
     this.getStmt = db.prepare('SELECT * FROM waits WHERE run_id = ?');
     this.pendingStmt = db.prepare('SELECT * FROM waits WHERE outcome IS NULL ORDER BY created_at');
@@ -65,7 +72,11 @@ export class WaitStore {
   /** One wait per run: a second insert for the same run replaces the first. */
   insert(wait: Omit<WaitRecord, 'outcome' | 'event_id'>): void {
     this.deleteStmt.run(wait.run_id);
-    this.insertStmt.run({ ...wait, resume: JSON.stringify(wait.resume) });
+    this.insertStmt.run({
+      ...wait,
+      resume: JSON.stringify(wait.resume),
+      consumed: JSON.stringify(wait.consumed),
+    });
   }
 
   get(runId: string): WaitRecord | undefined {

@@ -24,6 +24,9 @@ const gateSteps = (timeout: string, onTimeout: 'fail' | 'succeed' = 'fail'): unk
   },
 ];
 
+const approval =
+  "payload.correlation_id == '${event.correlation_id}' && payload.approved == `true`";
+
 const tasks = config([
   {
     name: 'gate',
@@ -46,6 +49,34 @@ const tasks = config([
     name: 'plain_wait',
     trigger: { kind: 'event', type: 'x.wait' },
     action: { kind: 'wait', for: { type: 'chat.*' }, timeout: '1h' },
+  },
+  {
+    name: 'gates',
+    trigger: { kind: 'event', type: 'x.gates' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'wait', for: { type: 'chat.reply', filter: approval }, timeout: '1h' },
+        {
+          kind: 'wait',
+          for: { type: 'chat.*', filter: approval },
+          timeout: '30s',
+          on_timeout: 'succeed',
+        },
+        { kind: 'wait', for: { type: 'chat.reply', filter: approval }, timeout: '1h' },
+      ],
+    },
+  },
+  {
+    name: 'two_keys',
+    trigger: { kind: 'event', type: 'x.two_keys' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'a'" }, timeout: '1h' },
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'b'" }, timeout: '1h' },
+      ],
+    },
   },
   {
     name: 'gate_by_name',
@@ -230,6 +261,60 @@ describe('wait inside a sequence', () => {
     expect(ex2.start()).toMatchObject({ resumed: 1, waiting: 0 });
     await ex2.idle();
     expect(runOf('gate', trigger)?.status).toBe('succeeded');
+  });
+});
+
+describe('several waits in one run (#12)', () => {
+  it('does not let the reply that ended one wait end a later one', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = await askAndSuspend(ex, 'x.gates', 'gates');
+    const approve = (): EventRecord =>
+      publish('chat.reply', { correlation_id: trigger.correlation_id, approved: true });
+
+    const first = approve();
+    bus.dispatcher.drain();
+    await ex.idle();
+    // The second wait is armed after the first reply was dispatched and must not take it.
+    expect(runOf('gates', trigger)?.status).toBe('waiting');
+    expect(env.store.waits.get(runOf('gates', trigger)?.id ?? '')).toMatchObject({
+      type: 'chat.*',
+      outcome: null,
+    });
+
+    // The second wait times out; the third must still not take the first reply.
+    env.clock.set('2026-09-19T10:00:31.000Z');
+    bus.dispatcher.dispatchOnce();
+    await ex.idle();
+    expect(runOf('gates', trigger)?.status).toBe('waiting');
+
+    const third = approve();
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('gates', trigger);
+    expect(run?.status).toBe('succeeded');
+    const steps = (run?.result as { steps: { id?: string }[] }).steps;
+    expect(steps.map((s) => s.id ?? s)).toEqual([first.id, { timed_out: true }, third.id]);
+  });
+
+  it('lets a later wait take an event that arrived while an earlier wait was armed', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.two_keys');
+    bus.dispatcher.drain();
+    await ex.idle();
+    const b = publish('chat.reply', { k: 'b' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('two_keys', trigger)?.status).toBe('waiting');
+
+    const a = publish('chat.reply', { k: 'a' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('two_keys', trigger);
+    expect(run?.status).toBe('succeeded');
+    const steps = (run?.result as { steps: { id: string }[] }).steps;
+    expect(steps.map((s) => s.id)).toEqual([a.id, b.id]);
   });
 });
 
