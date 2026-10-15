@@ -231,11 +231,28 @@ describe('openrouter adapter: response mapping', () => {
     });
   });
 
-  it('a 200 with an error body, no choices and an empty usage block fails retryably', async () => {
-    const { err } = await failure({ error: { message: 'upstream failed' }, usage: {} });
-    expect((err as Error).message).toBe('openrouter: upstream failed');
-    expect(isRetryable(err)).toBe(true);
+  it('a 200 with an error body, no choices and token counts but no cost returns the usage', async () => {
+    const { res } = await call({
+      error: { message: 'upstream failed' },
+      usage: { prompt_tokens: 920, completion_tokens: 0, total_tokens: 920 },
+    });
+    expect(res).toMatchObject({
+      output: null,
+      stopReason: 'other',
+      error: 'openrouter: upstream failed',
+      usage: { input: 920, output: 0 },
+    });
+    expect(res.usage.reportedUsd).toBeUndefined();
   });
+
+  it.each([{}, null])(
+    'a 200 with an error body, no choices and usage %j fails retryably',
+    async (usage) => {
+      const { err } = await failure({ error: { message: 'upstream failed' }, usage });
+      expect((err as Error).message).toBe('openrouter: upstream failed');
+      expect(isRetryable(err)).toBe(true);
+    },
+  );
 
   it('returns a completed response with no structured output, with its usage and an error', async () => {
     const { res } = await call(

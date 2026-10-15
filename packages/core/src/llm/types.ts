@@ -41,9 +41,10 @@ export interface LlmResponse {
   usage: LlmUsage;
   stopReason: StopReason;
   /**
-   * Set when the response is billed but its structured output is unusable (a completed
-   * response with no output, or one that is not JSON). The service still ledgers it; the
-   * runner then fails the attempt retryably.
+   * Set when the response is billed but unusable: a completed response whose structured
+   * output is missing or not JSON, or an upstream failure that reports usage (OpenRouter's
+   * 200 with an `error` body). The service still ledgers it; the runner then fails the
+   * attempt retryably.
    */
   error?: string | undefined;
 }
