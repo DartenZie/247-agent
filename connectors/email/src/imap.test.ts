@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 
 import { imapFlowOptions, ImapMailbox, type ImapClient } from './imap.js';
@@ -183,5 +185,60 @@ describe('imapFlowOptions', () => {
     );
     const tls = imapFlowOptions(incomingConfig());
     expect([tls.secure, tls.port, tls.doSTARTTLS]).toEqual([true, 993, undefined]);
+  });
+});
+
+/**
+ * A plain-text IMAP server that never offers STARTTLS and records every command, so the
+ * test sees whether LOGIN went over the wire in cleartext.
+ */
+async function withPlainImapServer(
+  run: (port: number, commands: string[]) => Promise<void>,
+): Promise<void> {
+  const commands: string[] = [];
+  const server = createServer((socket) => {
+    socket.write('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n');
+    let buffer = '';
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('latin1');
+      let end: number;
+      while ((end = buffer.indexOf('\r\n')) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        commands.push(line);
+        const [tag = '*', verb = ''] = line.split(' ');
+        if (verb.toUpperCase() === 'CAPABILITY') {
+          socket.write(`* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n${tag} OK done\r\n`);
+        } else if (verb.toUpperCase() === 'LOGOUT') {
+          socket.end(`* BYE\r\n${tag} OK bye\r\n`);
+        } else {
+          socket.write(`${tag} NO not here\r\n`);
+        }
+      }
+    });
+    socket.on('error', () => undefined);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await run((server.address() as AddressInfo).port, commands);
+  } finally {
+    server.close();
+  }
+}
+
+describe('ImapMailbox over a plain port', () => {
+  it('refuses to log in when the server offers no STARTTLS', async () => {
+    await withPlainImapServer(async (port, commands) => {
+      const config = incomingConfig({
+        host: '127.0.0.1',
+        port,
+        secure: false,
+        user: 'u',
+        password: 'secret-password',
+      });
+      const mailbox = new ImapMailbox(config, new MemoryState(), () => undefined);
+      await expect(mailbox.fetchNew({})).rejects.toThrow(/STARTTLS/);
+      expect(commands.join('\n')).not.toContain('secret-password');
+    });
   });
 });
