@@ -75,8 +75,9 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
 Back in the runner: a `max_tokens` stop fails non-retryably ("output truncated at
 max_tokens N; raise it or shorten the task"), so does a refusal; the result is the
 parsed object with `output_schema`, else `{text}`. A response the adapter returned
-with `error` (billed, but no usable structured output) fails retryably; its row is
-already in the ledger, so the retry spends from the same cap.
+with `error` (billed, but no usable structured output), or a structured call that
+stopped for another reason (`other`), fails retryably; its row is already in the
+ledger, so the retry spends from the same cap.
 
 ## The daily breaker
 

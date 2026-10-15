@@ -133,6 +133,19 @@ describe('runLlm', () => {
     expect((err as Error).message).toBe('p: failed to parse the structured output');
     expect(isRetryable(err)).toBe(true);
   });
+
+  it('fails retryably when a structured response stopped for another reason', async () => {
+    const llm = fakeLlmPort({
+      defaults: { provider: 'p', model: 'm' },
+      respond: () => result({ output: null, stopReason: 'other' }),
+    });
+    const err = await runLlm(
+      { kind: 'llm', input: 'x', output_schema: action.output_schema },
+      testContext({ llm }),
+    ).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/stopped without a structured output/);
+    expect(isRetryable(err)).toBe(true);
+  });
 });
 
 describe('runLlm with batch: true', () => {

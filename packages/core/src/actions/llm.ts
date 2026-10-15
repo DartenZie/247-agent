@@ -162,5 +162,9 @@ function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): 
     // Billed and ledgered, but unusable: the next attempt may do better, within the same cap.
     throw new Error(res.error);
   }
+  if (cfg.output_schema !== undefined && res.stopReason === 'other') {
+    // Billed and ledgered too; nothing was parsed, so there is no result to route.
+    throw new Error('the response stopped without a structured output (stop reason: other)');
+  }
   return cfg.output_schema === undefined ? { text: res.text ?? '' } : res.output;
 }
