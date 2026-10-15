@@ -48,7 +48,16 @@ export class SocketClientTransport implements Transport {
       };
       socket.once('error', onConnectError);
       socket.on('data', (chunk: Buffer) => {
-        this.buffer.append(chunk);
+        try {
+          this.buffer.append(chunk);
+        } catch (err) {
+          // Over the read buffer's limit (a message or unterminated line past 10 MB): the
+          // connector cannot be trusted to resync, so drop the connection; `close` reports
+          // it and the supervisor reconnects with backoff. Never throw out of the handler.
+          this.onerror?.(err instanceof Error ? err : new Error(String(err)));
+          socket.destroy();
+          return;
+        }
         for (;;) {
           let message: JSONRPCMessage | null;
           try {
