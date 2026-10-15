@@ -20,8 +20,9 @@ connectors/email/src/
 ```
 
 Tests run without the network: `pop3.test.ts` starts a fake POP3 server in-process,
-`imap.test.ts` drives the mailbox with a fake client, `send.test.ts` renders through
-nodemailer's stream transport. STARTTLS and STLS upgrades are not covered by the unit
+`imap.test.ts` drives the mailbox with a fake client and checks the STARTTLS refusal
+against an in-process plain IMAP server, `send.test.ts` renders through nodemailer's
+stream transport. Successful STARTTLS and STLS upgrades are not covered by the unit
 tests; the smoke rig covers them against real servers:
 
 ```

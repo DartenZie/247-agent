@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo, type Socket } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 
 import { imapFlowOptions, ImapMailbox, type ImapClient } from './imap.js';
@@ -25,6 +27,9 @@ function fakeClient(server: FakeServer): ImapClient {
     logout: () => {
       server.calls.push('logout');
       return Promise.resolve();
+    },
+    close: () => {
+      server.calls.push('close');
     },
     getMailboxLock: (path) => {
       open = path;
@@ -183,5 +188,83 @@ describe('imapFlowOptions', () => {
     );
     const tls = imapFlowOptions(incomingConfig());
     expect([tls.secure, tls.port, tls.doSTARTTLS]).toEqual([true, 993, undefined]);
+  });
+});
+
+/**
+ * A plain-text IMAP server that never offers STARTTLS and records every command. It
+ * advertises no AUTH mechanism, so a client that logs in sends LOGIN with the password in
+ * clear. `closed` settles once every accepted connection has closed.
+ */
+async function withPlainImapServer(
+  run: (port: number, commands: string[], closed: () => Promise<void>) => Promise<void>,
+): Promise<void> {
+  const commands: string[] = [];
+  const sockets = new Set<Socket>();
+  const closing: Promise<void>[] = [];
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    closing.push(
+      new Promise((resolve) =>
+        socket.on('close', () => {
+          resolve();
+        }),
+      ),
+    );
+    socket.write('* OK [CAPABILITY IMAP4rev1] ready\r\n');
+    let buffer = '';
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('latin1');
+      let end: number;
+      while ((end = buffer.indexOf('\r\n')) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        commands.push(line);
+        const [tag = '*', verb = ''] = line.split(' ');
+        if (verb.toUpperCase() === 'CAPABILITY') {
+          socket.write(`* CAPABILITY IMAP4rev1\r\n${tag} OK done\r\n`);
+        } else if (verb.toUpperCase() === 'LOGOUT') {
+          socket.end(`* BYE\r\n${tag} OK bye\r\n`);
+        } else {
+          socket.write(`${tag} NO not here\r\n`);
+        }
+      }
+    });
+    socket.on('error', () => undefined);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await run((server.address() as AddressInfo).port, commands, async () => {
+      await Promise.all(closing);
+    });
+  } finally {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
+  }
+}
+
+describe('ImapMailbox over a plain port', () => {
+  it('refuses to log in when the server offers no STARTTLS, and closes the connection', async () => {
+    await withPlainImapServer(async (port, commands, closed) => {
+      const config = incomingConfig({
+        host: '127.0.0.1',
+        port,
+        secure: false,
+        user: 'u',
+        password: 'secret-password',
+      });
+      const mailbox = new ImapMailbox(config, new MemoryState(), () => undefined);
+      await expect(mailbox.fetchNew({})).rejects.toThrow(/STARTTLS/);
+      expect(commands.filter((c) => /^\S+ (LOGIN|AUTHENTICATE)\b/i.test(c))).toEqual([]);
+      // A socket left open after a failed connect times out later with no 'error'
+      // listener and takes the connector down.
+      await closed();
+    });
   });
 });
