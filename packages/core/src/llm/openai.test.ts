@@ -220,6 +220,14 @@ describe('openai adapter: response mapping', () => {
     expect(res).toMatchObject({ output: null, stopReason: 'max_tokens' });
   });
 
+  it('accepts a completed reply that leaves out the error field', async () => {
+    const reply = response();
+    delete reply.error;
+    const { res } = await call(reply, { outputSchema: SCHEMA });
+    expect(res).toMatchObject({ output: { kind: 'general_change' }, stopReason: 'end' });
+    expect(res.usage.output).toBe(15);
+  });
+
   it('a failed response surfaces its error retryably', async () => {
     const { err } = await failure(
       response({ status: 'failed', error: { code: 'server_error', message: 'try later' } }),
