@@ -45,7 +45,7 @@ by connectors and the API (`PUT /v1/state/<ns>/<key>`), and by pollers (`<name>/
 **`waits`**: `run_id TEXT PRIMARY KEY REFERENCES runs(id)`, `task`, `type` (a pattern),
 `filter` (rendered JMESPath or null), `expires_at`, `on_timeout` (`fail`|`succeed`),
 `resume TEXT` (the runner's private JSON), `created_at`, `outcome` (`matched`|`timeout`|
-null), `event_id`. Indexes `waits_type`, `waits_expires`, `waits_event`. One row per run;
+null), `event_id`, `after_seq` (where the backlog check at arming starts). Indexes `waits_type`, `waits_expires`, `waits_event`. One row per run;
 a second insert replaces the first; written by the executor's `suspend`, resolved by the
 dispatcher, deleted when the run finishes.
 

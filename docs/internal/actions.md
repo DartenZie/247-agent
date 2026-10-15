@@ -140,7 +140,10 @@ A bare value is a backtick JSON literal. A backtick in a value becomes `\u0060`.
 schema refuses `secrets` in the filter, because the rendered text is written to the
 store. Arming happens inside the suspend transaction, which also checks events
 published after the run's trigger up to the dispatch cursor, so a reply that raced the
-asking step re-queues the run on the spot. The result is the matched event (minus
+asking step re-queues the run on the spot. That check starts after the wait's
+`after_seq`: the trigger, or the event that ended the run's previous wait, whichever is
+later. One event therefore never ends two waits of a run, even when their filters are
+the same. The result is the matched event (minus
 `seq`); on timeout `on_timeout: succeed` returns `{timed_out: true}`, else
 `WaitTimeoutError` (non-retryable). A wait without `timeout` waits forever. The
 attempt timer is cleared on suspend and set again on resume, so waiting time never

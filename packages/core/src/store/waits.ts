@@ -17,6 +17,11 @@ export interface WaitRecord {
   /** Runner-private: where to continue (sequence step index and earlier results). */
   resume: JsonValue;
   created_at: string;
+  /**
+   * The backlog check at arming looks only at events after this seq: the run's trigger, or
+   * the event that ended the run's previous wait, whichever is later.
+   */
+  after_seq: number;
   /** Set once the wait is over; the run is then resumed by the executor. */
   outcome: WaitOutcome | null;
   /** The matching event when `outcome` is `matched`. */
@@ -44,8 +49,8 @@ export class WaitStore {
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
-      `INSERT INTO waits (run_id, task, type, filter, expires_at, on_timeout, resume, created_at)
-       VALUES (@run_id, @task, @type, @filter, @expires_at, @on_timeout, @resume, @created_at)`,
+      `INSERT INTO waits (run_id, task, type, filter, expires_at, on_timeout, resume, created_at, after_seq)
+       VALUES (@run_id, @task, @type, @filter, @expires_at, @on_timeout, @resume, @created_at, @after_seq)`,
     );
     this.getStmt = db.prepare('SELECT * FROM waits WHERE run_id = ?');
     this.pendingStmt = db.prepare('SELECT * FROM waits WHERE outcome IS NULL ORDER BY created_at');

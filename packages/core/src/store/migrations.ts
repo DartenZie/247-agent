@@ -121,6 +121,11 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX llm_batches_run ON llm_batches(run_id);
   `,
+  `
+  -- The wait's backlog check starts after this seq, so an event that ended an earlier wait
+  -- of the same run cannot end this one too.
+  ALTER TABLE waits ADD COLUMN after_seq INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function migrate(db: Database): void {

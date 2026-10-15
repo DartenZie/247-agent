@@ -153,7 +153,7 @@ export class Dispatcher {
 
   /**
    * Executor seam, called inside its suspend transaction: checks the wait just recorded for
-   * `runId` against events already dispatched since `afterSeq` (the run's trigger). Returns
+   * `runId` against events already dispatched since `afterSeq` (the wait's `after_seq`). Returns
    * the matching event, if any; the run is then re-queued on the spot.
    */
   matchWaitAgainstBacklog(runId: string, afterSeq: number): EventRecord | undefined {

@@ -144,6 +144,7 @@ describe('Dispatcher', () => {
       on_timeout: 'fail',
       resume: null,
       created_at: now,
+      after_seq: 0,
     });
     const deep = publish('x.happened', null, { parent_id: child.id });
     expect(deep.depth).toBe(2);
