@@ -14,7 +14,7 @@ Two different things look alike; mixing them up is the most common config bug.
 | `event` | The trigger event (`event.type`, `event.payload`, `event.correlation_id`, `event.id`, `event.source`). For `oa run --event f.json` the given event, under the `manual.run` event's ids | everywhere |
 | `result` | The action's result | `emit`, `state_updates` only |
 | `state` | KV snapshot at run start: `state.<namespace>.<key>` | everywhere |
-| `secrets` | Secret values, only as `secrets.<name>` | `action` only |
+| `secrets` | Secret values, only as `secrets.<name>` | `action` only, never a `wait` `for.filter` |
 | `env` | The daemon's environment (minus the secrets backend's variables) | everywhere |
 | `run` | `{id, task, attempt, event_id, correlation_id}` | everywhere |
 | `item` | Current element of an `emit[].each` fan-out | that emit rule |

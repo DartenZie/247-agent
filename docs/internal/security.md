@@ -45,9 +45,15 @@ Where a value goes, and nowhere else:
   whole is refused, and the `env` scope omits what the backend reads through
   (`SecretsBackend.scrub()`: the `env` backend's prefixed variables, or
   `CREDENTIALS_DIRECTORY` under a `systemd-credentials` backend without a `dir`).
-- An unsandboxed `shell` step or `post` gate starts from that same scrubbed set
-  (`ctx.childEnv`) plus the action's `env`, never from the daemon's environment. The
-  git the daemon runs to create, remove or sweep a workspace starts from it too.
+  A `wait`'s `for.filter` refuses `secrets` too (`actions/wait.ts`), because the
+  rendered filter is stored on the wait record.
+- A value rendered into a `wait` filter lands there as data, never as JMESPath
+  (`expr/filter-template.ts`, [`actions.md`](actions.md)). Whoever controls a trigger
+  payload cannot resume another run's gate.
+- An unsandboxed `shell` step or `post` gate starts from the scrubbed set the `env`
+  scope gets (`ctx.childEnv`) plus the action's `env`, never from the daemon's
+  environment. The git the daemon runs to create, remove or sweep a workspace starts
+  from it too.
   Otherwise a command that prints its environment, by design or in a build tool's
   error output, would store every secret in the run result and the
   `task.<name>.succeeded` payload. The scrub limits accidental exposure. It is not a

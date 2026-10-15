@@ -51,10 +51,13 @@ own scope, and the rendered text is then evaluated as a JMESPath expression agai
 every incoming event. So `${event.correlation_id}` becomes the id of the event that
 started this run, and the filter reads: an event whose payload carries that id.
 
-The rendered value goes into the filter as plain text, so quote it the way JMESPath
-needs: `'${event.correlation_id}'` for a string, `` `${event.payload.min}` `` for a
-number or a boolean. `oa validate` warns about a template left unquoted as a
-comparison operand.
+The daemon compares the value as data. It never reads the value as part of the
+expression, so a name with an apostrophe in it, or a value crafted to look like
+JMESPath, matches only an event that carries exactly that value. Write the template
+where its value belongs: `'${event.payload.name}'` compares as a string,
+`` `${event.payload.min}` `` as the number or boolean it holds, and a bare
+`${event.payload.min}` as the value's own type. `for.filter` cannot use `secrets`,
+because the rendered filter is stored with the run.
 
 > [!WARNING]
 > Always match on the correlation id, never on "the next reply". Two questions can be

@@ -107,8 +107,8 @@ What is linted: every trigger `filter`, `emit` `when`, sequence step `when` and 
 `state_updates` (the strings the schema checks as templates, found with
 `forEachTemplate`, path down to the string); and each `wait` `for.filter` as a whole,
 with every template replaced by an identifier placeholder (`lintWaitFilter`). The wait
-runner renders that filter with `renderText`, so a value lands unquoted; a placeholder
-left as a comparison operand is flagged, and a filter that does not parse even with
+runner renders each template as a value in place (`expr/filter-template.ts`), so a
+placeholder is never itself suspect. A filter that does not parse even with
 placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
 the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
 task's action and its sequence steps; the lint, `checkSandboxes` and the core's

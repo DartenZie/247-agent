@@ -102,7 +102,7 @@ describe('lintTasks', () => {
     );
   });
 
-  it('lints a wait filter around its templates, flagging one interpolated unquoted', () => {
+  it('lints a wait filter around its templates, each standing for a value', () => {
     const wait = (filter: string) =>
       parse([
         {
@@ -111,12 +111,13 @@ describe('lintTasks', () => {
           action: { kind: 'wait', for: { type: 'x.y', filter } },
         },
       ]);
-    expect(lintTasks(wait('payload.ok == ${event.payload.want}'))).toEqual([
+    // A bare template renders as a JSON literal of its value: nothing to say.
+    expect(lintTasks(wait('payload.ok == ${event.payload.want}'))).toEqual([]);
+    expect(lintTasks(wait("payload.ok == ${event.payload.want} && payload.n > '1'"))).toEqual([
       {
         task: 'w',
         path: 'tasks[0].action.for.filter',
-        message:
-          "payload.ok == ${event.payload.want}: ${event.payload.want} is rendered into the filter as plain text, so a string or true/false/null becomes a field name and a number breaks the filter; write '${event.payload.want}' for a string or `${event.payload.want}` for a number or boolean",
+        message: "payload.n > '1': '1' is a string and JMESPath orders only numbers; write `1`",
       },
     ]);
     // The expression inside the template and the filter around it are both linted.

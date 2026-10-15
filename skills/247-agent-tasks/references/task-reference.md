@@ -103,7 +103,9 @@ action:
 ```
 
 `for.filter` is rendered as a template first (so `${event…}` is the waiting run's own
-trigger event), then evaluated as JMESPath over every incoming event. Events that
+trigger event), then evaluated as JMESPath over every incoming event. Each value lands
+in the expression as data, so a quote or JMESPath in it cannot break or widen the
+filter. `secrets` are refused in `for.filter`. Events that
 arrived between the trigger and the wait being armed are checked too. The run sits in
 `waiting`, survives restarts, and its result is the matched event. A wait timeout fails
 without retry.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { compileFilter } from '../expr/jmespath.js';
 import type { EventRecord, JsonValue } from '../store/types.js';
 import { ConnectorAction, runConnector } from './connector.js';
 import { runSequence, SequenceAction } from './sequence.js';
@@ -126,11 +127,42 @@ describe('runWait', () => {
     ).resolves.toEqual({ timed_out: true });
   });
 
+  it('arms a filter that takes the trigger value as data, not as syntax', async () => {
+    const crafted = "x' || 'a' == 'a";
+    let spec: WaitSpec | undefined;
+    const ctx = testContext({
+      scope: { event: { payload: { name: crafted } } },
+      suspend: (s) => {
+        spec = s;
+        return Promise.reject(new Error('suspended'));
+      },
+    });
+    await expect(
+      runWait(
+        {
+          kind: 'wait',
+          for: { type: 'chat.reply', filter: "payload.name == '${event.payload.name}'" },
+        },
+        ctx,
+      ),
+    ).rejects.toThrow('suspended');
+    const filter = compileFilter(spec?.filter ?? '');
+    expect(filter.evaluate({ type: 'chat.reply', payload: { name: 'someone else' } })).toBe(false);
+    expect(filter.evaluate({ type: 'chat.reply', payload: { name: crafted } })).toBe(true);
+  });
+
   it('validates the type pattern and the filter template', () => {
     expect(WaitAction.safeParse({ kind: 'wait', for: { type: 'Bad Type' } }).success).toBe(false);
     expect(
       WaitAction.safeParse({ kind: 'wait', for: { type: 'a.b', filter: '${ x[ }' } }).success,
     ).toBe(false);
+    // The rendered filter is written to the wait record.
+    const withSecret = WaitAction.safeParse({
+      kind: 'wait',
+      for: { type: 'a.b', filter: "payload.token == '${secrets.token}'" },
+    });
+    expect(withSecret.success).toBe(false);
+    expect(JSON.stringify(withSecret.error?.issues)).toContain('secrets cannot be used here');
     expect(WaitAction.parse({ kind: 'wait', for: { type: 'a.*' } }).on_timeout).toBe('fail');
   });
 });
