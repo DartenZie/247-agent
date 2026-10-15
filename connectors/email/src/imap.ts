@@ -26,6 +26,7 @@ import type {
 export interface ImapClient {
   connect(): Promise<void>;
   logout(): Promise<void>;
+  close(): void;
   getMailboxLock(path: string): Promise<{ release(): void }>;
   mailbox: { uidValidity: bigint; uidNext: number } | false;
   search(
@@ -177,7 +178,14 @@ export class ImapMailbox implements Mailbox {
     fn: (client: ImapClient, mailbox: { uidValidity: bigint; uidNext: number }) => Promise<T>,
   ): Promise<T> {
     const client = this.clientFactory(this.config);
-    await client.connect();
+    try {
+      await client.connect();
+    } catch (err) {
+      // imapflow leaves the socket open when connect fails (a refused STARTTLS, a bad
+      // login); its idle timeout then raises an 'error' nobody listens for.
+      client.close();
+      throw err;
+    }
     try {
       const lock = await client.getMailboxLock(folder);
       try {
