@@ -108,10 +108,15 @@ interface ExecuteSpec {
  * A `batch: true` call is split in two: `submitBatch` does the checks and submits, and
  * `pollBatches` (driven by the `BatchPoller`) settles the batch once it ended: the ledger
  * row at the batch price and the `llm.batch.ended` event, in one transaction.
+ * The daily cap counts what is spent, what batches in flight reserve, and the worst case
+ * of calls and batch submissions still waiting on the provider, so concurrent calls
+ * overshoot it by one call at most.
  */
 export class LlmService implements LlmPort, BatchSource {
   private o: LlmServiceOptions;
   private readonly metrics: Metrics;
+  /** The worst case of each call or batch submission waiting on its provider. */
+  private readonly inFlight = new Set<{ usd: number }>();
 
   constructor(opts: LlmServiceOptions) {
     this.o = opts;
@@ -239,7 +244,7 @@ export class LlmService implements LlmPort, BatchSource {
     const dailyCap = this.o.budgets.daily_usd;
     if (dailyCap !== undefined && worst !== undefined) {
       const spentToday = this.o.store.ledger.sumSince(startOfUtcDay(now));
-      const reserved = this.o.store.batches.reservedUsd();
+      const reserved = this.o.store.batches.reservedUsd() + this.inFlightUsd();
       if (spentToday + reserved + worst > dailyCap) {
         this.metrics.budgetExceeded.inc({ scope: 'daily' });
         throw new BudgetExceededError(
@@ -254,26 +259,31 @@ export class LlmService implements LlmPort, BatchSource {
         `provider "${req.provider}" (type ${adapter.type}) has no batch API: batch: true needs an anthropic provider`,
       );
     }
-    const { batchId } = await adapter.submitBatch({
-      model: req.model,
-      system: req.system,
-      input: req.input,
-      outputSchema: req.outputSchema,
-      maxTokens: req.maxTokens,
-      effort: req.effort,
-      signal: cctx.signal,
-      customId: cctx.run.id,
-    });
-    this.o.store.batches.insert({
-      batch_id: batchId,
-      run_id: cctx.run.id,
-      task: cctx.task,
-      attempt: cctx.run.attempt,
-      provider: req.provider,
-      model: req.model,
-      structured: req.outputSchema !== undefined,
-      worst_usd: worst ?? 0,
-      submitted_at: this.o.clock.now().toISOString(),
+    const submitBatch = adapter.submitBatch.bind(adapter);
+    // Held until the `llm_batches` row carries the reservation.
+    const batchId = await this.reserving(worst, async () => {
+      const { batchId: id } = await submitBatch({
+        model: req.model,
+        system: req.system,
+        input: req.input,
+        outputSchema: req.outputSchema,
+        maxTokens: req.maxTokens,
+        effort: req.effort,
+        signal: cctx.signal,
+        customId: cctx.run.id,
+      });
+      this.o.store.batches.insert({
+        batch_id: id,
+        run_id: cctx.run.id,
+        task: cctx.task,
+        attempt: cctx.run.attempt,
+        provider: req.provider,
+        model: req.model,
+        structured: req.outputSchema !== undefined,
+        worst_usd: worst ?? 0,
+        submitted_at: this.o.clock.now().toISOString(),
+      });
+      return id;
     });
     this.metrics.llmBatches.inc({ provider: req.provider, status: 'submitted' });
     cctx.log.info('llm.batch_submitted', {
@@ -540,21 +550,22 @@ export class LlmService implements LlmPort, BatchSource {
     logFields: (res: T) => Record<string, unknown>,
   ): Promise<T & { usd: number; priced_by: PricedBy; ledgerId: number }> {
     const { cfg, factory, price } = this.lookup(spec.provider, spec.model);
-    const { now, spentRun } = this.precheck(
-      {
-        maxUsd: spec.maxUsd,
-        estimate: price === undefined ? undefined : costUsd(price, spec.estimate),
-      },
-      cctx,
-    );
+    const estimate = price === undefined ? undefined : costUsd(price, spec.estimate);
+    const { now, spentRun } = this.precheck({ maxUsd: spec.maxUsd, estimate }, cctx);
 
     const adapter = factory(this.resolveProvider(spec.provider, cfg));
-    const startedAt = Date.now();
-    const res = await invoke(adapter);
-    const durationMs = Date.now() - startedAt;
-    const settled = this.settle(spec, res.usage, price, spentRun, now, cctx, {
-      duration_ms: durationMs,
-      ...logFields(res),
+    // Held until the ledger row replaces it.
+    const { res, settled } = await this.reserving(estimate, async () => {
+      const startedAt = Date.now();
+      const r = await invoke(adapter);
+      const durationMs = Date.now() - startedAt;
+      return {
+        res: r,
+        settled: this.settle(spec, r.usage, price, spentRun, now, cctx, {
+          duration_ms: durationMs,
+          ...logFields(r),
+        }),
+      };
     });
     if (settled.pricedBy === 'unpriced') {
       throw new UnpricedModelError(
@@ -595,9 +606,30 @@ export class LlmService implements LlmPort, BatchSource {
     return { cfg, factory };
   }
 
+  /** Holds `usd` (unknown counts as 0) against the daily cap while `fn` runs. */
+  private async reserving<T>(usd: number | undefined, fn: () => Promise<T>): Promise<T> {
+    const held = { usd: usd ?? 0 };
+    this.inFlight.add(held);
+    try {
+      return await fn();
+    } finally {
+      this.inFlight.delete(held);
+    }
+  }
+
+  /** The worst case of the calls and batch submissions waiting on their provider. */
+  private inFlightUsd(): number {
+    let sum = 0;
+    for (const held of this.inFlight) {
+      sum += held.usd;
+    }
+    return sum;
+  }
+
   /**
    * The checks before any spend: the daily cap (tripping the breaker when it is already
-   * reached), the run's own cap, and, when a worst-case `estimate` is known, that it fits.
+   * reached, refusing too when what batches and calls in flight hold would reach it), the
+   * run's own cap, and, when a worst-case `estimate` is known, that it fits.
    */
   private precheck(
     req: { maxUsd?: number | undefined; estimate?: number | undefined },
@@ -614,6 +646,16 @@ export class LlmService implements LlmPort, BatchSource {
         'daily',
         `daily budget of $${String(dailyCap)} reached ($${spentToday.toFixed(4)} spent today); model-backed tasks resume at 00:00 UTC`,
       );
+    }
+    if (dailyCap !== undefined) {
+      const held = this.o.store.batches.reservedUsd() + this.inFlightUsd();
+      if (spentToday + held >= dailyCap) {
+        this.metrics.budgetExceeded.inc({ scope: 'daily' });
+        throw new BudgetExceededError(
+          'daily',
+          `daily budget of $${String(dailyCap)} is held by calls and batches in flight ($${held.toFixed(4)} worst case, $${spentToday.toFixed(4)} spent today)`,
+        );
+      }
     }
     const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
     if (req.maxUsd !== undefined) {
