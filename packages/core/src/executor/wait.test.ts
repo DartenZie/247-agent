@@ -79,6 +79,19 @@ const tasks = config([
     },
   },
   {
+    name: 'retry_after_wait',
+    trigger: { kind: 'event', type: 'x.retry_after_wait' },
+    retry: { attempts: 2, backoff: 'fixed', base: '10ms' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'a'" }, timeout: '1h' },
+        { kind: 'shell', cmd: ['sh', '-c', 'test ${run.attempt} -gt 1'] },
+        { kind: 'wait', for: { type: 'chat.reply', filter: "payload.k == 'a'" }, timeout: '1h' },
+      ],
+    },
+  },
+  {
     name: 'gate_by_name',
     trigger: { kind: 'event', type: 'x.ask_name' },
     action: {
@@ -315,6 +328,28 @@ describe('several waits in one run (#12)', () => {
     expect(run?.status).toBe('succeeded');
     const steps = (run?.result as { steps: { id: string }[] }).steps;
     expect(steps.map((s) => s.id)).toEqual([a.id, b.id]);
+  });
+});
+
+describe('a retry after a resumed wait (#156)', () => {
+  it('does not repeat the resumed step in the step results', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = await askAndSuspend(ex, 'x.retry_after_wait', 'retry_after_wait');
+
+    const first = publish('chat.reply', { k: 'a' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    // Attempt 1 resumes, its shell step fails, and attempt 2 waits at the second wait.
+    expect(runOf('retry_after_wait', trigger)?.status).toBe('waiting');
+
+    const second = publish('chat.reply', { k: 'a' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('retry_after_wait', trigger);
+    expect(run?.status).toBe('succeeded');
+    const steps = (run?.result as { steps: { id?: string }[] }).steps;
+    expect(steps.map((s) => s.id ?? null)).toEqual([first.id, null, second.id]);
   });
 });
 
