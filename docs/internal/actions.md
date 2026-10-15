@@ -156,10 +156,11 @@ but still ends a wait.
 `when`; `steps[i]` is the result of step i (`null` when skipped) for later templates
 and `when`s; the run result is `{steps: [...]}`. A `wait` step suspends with
 `{step, steps}`; on resume the runner restarts at that index with the earlier results
-and takes the wait's outcome without waiting again. The executor rebuilds
-`ctx.resume` from the wait record on every attempt of the run, so a retry after a
-resumed attempt failed starts again at the wait step with the same outcome; steps
-before it are not re-run. A retry of an attempt that never waited starts at step 0.
+and takes the wait's outcome without waiting again. The executor reads the wait
+record once and hands every attempt of the run the same `ctx.resume`, so a retry after
+a resumed attempt failed starts again at the wait step with the same outcome; steps
+before it are not re-run. The runner copies the checkpoint's `steps` and never
+mutates `ctx.resume`, which every attempt shares. A retry of an attempt that never waited starts at step 0.
 
 ## Routing: `emit` and `state_updates`
 
