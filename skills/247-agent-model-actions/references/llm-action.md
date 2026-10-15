@@ -93,15 +93,15 @@ budgets: { daily_usd: 10 }
 
 - Anthropic (`anthropic.ts`, shipped; also `submitBatch`/`pollBatch` over
   `client.messages.batches`, the same params with `output_config.format` as a plain
-  `json_schema`, the result text parsed as JSON): `client.messages.parse()` with a schema,
-  `messages.create()` without; system block first with `cache_control`, the input as
+  `json_schema`, the result text parsed as JSON): `client.messages.create()`, with
+  `output_config.format` and the text parsed by the adapter when a schema is set; system block first with `cache_control`, the input as
   the user turn, `output_config.format` with the raw JSON Schema; adaptive thinking and
   `output_config.effort` on Sonnet/Opus 5 only (`models.ts`); no prefill. Usage:
   `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
   `cache_creation_input_tokens`. The SDK client is built per call with `maxRetries: 0`
   (retries are the task's `retry` policy) and an explicit HTTP timeout, so the run's
   `timeout` is what bounds the call. A structured output that is not JSON, or a
-  completed response with no output, fails retryably.
+  completed response with no output, is ledgered first and then fails retryably.
 - OpenAI (`openai.ts`, shipped): one non-streaming Responses API call; `instructions`
   for the system prompt (caching is automatic for prefixes of 1024+ tokens), the input
   as `input`, `text.format` json_schema with `strict: true`, `reasoning.effort` only on

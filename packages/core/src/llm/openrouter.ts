@@ -105,10 +105,7 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
   if (stopReason !== 'end') {
     return { output: null, usage, stopReason };
   }
-  if (text === '') {
-    throw new Error(`${PREFIX}: the response ended without a structured output`);
-  }
-  return { output: parseStructured(PREFIX, text), usage, stopReason };
+  return { ...parseStructured(PREFIX, text), usage, stopReason };
 }
 
 /** A 200 with an `error` body and no choices is how some upstream failures arrive; say so. */

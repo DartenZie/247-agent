@@ -224,32 +224,30 @@ describe('anthropic adapter: response mapping', () => {
     expect(res).toMatchObject({ output: null, stopReason: 'refusal' });
   });
 
-  it('fails retryably when a completed response has no structured output', async () => {
-    const t = transport(message({ content: [] }));
-    const p = createAnthropicProvider({ fetch: t.fetch })(provider).complete(
-      request({ outputSchema: SCHEMA }),
-    );
-    await expect(p).rejects.toThrow(/without a structured output/);
-    await p.catch((err: unknown) => {
-      expect(isRetryable(err)).toBe(true);
-    });
+  it('returns a completed response with no structured output, with its usage and an error', async () => {
+    const { res } = await call(message({ content: [] }), { outputSchema: SCHEMA });
+    expect(res).toMatchObject({ output: null, stopReason: 'end', usage: { input: 120 } });
+    expect(res.error).toMatch(/anthropic: the response ended without a structured output/);
   });
 
-  it('fails retryably when the structured output is not JSON', async () => {
-    const err = await (async () => {
-      const t = transport(message({ content: [{ type: 'text', text: '{not json' }] }));
-      try {
-        await createAnthropicProvider({ fetch: t.fetch })(provider).complete(
-          request({ outputSchema: SCHEMA }),
-        );
-      } catch (e) {
-        return e;
-      }
-      return undefined;
-    })();
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/Failed to parse structured output/);
-    expect(isRetryable(err)).toBe(true);
+  it('returns a structured output that is not JSON, with its usage and an error', async () => {
+    const { res } = await call(message({ content: [{ type: 'text', text: '{not json' }] }), {
+      outputSchema: SCHEMA,
+    });
+    expect(res).toMatchObject({ output: null, stopReason: 'end', usage: { input: 120 } });
+    expect(res.error).toMatch(/anthropic: failed to parse the structured output/);
+  });
+
+  it('does not parse a truncated structured output, so the runner reports the truncation', async () => {
+    const { res } = await call(
+      message({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"kind":"gen' }] }),
+      { outputSchema: SCHEMA },
+    );
+    expect(res).toEqual({
+      output: null,
+      usage: { input: 120, output: 15, cacheRead: 800, cacheWrite: 40 },
+      stopReason: 'max_tokens',
+    });
   });
 });
 
@@ -484,7 +482,7 @@ describe('anthropic adapter: message batches', () => {
     ]);
     await expect(poll(api.fetch)).resolves.toMatchObject({
       status: 'succeeded',
-      error: expect.stringMatching(/without a structured output/) as unknown,
+      error: expect.stringMatching(/failed to parse the structured output/) as unknown,
     });
   });
 

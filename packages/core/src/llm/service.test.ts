@@ -12,7 +12,9 @@ import { Batches, type ProviderConfigParsed } from './config.js';
 import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } from './errors.js';
 import { resolvePricing } from './pricing.js';
 import { BUDGET_EXCEEDED, LlmService, type LlmServiceOptions } from './service.js';
-import { fakeProviderFactory, type FakeProvider } from './testing.js';
+import { createAnthropicProvider } from './anthropic.js';
+import { createOpenRouterProvider } from './openrouter.js';
+import { fakeProviderFactory, recordingFetch, type FakeProvider } from './testing.js';
 import { LLM_BATCH_ENDED } from '../bus/matcher.js';
 import type { BatchStatus, DecideCall, DecideResponse, LlmCall, LlmResponse } from './types.js';
 
@@ -263,6 +265,77 @@ describe('LlmService.call', () => {
       UnpricedModelError,
     );
     expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'unpriced' });
+  });
+});
+
+describe('LlmService.call: billed responses without a usable structured output', () => {
+  const schema = { type: 'object', required: ['kind'], properties: { kind: { type: 'string' } } };
+
+  function anthropicReply(stop: string, content: unknown[]): Record<string, unknown> {
+    return {
+      id: 'msg_01',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-sonnet-5',
+      content,
+      stop_reason: stop,
+      stop_sequence: null,
+      usage: { input_tokens: 50_000, output_tokens: 4096 },
+    };
+  }
+
+  function overHttp(reply: unknown): LlmService {
+    const { fetch } = recordingFetch(reply);
+    return service({
+      factories: {
+        anthropic: createAnthropicProvider({ fetch }),
+        openrouter: createOpenRouterProvider({ fetch }),
+      },
+    });
+  }
+
+  it.each([
+    ['a truncated response', 'max_tokens', [{ type: 'text', text: '{"kind":"gen' }], 'max_tokens'],
+    ['a refusal', 'refusal', [{ type: 'text', text: 'I cannot help with that.' }], 'refusal'],
+    ['malformed JSON', 'end_turn', [{ type: 'text', text: '{oops' }], 'end'],
+  ])('anthropic: ledgers %s and returns its stop reason', async (_, stop, content, want) => {
+    const s = overHttp(anthropicReply(stop, content));
+    const r = run();
+    const res = await call(
+      s,
+      { model: 'claude-sonnet-5', maxTokens: 4096, outputSchema: schema },
+      r,
+    );
+    expect(res).toMatchObject({ output: null, stopReason: want });
+    const rows = env.store.ledger.listByRun(r.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ in_tok: 50_000, out_tok: 4096, priced_by: 'table' });
+    expect(rows[0]?.usd).toBeGreaterThan(0);
+  });
+
+  it('openrouter: ledgers the reported cost of malformed JSON and says why it is unusable', async () => {
+    const s = overHttp({
+      id: 'gen-01',
+      object: 'chat.completion',
+      created: 0,
+      model: 'acme/model',
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'stop',
+          logprobs: null,
+          message: { role: 'assistant', content: '{oops', refusal: null },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, cost: 0.42 },
+    });
+    const r = run();
+    const res = await call(s, { provider: 'router', model: 'acme/model', outputSchema: schema }, r);
+    expect(res).toMatchObject({ output: null, stopReason: 'end', usd: 0.42 });
+    expect(res.error).toMatch(/failed to parse the structured output/);
+    expect(env.store.ledger.listByRun(r.id)).toEqual([
+      expect.objectContaining({ usd: 0.42, priced_by: 'provider' }),
+    ]);
   });
 });
 

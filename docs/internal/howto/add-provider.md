@@ -20,7 +20,8 @@ SDK. `../model-actions.md` has the port's contract.
    normalised so `input` is what the vendor bills at the full input price and cache
    reads and writes are separate; a reported cost returned as `reportedUsd` when the
    vendor gives one; stop reasons mapped to `end | max_tokens | refusal | other`; a
-   structured response that is not JSON thrown as a plain `Error` (retryable). Error
+   structured response that is not JSON, or has no output, returned with `output: null`
+   and `error` set, never thrown, since it is billed and must reach the ledger. Error
    classes: 400, 401, 403, 404 and 422 are `NonRetryableError`, everything else (429,
    5xx, 409, connection and SDK errors) a plain `Error`; an abort is rethrown as is; the
    key never appears in a message. Done when the adapter test drives the real SDK through

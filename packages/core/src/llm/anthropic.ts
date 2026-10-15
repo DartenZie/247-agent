@@ -93,29 +93,49 @@ async function complete(client: Anthropic, req: LlmRequest): Promise<LlmResponse
   const params = requestParams(req);
   const options = { signal: req.signal, timeout: HTTP_TIMEOUT_MS };
 
+  let msg: Anthropic.Message;
   try {
-    const schema = params.output_config?.format?.schema;
-    if (schema === undefined) {
-      const msg = await client.messages.create(params, options);
-      return { output: null, text: textOf(msg), usage: usageOf(msg), stopReason: stopOf(msg) };
-    }
-    // `messages.parse()` takes the same format with its own `parse`.
-    const format = {
-      type: 'json_schema' as const,
-      schema,
-      parse: (text: string) => JSON.parse(text) as JsonValue,
-    };
-    const msg = await client.messages.parse(
-      { ...params, output_config: { ...params.output_config, format } },
-      options,
-    );
-    const stopReason = stopOf(msg);
-    if (msg.parsed_output === null && stopReason === 'end') {
-      throw new Error('anthropic: the response ended without a structured output');
-    }
-    return { output: msg.parsed_output, usage: usageOf(msg), stopReason };
+    msg = await client.messages.create(params, options);
   } catch (err) {
     throw mapError(err);
+  }
+  return responseOf(msg, req.outputSchema !== undefined);
+}
+
+/**
+ * The response to a request, with or without a schema. Parsed here rather than by
+ * `messages.parse()`, which throws on text that is not JSON: every response that got this
+ * far is billed and must reach the ledger, so an unusable one carries an `error` instead.
+ * A truncated or refused response is not parsed at all; the runner reports its stop reason.
+ */
+function responseOf(msg: Anthropic.Message, structured: boolean): LlmResponse {
+  const stopReason = stopOf(msg);
+  const text = textOf(msg);
+  const usage = usageOf(msg);
+  if (!structured) {
+    return { output: null, text, usage, stopReason };
+  }
+  if (stopReason !== 'end') {
+    return { output: null, usage, stopReason };
+  }
+  if (text === '') {
+    return {
+      output: null,
+      usage,
+      stopReason,
+      error: 'anthropic: the response ended without a structured output',
+    };
+  }
+  try {
+    return { output: JSON.parse(text) as JsonValue, usage, stopReason };
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return {
+      output: null,
+      usage,
+      stopReason,
+      error: `anthropic: failed to parse the structured output as JSON: ${why}`,
+    };
   }
 }
 
@@ -171,28 +191,8 @@ function outcomeOf(
 ): BatchStatus {
   switch (result.type) {
     case 'succeeded': {
-      const msg = result.message;
-      const stopReason = stopOf(msg);
-      const text = textOf(msg);
-      const usage = usageOf(msg);
-      if (!structured) {
-        return { status: 'succeeded', response: { output: null, text, usage, stopReason } };
-      }
-      if (stopReason !== 'end') {
-        return { status: 'succeeded', response: { output: null, usage, stopReason } };
-      }
-      try {
-        return {
-          status: 'succeeded',
-          response: { output: JSON.parse(text) as JsonValue, usage, stopReason },
-        };
-      } catch {
-        return {
-          status: 'succeeded',
-          response: { output: null, usage, stopReason },
-          error: 'anthropic: the batch response ended without a structured output',
-        };
-      }
+      const { error, ...response } = responseOf(result.message, structured);
+      return { status: 'succeeded', response, ...(error === undefined ? {} : { error }) };
     }
     case 'errored': {
       const e = result.error.error;

@@ -73,15 +73,25 @@ export function cacheTokensOf(
   return { cached: details?.cached_tokens ?? 0, cacheWrite: details?.cache_write_tokens ?? 0 };
 }
 
-/** A structured output that is not JSON fails retryably: the next attempt may do better. */
-export function parseStructured(prefix: string, text: string): JsonValue {
+/**
+ * The structured output of a completed response, or why it is unusable. Never throws: the
+ * response is billed, so it goes back to the service to be ledgered either way.
+ */
+export function parseStructured(
+  prefix: string,
+  text: string,
+): { output: JsonValue; error?: undefined } | { output: null; error: string } {
+  if (text === '') {
+    return { output: null, error: `${prefix}: the response ended without a structured output` };
+  }
   try {
-    return JSON.parse(text) as JsonValue;
+    return { output: JSON.parse(text) as JsonValue };
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
-    throw new Error(`${prefix}: failed to parse the structured output as JSON: ${why}`, {
-      cause: err,
-    });
+    return {
+      output: null,
+      error: `${prefix}: failed to parse the structured output as JSON: ${why}`,
+    };
   }
 }
 

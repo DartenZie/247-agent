@@ -40,6 +40,12 @@ export interface LlmResponse {
   text?: string | undefined;
   usage: LlmUsage;
   stopReason: StopReason;
+  /**
+   * Set when the response is billed but its structured output is unusable (a completed
+   * response with no output, or one that is not JSON). The service still ledgers it; the
+   * runner then fails the attempt retryably.
+   */
+  error?: string | undefined;
 }
 
 /** What a `decide` action asks the model to judge: text, or a JSON document (docs/internal/model-actions.md). */

@@ -218,24 +218,22 @@ describe('openrouter adapter: response mapping', () => {
     expect(isRetryable(err)).toBe(true);
   });
 
-  it('fails retryably when a completed response has no structured output', async () => {
-    const { err } = await failure(
+  it('returns a completed response with no structured output, with its usage and an error', async () => {
+    const { res } = await call(
       completion({ choices: [choice({ message: { role: 'assistant', content: '' } })] }),
-      200,
       { outputSchema: SCHEMA },
     );
-    expect((err as Error).message).toMatch(/without a structured output/);
-    expect(isRetryable(err)).toBe(true);
+    expect(res).toMatchObject({ output: null, stopReason: 'end', usage: { reportedUsd: 0.00042 } });
+    expect(res.error).toMatch(/openrouter: the response ended without a structured output/);
   });
 
-  it('fails retryably when the structured output is not JSON', async () => {
-    const { err } = await failure(
+  it('returns a structured output that is not JSON, with its usage and an error', async () => {
+    const { res } = await call(
       completion({ choices: [choice({ message: { role: 'assistant', content: '{not json' } })] }),
-      200,
       { outputSchema: SCHEMA },
     );
-    expect((err as Error).message).toMatch(/openrouter: failed to parse the structured output/);
-    expect(isRetryable(err)).toBe(true);
+    expect(res).toMatchObject({ output: null, stopReason: 'end', usage: { reportedUsd: 0.00042 } });
+    expect(res.error).toMatch(/openrouter: failed to parse the structured output/);
   });
 });
 
