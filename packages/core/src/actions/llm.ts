@@ -145,7 +145,10 @@ async function runBatched(
   );
 }
 
-/** The run's result, or the non-retryable failure a truncated or refused response is. */
+/**
+ * The run's result, the non-retryable failure a truncated or refused response is, or the
+ * retryable one an unusable structured output is.
+ */
 function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): JsonValue {
   if (res.stopReason === 'max_tokens') {
     throw new NonRetryableError(
@@ -154,6 +157,14 @@ function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): 
   }
   if (res.stopReason === 'refusal') {
     throw new NonRetryableError('the model refused the request');
+  }
+  if (res.error !== undefined) {
+    // Billed and ledgered, but unusable: the next attempt may do better, within the same cap.
+    throw new Error(res.error);
+  }
+  if (cfg.output_schema !== undefined && res.stopReason === 'other') {
+    // Billed and ledgered too; nothing was parsed, so there is no result to route.
+    throw new Error('the response stopped without a structured output (stop reason: other)');
   }
   return cfg.output_schema === undefined ? { text: res.text ?? '' } : res.output;
 }

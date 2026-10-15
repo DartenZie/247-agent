@@ -229,18 +229,20 @@ describe('openai adapter: response mapping', () => {
     expect(isRetryable(err)).toBe(true);
   });
 
-  it('fails retryably when a completed response has no structured output', async () => {
-    const { err } = await failure(response({ output: [] }), 200, { outputSchema: SCHEMA });
-    expect((err as Error).message).toMatch(/without a structured output/);
-    expect(isRetryable(err)).toBe(true);
+  it('returns a completed response with no structured output, with its usage and an error', async () => {
+    const { res } = await call(response({ output: [] }), { outputSchema: SCHEMA });
+    expect(res).toMatchObject({ output: null, stopReason: 'end' });
+    expect(res.usage.output).toBeGreaterThan(0);
+    expect(res.error).toMatch(/openai: the response ended without a structured output/);
   });
 
-  it('fails retryably when the structured output is not JSON', async () => {
-    const { err } = await failure(response({ output: [textItem('{not json')] }), 200, {
+  it('returns a structured output that is not JSON, with its usage and an error', async () => {
+    const { res } = await call(response({ output: [textItem('{not json')] }), {
       outputSchema: SCHEMA,
     });
-    expect((err as Error).message).toMatch(/openai: failed to parse the structured output/);
-    expect(isRetryable(err)).toBe(true);
+    expect(res).toMatchObject({ output: null, stopReason: 'end' });
+    expect(res.usage.output).toBeGreaterThan(0);
+    expect(res.error).toMatch(/openai: failed to parse the structured output/);
   });
 });
 

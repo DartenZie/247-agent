@@ -74,7 +74,10 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
 
 Back in the runner: a `max_tokens` stop fails non-retryably ("output truncated at
 max_tokens N; raise it or shorten the task"), so does a refusal; the result is the
-parsed object with `output_schema`, else `{text}`.
+parsed object with `output_schema`, else `{text}`. A response the adapter returned
+with `error` (billed, but no usable structured output), or a structured call that
+stopped for another reason (`other`), fails retryably; its row is already in the
+ledger, so the retry spends from the same cap.
 
 ## The daily breaker
 
@@ -113,12 +116,16 @@ environment variables such as `OPENAI_BASE_URL` are ignored); the task `timeout`
 the real bound. Error classes are shared (`anthropic.ts`, `openai-compat.ts`): 400,
 401, 403, 404 and 422 are `NonRetryableError`; every other API error (429, 5xx, 409),
 connection and SDK errors are plain `Error`, retried by the task's policy; an abort is
-rethrown as is. A structured response that ends without parseable JSON, or a
-completed response with no output, is a retryable `Error`. Keys never appear in an
-error message.
+rethrown as is. A completed response is billed, so the adapter returns it rather
+than throwing: one whose structured output is missing or not JSON comes back with
+`output: null` and `error` set. The service ledgers it like any other, and the runner
+then fails the attempt with a retryable `Error`, after its `max_tokens` and refusal
+checks (the adapters do not parse a truncated or refused response). Keys never appear
+in an error message.
 
-- **Anthropic** (`anthropic.ts`): `client.messages.parse()` with `output_config.format
-  = {type: 'json_schema', schema}` when a schema is set, `messages.create()` otherwise;
+- **Anthropic** (`anthropic.ts`): `client.messages.create()` with `output_config.format
+  = {type: 'json_schema', schema}` when a schema is set, the text parsed by the adapter
+  (`messages.parse()` throws on text that is not JSON, before the ledger sees it);
   `system` as one text block with `cache_control: {type: 'ephemeral'}`; the input as
   the single user turn, no prefill; `thinking: {type: 'adaptive'}` and
   `output_config.effort` only when `supportsEffort(model)` (`llm/models.ts`:

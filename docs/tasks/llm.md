@@ -125,6 +125,10 @@ event is published.
 | the answer was not valid JSON for the schema | the attempt fails and is retried |
 | the cost overran the run's budget, or the daily cap is reached | fails without retry |
 
+Every answer the provider bills is recorded in the ledger before the run fails, so
+the cut-off, refused and invalid answers above count against the run's budget and
+the daily cap. A retry of an invalid answer spends from the same run budget.
+
 ## `batch: true`: half price for anything that can wait
 
 ```yaml

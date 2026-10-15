@@ -85,10 +85,7 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
   if (stopReason !== 'end') {
     return { output: null, usage, stopReason };
   }
-  if (text === '') {
-    throw new Error(`${PREFIX}: the response ended without a structured output`);
-  }
-  return { output: parseStructured(PREFIX, text), usage, stopReason };
+  return { ...parseStructured(PREFIX, text), usage, stopReason };
 }
 
 /** Joins the `output_text` parts of every message item; a `refusal` part marks the whole response. */
