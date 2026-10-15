@@ -94,11 +94,14 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
   } catch (err) {
     throw mapError(PREFIX, err);
   }
+  const usage = usageOf(res);
   const choice = choiceOf(res);
+  if (choice === undefined) {
+    return failedReply(res, usage);
+  }
   const refused = typeof choice.message.refusal === 'string' && choice.message.refusal !== '';
   const stopReason: StopReason = refused ? 'refusal' : stopOf(choice.finish_reason);
   const text = choice.message.content ?? '';
-  const usage = usageOf(res);
   if (req.outputSchema === undefined) {
     return { output: null, text, usage, stopReason };
   }
@@ -108,19 +111,33 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
   return { ...parseStructured(PREFIX, text), usage, stopReason };
 }
 
-/** A 200 with an `error` body and no choices is how some upstream failures arrive; say so. */
-function choiceOf(res: OpenAI.ChatCompletion): OpenAI.ChatCompletion.Choice {
-  const body: { error?: { message?: unknown }; choices?: OpenAI.ChatCompletion.Choice[] } = res;
-  const choice = body.choices?.[0];
-  if (choice !== undefined) {
-    return choice;
-  }
-  const message = body.error?.message;
-  throw new Error(
+/** The first choice; `undefined` when the reply has none (a 200 with an `error` body). */
+function choiceOf(res: OpenAI.ChatCompletion): OpenAI.ChatCompletion.Choice | undefined {
+  const body: { choices?: OpenAI.ChatCompletion.Choice[] | undefined } = res;
+  return body.choices?.[0];
+}
+
+/**
+ * A 200 with an `error` body and no choices is how some upstream failures arrive. When its
+ * usage reports a cost or tokens, the reply is billed, so it goes back to the service to be
+ * ledgered with `error` set, and the runner fails the attempt retryably. Otherwise nothing
+ * was billed, so it is a plain retryable error.
+ */
+function failedReply(res: OpenAI.ChatCompletion, usage: LlmUsage): LlmResponse {
+  // Not in the SDK's types: OpenRouter's own field on an upstream failure.
+  const { error: failure } = res as { error?: { message?: unknown } | undefined };
+  const message = failure?.message;
+  const error =
     typeof message === 'string'
       ? `${PREFIX}: ${message}`
-      : `${PREFIX}: the response has no choices`,
-  );
+      : `${PREFIX}: the response has no choices`;
+  const billed =
+    usage.reportedUsd !== undefined ||
+    usage.input + usage.output + usage.cacheRead + usage.cacheWrite > 0;
+  if (!billed) {
+    throw new Error(error);
+  }
+  return { output: null, usage, stopReason: 'other', error };
 }
 
 function stopOf(reason: OpenAI.ChatCompletion.Choice['finish_reason']): StopReason {
@@ -247,14 +264,15 @@ function decisionUsageOf(u: DecisionsBody['usage']): LlmUsage {
 }
 
 function usageOf(res: OpenAI.ChatCompletion): LlmUsage {
-  // `cost` (USD) is OpenRouter's extension to the usage block.
-  const u: (OpenAI.CompletionUsage & { cost?: unknown }) | undefined = res.usage;
-  if (u === undefined) {
+  // `cost` (USD) is OpenRouter's extension to the usage block; an upstream may send `null`.
+  const u = res.usage as (OpenAI.CompletionUsage & { cost?: unknown }) | null | undefined;
+  if (u === undefined || u === null) {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   }
+  // An error reply may carry `cost` without the token counts.
   const usage = normaliseUsage({
-    input: u.prompt_tokens,
-    output: u.completion_tokens,
+    input: typeof u.prompt_tokens === 'number' ? u.prompt_tokens : 0,
+    output: typeof u.completion_tokens === 'number' ? u.completion_tokens : 0,
     ...cacheTokensOf(u.prompt_tokens_details),
   });
   return typeof u.cost === 'number' ? { ...usage, reportedUsd: u.cost } : usage;

@@ -147,7 +147,11 @@ in an error message.
   `reasoning: {effort}` whenever `effort` is set; `usage.cost` → `reportedUsd`, so the
   ledger says `provider` and no `pricing:` entry is needed. `finish_reason`
   stop/length/content_filter → end/max_tokens/refusal; a non-empty `message.refusal` →
-  refusal. `HTTP-Referer`/`X-Title` come from the provider's `headers:`.
+  refusal. A 200 with an `error` body and no choices is an upstream failure. When its
+  usage reports a cost or tokens, it comes back with `output: null`, `error` set and
+  stop reason `other`, so the service ledgers it before the runner fails the attempt
+  retryably; otherwise it is a plain retryable `Error`. `HTTP-Referer`/`X-Title` come
+  from the provider's `headers:`.
 - **Strict schemas**: OpenAI and OpenRouter accept `strict: true` only when every
   property is in `required` and every object has `additionalProperties: false` (and a
   subset of JSON Schema keywords). The adapters send the user's schema unchanged; one
