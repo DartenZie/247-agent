@@ -73,8 +73,10 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
   } catch (err) {
     throw mapError(PREFIX, err);
   }
-  if (res.error !== null) {
-    throw new Error(`${PREFIX}: ${res.error.code}: ${res.error.message}`);
+  // OpenAI sends `error: null`; an OpenAI-compatible server may leave the field out.
+  const error = res.error as OpenAI.Responses.ResponseError | null | undefined;
+  if (error !== null && error !== undefined) {
+    throw new Error(`${PREFIX}: ${error.code}: ${error.message}`);
   }
   const { text, refused } = contentOf(res);
   const stopReason: StopReason = refused ? 'refusal' : stopOf(res);
