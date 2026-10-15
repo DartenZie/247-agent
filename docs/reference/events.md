@@ -20,7 +20,7 @@ match, and the log lines worth searching for.
 | `type` | dot-separated lower-case segments |
 | `source` | who published it (below) |
 | `ts` | when it was stored |
-| `correlation_id` | `cor_…`; shared by every event and run that stem from one happening; inherited from the parent when there is one, else new |
+| `correlation_id` | `cor_…`; shared by every event and run that stem from one happening; inherited from the parent when there is one, else new; new for each item of an `emit … each` rule |
 | `parent_id` | the event this one was caused by, or `null` |
 | `dedup_key` | the idempotency key, or `null`; a second event with the same key is dropped |
 | `depth` | hops from the root of the causal chain: the parent's depth + 1, or 0 |

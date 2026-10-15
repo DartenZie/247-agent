@@ -20,6 +20,7 @@ import type { Clock } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
 import { Retry, type EmitRuleConfig, type RetryConfig } from '../config/schema.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
+import { newId } from '../ids.js';
 import {
   evaluateExpr,
   renderTemplate,
@@ -153,14 +154,16 @@ export function backoffDelay(policy: RetryConfig, attempt: number): number {
 }
 
 /**
- * Renders a task's `emit` rules (docs/internal/actions.md) into events to publish. Throws
- * `NonRetryableError` when a rule cannot be rendered.
+ * Renders a task's `emit` rules (docs/internal/actions.md) into events to publish. Each item
+ * of an `each` rule starts its own correlation from `newCorrelation()`; the other rules
+ * inherit the trigger's. Throws `NonRetryableError` when a rule cannot be rendered.
  */
 export function renderEmits(
   rules: readonly EmitRuleConfig[],
   scope: TemplateScope,
   source: string,
   parentId: string,
+  newCorrelation: () => string,
 ): NewEvent[] {
   const out: NewEvent[] = [];
   rules.forEach((rule, i) => {
@@ -185,6 +188,7 @@ export function renderEmits(
           type: rule.type,
           source,
           parent_id: parentId,
+          correlation_id: rule.each === undefined ? undefined : newCorrelation(),
           dedup_key: rule.dedup_key === undefined ? undefined : renderText(rule.dedup_key, s),
           payload: rule.payload === undefined ? null : (renderValue(rule.payload, s) as JsonValue),
         });
@@ -676,7 +680,9 @@ export class Executor {
           env: this.env,
           run: this.runView(run),
         };
-        emitted = renderEmits(task.config.emit ?? [], scope, source, run.event_id);
+        emitted = renderEmits(task.config.emit ?? [], scope, source, run.event_id, () =>
+          newId('cor', this.clock.now()),
+        );
         updates = renderStateUpdates(task.config.state_updates, scope);
       } catch (err) {
         final = { ok: false, error: errorMessage(err), retryable: false };

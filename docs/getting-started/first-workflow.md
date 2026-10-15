@@ -247,16 +247,17 @@ minutes you see the chain:
 
 ```
 2026-10-04T18:02:00.118Z  evt_01M4406S9MX4N3K7R7A1V2PZ0C  cron.tick  source=scheduler  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB
-2026-10-04T18:02:00.941Z  evt_01M4406SASB1D4V3MN9T8Q7XKR  email.received  source=task:fetch_email  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406S9MX4N3K7R7A1V2PZ0C
+2026-10-04T18:02:00.941Z  evt_01M4406SASB1D4V3MN9T8Q7XKR  email.received  source=task:fetch_email  correlation=cor_01M4406SASK7D2W9Q5N3B8X1FV  parent=evt_01M4406S9MX4N3K7R7A1V2PZ0C
 2026-10-04T18:02:00.941Z  evt_01M4406SAS8F2WQ0CZ5JH6YD3N  task.fetch_email.succeeded  source=task:fetch_email  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406S9MX4N3K7R7A1V2PZ0C
-2026-10-04T18:02:02.377Z  evt_01M4406SCA7KQ9P1H4XZ2B8VWE  email.classified  source=task:classify_email  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406SASB1D4V3MN9T8Q7XKR
-2026-10-04T18:02:02.377Z  evt_01M4406SCAN5T0D6RJ3G9Y1MFH  task.classify_email.succeeded  source=task:classify_email  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406SASB1D4V3MN9T8Q7XKR
-2026-10-04T18:02:03.102Z  evt_01M4406SD2YV8B3Q7W4KX0E5PR  task.reply.succeeded  source=task:reply  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406SCA7KQ9P1H4XZ2B8VWE
+2026-10-04T18:02:02.377Z  evt_01M4406SCA7KQ9P1H4XZ2B8VWE  email.classified  source=task:classify_email  correlation=cor_01M4406SASK7D2W9Q5N3B8X1FV  parent=evt_01M4406SASB1D4V3MN9T8Q7XKR
+2026-10-04T18:02:02.377Z  evt_01M4406SCAN5T0D6RJ3G9Y1MFH  task.classify_email.succeeded  source=task:classify_email  correlation=cor_01M4406SASK7D2W9Q5N3B8X1FV  parent=evt_01M4406SASB1D4V3MN9T8Q7XKR
+2026-10-04T18:02:03.102Z  evt_01M4406SD2YV8B3Q7W4KX0E5PR  task.reply.succeeded  source=task:reply  correlation=cor_01M4406SASK7D2W9Q5N3B8X1FV  parent=evt_01M4406SCA7KQ9P1H4XZ2B8VWE
 ```
 
 The ids will differ, but the shape is the same: a cron tick fetched the mail, the mail
-was classified, and the reply went out, all under one correlation id. Your inbox should
-have the acknowledgement by now.
+was classified, and the reply went out. Each fetched mail starts its own correlation id,
+which its classification and reply share; its `parent` points back to the tick. Your
+inbox should have the acknowledgement by now.
 
 ## 8. See what it cost
 
@@ -271,7 +272,7 @@ oa runs show <that run id>
 run         run_01M4406SASQ8F7K2D0N3V9W1EZ
 task        classify_email
 status      succeeded
-event       2026-10-04T18:02:00.941Z  evt_01M4406SASB1D4V3MN9T8Q7XKR  email.received  source=task:fetch_email  correlation=cor_01M4406S9MK3HX2YQ6D8W0F7TB  parent=evt_01M4406S9MX4N3K7R7A1V2PZ0C
+event       2026-10-04T18:02:00.941Z  evt_01M4406SASB1D4V3MN9T8Q7XKR  email.received  source=task:fetch_email  correlation=cor_01M4406SASK7D2W9Q5N3B8X1FV  parent=evt_01M4406S9MX4N3K7R7A1V2PZ0C
 payload     {"uid":42,"message_id":"<a1b2c3@mail.example.net>","from":"friend@example.net","from_name":"A Friend","to":["you@example.com"],"cc":[],"reply_to":null,"subject":"Opening hours?","date":"2026-10-04T18:01:40.000Z","body":"Hi, are you open on Saturday?","truncated":false,"in_reply_to":null,"references":[],"attachments":[]}
 created     2026-10-04T18:02:00.942Z
 started     2026-10-04T18:02:00.943Z

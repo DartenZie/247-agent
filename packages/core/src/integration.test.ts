@@ -254,7 +254,7 @@ async function until(pred: () => Promise<boolean> | boolean, ms = 15_000): Promi
 }
 
 describe('website workflow without a model', () => {
-  it('runs fetch_email → … → publish_site → notify on one correlation id, secrets contained', async () => {
+  it('runs fetch_email → … → publish_site → notify on the mail correlation id, secrets contained', async () => {
     await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
 
     const { event_id, run: first } = await api.run('fetch_email');
@@ -274,10 +274,13 @@ describe('website workflow without a model', () => {
       'update_site_general',
     ]);
     expect(runs).toHaveLength(6); // the spam mail never reaches the classifier
+    // The tick keeps its correlation; the mail starts its own, which every later run shares.
+    const mail = byTask.get('classify_email')?.correlation_id;
+    expect(mail).not.toBe(first.correlation_id);
     for (const run of runs) {
       expect(run, run.task).toMatchObject({
         status: 'succeeded',
-        correlation_id: first.correlation_id,
+        correlation_id: run.task === 'fetch_email' ? first.correlation_id : mail,
       });
     }
     expect(byTask.get('fetch_email')?.result).toMatchObject({ last_uid: 2 });
@@ -285,7 +288,7 @@ describe('website workflow without a model', () => {
     expect(byTask.get('approve_general_change')?.result).toMatchObject({
       steps: [
         { message_id: 1, chat_id: '1', options: ['Approve', 'Reject'] },
-        { type: 'chat.reply', payload: { approved: true, correlation_id: first.correlation_id } },
+        { type: 'chat.reply', payload: { approved: true, correlation_id: mail } },
         'git push origin HEAD:main',
       ],
     });
@@ -323,10 +326,22 @@ describe('website workflow without a model', () => {
       expect.stringContaining('Spring event') as string,
     ]);
 
-    // One correlation id from the manual run to the last lifecycle event, chat reply included.
+    // The manual run's correlation covers the fetch; each mail has its own from there to the
+    // last lifecycle event, chat reply included.
     const events = daemon.core.store.events.listAfter(0, 1000);
     expect(events[0]?.id).toBe(event_id);
-    expect(new Set(events.map((e) => e.correlation_id))).toEqual(new Set([first.correlation_id]));
+    const tick = new Set(['manual.run', 'task.fetch_email.succeeded']);
+    const received = events.filter((e) => e.type === 'email.received');
+    const spam = received.find((e) => e.correlation_id !== mail);
+    expect(spam?.correlation_id).not.toBe(first.correlation_id);
+    for (const e of events) {
+      const expected = tick.has(e.type)
+        ? first.correlation_id
+        : e === spam
+          ? spam.correlation_id
+          : mail;
+      expect(e.correlation_id, e.type).toBe(expected);
+    }
     expect(events.map((e) => e.type)).toEqual([
       'manual.run',
       'task.fetch_email.succeeded',

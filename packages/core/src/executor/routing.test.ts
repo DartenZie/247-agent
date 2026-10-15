@@ -157,10 +157,14 @@ describe('emit routing and state_updates', () => {
       dedup_key: 'email:m1',
       payload: { id: 'm1' },
       parent_id: trigger.id,
-      correlation_id: trigger.correlation_id,
       depth: 1,
     });
     expect(emitted[2]).toMatchObject({ dedup_key: 'email:m2', payload: { id: 'm2' } });
+    // Each item is its own happening: a fresh correlation each; other rules keep the trigger's.
+    const correlations = emitted.map((e) => e.correlation_id);
+    expect(correlations[1]).toMatch(/^cor_/);
+    expect(new Set([trigger.correlation_id, correlations[1], correlations[2]]).size).toBe(3);
+    expect(correlations[3]).toBe(trigger.correlation_id);
     expect(emitted[3]?.payload).toEqual({ kind: 'ok', n: 7, from: 'x.fan', run: 'fan' });
     expect(env.store.state.snapshot()).toEqual({
       email: { last_uid: 7, meta: { attempt: 1 } },
