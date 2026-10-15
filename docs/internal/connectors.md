@@ -128,7 +128,9 @@ or `OA_SECRET_*`), builds the child environment with the same `connectorChildEnv
   stdin/stdout with MCP's line framing unchanged; a new connection replaces the old
   one, a closed one terminates the process. The supervisor connects through
   `connectors/socket-transport.ts` instead of spawning, with the usual backoff, health
-  pings and `ops` allowlist.
+  pings and `ops` allowlist. A message or unterminated line over MCP's 10 MB read
+  buffer drops that connection: the ops in flight fail, the supervisor reconnects, and
+  the daemon keeps running.
 
 The host logs JSON on stderr at `info` with `connector` on every line. The unit is
 `PartOf=247-agent.service` and keeps `Group=247-agent`, which is how it reads
