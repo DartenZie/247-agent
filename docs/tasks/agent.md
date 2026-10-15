@@ -262,7 +262,8 @@ the direct model calls.
 > daemon can price, or add the model the agent reports to `pricing:` in `agent.yaml`;
 > otherwise the run fails as unpriced after the turn.
 
-Before any work, a run is refused when the daily cap is already reached. Size the
+Before any work, a run is refused when the daily cap is already reached, counting the
+worst case of model calls still in flight. Size the
 limits to the task: a YAML edit is 20 calls and cents; a site-wide change is 60 calls,
 a few dollars, and an approval gate.
 

@@ -52,7 +52,9 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
 `effort` is `low | medium | high`. The service (`LlmService.call`):
 
 1. **Precheck** (`precheck()`): refuses with `BudgetExceededError('daily')` when the
-   day's ledger sum (UTC day, `pricing.ts`) has reached `budgets.daily_usd`, and with
+   day's ledger sum (UTC day, `pricing.ts`) has reached `budgets.daily_usd`, or when
+   that sum plus what is held in flight reaches it (see [The daily
+   breaker](#the-daily-breaker)), and with
    `BudgetExceededError('task')` when the run has already spent its cap. When the
    model has a table price, the worst case is also checked: `ceil(len(system + input)
    / 3)` input tokens plus `max_tokens` output at table prices, added to what the run
@@ -60,7 +62,7 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    table price, so it gets only the post-hoc check. `spentRun` is the ledger sum for
    the run id, so retries share one cap.
 2. **Call** the adapter with `{model, system, input, outputSchema, maxTokens, effort,
-   signal}`.
+   signal}`, holding the worst case in flight until the ledger row is written.
 3. **Settle** (`settle()`): price the response. A provider-reported cost wins
    (`priced_by: provider`); else the table (`table`); else the row is written at $0
    with `priced_by: unpriced` and `UnpricedModelError` fails the run so it is noticed.
@@ -81,7 +83,19 @@ nothing. Once tripped, every `call`, `decide`, batch submit and agent `checkBudg
 fails fast without contacting a provider until 00:00 UTC. The first crossing publishes
 `budget.exceeded` with `dedup_key: budget:daily:<YYYY-MM-DD>` (so once per day),
 `source: core`, payload `{scope, day, limit_usd, spent_usd, task, run_id}`; a `notify`
-task should listen for it. Batches in flight reserve their worst case against the cap.
+task should listen for it.
+
+Spend the ledger does not show yet counts against the cap too, so concurrent calls
+overshoot it by one call at most. Batches in flight reserve their worst case in
+`llm_batches.worst_usd`. A `call`, `decide` or batch submit holds its worst case in
+memory (`LlmService.inFlight`) from the precheck until its ledger or `llm_batches` row
+is written, and drops it if the call fails. A call is refused once spent plus held
+reaches the cap; the breaker trips on spend alone, so a refusal because the cap is held
+publishes no `budget.exceeded`. It is a `BudgetExceededError('daily')` like any other,
+so the run fails without retry. Two kinds of call hold nothing and can still overshoot
+together: an `openrouter` model without a table price, which has no worst case, and an
+agent session, whose spend `checkBudget` cannot know in advance. Both are refused like
+any call once the cap is held.
 
 ## The ledger row
 
@@ -167,7 +181,8 @@ like a wait:
 
 1. `actions/llm.ts` calls `ctx.llm.submitBatch()`: the usual precheck with the worst
    case at the batch price (`batchPrice()`, factor 0.5); the day's spend plus the
-   reservations of every batch in flight plus this worst case must fit the daily cap.
+   reservations of every batch in flight and the worst cases held by calls in flight,
+   plus this worst case, must fit the daily cap.
    One request per run (`custom_id` = the run id, ids `[A-Za-z0-9_-]{1,64}`), the same
    params as the synchronous call, a row in `llm_batches` with the reserved
    `worst_usd`. A run that already has a batch in flight gets that one back

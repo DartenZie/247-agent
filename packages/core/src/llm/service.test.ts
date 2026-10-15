@@ -213,6 +213,40 @@ describe('LlmService.call', () => {
     expect(fake.requests).toHaveLength(3);
   });
 
+  it('counts the worst case of calls in flight against the daily cap', async () => {
+    // Each worst case is ~$0.000505 (5 input + 100 output tokens): two fit under $0.001.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    fake = fakeProviderFactory(async () => {
+      await gate;
+      return usage(1000, 100);
+    });
+    const s = service({ budgets: { daily_usd: 0.001 } });
+    const calls = Array.from({ length: 8 }, () => call(s));
+    release();
+    const settled = await Promise.allSettled(calls);
+    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    const refused = settled.filter((r) => r.status === 'rejected');
+    expect(refused).toHaveLength(6);
+    expect(refused[0]?.reason).toBeInstanceOf(BudgetExceededError);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  it('releases the reservation of a call that failed', async () => {
+    let fail = true;
+    fake = fakeProviderFactory(() => {
+      if (fail) {
+        throw new Error('upstream down');
+      }
+      return usage(1000, 100);
+    });
+    // One worst case (~$0.000505) reaches this cap: a leaked hold would refuse the retry.
+    const s = service({ budgets: { daily_usd: 0.0005 } });
+    await expect(call(s)).rejects.toThrow(/upstream down/);
+    fail = false;
+    await expect(call(s)).resolves.toBeDefined();
+  });
+
   it('uses the cost an OpenRouter-type provider reports, and fails when it reports none', async () => {
     fake = fakeProviderFactory({
       ...usage(500, 50),
@@ -548,6 +582,22 @@ describe('LlmService batches', () => {
     await poll(s);
     expect(env.store.batches.reservedUsd()).toBe(0);
     await expect(s.submitBatch(req, ctxOf(run()))).resolves.toMatchObject({ reused: false });
+  });
+
+  it('counts batches in flight against synchronous calls and against each other', async () => {
+    // A batch worst case is ~$0.00025; a synchronous one ~$0.0005.
+    const s = withBatches({ budgets: { daily_usd: 0.0006 } });
+    const submits = await Promise.allSettled([
+      s.submitBatch(req, ctxOf(run())),
+      s.submitBatch(req, ctxOf(run())),
+      s.submitBatch(req, ctxOf(run())),
+    ]);
+    expect(submits.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled', 'rejected']);
+    expect(fake.batches).toHaveLength(2);
+    // $0.0005 reserved by the two batches: a synchronous call would cross $0.0004.
+    const tight = service({ budgets: { daily_usd: 0.0004 } });
+    await expect(call(tight)).rejects.toThrow(BudgetExceededError);
+    expect(fake.requests).toHaveLength(0);
   });
 
   it('leaves a batch in progress alone and settles a succeeded one at half price', async () => {

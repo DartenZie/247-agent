@@ -104,7 +104,7 @@ call.
 | a rate limit or a server error | the attempt fails and is retried |
 | the request was rejected: no key, no credits, over 32k tokens | fails without retry |
 | an answer is missing, of the wrong type, a label outside the criteria or a score out of range | the attempt fails and is retried; the provider answered badly |
-| the cost overran the run's budget, or the daily cap is reached | fails without retry |
+| the cost overran the run's budget, or the daily cap is reached, counting calls in flight at their worst case | fails without retry |
 
 [`decide-triage.yaml`](../examples/decide-triage.yaml) is a complete example, and
 [Triage with decide](../recipes/triage-with-decide.md) walks through it.
