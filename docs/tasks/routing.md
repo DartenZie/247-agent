@@ -63,15 +63,18 @@ emit:
   `result.status == 'blocked'`.
 - **`each`** fans a list out into one event per element. It must be a single `${…}`
   that renders to a list; `null` emits nothing, anything else fails the run. Inside the
-  rule, `item` is the current element.
+  rule, `item` is the current element. Each element is its own happening, so each event
+  gets a new correlation id.
 - **`dedup_key`** makes delivery idempotent: a later event with the same key is dropped.
   Give one to anything that can be fetched twice, built from a stable id in the data.
 - **`payload`** is the event's data, templated. A value that is exactly one `${…}`
   keeps its type, so `payload: ${item}` publishes the object as it is.
 
-Emitted events carry `source: task:<name>`, the trigger event as their parent, and
-inherit its correlation id. That is what lets `oa` and the logs show one real-world
-happening from the email to the chat message that reported it.
+Emitted events carry `source: task:<name>` and the trigger event as their parent. An
+event from a rule without `each` inherits the trigger's correlation id; an event from an
+`each` rule gets a new one. That is what lets `oa` and the logs show one real-world
+happening from the email to the chat message that reported it, and what lets an
+[approval gate](../recipes/approval-gate.md) wait for the answer to its own item only.
 
 > [!NOTE]
 > All rules are rendered before anything is written. A rule that cannot be rendered,

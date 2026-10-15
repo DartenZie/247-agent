@@ -33,7 +33,8 @@ is `seq` (the dispatch order, an autoincrement), `id`, `type`, `source`, `ts`,
 only `seq` orders events reliably.
 
 - `correlation_id` threads one real-world happening through every run it causes:
-  given, else inherited from the parent, else fresh (`bus/publish.ts`).
+  given, else inherited from the parent, else fresh (`bus/publish.ts`). An `emit` rule
+  with `each` gives each item a fresh one ([`actions.md`](actions.md)).
 - `dedup_key` makes delivery idempotent: `UNIQUE(dedup_key)` and `ON CONFLICT DO
   NOTHING` turn a repeat into `{status: 'duplicate'}`.
 - `source` is `scheduler` (cron ticks), `manual` (`oa run`), `api` (the default of

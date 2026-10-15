@@ -175,8 +175,10 @@ the result) and the emitted events.
   event per `item`; `null` emits nothing; anything else fails.
 - `when` is JMESPath over `{event, result, state, env, run}`; falsy skips the rule.
 - Emitted events carry `source: task:<name>`, the trigger event as `parent_id`, and so
-  its `correlation_id` and `depth + 1`; a `dedup_key` collision is dropped and logged
-  at debug.
+  `depth + 1`; a `dedup_key` collision is dropped and logged at debug. A rule without
+  `each` inherits the trigger's `correlation_id`; each item of an `each` rule gets a new
+  one (`renderEmits`). The item, not the poll that fetched it, is the happening, and a
+  gate keyed on the correlation id must not resume on another item's answer.
 - `task.<name>.failed` is published once, after the last attempt, with payload
   `{run_id, task, error, attempt}`.
 - `bus/matcher.ts` never matches a task to an event whose `source` is its own

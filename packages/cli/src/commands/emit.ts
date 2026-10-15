@@ -11,8 +11,8 @@ Injects an event into the daemon as if a connector had emitted it.
 options:
   --source <name>       event source (default: manual)
   --dedup-key <key>     drop the event if one with this key was already published
-  --parent <event_id>   parent event; inherits its correlation id and depth + 1
-  --correlation <id>    correlation id (ignored when --parent has one)
+  --parent <event_id>   parent event; depth + 1, and its correlation id by default
+  --correlation <id>    correlation id; wins over the parent's
   --json                print the response as JSON
   --socket <path>       daemon socket (default: $OA_CORE_SOCKET or /run/247-agent/core.sock)
 `;

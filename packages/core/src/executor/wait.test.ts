@@ -92,6 +92,12 @@ const tasks = config([
     },
   },
   {
+    name: 'poll',
+    trigger: { kind: 'event', type: 'x.poll' },
+    action: { kind: 'shell', cmd: ['echo', '[{"q":"a"},{"q":"b"}]'], result: 'json_stdout' },
+    emit: [{ type: 'x.ask', each: '${result}', payload: '${item}' }],
+  },
+  {
     name: 'gate_by_name',
     trigger: { kind: 'event', type: 'x.ask_name' },
     action: {
@@ -350,6 +356,31 @@ describe('a retry after a resumed wait (#156)', () => {
     expect(run?.status).toBe('succeeded');
     const steps = (run?.result as { steps: { id?: string }[] }).steps;
     expect(steps.map((s) => s.id ?? null)).toEqual([first.id, null, second.id]);
+  });
+});
+
+describe('gates opened for items of one fan-out (#13)', () => {
+  it('resumes only the gate the reply answers', async () => {
+    const ex = make();
+    ex.start();
+    publish('x.poll');
+    bus.dispatcher.drain();
+    await ex.idle();
+    bus.dispatcher.drain();
+    await ex.idle();
+    const asks = events().filter((e) => e.type === 'x.ask');
+    const [first, second] = asks;
+    if (first === undefined || second === undefined) {
+      throw new Error('expected two x.ask events');
+    }
+    expect(runOf('gate', first)?.status).toBe('waiting');
+    expect(runOf('gate', second)?.status).toBe('waiting');
+
+    publish('chat.reply', { correlation_id: first.correlation_id, approved: true, text: 'yes' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate', first)?.status).toBe('succeeded');
+    expect(runOf('gate', second)?.status).toBe('waiting');
   });
 });
 

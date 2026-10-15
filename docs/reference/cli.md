@@ -77,8 +77,8 @@ runs. Without a payload file the payload is `null`.
 |---|---|---|
 | `--source <name>` | the event's source | `manual` |
 | `--dedup-key <key>` | drop the event when one with this key was already published | none |
-| `--parent <event_id>` | parent event; the new one inherits its correlation id and depth + 1 | none |
-| `--correlation <id>` | correlation id (ignored when `--parent` has one) | a new one |
+| `--parent <event_id>` | parent event; the new one gets depth + 1 and, without `--correlation`, its correlation id | none |
+| `--correlation <id>` | correlation id; wins over the parent's | the parent's, else a new one |
 | `--json` | print the response as JSON | off |
 | `--socket <path>` | the daemon socket | see above |
 

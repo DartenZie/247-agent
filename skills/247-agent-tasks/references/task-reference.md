@@ -153,8 +153,9 @@ emit:
 
 - Automatic events: `task.<name>.succeeded` (payload = result) and `task.<name>.failed`
   (payload = error, once, after the last retry attempt).
-- Emitted events carry `source: task:<name>`, `parent_id` = the trigger event, and
-  inherit its `correlation_id`.
+- Emitted events carry `source: task:<name>` and `parent_id` = the trigger event. A
+  rule without `each` inherits the trigger's `correlation_id`; each item of an `each`
+  rule gets a new one, so a gate keyed on `${event.correlation_id}` answers one item.
 - Rendering happens before anything is written; a rule that cannot render fails the
   run (no retry) and nothing is emitted.
 - No `secrets` in `emit` or `state_updates`.
