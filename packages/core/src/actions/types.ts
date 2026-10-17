@@ -46,6 +46,8 @@ export interface AgentClients {
   open(connector: string, opts: AgentOpenOptions): Promise<AgentSession>;
   /** What the agent said about itself at `initialize`; `undefined` until it is up. */
   info(connector: string): AgentInfo | undefined;
+  /** Stops the agent process and starts it again: how a turn that ignores a cancel is ended. */
+  restart(connector: string, reason: string): Promise<unknown>;
 }
 
 /** What a `wait` suspends the run for (docs/internal/actions.md). */
