@@ -43,7 +43,10 @@ tool calls). Per run the runner:
 6. Reads `RESULT.json`, runs the gates, keeps or removes the workspace.
 
 `session/cancel` is the hard stop. After it the runner waits 15 s for the agent's turn
-to end, then the turn fails with "the agent did not stop within 15000ms of cancel".
+to end. A turn still running then may still be calling the model, so the runner restarts
+the connector (`AgentClients.restart`): sessions of other runs on the same agent fail
+with it. The turn fails with the error of the cancel's reason, which ends in "the agent
+did not stop within 15000ms of cancel, so it was restarted".
 Once `ctx.signal` aborts (timeout, daemon stop), pending permission requests are
 answered `cancelled`. The agent runs the model with its own key from the manifest's
 `env`; the core never talks to a provider for an `agent` action.
@@ -141,7 +144,9 @@ agent never holds the connector's secrets, only a per-run socket and token.
   (`priced_by: table`), else `unpriced` and the run fails. Consequence: without
   `action.model`, an agent that reports tokens but no cost fails `UnpricedModelError`
   unless `pricing:` names what it reports. A turn reporting neither usage nor cost
-  fails non-retryably, the row already written.
+  fails non-retryably, the row already written. A turn that ends without a stop (the
+  agent process dies, or the turn ignores a cancel) still writes its row, with the cost
+  reported so far and no tokens, before the run fails.
 - Wall clock: the task `timeout` aborts `ctx.signal`, which cancels the session.
 - Stop reasons: `refusal` and `cancelled` fail non-retryably; `max_tokens` and
   `max_turn_requests` are not special, the run proceeds to read `RESULT.json`.

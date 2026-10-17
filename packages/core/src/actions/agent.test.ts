@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { execaSync } from 'execa';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentConfigOption,
@@ -56,6 +56,8 @@ interface FakeAgents extends AgentClients {
   prompts: string[];
   cancels: number;
   closed: number;
+  /** `[connector, reason]` per `restart`. */
+  restarts: [string, string][];
 }
 
 const select = (
@@ -82,6 +84,7 @@ function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {
     prompts: [],
     cancels: 0,
     closed: 0,
+    restarts: [],
     agentNames: () => ['claude'],
     info: (): AgentInfo => ({ name: 'fake-agent', version: '1' }),
     open: (connector, opts) => {
@@ -118,6 +121,10 @@ function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {
         },
       };
       return Promise.resolve(session);
+    },
+    restart: (connector, reason) => {
+      fake.restarts.push([connector, reason]);
+      return Promise.resolve();
     },
     ...over,
   };
@@ -712,6 +719,48 @@ describe('runAgent', () => {
     expect(err).toBeInstanceOf(BudgetExceededError);
     expect(String(err)).toMatch(/\$0.6000, over the run budget of \$0.5/);
     expect(llm.turns[0]?.turn.usage.reportedUsd).toBe(0.6);
+  });
+
+  it('ledgers, fails without retry and restarts the agent when a cancelled turn does not stop', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const agents = fakeAgents(async function* () {
+        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.9 };
+        await new Promise(() => undefined); // ignores session/cancel
+        return stop();
+      }, workDir);
+      const p = runAgent({ ...action, budget: { max_usd: 0.5 } }, ctx(agents)).catch(
+        (e: unknown) => e,
+      );
+      while (agents.cancels === 0) {
+        await new Promise((r) => setImmediate(r));
+      }
+      await vi.advanceTimersByTimeAsync(15_000);
+      const err = await p;
+      expect(err).toBeInstanceOf(BudgetExceededError);
+      expect(isRetryable(err)).toBe(false);
+      expect(String(err)).toMatch(/\$0.9000, over the run budget of \$0.5/);
+      expect(String(err)).toMatch(/did not stop within 15000ms/);
+      expect(llm.turns).toHaveLength(1);
+      expect(llm.turns[0]?.turn.usage.reportedUsd).toBe(0.9);
+      expect(agents.restarts).toEqual([['claude', expect.stringMatching(/did not stop/)]]);
+      expect(agents.closed).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ledgers the cost reported before the agent dies mid-turn', async () => {
+    const agents = fakeAgents(async function* () {
+      yield { kind: 'usage', used: 10, size: 100, costUsd: 0.8 };
+      throw new Error('the agent process exited');
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/the agent process exited/);
+    expect(isRetryable(err)).toBe(true);
+    expect(llm.turns).toHaveLength(1);
+    expect(llm.turns[0]?.turn.usage).toMatchObject({ input: 0, output: 0, reportedUsd: 0.8 });
+    expect(agents.restarts).toEqual([]);
   });
 
   it('refuses before the turn when the budget port does, and maps refusal and self-cancel', async () => {
