@@ -15,8 +15,8 @@ connector:
     OPENCODE_CONFIG_CONTENT: '{"model":"opencode/big-pickle","autoupdate":false,"share":"disabled","permission":{"edit":"ask","bash":"ask"}}'
   restart: { base: 1s, max: 60s }
 tasks: { model: opencode/big-pickle }
-# big-pickle has no effort levels; ling-3.1-flash-free has low, medium and high.
-override: { model: opencode/ling-3.1-flash-free, effort: medium }
+# big-pickle has no effort levels; beam-free has low, medium, high, xhigh and max.
+override: { model: opencode/beam-free, effort: medium }
 pricing:
   opencode/big-pickle: { input: 0, output: 0 }
-  opencode/ling-3.1-flash-free: { input: 0, output: 0 }
+  opencode/beam-free: { input: 0, output: 0 }
