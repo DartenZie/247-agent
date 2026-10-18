@@ -94,7 +94,8 @@ failures}`; `ok` is `null` until the first check after a start.
 
 **Restart.** `POST /v1/connectors/<name>/restart` kills the process (SIGTERM, 5 s,
 SIGKILL), resets the counter, re-resolves the secrets and respawns; it is the step after
-rotating a secret. 409 for a built-in (it re-resolves on every poll) and for a unit's
+rotating a secret. A restart requested while one is in flight joins it
+(`connector.restart_joined`), so two never spawn two processes. 409 for a built-in (it re-resolves on every poll) and for a unit's
 connector without ops (restart it with `systemctl`); a unit's `stdio` connector is
 reconnected, which makes the host spawn a fresh process with fresh secrets.
 

@@ -306,6 +306,16 @@ describe('ConnectorSupervisor with an acp connector', () => {
     );
   });
 
+  it('coalesces concurrent restarts into one new agent process', async () => {
+    const s = make([acp()]);
+    await s.start();
+    const [a, b] = await Promise.all([s.restart('claude', 'one'), s.restart('claude', 'two')]);
+    expect(a.pid).toBe(b.pid);
+    expect(s.status()[0]?.pid).toBe(a.pid);
+    expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
+    await s.stop();
+  });
+
   it('restarts a crashed agent with backoff and reports it down meanwhile', async () => {
     const s = make([acp()]);
     await s.start();

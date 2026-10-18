@@ -146,7 +146,8 @@ agent never holds the connector's secrets, only a per-run socket and token.
   unless `pricing:` names what it reports. A turn reporting neither usage nor cost
   fails non-retryably, the row already written. A turn that ends without a stop (the
   agent process dies, or the turn ignores a cancel) still writes its row, with the cost
-  reported so far and no tokens, before the run fails.
+  reported so far and no tokens, before the run fails. If the agent reported no cost
+  before such an end, there is nothing to record and no row is written.
 - Wall clock: the task `timeout` aborts `ctx.signal`, which cancels the session.
 - Stop reasons: `refusal` and `cancelled` fail non-retryably; `max_tokens` and
   `max_turn_requests` are not special, the run proceeds to read `RESULT.json`.

@@ -218,6 +218,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private netSeq = 0;
   private readonly netProxies = new Set<NetProxy>();
   private stopping = false;
+  /** The restart in flight per connector, which a concurrent `restart` joins. */
+  private readonly restarting = new Map<string, Promise<ConnectorStatus>>();
 
   constructor(opts: SupervisorOptions) {
     this.socketPath = opts.socketPath;
@@ -425,9 +427,23 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   /**
    * Kills one connector and spawns it again, re-resolving its secrets: how a rotated
    * secret reaches a running connector (docs/internal/connectors.md). Deliberate, so the backoff
-   * counter resets. Throws for an unknown name.
+   * counter resets. Throws for an unknown name. A restart requested while one is in flight
+   * joins it: two would each spawn a process, and the one overwritten would never be stopped.
    */
-  async restart(name: string, reason = 'requested'): Promise<ConnectorStatus> {
+  restart(name: string, reason = 'requested'): Promise<ConnectorStatus> {
+    const inFlight = this.restarting.get(name);
+    if (inFlight !== undefined) {
+      this.log.child({ connector: name }).info('connector.restart_joined', { reason });
+      return inFlight;
+    }
+    const p = this.restartOnce(name, reason).finally(() => {
+      this.restarting.delete(name);
+    });
+    this.restarting.set(name, p);
+    return p;
+  }
+
+  private async restartOnce(name: string, reason: string): Promise<ConnectorStatus> {
     const m = this.managed.get(name);
     if (m === undefined) {
       throw new NonRetryableError(`unknown connector "${name}"`);

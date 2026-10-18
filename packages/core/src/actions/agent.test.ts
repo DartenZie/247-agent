@@ -23,7 +23,7 @@ import type {
   AgentUpdate,
   PermissionHandler,
 } from '../connectors/acp-types.js';
-import { BudgetExceededError } from '../llm/errors.js';
+import { BudgetExceededError, UnpricedModelError } from '../llm/errors.js';
 import { fakeLlmPort, type FakePort } from '../llm/testing.js';
 import { createLogger } from '../log.js';
 import type { NewTranscriptEntry } from '../store/transcripts.js';
@@ -761,6 +761,24 @@ describe('runAgent', () => {
     expect(llm.turns).toHaveLength(1);
     expect(llm.turns[0]?.turn.usage).toMatchObject({ input: 0, output: 0, reportedUsd: 0.8 });
     expect(agents.restarts).toEqual([]);
+  });
+
+  it('keeps a crash before any cost retryable when the model has no price', async () => {
+    llm = fakeLlmPort({
+      record: (turn) => {
+        if (turn.usage.reportedUsd === undefined) {
+          throw new UnpricedModelError('agent "claude" reported no cost');
+        }
+        return { usd: turn.usage.reportedUsd, priced_by: 'provider', ledgerId: 1 };
+      },
+    });
+    const agents = fakeAgents(async function* () {
+      yield { kind: 'text', text: 'starting', messageId: null };
+      throw new Error('the agent process exited');
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/the agent process exited/);
+    expect(isRetryable(err)).toBe(true);
   });
 
   it('refuses before the turn when the budget port does, and maps refusal and self-cancel', async () => {

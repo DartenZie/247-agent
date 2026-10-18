@@ -543,31 +543,36 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       if (out.costUsd !== undefined) {
         chargedUsd = out.costUsd;
       }
-      const ledgered = llm.record(
-        {
-          provider: connector,
-          model,
-          maxUsd,
-          usage: {
-            input: stop?.usage?.input ?? 0,
-            output: stop?.usage?.output ?? 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            reportedUsd: reported,
-          },
-        },
-        cctx,
-      );
+      // A turn that ended without a stop and before any cost has nothing to record: pricing
+      // zero tokens would fail an unpriced model and hide why the turn ended.
+      const ledgered =
+        stop === undefined && reported === undefined
+          ? undefined
+          : llm.record(
+              {
+                provider: connector,
+                model,
+                maxUsd,
+                usage: {
+                  input: stop?.usage?.input ?? 0,
+                  output: stop?.usage?.output ?? 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  reportedUsd: reported,
+                },
+              },
+              cctx,
+            );
       ctx.log.info('agent.turn_done', {
         stop_reason: stop?.stopReason ?? out.end.kind,
         tool_calls: toolCalls,
-        usd: ledgered.usd,
+        usd: ledgered?.usd ?? 0,
         duration_ms: Date.now() - startedAt,
         text: out.text.slice(0, 500),
       });
       if (stop !== undefined && stop.usage === undefined && out.costUsd === undefined) {
         throw new NonRetryableError(
-          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${ledgered.usd.toFixed(4)}`,
+          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
         );
       }
       const cancelled =
