@@ -73,7 +73,7 @@ durations with `runs` and `ledger` at least 1d and `ledger` not outliving `runs`
 `pricing` entries for unknown models carrying `input` and `output`, `network.allow`
 entries as `host[:port]`, `network` needing `backend: bwrap` and no `--share-net`.
 
-**Load** (`config/load.ts`): unreadable file, YAML syntax, no tasks file, duplicate
+**Load** (`config/load.ts`): unreadable file or directory, YAML syntax, no tasks file, duplicate
 task or connector names across files, a poller's target connector and op.
 
 **Cross-checks** (`config/crosscheck.ts`; also run at daemon start and on every reload):

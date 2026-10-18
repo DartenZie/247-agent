@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,6 +11,9 @@ import { expandConfigPaths, loadConnectors, loadTasks } from './load.js';
 const task = (name: string): string =>
   `  - name: ${name}\n    trigger: { kind: manual }\n    action: { kind: shell, cmd: ["true"] }\n`;
 
+// Root reads a mode-000 directory anyway, so the unreadable-directory cases skip there.
+const asRoot = process.getuid?.() === 0;
+
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'oa-merge-'));
@@ -21,6 +24,7 @@ beforeEach(() => {
   writeFileSync(join(dir, 'tasks.d', 'README.md'), 'not yaml\n');
 });
 afterEach(() => {
+  chmodSync(join(dir, 'tasks.d'), 0o755);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -76,6 +80,48 @@ describe('loadTasks', () => {
       ok: false,
       files: [{ ok: false, issues: [{ message: 'no tasks files found' }] }],
     });
+  });
+});
+
+describe('unreadable directories', () => {
+  it.skipIf(asRoot)('reports an unreadable tasks.d as an issue instead of throwing', () => {
+    chmodSync(join(dir, 'tasks.d'), 0o000);
+    const r = loadTasks([join(dir, 'tasks.yaml'), join(dir, 'tasks.d')]);
+    expect(r.ok).toBe(false);
+    expect(r.files).toMatchObject([
+      { ok: true, file: join(dir, 'tasks.yaml') },
+      {
+        ok: false,
+        file: join(dir, 'tasks.d'),
+        issues: [
+          { path: '', message: expect.stringMatching(/^cannot read directory: EACCES/) as string },
+        ],
+      },
+    ]);
+  });
+
+  it.skipIf(asRoot)('reports an unreadable connectors.d as an issue instead of throwing', () => {
+    mkdirSync(join(dir, 'connectors.d'), 0o000);
+    try {
+      const r = loadConnectors([join(dir, 'connectors.d')], []);
+      expect(r).toMatchObject({
+        ok: false,
+        files: [
+          {
+            ok: false,
+            file: join(dir, 'connectors.d'),
+            issues: [
+              {
+                path: '',
+                message: expect.stringMatching(/^cannot read directory: EACCES/) as string,
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      chmodSync(join(dir, 'connectors.d'), 0o755);
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -270,6 +270,33 @@ describe('startDaemon', () => {
     expect((await daemon.reload()).ok).toBe(true);
     expect(daemon.core.config().tasks.map((t) => t.name)).toEqual(['ok']);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'refuses a reload that cannot read tasks.d and keeps the previous config (#17)',
+    async () => {
+      mkdirSync(join(dir, 'tasks.d'));
+      writeFileSync(join(dir, 'tasks.d', 'a.yaml'), TASKS);
+      writeFileSync(
+        join(dir, 'agent.yaml'),
+        'db: state.db\nsocket: core.sock\nlog: { level: debug }\ntasks: tasks.d\n',
+      );
+      expect((await daemon.reload()).ok).toBe(true);
+      chmodSync(join(dir, 'tasks.d'), 0o000);
+      try {
+        const report = await daemon.reload();
+        expect(report).toMatchObject({ ok: false, tasks: 3 });
+        expect(report.files.find((f) => !f.ok)).toMatchObject({
+          file: join(dir, 'tasks.d'),
+          issues: [{ message: expect.stringMatching(/^cannot read directory: EACCES/) as string }],
+        });
+        await expect(api.reload()).resolves.toMatchObject({ ok: false });
+        expect(daemon.core.config().tasks).toHaveLength(3);
+        expect((await api.health()).ok).toBe(true);
+      } finally {
+        chmodSync(join(dir, 'tasks.d'), 0o755);
+      }
+    },
+  );
 });
 
 describe('GET /v1/cost', () => {
