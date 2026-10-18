@@ -139,8 +139,8 @@ agent never holds the connector's secrets, only a per-run socket and token.
   During the turn every `usage_update.cost` asks `ctx.llm.overBudget({maxUsd,
   pendingUsd})`, `pendingUsd` being the cumulative cost less what earlier turns
   ledgered. It breaks the daily cap once today's spend plus `pendingUsd` reaches it
-  (whether or not `maxUsd` is set) and the run cap once the run's spend plus
-  `pendingUsd` passes it; either is `cancel('budget')` and a `BudgetExceededError` of
+  (whether or not `maxUsd` is set) and the run cap once the run's spend, earlier attempts
+  included, plus `pendingUsd` passes it; either is `cancel('budget')` and a `BudgetExceededError` of
   that scope. The turn's `record` then gets no `maxUsd`, so its overrun check does not
   replace that error. An agent that reports tokens but no cost is priced only by `record`
   after the turn, so `checkBudget` before the nudge is its only stop between turns.

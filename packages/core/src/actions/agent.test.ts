@@ -1088,6 +1088,36 @@ describe('runAgent against the ledger and the daily cap', () => {
     expect(spent()).toBe(500);
   });
 
+  it('cancels a retried attempt once the run total, not the attempt, reaches max_usd', async () => {
+    let attempt = 0;
+    const agents = fakeAgents(async function* (env) {
+      attempt += 1;
+      if (attempt === 1) {
+        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.45 };
+        throw new Error('the agent process exited');
+      }
+      for (const costUsd of [0.3, 0.49]) {
+        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        if (env.cancelled()) {
+          return stop({ stopReason: 'cancelled' });
+        }
+      }
+      writeResult(env.cwd, { status: 'done', summary: 'spent it again' });
+      return stop();
+    }, workDir);
+    const c = ctx(agents, { llm: ledgered(100) });
+    const budgeted = { ...action, budget: { max_usd: 0.5 } };
+    const first = await runAgent(budgeted, c).catch((e: unknown) => e);
+    expect(isRetryable(first)).toBe(true);
+    expect(spent()).toBeCloseTo(0.45);
+    const err = await runAgent(budgeted, c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BudgetExceededError);
+    expect((err as BudgetExceededError).scope).toBe('task');
+    expect(String(err)).toMatch(/\$0.7500, over the run budget of \$0.5; session cancelled/);
+    expect(agents.cancels).toBe(1);
+    expect(spent()).toBeCloseTo(0.75);
+  });
+
   it('does not start the nudge turn once the first turn crossed the daily cap', async () => {
     // Tokens only, no cost: priced from the table after the turn, $10 at Sonnet's $2/M input.
     const agents = fakeAgents(async function* () {
