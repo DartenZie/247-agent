@@ -155,8 +155,11 @@ agent never holds the connector's secrets, only a per-run socket and token.
   and equal to input plus output means cache is inside input too (OpenAI's
   convention), so the cache moves out of `input`. A `usage_update.cost` is `costUsd`
   only in `USD`. Another currency gives no cost: neither the mid-turn check nor
-  `reportedUsd` sees it, the runner logs `agent.cost_currency` once per turn, and a
-  turn that then ends without a stop writes no row. Consequence: without
+  `reportedUsd` sees it, and the runner logs `agent.cost_currency` once per turn. A
+  turn that then ends without a stop writes a row with no tokens (`table` at $0, or
+  `unpriced`, whose `UnpricedModelError` is only logged as `agent.record_failed`), and
+  the turn's error becomes a `NonRetryableError`: the spend is unknown, so a retry could
+  not be budgeted. Consequence: without
   `action.model`, an agent that reports tokens but no cost fails `UnpricedModelError`
   unless `pricing:` names what it reports. A turn reporting neither usage nor cost
   fails non-retryably, the row already written. A turn that ends without a stop (the

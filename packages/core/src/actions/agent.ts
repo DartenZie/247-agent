@@ -172,6 +172,8 @@ interface TurnOutcome {
   budget: BudgetExceededError | undefined;
   /** Cumulative session cost the agent reported, if any. */
   costUsd: number | undefined;
+  /** The currency of a cost the agent reported in other than USD, if any. */
+  currency: string | undefined;
   text: string;
 }
 
@@ -218,7 +220,7 @@ async function runTurn(
   const gen = session.prompt(text);
   let toolCalls = limits.toolCallsBefore;
   let costUsd: number | undefined;
-  let warnedCurrency = false;
+  let currency: string | undefined;
   let kept = '';
   let cancelReason: CancelReason | undefined;
   let violation: string | undefined;
@@ -272,6 +274,7 @@ async function runTurn(
     violation,
     budget,
     costUsd,
+    currency,
     text: kept,
     toolCalls,
   });
@@ -327,10 +330,10 @@ async function runTurn(
           break;
         }
         case 'usage':
-          if (u.currency !== undefined && u.costUsd === undefined && !warnedCurrency) {
+          if (u.currency !== undefined && u.costUsd === undefined && currency === undefined) {
             // No exchange rate in the core: the turn is priced by its tokens instead.
-            warnedCurrency = true;
-            ctx.log.warn('agent.cost_currency', { currency: u.currency });
+            currency = u.currency;
+            ctx.log.warn('agent.cost_currency', { currency });
           }
           costUsd = u.costUsd ?? costUsd;
           ctx.log.debug('agent.usage', { used: u.used, size: u.size, cost_usd: u.costUsd ?? null });
@@ -567,26 +570,36 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         chargedUsd = out.costUsd;
       }
       // A turn that ended without a stop and before any cost has nothing to record: pricing
-      // zero tokens would fail an unpriced model and hide why the turn ended.
+      // zero tokens would fail an unpriced model and hide why the turn ended. One that
+      // reported its cost only in another currency spent an amount the core cannot convert:
+      // its row keeps the turn in the ledger, and the run fails below without a retry.
       // A turn cancelled for budget already has its error; `record` must not replace it.
-      const ledgered =
-        stop === undefined && reported === undefined
-          ? undefined
-          : llm.record(
-              {
-                provider: connector,
-                model,
-                maxUsd: out.cancelReason === 'budget' ? undefined : maxUsd,
-                usage: {
-                  input: stop?.usage?.input ?? 0,
-                  output: stop?.usage?.output ?? 0,
-                  cacheRead: stop?.usage?.cacheRead ?? 0,
-                  cacheWrite: stop?.usage?.cacheWrite ?? 0,
-                  reportedUsd: reported,
-                },
-              },
-              cctx,
-            );
+      const unbudgeted = stop === undefined && reported === undefined && out.currency !== undefined;
+      const turn = {
+        provider: connector,
+        model,
+        maxUsd: out.cancelReason === 'budget' ? undefined : maxUsd,
+        usage: {
+          input: stop?.usage?.input ?? 0,
+          output: stop?.usage?.output ?? 0,
+          cacheRead: stop?.usage?.cacheRead ?? 0,
+          cacheWrite: stop?.usage?.cacheWrite ?? 0,
+          reportedUsd: reported,
+        },
+      };
+      let ledgered: ReturnType<typeof llm.record> | undefined;
+      if (unbudgeted) {
+        try {
+          ledgered = llm.record(turn, cctx);
+        } catch (err) {
+          // The row is written; an unpriced model must not hide why the turn ended.
+          ctx.log.warn('agent.record_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else if (stop !== undefined || reported !== undefined) {
+        ledgered = llm.record(turn, cctx);
+      }
       ctx.log.info('agent.turn_done', {
         stop_reason: stop?.stopReason ?? out.end.kind,
         tool_calls: toolCalls,
@@ -623,6 +636,14 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
           break;
       }
       if (out.end.kind === 'error') {
+        if (unbudgeted) {
+          const why =
+            out.end.error instanceof Error ? out.end.error.message : String(out.end.error);
+          throw new NonRetryableError(
+            `agent "${connector}" reported its cost only in ${out.currency ?? ''} and the turn ended without a stop (${why}), so a retry could not be budgeted`,
+            { cause: out.end.error },
+          );
+        }
         throw out.end.error;
       }
       if (stop === undefined) {
