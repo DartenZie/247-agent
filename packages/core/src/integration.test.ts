@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parse, stringify } from 'yaml';
 
 import { ApiClient } from './api/client.js';
 import { startDaemon, type Daemon } from './daemon.js';
@@ -20,6 +21,7 @@ import { fakeProviderFactory, type FakeProvider } from './llm/testing.js';
 import { createLogger } from './log.js';
 
 const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
+const EXAMPLE = new URL('../../../docs/examples/website-updates.yaml', import.meta.url).pathname;
 const PROMPT = new URL('../../../docs/examples/prompts/classify_email.md', import.meta.url)
   .pathname;
 
@@ -46,7 +48,7 @@ connectors:
   - name: email
     exec: [node, ${FIXTURES}fake-email.ts]
     emits: [email.received]
-    ops: [fetch_new, mark_read]
+    ops: [fetch_new, mark_read, send]
     config:
       user: "\${secrets.imap_user}"
       mails:
@@ -64,7 +66,7 @@ connectors:
       files: { "incoming/orders.csv": "id;qty|1;2", "incoming/notes/readme.txt": "skip me" }
 `;
 
-const TASKS = `
+const TASKS_INLINE = `
 tasks:
   # 1. Poll the mailbox (as in the example, where it is a */2 cron). Manual here: the test
   #    runs it by hand, and a cron would fire a second poll whenever the test crosses an
@@ -201,6 +203,14 @@ tasks:
       op: send
       args: { text: "[247-agent] \${event.type}: \${event.payload.summary || event.payload.error}" }
 `;
+
+/** 3b. `reply_blocked` verbatim from the example, so its `send` args meet the connector's rules. */
+const replyBlocked = (
+  parse(readFileSync(EXAMPLE, 'utf8')) as { tasks: { name: string }[] }
+).tasks.find((t) => t.name === 'reply_blocked');
+const TASKS = stringify({
+  tasks: [...(parse(TASKS_INLINE) as { tasks: unknown[] }).tasks, replyBlocked],
+});
 
 let dir: string;
 let daemon: Daemon;
@@ -376,6 +386,37 @@ describe('website workflow without a model', () => {
     expect(
       daemon.core.store.events.listAfter(0, 1000).filter((e) => e.type === 'email.received'),
     ).toHaveLength(2);
+  }, 30_000);
+});
+
+describe('reply_blocked from the example', () => {
+  it('replies to the sender with what is missing', async () => {
+    await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
+
+    await api.emit({
+      type: 'site.change_blocked',
+      source: 'test',
+      payload: {
+        summary: 'need dates',
+        missing: ['dates', 'venue'],
+        email: { from: 'editor@example.com', message_id: '<m1@x>', subject: 'Events' },
+      },
+    });
+    await until(async () => (await api.listRuns({ task: 'reply_blocked' })).length === 1);
+    await daemon.core.executor.idle();
+
+    const [run] = await api.listRuns({ task: 'reply_blocked' });
+    expect(run, run?.error ?? '').toMatchObject({ status: 'succeeded' });
+    expect((await api.getState('email', 'sent'))?.value).toEqual([
+      expect.objectContaining({
+        to: 'editor@example.com',
+        in_reply_to: '<m1@x>',
+        subject: 'Re: Events',
+        text: expect.stringMatching(
+          /could not apply this change to the website yet: need dates\n\nPlease send: dates, venue/,
+        ) as string,
+      }),
+    ]);
   }, 30_000);
 });
 

@@ -105,7 +105,7 @@ tasks:
         to: ${event.payload.email.from}
         in_reply_to: ${event.payload.email.message_id}
         subject: "Re: ${event.payload.email.subject}"
-        body: |
+        text: |
           Hello,
 
           I could not apply this change to the website yet: ${event.payload.summary}

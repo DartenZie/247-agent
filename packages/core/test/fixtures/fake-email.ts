@@ -1,7 +1,8 @@
 /**
  * A fake email connector: `fetch_new` returns the mails listed in the manifest's `config`
  * with a uid above `since_uid`; `mark_read` is a no-op; `send` records the mail in the
- * `sent` state key so tests can see what was said. Never touches the network.
+ * `sent` state key so tests can see what was said, and like the real connector refuses a
+ * mail with neither `text` nor `html`. Never touches the network.
  */
 import { z } from 'zod';
 
@@ -50,6 +51,9 @@ await runConnector({
           in_reply_to: z.string().optional(),
         },
         handler: async (args) => {
+          if (args.text === undefined && args.html === undefined) {
+            throw new Error('send: pass text, html or both');
+          }
           const sent = ((await rt.core.getState('sent')) ?? []) as JsonValue[];
           const message_id = `<fake-${String(sent.length + 1)}@example.com>`;
           sent.push({ ...args, message_id } as unknown as JsonValue);
