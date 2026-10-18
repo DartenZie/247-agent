@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '../log.js';
-import { AcpAgent, normalisePermission, normaliseUpdate } from './acp.js';
+import { AcpAgent, normalisePermission, normaliseUpdate, normaliseUsage } from './acp.js';
 import type { AgentSession, AgentStop, AgentUpdate } from './acp-types.js';
 
 const FIXTURES = new URL('../../test/fixtures/', import.meta.url).pathname;
@@ -81,7 +81,10 @@ describe('AcpAgent', () => {
       session,
       '[[run: npm run build]] [[edit: notes/a.txt]] [[cost: 0.25]] [[result: {"status":"done","summary":"ok"}]]',
     );
-    expect(stop).toEqual({ stopReason: 'end_turn', usage: { input: 1000, output: 200 } });
+    expect(stop).toEqual({
+      stopReason: 'end_turn',
+      usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0 },
+    });
     expect(asked).toEqual(['execute:npm run build', 'edit:Edit notes/a.txt']);
     expect(updates).toEqual([
       { kind: 'text', text: 'Working on it. ', messageId: null },
@@ -99,7 +102,7 @@ describe('AcpAgent', () => {
       }),
       expect.objectContaining({ kind: 'tool_call_update', status: 'failed' }),
       { kind: 'text', text: 'Done.', messageId: null },
-      { kind: 'usage', used: 1200, size: 200_000, costUsd: 0.25 },
+      { kind: 'usage', used: 1200, size: 200_000, costUsd: 0.25, currency: 'USD' },
     ]);
     expect(existsSync(join(dir, 'notes/a.txt'))).toBe(false); // the edit was refused
     expect(JSON.parse(readFileSync(join(dir, 'RESULT.json'), 'utf8'))).toEqual({
@@ -115,6 +118,7 @@ describe('AcpAgent', () => {
       used: 1200,
       size: 200_000,
       costUsd: 0.26,
+      currency: 'USD',
     });
     session.close();
     expect(lines.filter((l) => l.msg === 'connector.output').map((l) => l.line)).toEqual(
@@ -213,6 +217,64 @@ describe('AcpAgent', () => {
 });
 
 describe('normalise', () => {
+  it('keeps every token class of a turn and prices separate thought tokens as output', () => {
+    const counts = {
+      inputTokens: 100,
+      outputTokens: 20,
+      cachedReadTokens: 5000,
+      cachedWriteTokens: 800,
+    };
+    expect(normaliseUsage({ ...counts, totalTokens: 5920 })).toEqual({
+      input: 100,
+      output: 20,
+      cacheRead: 5000,
+      cacheWrite: 800,
+    });
+    // `totalTokens` is the sum of all classes: thought tokens outside it would be lost.
+    expect(normaliseUsage({ ...counts, thoughtTokens: 30, totalTokens: 5950 })).toMatchObject({
+      output: 50,
+    });
+    // An agent that counts thought tokens inside the output must not have them added twice.
+    expect(normaliseUsage({ ...counts, thoughtTokens: 15, totalTokens: 5920 })).toMatchObject({
+      output: 20,
+    });
+  });
+
+  it('moves cache tokens out of the input when the total shows they are inside it', () => {
+    // OpenAI's convention: cache inside input, reasoning inside output, total = input + output.
+    expect(
+      normaliseUsage({
+        inputTokens: 5900,
+        outputTokens: 50,
+        cachedReadTokens: 5000,
+        cachedWriteTokens: 800,
+        thoughtTokens: 30,
+        totalTokens: 5950,
+      }),
+    ).toEqual({ input: 100, output: 50, cacheRead: 5000, cacheWrite: 800 });
+  });
+
+  it('reads a usage_update cost as USD only when its currency is USD', () => {
+    const update = { sessionUpdate: 'usage_update' as const, used: 1, size: 2 };
+    expect(normaliseUpdate({ ...update, cost: { amount: 0.5, currency: 'usd' } })).toMatchObject({
+      costUsd: 0.5,
+      currency: 'USD',
+    });
+    expect(normaliseUpdate({ ...update, cost: { amount: 1, currency: 'EUR' } })).toEqual({
+      kind: 'usage',
+      used: 1,
+      size: 2,
+      costUsd: undefined,
+      currency: 'EUR',
+    });
+    // The wire is untrusted: a cost without a currency is not a USD cost.
+    const bare = { amount: 1 } as unknown as { amount: number; currency: string };
+    expect(normaliseUpdate({ ...update, cost: bare })).toMatchObject({
+      costUsd: undefined,
+      currency: undefined,
+    });
+  });
+
   it('maps wire updates and permission requests to the runner shapes', () => {
     expect(
       normaliseUpdate({
@@ -247,6 +309,7 @@ describe('normalise', () => {
       used: 1,
       size: 2,
       costUsd: undefined,
+      currency: undefined,
     });
     expect(normaliseUpdate({ sessionUpdate: 'plan', entries: [] })).toEqual({
       kind: 'other',

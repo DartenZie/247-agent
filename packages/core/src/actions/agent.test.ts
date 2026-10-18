@@ -138,7 +138,7 @@ function fakeAgents(turn: Turn, workDir: string, over: Partial<AgentClients> = {
 
 const stop = (over: Partial<AgentStop> = {}): AgentStop => ({
   stopReason: 'end_turn',
-  usage: { input: 1000, output: 100 },
+  usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 },
   ...over,
 });
 
@@ -300,7 +300,7 @@ describe('runAgent', () => {
         command: 'npm run build',
         locations: [],
       };
-      yield { kind: 'usage', used: 500, size: 200_000, costUsd: 0.02 };
+      yield { kind: 'usage', used: 500, size: 200_000, costUsd: 0.02, currency: 'USD' };
       writeFileSync(join(env.cwd, 'data.txt'), 'changed');
       writeResult(env.cwd, {
         status: 'done',
@@ -713,8 +713,8 @@ describe('runAgent', () => {
 
   it('cancels the session when the reported cost passes the budget', async () => {
     const agents = fakeAgents(async function* (env) {
-      yield { kind: 'usage', used: 10, size: 100, costUsd: 0.4 };
-      yield { kind: 'usage', used: 20, size: 100, costUsd: 0.6 };
+      yield { kind: 'usage', used: 10, size: 100, costUsd: 0.4, currency: 'USD' };
+      yield { kind: 'usage', used: 20, size: 100, costUsd: 0.6, currency: 'USD' };
       await sleep(5);
       return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
     }, workDir);
@@ -730,7 +730,7 @@ describe('runAgent', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     try {
       const agents = fakeAgents(async function* () {
-        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.9 };
+        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.9, currency: 'USD' };
         await new Promise(() => undefined); // ignores session/cancel
         return stop();
       }, workDir);
@@ -757,7 +757,7 @@ describe('runAgent', () => {
 
   it('ledgers the cost reported before the agent dies mid-turn', async () => {
     const agents = fakeAgents(async function* () {
-      yield { kind: 'usage', used: 10, size: 100, costUsd: 0.8 };
+      yield { kind: 'usage', used: 10, size: 100, costUsd: 0.8, currency: 'USD' };
       throw new Error('the agent process exited');
     }, workDir);
     const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
@@ -766,6 +766,25 @@ describe('runAgent', () => {
     expect(llm.turns).toHaveLength(1);
     expect(llm.turns[0]?.turn.usage).toMatchObject({ input: 0, output: 0, reportedUsd: 0.8 });
     expect(agents.restarts).toEqual([]);
+  });
+
+  it('ledgers cache tokens and prices a turn by table when its cost is not in USD', async () => {
+    const agents = fakeAgents(async function* (env) {
+      yield { kind: 'usage', used: 10, size: 100, costUsd: undefined, currency: 'EUR' };
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop({ usage: { input: 100, output: 20, cacheRead: 5000, cacheWrite: 800 } });
+    }, workDir);
+    await expect(runAgent(action, ctx(agents))).resolves.toMatchObject({ status: 'done' });
+    expect(llm.turns[0]?.turn.usage).toEqual({
+      input: 100,
+      output: 20,
+      cacheRead: 5000,
+      cacheWrite: 800,
+      reportedUsd: undefined,
+    });
+    expect(lines.filter((l) => l.msg === 'agent.cost_currency')).toEqual([
+      expect.objectContaining({ level: 'warn', currency: 'EUR' }),
+    ]);
   });
 
   it('keeps a crash before any cost retryable when the model has no price', async () => {
@@ -810,7 +829,7 @@ describe('runAgent', () => {
       writeResult(env.cwd, { status: 'done', summary: 'x' });
       return stop({ usage: undefined });
     }, workDir);
-    await expect(runAgent(action, ctx(agents))).rejects.toThrow(/neither usage nor cost/);
+    await expect(runAgent(action, ctx(agents))).rejects.toThrow(/neither usage nor a cost in USD/);
     expect(llm.turns).toHaveLength(1);
   });
 
@@ -1054,7 +1073,7 @@ describe('runAgent against the ledger and the daily cap', () => {
   it('cancels a turn without a run budget once its reported cost reaches the daily cap', async () => {
     const agents = fakeAgents(async function* (env) {
       for (const costUsd of [5, 50, 500]) {
-        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        yield { kind: 'usage', used: 10, size: 100, costUsd, currency: 'USD' };
         if (env.cancelled()) {
           return stop({ stopReason: 'cancelled' });
         }
@@ -1073,7 +1092,7 @@ describe('runAgent against the ledger and the daily cap', () => {
   it('fails with the cap that cancelled the turn when the run budget is passed too', async () => {
     const agents = fakeAgents(async function* (env) {
       for (const costUsd of [5, 500]) {
-        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        yield { kind: 'usage', used: 10, size: 100, costUsd, currency: 'USD' };
         if (env.cancelled()) {
           return stop({ stopReason: 'cancelled' });
         }
@@ -1093,11 +1112,11 @@ describe('runAgent against the ledger and the daily cap', () => {
     const agents = fakeAgents(async function* (env) {
       attempt += 1;
       if (attempt === 1) {
-        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.45 };
+        yield { kind: 'usage', used: 10, size: 100, costUsd: 0.45, currency: 'USD' };
         throw new Error('the agent process exited');
       }
       for (const costUsd of [0.3, 0.49]) {
-        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        yield { kind: 'usage', used: 10, size: 100, costUsd, currency: 'USD' };
         if (env.cancelled()) {
           return stop({ stopReason: 'cancelled' });
         }
@@ -1121,7 +1140,7 @@ describe('runAgent against the ledger and the daily cap', () => {
   it('does not start the nudge turn once the first turn crossed the daily cap', async () => {
     // Tokens only, no cost: priced from the table after the turn, $10 at Sonnet's $2/M input.
     const agents = fakeAgents(async function* () {
-      return stop({ usage: { input: 5_000_000, output: 0 } });
+      return stop({ usage: { input: 5_000_000, output: 0, cacheRead: 0, cacheWrite: 0 } });
     }, workDir);
     const c = ctx(agents, { llm: ledgered(10) });
     const err = await runAgent({ ...action, model: 'claude-sonnet-5' }, c).catch((e: unknown) => e);

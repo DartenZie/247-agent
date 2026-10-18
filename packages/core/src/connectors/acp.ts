@@ -24,6 +24,7 @@ import {
   type SessionUpdate,
   type ToolCallLocation,
   type ToolKind as WireToolKind,
+  type Usage,
 } from '@agentclientprotocol/sdk';
 import { execa } from 'execa';
 
@@ -137,16 +138,41 @@ export function normaliseUpdate(update: SessionUpdate): AgentUpdate {
             ? undefined
             : locationsOf(update.locations),
       };
-    case 'usage_update':
+    case 'usage_update': {
+      const code: unknown = update.cost?.currency;
+      const currency = typeof code === 'string' ? code.toUpperCase() : undefined;
       return {
         kind: 'usage',
         used: update.used,
         size: update.size,
-        costUsd: update.cost?.amount,
+        costUsd: currency === 'USD' ? update.cost?.amount : undefined,
+        currency,
       };
+    }
     default:
       return { kind: 'other', sessionUpdate: update.sessionUpdate };
   }
+}
+
+/**
+ * A turn's token counts by price class (`acp-types.ts`). Exported for tests. ACP lists the
+ * classes apart, so thought tokens go to `output`. When `totalTokens` is only input plus
+ * output, the agent counts as OpenAI does: cache inside the input, thought inside the
+ * output, so the cache moves out of `input` and the thought is not added again.
+ */
+export function normaliseUsage(usage: Usage): NonNullable<AgentStop['usage']> {
+  const cacheRead = usage.cachedReadTokens ?? 0;
+  const cacheWrite = usage.cachedWriteTokens ?? 0;
+  const thought = usage.thoughtTokens ?? 0;
+  const nested = usage.totalTokens === usage.inputTokens + usage.outputTokens;
+  const inOutput =
+    nested || usage.totalTokens === usage.inputTokens + usage.outputTokens + cacheRead + cacheWrite;
+  return {
+    input: nested ? Math.max(0, usage.inputTokens - cacheRead - cacheWrite) : usage.inputTokens,
+    output: usage.outputTokens + (inOutput ? 0 : thought),
+    cacheRead,
+    cacheWrite,
+  };
 }
 
 /** A `session/request_permission` as the policy sees it. Exported for tests. */
@@ -222,10 +248,7 @@ class AcpSession implements AgentSession {
         const usage = message.response.usage;
         return {
           stopReason: message.stopReason,
-          usage:
-            usage === null || usage === undefined
-              ? undefined
-              : { input: usage.inputTokens, output: usage.outputTokens },
+          usage: usage === null || usage === undefined ? undefined : normaliseUsage(usage),
         };
       }
       if (message.update.sessionUpdate === 'config_option_update') {

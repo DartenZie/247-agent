@@ -218,6 +218,7 @@ async function runTurn(
   const gen = session.prompt(text);
   let toolCalls = limits.toolCallsBefore;
   let costUsd: number | undefined;
+  let warnedCurrency = false;
   let kept = '';
   let cancelReason: CancelReason | undefined;
   let violation: string | undefined;
@@ -326,6 +327,11 @@ async function runTurn(
           break;
         }
         case 'usage':
+          if (u.currency !== undefined && u.costUsd === undefined && !warnedCurrency) {
+            // No exchange rate in the core: the turn is priced by its tokens instead.
+            warnedCurrency = true;
+            ctx.log.warn('agent.cost_currency', { currency: u.currency });
+          }
           costUsd = u.costUsd ?? costUsd;
           ctx.log.debug('agent.usage', { used: u.used, size: u.size, cost_usd: u.costUsd ?? null });
           if (costUsd !== undefined && cancelReason === undefined) {
@@ -574,8 +580,8 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
                 usage: {
                   input: stop?.usage?.input ?? 0,
                   output: stop?.usage?.output ?? 0,
-                  cacheRead: 0,
-                  cacheWrite: 0,
+                  cacheRead: stop?.usage?.cacheRead ?? 0,
+                  cacheWrite: stop?.usage?.cacheWrite ?? 0,
                   reportedUsd: reported,
                 },
               },
@@ -590,7 +596,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       });
       if (stop !== undefined && stop.usage === undefined && out.costUsd === undefined) {
         throw new NonRetryableError(
-          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
+          `agent "${connector}" reported neither usage nor a cost in USD for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
         );
       }
       const cancelled =
