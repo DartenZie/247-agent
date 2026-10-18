@@ -151,15 +151,20 @@ export const AgentAction = z
 
 export type AgentActionConfig = z.infer<typeof AgentAction>;
 
-/** How long after `session/cancel` the runner waits for the agent to stop before moving on. */
+/** How long after `session/cancel` the runner waits for the agent to stop before restarting it. */
 const CANCEL_GRACE_MS = 15_000;
+const STUCK = `the agent did not stop within ${String(CANCEL_GRACE_MS)}ms of cancel`;
 /** Characters of the agent's last message kept for the log. */
 const TEXT_KEEP = 2000;
 
 type CancelReason = 'budget' | 'tool_calls' | 'policy' | 'abort';
 
 interface TurnOutcome {
-  stop: AgentStop;
+  /**
+   * How the turn ended: with the agent's stop, with an error (the process died, the
+   * connection broke), or not at all within `CANCEL_GRACE_MS` of a cancel.
+   */
+  end: { kind: 'stop'; stop: AgentStop } | { kind: 'error'; error: unknown } | { kind: 'stuck' };
   cancelReason: CancelReason | undefined;
   /** What the policy check found when `cancelReason` is `policy`. */
   violation: string | undefined;
@@ -194,7 +199,8 @@ const STARTED: readonly (string | undefined)[] = ['in_progress', 'completed', 'f
 /**
  * Drives one prompt turn: counts tool calls, watches the reported cost, checks tool calls
  * the agent ran without asking against the policy, cancels the session past a limit or on
- * the run's abort, and returns the stop with what it saw.
+ * the run's abort, and returns how the turn ended with what it saw. It does not throw, so
+ * the caller can ledger the cost of a turn that failed.
  */
 async function runTurn(
   session: AgentSession,
@@ -210,7 +216,7 @@ async function runTurn(
   let kept = '';
   let cancelReason: CancelReason | undefined;
   let violation: string | undefined;
-  let grace: Promise<never> | undefined;
+  let grace: Promise<'stuck'> | undefined;
   const cancel = (reason: CancelReason): void => {
     if (cancelReason !== undefined) {
       return;
@@ -218,9 +224,9 @@ async function runTurn(
     cancelReason = reason;
     ctx.log.warn('agent.cancelling', { reason, tool_calls: toolCalls, cost_usd: costUsd ?? null });
     transcript.cancel(reason, reason === 'policy' ? violation : undefined);
-    grace = new Promise((_, reject) => {
+    grace = new Promise((resolve) => {
       setTimeout(() => {
-        reject(new Error(`the agent did not stop within ${String(CANCEL_GRACE_MS)}ms of cancel`));
+        resolve('stuck');
       }, CANCEL_GRACE_MS).unref();
     });
     session.cancel().catch((err: unknown) => {
@@ -253,12 +259,23 @@ async function runTurn(
   if (ctx.signal.aborted) {
     onAbort();
   }
+  const ended = (end: TurnOutcome['end']): TurnOutcome & { toolCalls: number } => ({
+    end,
+    cancelReason,
+    violation,
+    costUsd,
+    text: kept,
+    toolCalls,
+  });
   try {
     for (;;) {
       const next = grace === undefined ? await gen.next() : await Promise.race([gen.next(), grace]);
+      if (next === 'stuck') {
+        return ended({ kind: 'stuck' });
+      }
       if (next.done) {
         transcript.stop(next.value);
-        return { stop: next.value, cancelReason, violation, costUsd, text: kept, toolCalls };
+        return ended({ kind: 'stop', stop: next.value });
       }
       const u = next.value;
       transcript.update(u);
@@ -313,6 +330,8 @@ async function runTurn(
           break;
       }
     }
+  } catch (error) {
+    return ended({ kind: 'error', error });
   } finally {
     // Not `gen.return()`: a generator parked on `nextUpdate()` would only return once that
     // resolves. `session.close()` disposes the queue, which ends the generator.
@@ -508,64 +527,90 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         ctx,
       );
       toolCalls = out.toolCalls;
+      if (out.end.kind === 'stuck') {
+        // The turn may still be running the model in the agent process; only stopping the
+        // process ends it. Other sessions on the same agent fail with it and are retried.
+        ctx.log.warn('agent.restarting', { reason: STUCK });
+        await agents.restart(connector, STUCK).catch((err: unknown) => {
+          ctx.log.warn('agent.restart_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+      const stop = out.end.kind === 'stop' ? out.end.stop : undefined;
       const reported =
         out.costUsd === undefined ? undefined : Math.max(0, out.costUsd - chargedUsd);
       if (out.costUsd !== undefined) {
         chargedUsd = out.costUsd;
       }
-      const ledgered = llm.record(
-        {
-          provider: connector,
-          model,
-          maxUsd,
-          usage: {
-            input: out.stop.usage?.input ?? 0,
-            output: out.stop.usage?.output ?? 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            reportedUsd: reported,
-          },
-        },
-        cctx,
-      );
+      // A turn that ended without a stop and before any cost has nothing to record: pricing
+      // zero tokens would fail an unpriced model and hide why the turn ended.
+      const ledgered =
+        stop === undefined && reported === undefined
+          ? undefined
+          : llm.record(
+              {
+                provider: connector,
+                model,
+                maxUsd,
+                usage: {
+                  input: stop?.usage?.input ?? 0,
+                  output: stop?.usage?.output ?? 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  reportedUsd: reported,
+                },
+              },
+              cctx,
+            );
       ctx.log.info('agent.turn_done', {
-        stop_reason: out.stop.stopReason,
+        stop_reason: stop?.stopReason ?? out.end.kind,
         tool_calls: toolCalls,
-        usd: ledgered.usd,
+        usd: ledgered?.usd ?? 0,
         duration_ms: Date.now() - startedAt,
         text: out.text.slice(0, 500),
       });
-      if (out.stop.usage === undefined && out.costUsd === undefined) {
+      if (stop !== undefined && stop.usage === undefined && out.costUsd === undefined) {
         throw new NonRetryableError(
-          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${ledgered.usd.toFixed(4)}`,
+          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
         );
       }
+      const cancelled =
+        out.end.kind === 'stuck'
+          ? `session cancelled; ${STUCK}, so it was restarted`
+          : 'session cancelled';
       switch (out.cancelReason) {
         case 'abort':
           throw abortReason(ctx.signal);
         case 'budget':
           throw new BudgetExceededError(
             'task',
-            `agent reported $${(out.costUsd ?? 0).toFixed(4)}, over the run budget of $${String(maxUsd)}; session cancelled`,
+            `agent reported $${(out.costUsd ?? 0).toFixed(4)}, over the run budget of $${String(maxUsd)}; ${cancelled}`,
           );
         case 'tool_calls':
           throw new NonRetryableError(
-            `agent exceeded max_tool_calls (${String(maxToolCalls)}); session cancelled`,
+            `agent exceeded max_tool_calls (${String(maxToolCalls)}); ${cancelled}`,
           );
         case 'policy':
           throw new NonRetryableError(
-            `agent ran a tool call outside the policy without asking (${out.violation ?? 'unknown'}); session cancelled`,
+            `agent ran a tool call outside the policy without asking (${out.violation ?? 'unknown'}); ${cancelled}`,
           );
         case undefined:
           break;
       }
-      if (out.stop.stopReason === 'refusal') {
+      if (out.end.kind === 'error') {
+        throw out.end.error;
+      }
+      if (stop === undefined) {
+        throw new Error(STUCK); // unreachable: only a cancelled turn can be stuck
+      }
+      if (stop.stopReason === 'refusal') {
         throw new NonRetryableError('the agent refused the request');
       }
-      if (out.stop.stopReason === 'cancelled') {
+      if (stop.stopReason === 'cancelled') {
         throw new NonRetryableError('the agent cancelled the turn');
       }
-      return out.stop;
+      return stop;
     };
     try {
       await applySessionSettings(
