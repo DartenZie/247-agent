@@ -240,6 +240,20 @@ describe('normalise', () => {
     });
   });
 
+  it('moves cache tokens out of the input when the total shows they are inside it', () => {
+    // OpenAI's convention: cache inside input, reasoning inside output, total = input + output.
+    expect(
+      normaliseUsage({
+        inputTokens: 5900,
+        outputTokens: 50,
+        cachedReadTokens: 5000,
+        cachedWriteTokens: 800,
+        thoughtTokens: 30,
+        totalTokens: 5950,
+      }),
+    ).toEqual({ input: 100, output: 50, cacheRead: 5000, cacheWrite: 800 });
+  });
+
   it('reads a usage_update cost as USD only when its currency is USD', () => {
     const update = { sessionUpdate: 'usage_update' as const, used: 1, size: 2 };
     expect(normaliseUpdate({ ...update, cost: { amount: 0.5, currency: 'usd' } })).toMatchObject({
@@ -252,6 +266,12 @@ describe('normalise', () => {
       size: 2,
       costUsd: undefined,
       currency: 'EUR',
+    });
+    // The wire is untrusted: a cost without a currency is not a USD cost.
+    const bare = { amount: 1 } as unknown as { amount: number; currency: string };
+    expect(normaliseUpdate({ ...update, cost: bare })).toMatchObject({
+      costUsd: undefined,
+      currency: undefined,
     });
   });
 

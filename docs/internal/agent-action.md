@@ -149,11 +149,14 @@ agent never holds the connector's secrets, only a per-run socket and token.
   reported, else the connector; the increase of the cumulative cost since the last turn
   is `reportedUsd` (`priced_by: provider`), else tokens at the table price of `model`
   (`priced_by: table`), else `unpriced` and the run fails. `normaliseUsage` in
-  `acp.ts` keeps the turn's input, output, cache-read and cache-write tokens; it adds
-  `thoughtTokens` to output unless `totalTokens` equals the other four, which means
-  the agent counted them in output already. A `usage_update.cost` is `costUsd` only in
-  `USD`; another currency gives no cost, so neither the mid-turn check nor
-  `reportedUsd` sees it, and the runner logs `agent.cost_currency` once per turn. Consequence: without
+  `acp.ts` keeps the turn's input, output, cache-read and cache-write tokens and adds
+  `thoughtTokens` to output, as ACP lists the classes apart. Two totals say the agent
+  nested them: `totalTokens` equal to the four classes means thought is inside output,
+  and equal to input plus output means cache is inside input too (OpenAI's
+  convention), so the cache moves out of `input`. A `usage_update.cost` is `costUsd`
+  only in `USD`. Another currency gives no cost: neither the mid-turn check nor
+  `reportedUsd` sees it, the runner logs `agent.cost_currency` once per turn, and a
+  turn that then ends without a stop writes no row. Consequence: without
   `action.model`, an agent that reports tokens but no cost fails `UnpricedModelError`
   unless `pricing:` names what it reports. A turn reporting neither usage nor cost
   fails non-retryably, the row already written. A turn that ends without a stop (the

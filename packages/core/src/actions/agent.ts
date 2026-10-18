@@ -596,7 +596,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       });
       if (stop !== undefined && stop.usage === undefined && out.costUsd === undefined) {
         throw new NonRetryableError(
-          `agent "${connector}" reported neither usage nor cost for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
+          `agent "${connector}" reported neither usage nor a cost in USD for the turn, so the run cannot be budgeted; it is in the ledger at $${(ledgered?.usd ?? 0).toFixed(4)}`,
         );
       }
       const cancelled =

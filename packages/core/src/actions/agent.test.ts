@@ -829,7 +829,7 @@ describe('runAgent', () => {
       writeResult(env.cwd, { status: 'done', summary: 'x' });
       return stop({ usage: undefined });
     }, workDir);
-    await expect(runAgent(action, ctx(agents))).rejects.toThrow(/neither usage nor cost/);
+    await expect(runAgent(action, ctx(agents))).rejects.toThrow(/neither usage nor a cost in USD/);
     expect(llm.turns).toHaveLength(1);
   });
 

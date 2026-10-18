@@ -139,7 +139,8 @@ export function normaliseUpdate(update: SessionUpdate): AgentUpdate {
             : locationsOf(update.locations),
       };
     case 'usage_update': {
-      const currency = update.cost?.currency.toUpperCase();
+      const code: unknown = update.cost?.currency;
+      const currency = typeof code === 'string' ? code.toUpperCase() : undefined;
       return {
         kind: 'usage',
         used: update.used,
@@ -154,17 +155,20 @@ export function normaliseUpdate(update: SessionUpdate): AgentUpdate {
 }
 
 /**
- * A turn's token counts by price class (`acp-types.ts`). Exported for tests. Thought tokens
- * go to `output` unless `totalTokens` shows the agent already counted them there.
+ * A turn's token counts by price class (`acp-types.ts`). Exported for tests. ACP lists the
+ * classes apart, so thought tokens go to `output`. When `totalTokens` is only input plus
+ * output, the agent counts as OpenAI does: cache inside the input, thought inside the
+ * output, so the cache moves out of `input` and the thought is not added again.
  */
 export function normaliseUsage(usage: Usage): NonNullable<AgentStop['usage']> {
   const cacheRead = usage.cachedReadTokens ?? 0;
   const cacheWrite = usage.cachedWriteTokens ?? 0;
   const thought = usage.thoughtTokens ?? 0;
+  const nested = usage.totalTokens === usage.inputTokens + usage.outputTokens;
   const inOutput =
-    usage.totalTokens === usage.inputTokens + usage.outputTokens + cacheRead + cacheWrite;
+    nested || usage.totalTokens === usage.inputTokens + usage.outputTokens + cacheRead + cacheWrite;
   return {
-    input: usage.inputTokens,
+    input: nested ? Math.max(0, usage.inputTokens - cacheRead - cacheWrite) : usage.inputTokens,
     output: usage.outputTokens + (inOutput ? 0 : thought),
     cacheRead,
     cacheWrite,
