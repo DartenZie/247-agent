@@ -197,4 +197,5 @@ The names worth searching for:
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
+| `daemon.stop_timeout` | error | the stop after an uncaught error took longer than 10 s (`after_ms`); the daemon exits 1 without waiting for it |
 | `api.stale_socket_removed` | warn | a dead daemon's socket file was removed at start |

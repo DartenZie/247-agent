@@ -127,8 +127,9 @@ expose the daemon's database, socket, configuration or secrets file to the comma
 
 A non-zero exit (except with `result: exit_code`), a command that could not be started,
 or a command killed by a signal fails the attempt. These failures are retried under the
-task's `retry` policy. When the attempt times out, the command gets `SIGTERM`, then
-`SIGKILL` five seconds later.
+task's `retry` policy. When the attempt times out or the daemon stops, the command and
+every process it started get `SIGTERM`, then `SIGKILL` five seconds later. A process
+that starts its own session (`setsid`) is not reached.
 
 ## Fields
 

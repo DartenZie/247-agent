@@ -30,7 +30,7 @@ export type ShellActionConfig = z.infer<typeof ShellAction>;
 const MAX_BUFFER = 8 * 1024 * 1024;
 /** Length of the stderr excerpt that goes into the run's error message. */
 const ERROR_TAIL = 1024;
-/** After SIGTERM on abort, SIGKILL if the process is still around. */
+/** After SIGTERM on abort, SIGKILL if the process group is still around. */
 const FORCE_KILL_AFTER_MS = 5000;
 
 export class ShellError extends Error {
@@ -54,6 +54,20 @@ function withTail(message: string, stderr: string): string {
   return t === '' ? message : `${message}: ${t}`;
 }
 
+/**
+ * Signals the process group `pid` leads; a group that is already gone is not an error.
+ * Never called with a missing pid: `kill(-0)` would be the daemon's own group.
+ */
+function killGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+      throw err;
+    }
+  }
+}
+
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new Error('cancelled');
 }
@@ -63,7 +77,8 @@ function abortReason(signal: AbortSignal): Error {
  * `text_stdout` (trailing newline removed), `json_stdout` (parsed; invalid JSON fails the
  * run) or `exit_code` (the number; a non-zero exit is then a result, not a failure).
  * In the other modes a non-zero exit, a signal or a spawn error fails the run with the
- * exit code and the tail of stderr. Aborting `ctx.signal` kills the process.
+ * exit code and the tail of stderr. Aborting `ctx.signal` kills the process and
+ * everything it started.
  */
 export async function runShell(action: unknown, ctx: ActionContext): Promise<JsonValue> {
   const cfg = ShellAction.parse(action);
@@ -113,25 +128,29 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
     ...('cwd' in spawn ? { cwd: spawn.cwd } : {}),
     env: spawn.env,
     extendEnv: false,
+    // Its own process group, so an abort reaches the children it starts too: a grandchild
+    // that holds stdout open would otherwise keep the step, and its slots, running (#16).
+    detached: true,
     ...(input === undefined ? {} : { input }),
     maxBuffer: MAX_BUFFER,
     reject: false,
     stripFinalNewline: false,
   });
 
-  // Not execa's `cancelSignal`: when the spawn itself failed the child has no pid and
-  // Node's `kill()` then signals pid 0, i.e. our whole process group. Guard on `pid`.
+  // Not execa's `cancelSignal`: it signals only the direct child, and when the spawn
+  // itself failed the child has no pid and `kill()` then signals pid 0, i.e. our whole
+  // process group. Guard on `pid`. SIGKILL follows even when the direct child is gone,
+  // for children that ignore SIGTERM.
   let abortedBy: Error | undefined;
   const onAbort = (): void => {
     abortedBy = abortReason(ctx.signal);
-    if (subprocess.pid === undefined) {
+    const pid = subprocess.pid;
+    if (pid === undefined) {
       return;
     }
-    subprocess.kill('SIGTERM');
+    killGroup(pid, 'SIGTERM');
     setTimeout(() => {
-      if (subprocess.exitCode === null && subprocess.signalCode === null) {
-        subprocess.kill('SIGKILL');
-      }
+      killGroup(pid, 'SIGKILL');
     }, FORCE_KILL_AFTER_MS).unref();
   };
   ctx.signal.addEventListener('abort', onAbort, { once: true });

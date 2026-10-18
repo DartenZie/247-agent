@@ -134,6 +134,32 @@ describe('runShell', () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  it('kills the whole process tree on abort, not only the direct child', async () => {
+    // Regression for #16: a grandchild kept stdout open, so the step waited for it.
+    const controller = new AbortController();
+    const started = Date.now();
+    const p = run(
+      { cmd: ['sh', '-c', "sh -c 'sleep 30; echo inner'; echo done"] },
+      ctx(controller.signal),
+    );
+    setTimeout(() => {
+      controller.abort(new Error('timed out'));
+    }, 200);
+    await expect(p).rejects.toThrow('timed out');
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('kills a background child on abort', async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const p = run({ cmd: ['sh', '-c', 'sleep 30 & sleep 30; echo done'] }, ctx(controller.signal));
+    setTimeout(() => {
+      controller.abort(new Error('stopping'));
+    }, 200);
+    await expect(p).rejects.toThrow('stopping');
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it('does not spawn at all when already aborted', async () => {
     const controller = new AbortController();
     controller.abort(new Error('already'));

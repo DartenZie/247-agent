@@ -21,6 +21,9 @@ options:
   -V, --version
 `;
 
+/** How long a stop after an uncaught error may take before the process exits anyway. */
+const CRASH_STOP_DEADLINE_MS = 10_000;
+
 function isLogLevel(v: string): v is LogLevel {
   return (LOG_LEVELS as readonly string[]).includes(v);
 }
@@ -100,13 +103,19 @@ async function main(argv: string[]): Promise<number> {
       log.info('daemon.signal', { signal: 'SIGHUP' });
       void daemon.reload();
     });
+    // After a crash the state is unknown: stop what can be stopped, then exit regardless of
+    // what still holds the event loop, so systemd's `Restart=always` brings the daemon back.
     const crash = (kind: string, err: unknown): void => {
       log.error('daemon.crashed', {
         kind,
         error: err instanceof Error ? (err.stack ?? err.message) : String(err),
       });
+      setTimeout(() => {
+        log.error('daemon.stop_timeout', { after_ms: CRASH_STOP_DEADLINE_MS });
+        process.exit(1);
+      }, CRASH_STOP_DEADLINE_MS).unref();
       void daemon.stop().finally(() => {
-        resolve(1);
+        process.exit(1);
       });
     };
     process.once('uncaughtException', (err) => {
