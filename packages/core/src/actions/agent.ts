@@ -562,6 +562,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       }
       // A turn that ended without a stop and before any cost has nothing to record: pricing
       // zero tokens would fail an unpriced model and hide why the turn ended.
+      // A turn cancelled for budget already has its error; `record` must not replace it.
       const ledgered =
         stop === undefined && reported === undefined
           ? undefined
@@ -569,7 +570,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
               {
                 provider: connector,
                 model,
-                maxUsd,
+                maxUsd: out.cancelReason === 'budget' ? undefined : maxUsd,
                 usage: {
                   input: stop?.usage?.input ?? 0,
                   output: stop?.usage?.output ?? 0,

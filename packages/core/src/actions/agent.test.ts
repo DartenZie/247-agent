@@ -1070,6 +1070,24 @@ describe('runAgent against the ledger and the daily cap', () => {
     expect(spent()).toBe(50);
   });
 
+  it('fails with the cap that cancelled the turn when the run budget is passed too', async () => {
+    const agents = fakeAgents(async function* (env) {
+      for (const costUsd of [5, 500]) {
+        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        if (env.cancelled()) {
+          return stop({ stopReason: 'cancelled' });
+        }
+      }
+      return stop();
+    }, workDir);
+    const c = ctx(agents, { llm: ledgered(10) });
+    const err = await runAgent({ ...action, budget: { max_usd: 20 } }, c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BudgetExceededError);
+    expect((err as BudgetExceededError).scope).toBe('daily');
+    expect(String(err)).toMatch(/reaching the daily budget of \$10; session cancelled/);
+    expect(spent()).toBe(500);
+  });
+
   it('does not start the nudge turn once the first turn crossed the daily cap', async () => {
     // Tokens only, no cost: priced from the table after the turn, $10 at Sonnet's $2/M input.
     const agents = fakeAgents(async function* () {

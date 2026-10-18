@@ -535,9 +535,9 @@ export class LlmService implements LlmPort, BatchSource {
       }
     }
     if (req.maxUsd !== undefined) {
-      // Not counted here: `record` counts the overrun once the turn's row is written.
       const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
       if (spentRun + req.pendingUsd > req.maxUsd) {
+        this.metrics.budgetExceeded.inc({ scope: 'task' });
         return new BudgetExceededError(
           'task',
           `run spent $${(spentRun + req.pendingUsd).toFixed(4)}, over the run budget of $${String(req.maxUsd)}`,

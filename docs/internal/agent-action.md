@@ -141,7 +141,8 @@ agent never holds the connector's secrets, only a per-run socket and token.
   ledgered. It breaks the daily cap once today's spend plus `pendingUsd` reaches it
   (whether or not `maxUsd` is set) and the run cap once the run's spend plus
   `pendingUsd` passes it; either is `cancel('budget')` and a `BudgetExceededError` of
-  that scope. An agent that reports tokens but no cost is priced only by `record`
+  that scope. The turn's `record` then gets no `maxUsd`, so its overrun check does not
+  replace that error. An agent that reports tokens but no cost is priced only by `record`
   after the turn, so `checkBudget` before the nudge is its only stop between turns.
 - After every turn `ctx.llm.record({provider: <connector name>, model, maxUsd,
   usage})` writes one ledger row: `model` = `action.model`, else the name the agent

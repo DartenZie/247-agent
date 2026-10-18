@@ -286,6 +286,7 @@ export interface LlmPort {
    * During an agent turn: the cap that `pendingUsd`, the cost the turn reported that is not
    * in the ledger yet, breaks. The daily cap is broken once today's spend plus it reaches the
    * cap, the run's `maxUsd` once the run's spend plus it passes it. Undefined while both hold.
+   * The runner then records the turn without `maxUsd`, so this error is the one the run fails with.
    */
   overBudget(
     req: { maxUsd?: number | undefined; pendingUsd: number },
