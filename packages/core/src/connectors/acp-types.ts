@@ -55,15 +55,20 @@ export type AgentUpdate =
       /** Tokens in context and the context window, as reported. */
       used: number;
       size: number;
-      /** Cumulative session cost in USD, when the agent reports one. */
+      /** Cumulative session cost, when the agent reports one in USD. */
       costUsd: number | undefined;
+      /** The ISO 4217 code of a reported cost, upper-cased; a cost in another currency has no `costUsd`. */
+      currency: string | undefined;
     }
   | { kind: 'other'; sessionUpdate: string };
 
-/** The `session/prompt` response. `usage` is the SDK's experimental per-turn count. */
+/**
+ * The `session/prompt` response. `usage` is the SDK's experimental per-turn count, by
+ * price class: thought tokens the agent reports apart from its output are in `output`.
+ */
 export interface AgentStop {
   stopReason: AgentStopReason;
-  usage: { input: number; output: number } | undefined;
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined;
 }
 
 export type PermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';

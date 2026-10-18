@@ -72,9 +72,9 @@ describe('TranscriptWriter', () => {
       locations: undefined,
     });
     w.update({ kind: 'other', sessionUpdate: 'plan' });
-    w.update({ kind: 'usage', used: 10, size: 100, costUsd: 0.5 });
+    w.update({ kind: 'usage', used: 10, size: 100, costUsd: 0.5, currency: 'USD' });
     w.update({ kind: 'text', text: 'Done.', messageId: 'm2' });
-    w.stop({ stopReason: 'end_turn', usage: { input: 1, output: 2 } });
+    w.stop({ stopReason: 'end_turn', usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } });
     w.result({ status: 'done', summary: 'ok' });
     expect(rows.map((r) => [r.turn, r.kind, r.text])).toEqual([
       [1, 'prompt', 'do the thing'],
@@ -164,8 +164,8 @@ describe('TranscriptWriter', () => {
     const { w, rows, lines, fail } = writer();
     w.begin('one');
     fail();
-    w.update({ kind: 'usage', used: 1, size: 2, costUsd: undefined });
-    w.update({ kind: 'usage', used: 1, size: 2, costUsd: undefined });
+    w.update({ kind: 'usage', used: 1, size: 2, costUsd: undefined, currency: undefined });
+    w.update({ kind: 'usage', used: 1, size: 2, costUsd: undefined, currency: undefined });
     expect(rows).toHaveLength(1);
     expect(lines.filter((l) => l.msg === 'agent.transcript_failed')).toHaveLength(1);
   });

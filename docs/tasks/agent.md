@@ -256,8 +256,11 @@ Four hard stops cancel the session and fail the run without retry:
 After the session is cancelled the agent has fifteen seconds to stop.
 
 Every turn is recorded in the ledger under the connector's name, with the cost the
-agent reported or, when it reports only tokens, the table price of `model`. A turn
-that reports neither fails the run. `oa cost --by provider` shows the agents next to
+agent reported in USD or, when it reports only tokens, the table price of `model`. Input,
+output, cache-read and cache-write tokens each have their price; thought tokens are
+priced as output. A cost in another currency is not converted: the turn is priced by
+its tokens, and the log has `agent.cost_currency`. A turn that reports neither tokens
+nor a cost fails the run. `oa cost --by provider` shows the agents next to
 the direct model calls.
 
 > [!WARNING]
