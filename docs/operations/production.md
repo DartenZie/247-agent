@@ -224,7 +224,8 @@ searching for.
 ## Stop, crash, restart
 
 `systemctl stop` sends SIGTERM. The daemon stops accepting, aborts the attempts in
-flight and exits 0. On the next start:
+flight and exits 0. After an uncaught error it stops the same way and exits 1, and
+after 10 seconds it exits 1 even if the stop has not finished. On the next start:
 
 - a run that was `running` is retried if its retry policy has attempts left, otherwise
   it is failed with `interrupted: the daemon restarted while the run was in progress`

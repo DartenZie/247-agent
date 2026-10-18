@@ -76,8 +76,9 @@ and `cmd` render to strings; `stdin` is sent verbatim when a string, else as JSO
 `json_stdout` (parse failure fails the attempt), `exit_code` (the number, never a
 failure for a non-zero exit). In the first two modes a non-zero exit is `ShellError`
 with the last 1024 characters of stderr. A spawn failure or a signal fails in every
-mode. Each of stdout and stderr is kept up to 8 MiB. An abort sends SIGTERM, then
-SIGKILL after 5 s. Unsandboxed, the child starts from `ctx.childEnv` plus the action's
+mode. Each of stdout and stderr is kept up to 8 MiB. The child runs in a session and process
+group of its own (`detached`); an abort sends SIGTERM to the group, then SIGKILL to it after 5 s,
+so grandchildren that hold stdout open do not keep the attempt running. Unsandboxed, the child starts from `ctx.childEnv` plus the action's
 `env`; the context always carries one, there is no fallback to `process.env`.
 The child never gets the daemon's own environment, which with the `env` secrets
 backend holds every secret. bwrap is spawned from the same scrubbed set. `user:` is
