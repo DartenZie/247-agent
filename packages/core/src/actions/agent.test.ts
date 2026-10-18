@@ -805,6 +805,35 @@ describe('runAgent', () => {
     expect(isRetryable(err)).toBe(true);
   });
 
+  it('ledgers and fails without retry when the agent dies after a cost not in USD', async () => {
+    const agents = fakeAgents(async function* () {
+      yield { kind: 'usage', used: 10, size: 100, costUsd: undefined, currency: 'EUR' };
+      throw new Error('the agent process exited');
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/only in EUR/);
+    expect(String(err)).toMatch(/the agent process exited/);
+    expect(isRetryable(err)).toBe(false);
+    expect(llm.turns).toHaveLength(1);
+    expect(llm.turns[0]?.turn.usage).toMatchObject({ input: 0, output: 0, reportedUsd: undefined });
+  });
+
+  it('keeps the currency error when the turn without a stop cannot be priced', async () => {
+    llm = fakeLlmPort({
+      record: () => {
+        throw new UnpricedModelError('agent "claude" reported no cost');
+      },
+    });
+    const agents = fakeAgents(async function* () {
+      yield { kind: 'usage', used: 10, size: 100, costUsd: undefined, currency: 'EUR' };
+      throw new Error('the agent process exited');
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/only in EUR.*the agent process exited/);
+    expect(isRetryable(err)).toBe(false);
+    expect(llm.turns).toHaveLength(1);
+  });
+
   it('refuses before the turn when the budget port does, and maps refusal and self-cancel', async () => {
     llm = fakeLlmPort({
       checkBudget: () => {

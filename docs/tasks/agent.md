@@ -260,8 +260,9 @@ agent reported in USD or, when it reports only tokens, the table price of `model
 output, cache-read and cache-write tokens each have their price; thought tokens are
 priced as output. A cost in another currency is not converted: the turn is priced by
 its tokens, and the log has `agent.cost_currency`. A turn that reports neither tokens
-nor a cost fails the run. `oa cost --by provider` shows the agents next to
-the direct model calls.
+nor a cost fails the run. If the agent exits during a turn after it reports a cost in
+another currency, the turn is recorded without a cost and the run fails without a
+retry. `oa cost --by provider` shows the agents next to the direct model calls.
 
 > [!WARNING]
 > An agent that reports tokens but no cost needs a price. Set `model` to a model the
