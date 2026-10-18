@@ -17,7 +17,7 @@ npm run smoke:acp -- opencode-acp   # OpenCode on free Zen models: no login at a
 | -------------- | ------------------------------------------ | ---------------------------- | ---------------------- |
 | `claude-acp`   | `@agentclientprotocol/claude-agent-acp@0.80.0` | `claude-haiku-4-5`           | `claude-sonnet-5`, low |
 | `codex-acp`    | `@agentclientprotocol/codex-acp@1.12.0`    | `gpt-5.6-luna`, low effort   | `gpt-5.6-terra`, medium |
-| `opencode-acp` | `opencode-ai@1.18.34 acp`                  | `opencode/big-pickle` (free) | `opencode/ling-3.1-flash-free`, medium |
+| `opencode-acp` | `opencode-ai@1.18.34 acp`                  | `opencode/big-pickle` (free) | `opencode/beam-free`, medium |
 
 Claude and Codex run on your subscription, not an API key, so a run costs nothing on top
 of your plan; OpenCode's models are free. A connector inherits only a minimal environment
