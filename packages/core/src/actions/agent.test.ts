@@ -23,9 +23,14 @@ import type {
   AgentUpdate,
   PermissionHandler,
 } from '../connectors/acp-types.js';
+import { createBus } from '../bus/bus.js';
+import { testEnv, type TestEnv } from '../bus/testing.js';
 import { BudgetExceededError, UnpricedModelError } from '../llm/errors.js';
+import { resolvePricing } from '../llm/pricing.js';
+import { LlmService } from '../llm/service.js';
 import { fakeLlmPort, type FakePort } from '../llm/testing.js';
 import { createLogger } from '../log.js';
+import { staticSecrets } from '../secrets/secrets.js';
 import type { NewTranscriptEntry } from '../store/transcripts.js';
 import { AgentAction, previousFailure, runAgent } from './agent.js';
 import { readAgentResult, resultInstructions } from './agent-result.js';
@@ -1001,6 +1006,99 @@ describe('runAgent', () => {
         process.env.OA_SECRET_X = saved;
       }
     }
+  });
+});
+
+describe('runAgent against the ledger and the daily cap', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = testEnv();
+  });
+
+  afterEach(() => {
+    env.close();
+  });
+
+  /** A real `LlmService` over a temp store, with `run_test` queued so ledger rows can reference it. */
+  function ledgered(dailyUsd: number): LlmService {
+    const bus = createBus({ store: env.store, clock: env.clock, log: env.log });
+    const event = bus.publish({ type: 'x.y', source: 'test' });
+    if (event.status !== 'inserted') {
+      throw new Error('unreachable');
+    }
+    env.store.runs.insertQueued({
+      id: 'run_test',
+      task: 'test',
+      event_id: event.event.id,
+      correlation_id: event.event.correlation_id,
+      created_at: env.clock.now().toISOString(),
+    });
+    return new LlmService({
+      store: env.store,
+      bus,
+      clock: env.clock,
+      log: env.log,
+      secrets: staticSecrets({}),
+      configDir: env.dir,
+      providers: {},
+      pricing: resolvePricing({}),
+      defaults: { max_tokens: 1024 },
+      budgets: { daily_usd: dailyUsd },
+      factories: {},
+    });
+  }
+
+  const spent = (): number => env.store.ledger.sumForRun('run_test');
+
+  it('cancels a turn without a run budget once its reported cost reaches the daily cap', async () => {
+    const agents = fakeAgents(async function* (env) {
+      for (const costUsd of [5, 50, 500]) {
+        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        if (env.cancelled()) {
+          return stop({ stopReason: 'cancelled' });
+        }
+      }
+      writeResult(env.cwd, { status: 'done', summary: 'spent it all' });
+      return stop();
+    }, workDir);
+    const c = ctx(agents, { llm: ledgered(10) });
+    const err = await runAgent(action, c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BudgetExceededError);
+    expect((err as BudgetExceededError).scope).toBe('daily');
+    expect(agents.cancels).toBe(1);
+    expect(spent()).toBe(50);
+  });
+
+  it('fails with the cap that cancelled the turn when the run budget is passed too', async () => {
+    const agents = fakeAgents(async function* (env) {
+      for (const costUsd of [5, 500]) {
+        yield { kind: 'usage', used: 10, size: 100, costUsd };
+        if (env.cancelled()) {
+          return stop({ stopReason: 'cancelled' });
+        }
+      }
+      return stop();
+    }, workDir);
+    const c = ctx(agents, { llm: ledgered(10) });
+    const err = await runAgent({ ...action, budget: { max_usd: 20 } }, c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BudgetExceededError);
+    expect((err as BudgetExceededError).scope).toBe('daily');
+    expect(String(err)).toMatch(/reaching the daily budget of \$10; session cancelled/);
+    expect(spent()).toBe(500);
+  });
+
+  it('does not start the nudge turn once the first turn crossed the daily cap', async () => {
+    // Tokens only, no cost: priced from the table after the turn, $10 at Sonnet's $2/M input.
+    const agents = fakeAgents(async function* () {
+      return stop({ usage: { input: 5_000_000, output: 0 } });
+    }, workDir);
+    const c = ctx(agents, { llm: ledgered(10) });
+    const err = await runAgent({ ...action, model: 'claude-sonnet-5' }, c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BudgetExceededError);
+    expect((err as BudgetExceededError).scope).toBe('daily');
+    expect(agents.prompts).toHaveLength(1);
+    expect(spent()).toBe(10);
   });
 });
 

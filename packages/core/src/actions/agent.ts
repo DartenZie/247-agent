@@ -168,6 +168,8 @@ interface TurnOutcome {
   cancelReason: CancelReason | undefined;
   /** What the policy check found when `cancelReason` is `policy`. */
   violation: string | undefined;
+  /** The cap the turn's reported cost broke when `cancelReason` is `budget`. */
+  budget: BudgetExceededError | undefined;
   /** Cumulative session cost the agent reported, if any. */
   costUsd: number | undefined;
   text: string;
@@ -186,7 +188,10 @@ interface PolicyWatch {
 
 interface TurnLimits {
   maxToolCalls: number;
-  maxUsd: number | undefined;
+  /** The cap, if any, that the reported cost not yet in the ledger breaks (`LlmPort.overBudget`). */
+  overBudget: (pendingUsd: number) => BudgetExceededError | undefined;
+  /** Cumulative session cost already in the ledger from earlier turns. */
+  chargedUsd: number;
   /** Tool calls already made in earlier turns of this run. */
   toolCallsBefore: number;
   watch: PolicyWatch;
@@ -216,6 +221,7 @@ async function runTurn(
   let kept = '';
   let cancelReason: CancelReason | undefined;
   let violation: string | undefined;
+  let budget: BudgetExceededError | undefined;
   let grace: Promise<'stuck'> | undefined;
   const cancel = (reason: CancelReason): void => {
     if (cancelReason !== undefined) {
@@ -263,6 +269,7 @@ async function runTurn(
     end,
     cancelReason,
     violation,
+    budget,
     costUsd,
     text: kept,
     toolCalls,
@@ -321,8 +328,11 @@ async function runTurn(
         case 'usage':
           costUsd = u.costUsd ?? costUsd;
           ctx.log.debug('agent.usage', { used: u.used, size: u.size, cost_usd: u.costUsd ?? null });
-          if (limits.maxUsd !== undefined && costUsd !== undefined && costUsd > limits.maxUsd) {
-            cancel('budget');
+          if (costUsd !== undefined && cancelReason === undefined) {
+            budget = limits.overBudget(Math.max(0, costUsd - limits.chargedUsd));
+            if (budget !== undefined) {
+              cancel('budget');
+            }
           }
           break;
         case 'thought':
@@ -523,7 +533,14 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       const out = await runTurn(
         session,
         text,
-        { maxToolCalls, maxUsd, toolCallsBefore: toolCalls, watch, transcript },
+        {
+          maxToolCalls,
+          overBudget: (pendingUsd) => llm.overBudget({ maxUsd, pendingUsd }, cctx),
+          chargedUsd,
+          toolCallsBefore: toolCalls,
+          watch,
+          transcript,
+        },
         ctx,
       );
       toolCalls = out.toolCalls;
@@ -545,6 +562,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       }
       // A turn that ended without a stop and before any cost has nothing to record: pricing
       // zero tokens would fail an unpriced model and hide why the turn ended.
+      // A turn cancelled for budget already has its error; `record` must not replace it.
       const ledgered =
         stop === undefined && reported === undefined
           ? undefined
@@ -552,7 +570,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
               {
                 provider: connector,
                 model,
-                maxUsd,
+                maxUsd: out.cancelReason === 'budget' ? undefined : maxUsd,
                 usage: {
                   input: stop?.usage?.input ?? 0,
                   output: stop?.usage?.output ?? 0,
@@ -584,8 +602,8 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
           throw abortReason(ctx.signal);
         case 'budget':
           throw new BudgetExceededError(
-            'task',
-            `agent reported $${(out.costUsd ?? 0).toFixed(4)}, over the run budget of $${String(maxUsd)}; ${cancelled}`,
+            out.budget?.scope ?? 'task',
+            `${out.budget?.message ?? 'over budget'}; ${cancelled}`,
           );
         case 'tool_calls':
           throw new NonRetryableError(
@@ -623,6 +641,8 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       let read = readAgentResult(ws.path, cfg.result.path, schema);
       if (!read.ok && read.missing) {
         ctx.log.warn('agent.result_missing', { path: cfg.result.path });
+        // The first turn may have crossed a cap, unseen when it reported tokens but no cost.
+        llm.checkBudget({ maxUsd }, cctx);
         await turn(nudge(cfg.result.path, schema));
         read = readAgentResult(ws.path, cfg.result.path, schema);
       }

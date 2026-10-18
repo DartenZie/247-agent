@@ -241,13 +241,16 @@ change is high-impact. The agent never publishes and never sees that secret.
 
 ## Limits and money
 
-Three hard stops cancel the session and fail the run without retry:
+Four hard stops cancel the session and fail the run without retry:
 
 - **`max_tool_calls`**: the number of tool calls in one run, including connector tools
   and any nudge turn. The default comes from `defaults.agent.max_tool_calls`, 40.
 - **`budget.max_usd`**: the cost cap for the run. The action's value, or
   `defaults.agent.budget.max_usd` when the action has none, whichever is smaller than
   the task's `budget`. The cost the agent reports is watched during the turn.
+- **`budgets.daily_usd`** in `agent.yaml`: the session is cancelled once today's spend
+  plus the cost the agent reported for the turn reaches the daily cap, with or without
+  a `budget`.
 - **`timeout`** on the task: the wall clock per attempt.
 
 After the session is cancelled the agent has fifteen seconds to stop.
@@ -262,8 +265,10 @@ the direct model calls.
 > daemon can price, or add the model the agent reports to `pricing:` in `agent.yaml`;
 > otherwise the run fails as unpriced after the turn.
 
-Before any work, a run is refused when the daily cap is already reached, counting the
-worst case of model calls still in flight. Size the
+Before any work, and again before a nudge turn, a run is refused when the daily cap is
+already reached, counting the worst case of model calls still in flight, or when the
+run has spent its `budget`. An agent that reports only tokens is priced after each
+turn, so these checks between turns are its only cost stops. Size the
 limits to the task: a YAML edit is 20 calls and cents; a site-wide change is 60 calls,
 a few dollars, and an approval gate.
 

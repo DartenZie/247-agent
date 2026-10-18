@@ -519,6 +519,34 @@ export class LlmService implements LlmPort, BatchSource {
     this.precheck({ maxUsd: req.maxUsd }, cctx);
   }
 
+  overBudget(
+    req: { maxUsd?: number | undefined; pendingUsd: number },
+    cctx: LlmCallContext,
+  ): BudgetExceededError | undefined {
+    const dailyCap = this.o.budgets.daily_usd;
+    if (dailyCap !== undefined) {
+      const spentToday = this.o.store.ledger.sumSince(startOfUtcDay(this.o.clock.now()));
+      if (spentToday + req.pendingUsd >= dailyCap) {
+        this.metrics.budgetExceeded.inc({ scope: 'daily' });
+        return new BudgetExceededError(
+          'daily',
+          `agent reported $${req.pendingUsd.toFixed(4)} for the turn with $${spentToday.toFixed(4)} spent today, reaching the daily budget of $${String(dailyCap)}`,
+        );
+      }
+    }
+    if (req.maxUsd !== undefined) {
+      const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);
+      if (spentRun + req.pendingUsd > req.maxUsd) {
+        this.metrics.budgetExceeded.inc({ scope: 'task' });
+        return new BudgetExceededError(
+          'task',
+          `run spent $${(spentRun + req.pendingUsd).toFixed(4)}, over the run budget of $${String(req.maxUsd)}`,
+        );
+      }
+    }
+    return undefined;
+  }
+
   record(turn: AgentTurn, cctx: LlmCallContext): AgentTurnResult {
     const price = this.o.pricing.get(turn.model);
     const spentRun = this.o.store.ledger.sumForRun(cctx.run.id);

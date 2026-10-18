@@ -2,6 +2,7 @@ import type { Logger } from '../log.js';
 import type { PricedBy } from '../store/ledger.js';
 import type { JsonValue, RunRecord } from '../store/types.js';
 import type { DecideDefaultsConfig, Effort, LlmDefaultsConfig, ProviderType } from './config.js';
+import type { BudgetExceededError } from './errors.js';
 
 /** What a provider adapter receives: rendered, with secrets already resolved. */
 export interface LlmRequest {
@@ -281,6 +282,16 @@ export interface LlmPort {
    * is contacted.
    */
   checkBudget(req: { maxUsd?: number | undefined }, ctx: LlmCallContext): void;
+  /**
+   * During an agent turn: the cap that `pendingUsd`, the cost the turn reported that is not
+   * in the ledger yet, breaks. The daily cap is broken once today's spend plus it reaches the
+   * cap, the run's `maxUsd` once the run's spend plus it passes it. Undefined while both hold.
+   * The runner then records the turn without `maxUsd`, so this error is the one the run fails with.
+   */
+  overBudget(
+    req: { maxUsd?: number | undefined; pendingUsd: number },
+    ctx: LlmCallContext,
+  ): BudgetExceededError | undefined;
   /**
    * After an agent turn: the ledger row for what the agent reported, the breaker, and the
    * post-hoc checks (`UnpricedModelError` when nothing prices it, `BudgetExceededError` when
