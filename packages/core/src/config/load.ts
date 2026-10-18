@@ -68,12 +68,19 @@ export function loadTasksFile(path: string): LoadResult {
 
 const YAML_FILE = /\.ya?ml$/;
 
+/** A config path after expansion; `unreadable` is why a directory could not be listed. */
+interface ConfigPath {
+  file: string;
+  unreadable?: string;
+}
+
 /**
  * Expands each path to itself (a file) or to its `*.yaml` files in name order (a
- * directory such as `tasks.d`). A missing path is returned as is so the loader reports it.
+ * directory such as `tasks.d`). Never throws: a missing path is returned as is so the
+ * loader reports it, and a directory that cannot be listed comes back with the reason.
  */
-export function expandConfigPaths(paths: readonly string[]): string[] {
-  const out: string[] = [];
+function listConfigPaths(paths: readonly string[]): ConfigPath[] {
+  const out: ConfigPath[] = [];
   for (const p of paths) {
     let isDir = false;
     try {
@@ -82,16 +89,36 @@ export function expandConfigPaths(paths: readonly string[]): string[] {
       // reported by the loader as unreadable
     }
     if (!isDir) {
-      out.push(p);
+      out.push({ file: p });
       continue;
     }
-    for (const name of readdirSync(p).sort()) {
+    let names: string[];
+    try {
+      names = readdirSync(p).sort();
+    } catch (err) {
+      out.push({ file: p, unreadable: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    for (const name of names) {
       if (YAML_FILE.test(name)) {
-        out.push(join(p, name));
+        out.push({ file: join(p, name) });
       }
     }
   }
   return out;
+}
+
+/**
+ * Expands each path to itself (a file) or to its `*.yaml` files in name order (a
+ * directory such as `tasks.d`). A missing path, or a directory that cannot be listed, is
+ * returned as is so the loader reports it.
+ */
+export function expandConfigPaths(paths: readonly string[]): string[] {
+  return listConfigPaths(paths).map((p) => p.file);
+}
+
+function unreadableDir(file: string, reason: string): Extract<LoadResult, { ok: false }> {
+  return { ok: false, file, issues: [{ path: '', message: `cannot read directory: ${reason}` }] };
 }
 
 /** Every file's result plus, when all pass, the merged config. */
@@ -107,7 +134,9 @@ export interface TasksLoadResult {
  * name defined in two files is an issue on the second file. At least one task is required.
  */
 export function loadTasks(paths: readonly string[]): TasksLoadResult {
-  const files = expandConfigPaths(paths).map(loadTasksFile);
+  const files = listConfigPaths(paths).map((p) =>
+    p.unreadable === undefined ? loadTasksFile(p.file) : unreadableDir(p.file, p.unreadable),
+  );
   if (files.length === 0) {
     return {
       ok: false,
@@ -196,8 +225,8 @@ export function loadConnectors(
   for (const c of inline) {
     add(c, c.file);
   }
-  for (const file of expandConfigPaths(paths)) {
-    const r = loadManifestFile(file);
+  for (const { file, unreadable } of listConfigPaths(paths)) {
+    const r = unreadable === undefined ? loadManifestFile(file) : unreadableDir(file, unreadable);
     if (r.ok) {
       add(r.config, file);
     } else {
