@@ -128,7 +128,7 @@ price on an `anthropic` or `openai` provider fails `oa validate`.
 
 | Key | Meaning | Default |
 |---|---|---|
-| `budgets.daily_usd` | A cap on model spend per UTC day, summed from the ledger. Calls in flight count against it at their worst case, so concurrent calls cross it by one call at most; a call is refused once spend plus that worst case reaches the cap. Agent sessions and models without a `pricing:` entry have no worst case and are not counted until they finish. Once crossed, every model call fails fast until 00:00 UTC and one `budget.exceeded` event is published for the day. | none |
+| `budgets.daily_usd` | A cap on model spend per UTC day, summed from the ledger. Calls in flight count against it at their worst case, so concurrent calls cross it by one call at most; a call is refused once spend plus that worst case reaches the cap. Agent sessions and models without a `pricing:` entry have no worst case and are not counted until they finish; an agent session that reports its cost is cancelled once today's spend plus that cost reaches the cap. Once crossed, every model call fails fast until 00:00 UTC and one `budget.exceeded` event is published for the day. | none |
 | `batches.poll` | How often `llm` actions with `batch: true` are checked for their result, `1s` to `1h`. | `1m` |
 | `retention.events` | How long a dispatched event is kept once no kept run or wait references it. A duration or `never`. | `90d` |
 | `retention.runs` | How long a finished run is kept, with its ledger rows and transcript. A duration of at least `1d`, or `never`. | `90d` |

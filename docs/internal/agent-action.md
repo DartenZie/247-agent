@@ -30,7 +30,8 @@ The supervisor spawns the agent program once, like any connector, and calls
 client capabilities, so file edits and commands are the agent's own and arrive as
 tool calls). Per run the runner:
 
-1. `ctx.llm.checkBudget({maxUsd})` once per attempt, before anything is created.
+1. `ctx.llm.checkBudget({maxUsd})` once per attempt, before anything is created, and
+   again before the nudge turn.
 2. Creates the workspace (below) and opens a session with the workspace as `cwd`,
    plus the tool bridge when `mcp_servers` is set.
 3. Applies `model` then `effort` (below).
@@ -135,8 +136,13 @@ agent never holds the connector's secrets, only a per-run socket and token.
   `NonRetryableError`.
 - The cost cap is the smaller of `task.budget.max_usd` and the action's
   (`action.budget.max_usd ?? defaults.agent.budget.max_usd`), either may be absent.
-  During the turn the cumulative `usage_update.cost` is compared to it;
-  `cancel('budget')` and `BudgetExceededError('task')` past it.
+  During the turn every `usage_update.cost` asks `ctx.llm.overBudget({maxUsd,
+  pendingUsd})`, `pendingUsd` being the cumulative cost less what earlier turns
+  ledgered. It breaks the daily cap once today's spend plus `pendingUsd` reaches it
+  (whether or not `maxUsd` is set) and the run cap once the run's spend plus
+  `pendingUsd` passes it; either is `cancel('budget')` and a `BudgetExceededError` of
+  that scope. An agent that reports tokens but no cost is priced only by `record`
+  after the turn, so `checkBudget` before the nudge is its only stop between turns.
 - After every turn `ctx.llm.record({provider: <connector name>, model, maxUsd,
   usage})` writes one ledger row: `model` = `action.model`, else the name the agent
   reported, else the connector; the increase of the cumulative cost since the last turn

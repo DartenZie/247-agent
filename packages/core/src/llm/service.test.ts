@@ -549,6 +549,30 @@ describe('LlmService agent turns (checkBudget + record)', () => {
       s.checkBudget({}, cctx(run()));
     }).toThrow(/daily budget/);
   });
+
+  it('overBudget measures a turn in progress against the daily cap and the run cap', () => {
+    const s = service({ budgets: { daily_usd: 1 } });
+    const r = run();
+    s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.4 },
+      },
+      cctx(r),
+    );
+    expect(s.overBudget({ pendingUsd: 0.5 }, cctx(r))).toBeUndefined();
+    expect(s.overBudget({ pendingUsd: 0.6 }, cctx(run()))).toMatchObject({
+      scope: 'daily',
+      message: expect.stringMatching(/reaching the daily budget of \$1/) as string,
+    });
+    expect(s.overBudget({ maxUsd: 0.5, pendingUsd: 0.1 }, cctx(r))).toBeUndefined();
+    expect(s.overBudget({ maxUsd: 0.5, pendingUsd: 0.2 }, cctx(r))).toMatchObject({
+      scope: 'task',
+      message: expect.stringMatching(/run spent \$0.6000, over the run budget of \$0.5/) as string,
+    });
+    expect(s.overBudget({ maxUsd: 0.5, pendingUsd: 0.2 }, cctx(run()))).toBeUndefined();
+  });
 });
 
 describe('LlmService.readSystemFile', () => {

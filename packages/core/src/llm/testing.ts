@@ -3,6 +3,7 @@ import {
   type DecideDefaultsConfig,
   type LlmDefaultsConfig,
 } from './config.js';
+import { BudgetExceededError } from './errors.js';
 import type { JsonValue } from '../store/types.js';
 import type {
   AgentTurn,
@@ -110,6 +111,11 @@ export function fakeLlmPort(
     respondDecide?: (req: DecideCall) => DecideCallResult | Promise<DecideCallResult>;
     /** Throws to simulate a budget refusal before a turn. */
     checkBudget?: (req: { maxUsd?: number | undefined }) => void;
+    /** Answers `overBudget`; defaults to the run cap over the turns recorded so far. */
+    overBudget?: (req: {
+      maxUsd?: number | undefined;
+      pendingUsd: number;
+    }) => BudgetExceededError | undefined;
     /** Prices an agent turn; defaults to the reported cost or $0.001. */
     record?: (turn: AgentTurn) => AgentTurnResult;
     /** Answers `submitBatch`; defaults to a new `msgbatch_<n>`. */
@@ -124,6 +130,7 @@ export function fakeLlmPort(
   const batches: FakePort['batches'] = [];
   const batchResults: FakePort['batchResults'] = [];
   const systemFiles = over.systemFiles ?? {};
+  let recordedUsd = 0;
   const respond =
     over.respond ??
     ((): LlmCallResult => ({
@@ -197,12 +204,27 @@ export function fakeLlmPort(
     checkBudget: (req) => {
       over.checkBudget?.(req);
     },
+    overBudget: (req) => {
+      if (over.overBudget !== undefined) {
+        return over.overBudget(req);
+      }
+      const spent = recordedUsd + req.pendingUsd;
+      return req.maxUsd !== undefined && spent > req.maxUsd
+        ? new BudgetExceededError(
+            'task',
+            `run spent $${spent.toFixed(4)}, over the run budget of $${String(req.maxUsd)}`,
+          )
+        : undefined;
+    },
     record: (turn, ctx) => {
       turns.push({ turn, ctx });
-      if (over.record !== undefined) {
-        return over.record(turn);
+      const priced = over.record?.(turn);
+      if (priced !== undefined) {
+        recordedUsd += priced.usd;
+        return priced;
       }
       const reported = turn.usage.reportedUsd;
+      recordedUsd += reported ?? 0.001;
       return {
         usd: reported ?? 0.001,
         priced_by: reported === undefined ? 'table' : 'provider',

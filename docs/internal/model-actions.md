@@ -98,7 +98,10 @@ publishes no `budget.exceeded`. It is a `BudgetExceededError('daily')` like any 
 so the run fails without retry. Two kinds of call hold nothing and can still overshoot
 together: an `openrouter` model without a table price, which has no worst case, and an
 agent session, whose spend `checkBudget` cannot know in advance. Both are refused like
-any call once the cap is held.
+any call once the cap is held. An agent session that reports its cost is cancelled
+mid-turn once spent plus that cost reaches the cap (`overBudget`, `agent-action.md`),
+so it overshoots by the cost between two `usage_update`s and the agent's stop after
+the cancel.
 
 ## The ledger row
 

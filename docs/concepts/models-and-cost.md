@@ -64,7 +64,8 @@ makes the call and writes a ledger row. There is no unbudgeted path.
   ledger, so a restart changes nothing. A call still running counts at its worst case,
   so a call is refused once today's spend plus those worst cases reaches the cap. Once
   the spend crosses it, every model call fails fast until midnight and one
-  `budget.exceeded` event is published. Route that event to the task that notifies you.
+  `budget.exceeded` event is published. An agent session is cancelled the moment
+  today's spend plus its reported cost reaches the cap. Route that event to the task that notifies you.
 
 A run that goes over its budget fails like any other failed run: `task.<name>.failed`
 is published, and the event that triggered it can be replayed later with
