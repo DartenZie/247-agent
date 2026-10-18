@@ -7,7 +7,7 @@ import { TOOL_KINDS, type AgentSession, type AgentStop } from '../connectors/acp
 import { isJmesTruthy } from '../expr/jmespath.js';
 import { evaluateExpr } from '../expr/template.js';
 import { Budget } from '../llm/config.js';
-import { BudgetExceededError } from '../llm/errors.js';
+import { BudgetExceededError, UnpricedModelError } from '../llm/errors.js';
 import type { LlmCallContext, LlmPort } from '../llm/types.js';
 import type { JsonValue } from '../store/types.js';
 import {
@@ -593,9 +593,10 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
           ledgered = llm.record(turn, cctx);
         } catch (err) {
           // The row is written; an unpriced model must not hide why the turn ended.
-          ctx.log.warn('agent.record_failed', {
-            error: err instanceof Error ? err.message : String(err),
-          });
+          if (!(err instanceof UnpricedModelError)) {
+            throw err;
+          }
+          ctx.log.warn('agent.record_failed', { error: err.message });
         }
       } else if (stop !== undefined || reported !== undefined) {
         ledgered = llm.record(turn, cctx);

@@ -159,13 +159,14 @@ agent never holds the connector's secrets, only a per-run socket and token.
   turn that then ends without a stop writes a row with no tokens (`table` at $0, or
   `unpriced`, whose `UnpricedModelError` is only logged as `agent.record_failed`), and
   the turn's error becomes a `NonRetryableError`: the spend is unknown, so a retry could
-  not be budgeted. Consequence: without
+  not be budgeted. A task `timeout` is the exception: the executor retries every attempt
+  it aborted, so that retry starts without the spend. Consequence: without
   `action.model`, an agent that reports tokens but no cost fails `UnpricedModelError`
   unless `pricing:` names what it reports. A turn reporting neither usage nor cost
   fails non-retryably, the row already written. A turn that ends without a stop (the
   agent process dies, or the turn ignores a cancel) still writes its row, with the cost
-  reported so far and no tokens, before the run fails. If the agent reported no cost
-  before such an end, there is nothing to record and no row is written.
+  reported so far and no tokens, before the run fails. If the agent reported no cost in
+  any currency before such an end, there is nothing to record and no row is written.
 - Wall clock: the task `timeout` aborts `ctx.signal`, which cancels the session.
 - Stop reasons: `refusal` and `cancelled` fail non-retryably; `max_tokens` and
   `max_turn_requests` are not special, the run proceeds to read `RESULT.json`.

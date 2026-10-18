@@ -831,6 +831,7 @@ describe('runAgent', () => {
     const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
     expect(String(err)).toMatch(/only in EUR.*the agent process exited/);
     expect(isRetryable(err)).toBe(false);
+    expect(llm.turns).toHaveLength(1);
   });
 
   it('refuses before the turn when the budget port does, and maps refusal and self-cancel', async () => {
