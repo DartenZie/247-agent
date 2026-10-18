@@ -106,6 +106,8 @@ async function main(argv: string[]): Promise<number> {
     // After a crash the state is unknown: stop what can be stopped, then exit regardless of
     // what still holds the event loop, so systemd's `Restart=always` brings the daemon back.
     const crash = (kind: string, err: unknown): void => {
+      // Also when the stop hangs on a promise that holds no handle and the loop drains.
+      process.exitCode = 1;
       log.error('daemon.crashed', {
         kind,
         error: err instanceof Error ? (err.stack ?? err.message) : String(err),
