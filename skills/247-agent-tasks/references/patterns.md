@@ -96,7 +96,7 @@ Safe by construction: a task never triggers on its own `task.notify.failed`.
         cmd: ["git", "push", "origin", "HEAD:main"]
   emit:
     - type: site.change_pushed          # a rejection skips the push and still succeeds
-      when: "result.steps[1].payload.approved == `true`"
+      when: "result.steps[2] != `null`"
       payload: { summary: "${event.payload.summary}" }
 ```
 

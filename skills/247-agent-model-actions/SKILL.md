@@ -147,7 +147,7 @@ action:
     - shell: ["npm", "run", "build"]
     - shell: ["git", "commit", "-am", "events: ${result.summary}"]
 emit:
-  - type: site.change_done              # route approval or publishing on this, never on task.<name>.succeeded
+  - type: site.change_done              # route the approval on this, never on task.<name>.succeeded
     when: "result.status == 'done'"
     payload: { summary: "${result.summary}" }
   - type: site.change_blocked           # the agent could not do it: say what is missing

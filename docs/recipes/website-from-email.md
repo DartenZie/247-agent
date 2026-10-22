@@ -198,7 +198,7 @@ tasks:
           cmd: ["git", "push", "origin", "HEAD:main"]
     emit:
       - type: site.change_pushed
-        when: "result.steps[1].payload.approved == `true`"
+        when: "result.steps[2] != `null`"
         payload: { summary: "${event.payload.summary}" }
 
   # 5. Publish what was pushed. Deterministic, holds the SFTP secret, nothing else does.

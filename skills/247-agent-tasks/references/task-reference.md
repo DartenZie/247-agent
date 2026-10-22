@@ -153,7 +153,7 @@ emit:
 
 - Automatic events: `task.<name>.succeeded` (payload
   `{run_id, task, result}`; also after a `blocked` agent result or a skipped step) and `task.<name>.failed`
-  (payload = error, once, after the last retry attempt).
+  (payload `{run_id, task, error, attempt}`, once, after the last retry attempt).
 - Emitted events carry `source: task:<name>` and `parent_id` = the trigger event. A
   rule without `each` inherits the trigger's `correlation_id`; each item of an `each`
   rule gets a new one, so a gate keyed on `${event.correlation_id}` answers one item.

@@ -40,7 +40,7 @@ tasks:
     # 4. Tell the publisher, only when the push ran.
     emit:
       - type: site.change_pushed
-        when: "result.steps[1].payload.approved == `true`"
+        when: "result.steps[2] != `null`"
         payload: { summary: "${event.payload.summary}" }
 ```
 
@@ -75,7 +75,7 @@ tasks:
 5. The sequence resumes at step 3. `steps[1]` is the matched event, so
    `steps[1].payload.approved` is `true` for the first option. With `when` false the push
    is skipped and the run still succeeds, with `null` for that step in the result.
-6. The `emit` rule publishes `site.change_pushed` only for an approval. Trigger the next
+6. The `emit` rule publishes `site.change_pushed` only when the push step ran. Trigger the next
    task, such as the publisher, on that event. `task.approve_change.succeeded` is
    published after a rejection too.
 
