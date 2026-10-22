@@ -111,7 +111,8 @@ the write lock for long. The order and the conditions:
    branch reset. It also publishes the event `retention.workspace_kept` (`source: core`)
    with `dedup_key: retention.workspace_kept:<run_id>`, so a `notify` task hears of a
    worktree once, not every `retention.interval`; the key is free again only after
-   retention deletes that event.
+   retention deletes that event. A publish that throws logs `retention.publish_failed`
+   and the sweep goes on.
 
 Counts go to `retention.purged` (info when anything was deleted) and to
 `oa_retention_deleted_total{kind}`; a throwing pass logs `retention.failed` and leaves

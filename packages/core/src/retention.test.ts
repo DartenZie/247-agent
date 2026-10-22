@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { execaSync } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createBus } from './bus/bus.js';
+import { createBus, type EventBus } from './bus/bus.js';
 import { retentionPolicy } from './config/retention.js';
 import { createLogger } from './log.js';
 import { Metrics } from './metrics.js';
@@ -65,7 +65,11 @@ function workspace(workDir: string, name: string, mtime: Date): string {
   return path;
 }
 
-const job = (workDir: string | undefined, metrics = new Metrics()): RetentionJob => {
+const job = (
+  workDir: string | undefined,
+  metrics = new Metrics(),
+  wrapBus: (bus: EventBus) => EventBus = (bus) => bus,
+): RetentionJob => {
   const clock = { now: () => NOW };
   const log = createLogger({
     level: 'debug',
@@ -73,7 +77,7 @@ const job = (workDir: string | undefined, metrics = new Metrics()): RetentionJob
   });
   return new RetentionJob({
     store,
-    bus: createBus({ store, clock, log, metrics }),
+    bus: wrapBus(createBus({ store, clock, log, metrics })),
     clock,
     log,
     metrics,
@@ -236,6 +240,66 @@ describe('RetentionJob', () => {
       task: 't',
       path: ws,
       reason: 'unknown',
+    });
+  });
+
+  it('publishes a kept worktree whose run is gone with a null task', async () => {
+    const repo = join(dir, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]): string => execaSync('git', args, { cwd }).stdout;
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 't');
+    git(repo, 'config', 'user.email', 't@x');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    const workDir = join(dir, 'work');
+    mkdirSync(workDir);
+    const ws = join(workDir, 'run_GONE');
+    git(repo, 'worktree', 'add', '-q', '-B', 'agent/run_GONE', ws, 'main');
+    writeFileSync(join(ws, 'a.txt'), 'two\n');
+    git(ws, 'commit', '-q', '-am', 'change');
+    utimesSync(ws, ago(10), ago(10)); // no run record: the directory's age decides
+
+    await job(workDir).run();
+    expect(existsSync(ws)).toBe(true);
+    expect(keptEvents()[0]?.payload).toMatchObject({ run_id: 'run_GONE', task: null });
+  });
+
+  it('keeps sweeping when publishing a kept worktree fails', async () => {
+    const repo = join(dir, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]): string => execaSync('git', args, { cwd }).stdout;
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 't');
+    git(repo, 'config', 'user.email', 't@x');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    const workDir = join(dir, 'work');
+    mkdirSync(workDir);
+    const ws = join(workDir, 'run_A'); // listed before run_B
+    git(repo, 'worktree', 'add', '-q', '-B', 'agent/run_A', ws, 'main');
+    writeFileSync(join(ws, 'a.txt'), 'two\n');
+    git(ws, 'commit', '-q', '-am', 'change');
+    run('run_A', 'succeeded', ago(10));
+    run('run_B', 'succeeded', ago(10));
+    const old = workspace(workDir, 'run_B', ago(10));
+
+    const metrics = new Metrics();
+    const report = await job(workDir, metrics, (bus) => ({
+      ...bus,
+      publish: () => {
+        throw new Error('database is locked');
+      },
+    })).run();
+    expect(report?.workspaces).toBe(1);
+    expect(existsSync(old)).toBe(false);
+    expect(metrics.registry.value('oa_retention_workspaces_kept')).toBe(1);
+    expect(lines.find((l) => l.msg === 'retention.publish_failed')).toMatchObject({
+      level: 'error',
+      run_id: 'run_A',
+      error: 'database is locked',
     });
   });
 

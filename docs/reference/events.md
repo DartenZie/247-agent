@@ -122,7 +122,8 @@ A retention pass publishes it when it keeps an agent worktree past `retention.wo
 because its branch holds commits that are not pushed yet (`reason: unpushed`, with
 `commits`) or because git could not count them (`reason: unknown`, without `commits`).
 `task` is the task of the run that made the worktree, or `null` when that run is already
-deleted. The event is published once per worktree, not on every pass. To let retention
+deleted. The event is published once per worktree, not on every pass. When
+`retention.events` deletes the event, the next pass publishes it again. To let retention
 remove the worktree, push the commits or reset the branch.
 
 ## Type patterns
@@ -206,6 +207,7 @@ The names worth searching for:
 | `agent.cancelling` | warn | the core is cancelling the session (`reason`: `budget`, `tool_calls`, `policy`, `abort`) |
 | `sandbox.net_denied` | warn, then debug | a sandboxed agent asked for a host outside its allowlist (`host`, `port`); the first time per target is a warning |
 | `sandbox.net_dropped` | warn once | a connection past the 256-connection limit was closed |
+| `retention.publish_failed` | error | the `retention.workspace_kept` event of a kept worktree could not be stored (`run_id`, `error`); the next pass tries again |
 | `retention.purged` | info | what a retention pass deleted (`runs`, `ledger`, `transcripts`, `events`, `workspaces`) |
 | `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path`; logged on every pass, published once as the event of the same name |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |

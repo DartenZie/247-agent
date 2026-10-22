@@ -181,13 +181,21 @@ export class RetentionJob {
           ...(unpushed === undefined ? {} : { commits: unpushed }),
         };
         this.log.warn(RETENTION_WORKSPACE_KEPT, details);
-        // Once per worktree, so every pass does not repeat it to whoever is notified.
-        this.bus.publish({
-          type: RETENTION_WORKSPACE_KEPT,
-          source: 'core',
-          dedup_key: `${RETENTION_WORKSPACE_KEPT}:${entry.runId}`,
-          payload: { ...details, task: this.store.runs.getById(entry.runId)?.task ?? null },
-        });
+        // Once per worktree, so every pass does not repeat it to whoever is notified. A
+        // failed publish is retried next pass and must not stop the sweep of the others.
+        try {
+          this.bus.publish({
+            type: RETENTION_WORKSPACE_KEPT,
+            source: 'core',
+            dedup_key: `${RETENTION_WORKSPACE_KEPT}:${entry.runId}`,
+            payload: { ...details, task: this.store.runs.getById(entry.runId)?.task ?? null },
+          });
+        } catch (err) {
+          this.log.error('retention.publish_failed', {
+            run_id: entry.runId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         continue;
       }
       await removeWorkspaceDir(entry, this.env);
