@@ -38,13 +38,11 @@ Copy the shape that fits; all of these validate and run today unless marked.
       payload: { kind: "${result.kind}", summary: "${result.summary}", email: "${event.payload}" }
 ```
 
-## Chain on another task's success
+## Publish only what was pushed
 
 ```yaml
 - name: publish_site
-  trigger:
-    kind: event
-    type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
+  trigger: { kind: event, type: site.change_pushed }
   concurrency: 1
   action:
     kind: shell
@@ -54,7 +52,9 @@ Copy the shape that fits; all of these validate and run today unless marked.
 ```
 
 The publisher is the only task holding the deploy secret. A mirror is idempotent, so a
-retry is safe.
+retry is safe. `site.change_pushed` comes from `emit` rules with a `when` on the outcome
+(`result.status == 'done'` on the agent task, the approval on the gate), never from
+`task.<name>.succeeded`: a `blocked` agent result and a rejected approval both succeed.
 
 ## Notify on any failure
 
@@ -94,6 +94,10 @@ Safe by construction: a task never triggers on its own `task.notify.failed`.
         when: "steps[1].payload.approved == `true`"
         cwd: ${event.payload.worktree}
         cmd: ["git", "push", "origin", "HEAD:main"]
+  emit:
+    - type: site.change_pushed          # a rejection skips the push and still succeeds
+      when: "result.steps[2] != `null`"
+      payload: { summary: "${event.payload.summary}" }
 ```
 
 Match the reply on `correlation_id`, never on "the next reply". The connector's `ask`

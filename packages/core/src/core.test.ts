@@ -122,9 +122,15 @@ describe('createCore with the reference workflow', () => {
     expect(runs[0]?.correlation_id).toBe(root.event.correlation_id);
   });
 
-  it('fans task success out to publish_site by type_any', () => {
+  it('publishes a pushed change, not a bare task success', () => {
     core.bus.publish({
       type: 'task.update_event_list.succeeded',
+      source: taskSource('update_event_list'),
+    });
+    core.bus.dispatcher.drain();
+    expect(started()).toEqual([]);
+    core.bus.publish({
+      type: 'site.change_pushed',
       source: taskSource('update_event_list'),
     });
     core.bus.dispatcher.drain();
@@ -200,7 +206,7 @@ describe('createCore with the reference workflow', () => {
 
   it('dispatches a backlog left from before a restart', async () => {
     core.bus.publish({
-      type: 'task.update_event_list.succeeded',
+      type: 'site.change_pushed',
       source: taskSource('update_event_list'),
     });
     await core.stop(); // before the wake ran

@@ -26,6 +26,10 @@ tasks:
           when: "steps[1].payload.approved == `true`"
           cwd: ${event.payload.worktree}
           cmd: ["git", "push", "origin", "HEAD:main"]
+    emit:
+      - type: site.change_pushed
+        when: "result.steps[2] != `null`"
+        payload: { summary: "${event.payload.summary}" }
 ```
 
 Steps are [`shell`](shell.md), [`connector`](connector.md) or [`wait`](wait.md)
@@ -37,7 +41,9 @@ result are visible as such.
 
 Inside later steps, `steps[i]` is the result of step *i*, counting from zero, so
 `steps[1].payload.approved` reads the reply the wait received. A step whose `when` is
-falsy is skipped and its result is `null`. `when` is a JMESPath expression over the
+falsy is skipped and its result is `null`, and the run still succeeds. A rejected
+approval therefore ends `succeeded` like an approved one; route on it with an `emit`
+rule that tests the step's result, as `site.change_pushed` does above. `when` is a JMESPath expression over the
 template scope, so `steps`, `event`, `state` and `run` are all available.
 
 The run's result is `{ steps: [...] }` with every step's result in order. `emit`

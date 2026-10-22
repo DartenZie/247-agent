@@ -105,8 +105,9 @@ Run in order in the workspace after a `done` result, through the `shell` runner 
 ${result.summary}"`. A non-zero exit fails the run (nothing leaves the workspace)
 retryably: with `retry.attempts` > 1 the next attempt starts fresh with the gate's error
 and stderr tail in its prompt, so a build the agent broke gets a second try.
-Publishing is a separate task on `task.<name>.succeeded`, which is the only place a
-deploy secret lives.
+Publishing is a separate task, the only place a deploy secret lives, on an event the
+task emits `when: "result.status == 'done'"`; never on `task.<name>.succeeded`, which a
+`blocked` run also publishes.
 
 ## Money
 
