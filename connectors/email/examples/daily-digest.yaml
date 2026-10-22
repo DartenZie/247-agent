@@ -32,14 +32,15 @@ tasks:
             text: |
               ${join('
               ', steps[0].emails[*].subject)}
+    # After the sequence, its results are under `result.steps`; `steps` exists only inside it.
     state_updates:
-      digest.last_uid: ${steps[0].last_uid}
+      digest.last_uid: ${result.steps[0].last_uid}
     emit:
       - type: email.digest_sent
-        when: 'length(steps[0].emails) > `0`'
+        when: 'length(result.steps[0].emails) > `0`'
         payload:
-          count: ${length(steps[0].emails)}
-          last_uid: ${steps[0].last_uid}
+          count: ${length(result.steps[0].emails)}
+          last_uid: ${result.steps[0].last_uid}
 
   # Optional: turn the same batch into a written summary. One Haiku call, JSON out,
   # capped by the task budget — the only place in this file a model is involved.
