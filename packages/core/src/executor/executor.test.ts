@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { runConnector } from '../actions/connector.js';
 import type { ActionRunner, ActionRunners } from '../actions/types.js';
 import { createBus, type EventBus } from '../bus/bus.js';
 import { runTaskManually } from '../bus/manual.js';
 import { type CompiledConfig, taskSource } from '../bus/matcher.js';
 import { config, shell, testEnv, type TestEnv } from '../bus/testing.js';
 import { runShell } from '../actions/shell.js';
-import { createSecretsBackend, SecretsConfig } from '../secrets/secrets.js';
+import { parseManifest } from '../config/connector.js';
+import { ConnectorSupervisor } from '../connectors/supervisor.js';
+import { createSecretsBackend, SecretsConfig, staticSecrets } from '../secrets/secrets.js';
 import type { EventRecord } from '../store/types.js';
 import { Executor, type ExecutorOptions } from './executor.js';
 
@@ -385,5 +388,127 @@ describe('the child environment of a shell step', () => {
     });
     expect(secret).toBe('from-childEnv');
     expect(home).toBe('');
+  });
+});
+
+describe('Executor retrying a connector op', () => {
+  const FIXTURES = new URL('../../test/fixtures/', import.meta.url).pathname;
+  const retry = { attempts: 2, backoff: 'fixed', base: '10ms' };
+  const op = (name: string, args: Record<string, unknown> = {}, timeout?: string) => ({
+    kind: 'connector',
+    connector: 'fake',
+    op: name,
+    args,
+    ...(timeout === undefined ? {} : { timeout }),
+  });
+  let sup: ConnectorSupervisor;
+
+  beforeEach(async () => {
+    current = config([
+      {
+        name: 'call_timeout',
+        trigger: { kind: 'event', type: 'c.call_timeout' },
+        action: op('slow', { ms: 2000 }, '100ms'),
+        retry,
+      },
+      {
+        name: 'task_timeout',
+        trigger: { kind: 'event', type: 'c.task_timeout' },
+        action: op('slow', { ms: 2000 }),
+        timeout: '200ms',
+        retry,
+      },
+      {
+        name: 'died',
+        trigger: { kind: 'event', type: 'c.died' },
+        action: op('die'),
+        retry,
+      },
+    ]);
+    bus.dispatcher.setConfig(current);
+    const m = parseManifest(
+      {
+        name: 'fake',
+        exec: ['node', `${FIXTURES}fake-mcp.ts`],
+        restart: { base: '20ms', max: '100ms' },
+      },
+      '/x/connectors.d/fake.yaml',
+    );
+    if (!m.ok) {
+      throw new Error(JSON.stringify(m.issues));
+    }
+    sup = new ConnectorSupervisor({
+      manifests: [m.config],
+      socketPath: '/tmp/oa-test.sock',
+      secrets: staticSecrets({}),
+      log: env.log,
+      env: { PATH: process.env.PATH ?? '' },
+    });
+    await sup.start();
+  });
+  afterEach(async () => {
+    await executor?.stop();
+    executor = undefined;
+    await sup.stop();
+  });
+
+  /** Runs `task` once; returns the run and how many times the op was called. */
+  async function runOnce(
+    task: string,
+  ): Promise<{ status: string; attempt: number; error: string | null; calls: number }> {
+    let calls = 0;
+    executor = new Executor({
+      store: env.store,
+      bus,
+      clock: env.clock,
+      log: env.log,
+      config: () => current,
+      runners: {
+        connector: (action, ctx) => {
+          calls++;
+          return runConnector(action, ctx);
+        },
+      },
+      connectors: sup,
+    });
+    executor.start();
+    const trigger = publish(`c.${task}`);
+    bus.dispatcher.drain();
+    await executor.idle();
+    const run = env.store.runs.getByTaskAndEvent(task, trigger.id);
+    return {
+      status: run?.status ?? 'missing',
+      attempt: run?.attempt ?? 0,
+      error: run?.error ?? null,
+      calls,
+    };
+  }
+
+  // The connector may still be running the op, or may have done it: a retry could do it twice.
+  it('does not retry an op that outlived its call timeout', async () => {
+    expect(await runOnce('call_timeout')).toEqual({
+      status: 'failed',
+      attempt: 1,
+      error: 'fake.slow: timed out after 100 ms; it may have taken effect',
+      calls: 1,
+    });
+  });
+
+  it('does not retry an op cut off by the task timeout', async () => {
+    expect(await runOnce('task_timeout')).toEqual({
+      status: 'failed',
+      attempt: 1,
+      error: 'fake.slow: cut off (timed out after 200ms); it may have taken effect',
+      calls: 1,
+    });
+  });
+
+  it('does not retry an op whose connector exited before answering', async () => {
+    expect(await runOnce('died')).toEqual({
+      status: 'failed',
+      attempt: 1,
+      error: 'fake.die: the connector exited before answering; it may have taken effect',
+      calls: 1,
+    });
   });
 });

@@ -121,7 +121,15 @@ values) and calls `ctx.connectors.call(name, op, args, {signal, timeoutMs})`, de
 timeout 60 s. The supervisor (`connectors/supervisor.ts`, `callTool()`) refuses an op
 outside the manifest's `ops` before any call (`ops: []` allows all), an unknown name
 (`NonRetryableError`), a non-`stdio` connector (`ConnectorOpError`), and a connector
-that is not up (`ConnectorDownError`, retryable). The MCP result maps through
+that is not up (`ConnectorDownError`, retryable: the op was never sent). A call that
+was sent and got no answer (the MCP client's own `RequestTimeout` after `timeoutMs`,
+an abort of `ctx.signal`, or its `ConnectionClosed` when the connector exits mid-call;
+the same codes in a server's answer do not count) becomes
+`ConnectorNoAnswerError`, an `OutcomeUnknownError` (`actions/types.ts`): the op may
+have run or may still be running, so it is never retried. The MCP client sends
+`notifications/cancelled` on a timeout or abort; a handler that ignores it keeps
+running. A signal already aborted before the call throws its own reason, so the
+executor's attempt-timeout rule applies. The MCP result maps through
 `toolResultToJson()`: `isError` → `ConnectorOpError` (non-retryable, message = the
 text); else `structuredContent`; else one text block parsed as JSON when it parses, the
 string otherwise; several texts → an array; none → `null`. Every call counts in
@@ -202,9 +210,12 @@ The executor is a worker pool bounded by `workers` globally and `concurrency` pe
 - Retryable is the default. An error is final when it carries `retryable === false`
   (`NonRetryableError` in `actions/types.ts`, `BudgetExceededError`,
   `UnpricedModelError`, `ProviderUnavailableError` in `llm/errors.ts`,
-  `ConnectorOpError`, `WaitTimeoutError`, `SecretError`). So: an attempt timeout, a
+  `ConnectorOpError`, `WaitTimeoutError`, `SecretError`). An `OutcomeUnknownError`
+  (`ConnectorNoAnswerError`) stays final even when the attempt timed out; any other
+  error from an attempt that timed out is retried. So: an attempt timeout, a
   connector that is down, a failed `post` gate and a missing or invalid RESULT.json are
-  retried; a wait timeout, a missing secret, an unknown connector, an `isError` op
+  retried; a wait timeout, a connector op that got no answer, a missing secret, an
+  unknown connector, an `isError` op
   result, an op outside `ops`, an unrenderable emit rule, a budget or price failure, a
   `max_tokens` or refusal stop, an agent policy violation or tool-call cap, and a
   missing task or runner are not.

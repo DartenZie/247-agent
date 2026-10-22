@@ -4,6 +4,7 @@ import { workspacePath } from '../actions/agent-workspace.js';
 import {
   isRetryable,
   NonRetryableError,
+  OutcomeUnknownError,
   withScope,
   type ActionContext,
   type ActionRunners,
@@ -601,7 +602,7 @@ export class Executor {
       if (slot.stop.signal.aborted) {
         return 'stopped';
       }
-      if (attemptController.signal.aborted) {
+      if (attemptController.signal.aborted && !(err instanceof OutcomeUnknownError)) {
         return {
           ok: false,
           error: (attemptController.signal.reason as Error).message,

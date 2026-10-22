@@ -24,6 +24,7 @@ import { Metrics } from '../metrics.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import {
   ConnectorDownError,
+  ConnectorNoAnswerError,
   ConnectorOpError,
   ConnectorSupervisor,
   toolResultToJson,
@@ -141,10 +142,17 @@ describe('ConnectorSupervisor', () => {
     await expect(
       s.call('fake', 'slow', { ms: 2000 }, { signal: signal(), timeoutMs: 100 }),
     ).rejects.toThrow(/timed out|timeout/i);
+    await expect(
+      s.call('fake', 'slow', { ms: 2000 }, { signal: signal(), timeoutMs: 100 }),
+    ).rejects.toThrow(ConnectorNoAnswerError);
     const controller = new AbortController();
     const p = s.call('fake', 'slow', { ms: 2000 }, { signal: controller.signal });
     controller.abort(new Error('cancelled'));
-    await expect(p).rejects.toThrow();
+    await expect(p).rejects.toThrow(ConnectorNoAnswerError);
+    // Aborted before the call: never sent, so the plain abort reason, which stays retryable.
+    await expect(
+      s.call('fake', 'echo', { value: 1 }, { signal: controller.signal }),
+    ).rejects.toThrow(/^cancelled$/);
   });
 
   it('restarts a crashed connector with backoff and reports it down meanwhile', async () => {

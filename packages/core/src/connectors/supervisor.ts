@@ -8,7 +8,12 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import {
+  ErrorCode,
+  McpError,
+  type CallToolResult,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
@@ -16,6 +21,7 @@ import { netProxyDir } from '../actions/sandbox-net.js';
 import { buildSandboxArgv, type SandboxBackend, type SandboxHost } from '../actions/sandbox.js';
 import {
   NonRetryableError,
+  OutcomeUnknownError,
   type AgentClients,
   type AgentOpenOptions,
   type ConnectorClients,
@@ -120,6 +126,23 @@ export class ConnectorDownError extends Error {
   constructor(readonly connector: string) {
     super(`connector "${connector}" is not running`);
     this.name = 'ConnectorDownError';
+  }
+}
+
+/**
+ * The op was sent but no answer came: it timed out, the run's signal aborted it, or the
+ * connector exited meanwhile. The connector may have done it or may still be doing it, so
+ * the run is not retried (docs/internal/actions.md).
+ */
+export class ConnectorNoAnswerError extends OutcomeUnknownError {
+  constructor(
+    readonly connector: string,
+    readonly op: string,
+    reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(`${connector}.${op}: ${reason}; it may have taken effect`, options);
+    this.name = 'ConnectorNoAnswerError';
   }
 }
 
@@ -490,11 +513,14 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       throw new ConnectorOpError(connector, op, "not in the manifest's ops");
     }
     const client = this.opsClient(connector, op);
+    // Aborted before the call is sent: the op never ran, so this stays retryable.
+    opts.signal.throwIfAborted();
+    const timeoutMs = opts.timeoutMs ?? this.callTimeoutMs;
     const startedAt = Date.now();
     try {
       const result = (await client.callTool({ name: op, arguments: args }, undefined, {
         signal: opts.signal,
-        timeout: opts.timeoutMs ?? this.callTimeoutMs,
+        timeout: timeoutMs,
       })) as CallToolResult;
       this.metrics.connectorOps.inc({
         connector,
@@ -504,7 +530,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       return result;
     } catch (err) {
       this.metrics.connectorOps.inc({ connector, op, result: 'error' });
-      throw err;
+      throw noAnswer(connector, op, err, opts.signal, timeoutMs) ?? err;
     } finally {
       this.metrics.connectorOpDuration.observe({ connector, op }, (Date.now() - startedAt) / 1000);
     }
@@ -1020,4 +1046,37 @@ export function toolResultToJson(connector: string, op: string, raw: unknown): J
     }
   }
   return texts.length === 0 ? null : texts;
+}
+
+// The errors the MCP client raises itself; a server may answer with the same codes for
+// errors of its own, which are answers.
+const TIMED_OUT = new McpError(ErrorCode.RequestTimeout, 'Request timed out').message;
+const CLOSED = new McpError(ErrorCode.ConnectionClosed, 'Connection closed').message;
+
+/**
+ * `ConnectorNoAnswerError` for a call that was sent and got no answer, else `undefined`.
+ * The MCP client has already sent `notifications/cancelled` for a timeout or an abort.
+ */
+function noAnswer(
+  connector: string,
+  op: string,
+  err: unknown,
+  signal: AbortSignal,
+  timeoutMs: number,
+): ConnectorNoAnswerError | undefined {
+  if (signal.aborted) {
+    const why = signal.reason instanceof Error ? signal.reason.message : 'aborted';
+    return new ConnectorNoAnswerError(connector, op, `cut off (${why})`, { cause: err });
+  }
+  if (err instanceof McpError && err.message === TIMED_OUT) {
+    return new ConnectorNoAnswerError(connector, op, `timed out after ${String(timeoutMs)} ms`, {
+      cause: err,
+    });
+  }
+  if (err instanceof McpError && err.message === CLOSED) {
+    return new ConnectorNoAnswerError(connector, op, 'the connector exited before answering', {
+      cause: err,
+    });
+  }
+  return undefined;
 }
