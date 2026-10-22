@@ -99,8 +99,9 @@ tasks:
           missing: ${result.missing}
           email: ${event.payload.email}
 
-  # 3a. Push the committed change. No LLM. Pushing the same commit again succeeds, so a
-  #     run interrupted by a restart is retried and still emits site.change_pushed.
+  # 3a. Push the committed change. No LLM. The rebase puts it on top of whatever reached
+  #     main since the worktree was made, so a retry after a restart or a rejected push
+  #     succeeds and still emits site.change_pushed.
   - name: push_event_list
     trigger: { kind: event, type: site.change_committed }
     concurrency: 1
@@ -108,7 +109,7 @@ tasks:
     action:
       kind: shell
       cwd: ${event.payload.worktree}
-      cmd: ["git", "push", "origin", "HEAD:main"]
+      cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
     emit:
       - type: site.change_pushed
         payload: { summary: "${event.payload.summary}" }

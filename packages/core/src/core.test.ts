@@ -227,7 +227,7 @@ describe('createCore with the reference workflow', () => {
     // and a push hangs until the core stops, as if the daemon died right after it.
     const main = { changed: false };
     let dying = true;
-    const isPush = (argv: unknown) => Array.isArray(argv) && argv.includes('push');
+    const isPush = (argv: unknown) => Array.isArray(argv) && argv.join(' ').includes('git push');
     const push = (ctx: Parameters<ActionRunner>[1]) => {
       main.changed = true;
       return dying ? hang(undefined, ctx) : Promise.resolve('');
@@ -280,6 +280,10 @@ describe('createCore with the reference workflow', () => {
       await core.executor.idle();
     }
     expect(core.store.runs.listByStatus('succeeded').map((r) => r.task)).toContain('publish_site');
+    const pushed = core.store.events
+      .listAfter(0, 100)
+      .filter((e) => e.type === 'site.change_pushed');
+    expect(pushed).toHaveLength(1);
   });
 
   it('refuses to start on invalid config', async () => {

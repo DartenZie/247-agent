@@ -116,7 +116,7 @@ tasks:
           missing: ${result.missing}
           email: ${event.payload.email}
 
-  # 3a. Push the committed change. No LLM. A restart during the push repeats it.
+  # 3a. Push the committed change on top of main. No LLM. A restart during the push repeats it.
   - name: push_event_list
     trigger: { kind: event, type: site.change_committed }
     concurrency: 1
@@ -124,7 +124,7 @@ tasks:
     action:
       kind: shell
       cwd: ${event.payload.worktree}
-      cmd: ["git", "push", "origin", "HEAD:main"]
+      cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
     emit:
       - type: site.change_pushed
         payload: { summary: "${event.payload.summary}" }
@@ -291,7 +291,7 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `fetch_email` | cron, connector op, cursor in state, fan out with a dedup key | polling, dedup and routing are code; a message becomes exactly one event |
 | `classify_email` | a filter on the sender, then one Haiku call with a schema and a fallback label | only trusted mail reaches a model; `ignore` is dropped by `when` without another call |
 | `update_event_list` | Sonnet at low effort, 20 tool calls, $0.50, one file in scope, `npm run build` the only command | a routine edit needs little intelligence and a tight surface; the build gate proves it did not break anything |
-| `push_event_list` | shell `git push` on `site.change_committed`, three attempts | pushing the same commit again succeeds, so a restart during the push repeats it and the change is still published |
+| `push_event_list` | shell `git pull --rebase` and `git push` on `site.change_committed`, three attempts | the rebase puts the change on top of `main`, so a push that a restart interrupted or that another push beat succeeds on a retry |
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
 | `approve_general_change` | ask, wait, push, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
@@ -304,17 +304,16 @@ in their gates and stop. The small one's change is pushed at once by `push_event
 because its scope is a single data file; the big one's change is pushed only after you
 approve.
 
-The push is not a gate of the agent task. If the daemon stopped after a push in a gate
-and before the run ended, the run would fail, `site.change_pushed` would never be emitted, and the
-change would be on `main` but not on the site. A retry would not help: it starts from
-`main`, which already has the change, and finds nothing to commit. A push task of its own is
-retried instead, and pushing the same commit again succeeds.
+The push is a task of its own, so a daemon restart repeats only the push. A restart
+during the agent task loses nothing: the change is not on `main` yet, and the retry
+makes it again in a fresh worktree.
 
 A `blocked` result is a success for the run, not a failure: the agent did its job by
 saying what is missing, and the `site.change_blocked` event carries that to the reply
 task. A rejected approval also succeeds, with the push skipped. That is why
 `publish_site` triggers on `site.change_pushed`, which only a push emits, and not on
-`task.<name>.succeeded`, which the agent task and the gate publish whatever the outcome. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
+`task.<name>.succeeded`, which `update_event_list` and `approve_general_change` publish
+whatever the outcome. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
 reaches you through `task.*.failed` on chat.
 
 ## Adapt it to your site
