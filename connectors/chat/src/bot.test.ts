@@ -294,6 +294,30 @@ describe('polling', () => {
     core.emitEvent = emit;
   });
 
+  it('keeps an update while the core socket is unreachable, however long', async () => {
+    const { tg, core, lines, bot } = setup();
+    await core.putState(STATE_OFFSET, 10);
+    const tap: TgUpdate = { ...messageUpdate('approve', { message_id: 1 }), update_id: 10 };
+    tg.respond('getUpdates', () => [tap]);
+    const emit = core.emitEvent.bind(core);
+    const unreachable = ['ENOENT', 'ECONNREFUSED', 'ENOENT', 'ECONNRESET', 'EPIPE'];
+    core.emitEvent = () => {
+      const code = unreachable.shift() ?? 'ENOENT';
+      return Promise.reject(Object.assign(new Error(`connect ${code} /run/core.sock`), { code }));
+    };
+
+    for (let i = 0; i < 5; i++) {
+      await expect(bot.pollOnce()).rejects.toThrow(/core unreachable/);
+    }
+    expect(core.state.get(STATE_OFFSET)).toBe(10);
+    expect(lines.some((l) => l.includes('giving up'))).toBe(false);
+
+    core.emitEvent = emit;
+    expect(await bot.pollOnce()).toBe(1);
+    expect(core.events).toHaveLength(1);
+    expect(core.state.get(STATE_OFFSET)).toBe(11);
+  });
+
   it('backs off on poll failures, honours retry_after and recovers', async () => {
     const { tg, core, lines, sleeps, bot } = setup();
     await core.putState(STATE_OFFSET, 1);

@@ -17,6 +17,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { JsonValue } from '@247-agent/connector-sdk';
 
 import {
+  coreUnreachable,
   loadPendingState,
   savePendingState,
   STATE_PENDING,
@@ -239,6 +240,11 @@ export class MatrixBot {
         try {
           await this.handleEvent(roomId, event);
         } catch (err) {
+          if (coreUnreachable(err)) {
+            throw new Error(`event ${event.event_id} waits, core unreachable: ${errorText(err)}`, {
+              cause: err,
+            });
+          }
           const attempts =
             this.failing?.event_id === event.event_id ? this.failing.attempts + 1 : 1;
           this.failing = { event_id: event.event_id, attempts };
