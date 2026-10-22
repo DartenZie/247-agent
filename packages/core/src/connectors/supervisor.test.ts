@@ -149,6 +149,10 @@ describe('ConnectorSupervisor', () => {
     const p = s.call('fake', 'slow', { ms: 2000 }, { signal: controller.signal });
     controller.abort(new Error('cancelled'));
     await expect(p).rejects.toThrow(ConnectorNoAnswerError);
+    // Aborted before the call: never sent, so the plain abort reason, which stays retryable.
+    await expect(
+      s.call('fake', 'echo', { value: 1 }, { signal: controller.signal }),
+    ).rejects.toThrow(/^cancelled$/);
   });
 
   it('restarts a crashed connector with backoff and reports it down meanwhile', async () => {

@@ -122,12 +122,14 @@ timeout 60 s. The supervisor (`connectors/supervisor.ts`, `callTool()`) refuses 
 outside the manifest's `ops` before any call (`ops: []` allows all), an unknown name
 (`NonRetryableError`), a non-`stdio` connector (`ConnectorOpError`), and a connector
 that is not up (`ConnectorDownError`, retryable: the op was never sent). A call that
-was sent and got no answer (the MCP `RequestTimeout` after `timeoutMs`, an abort of
-`ctx.signal`, or `ConnectionClosed` when the connector exits mid-call) becomes
+was sent and got no answer (the MCP client's own `RequestTimeout` after `timeoutMs`,
+an abort of `ctx.signal`, or its `ConnectionClosed` when the connector exits mid-call;
+the same codes in a server's answer do not count) becomes
 `ConnectorNoAnswerError`, an `OutcomeUnknownError` (`actions/types.ts`): the op may
 have run or may still be running, so it is never retried. The MCP client sends
 `notifications/cancelled` on a timeout or abort; a handler that ignores it keeps
-running. The MCP result maps through
+running. A signal already aborted before the call throws its own reason, so the
+executor's attempt-timeout rule applies. The MCP result maps through
 `toolResultToJson()`: `isError` → `ConnectorOpError` (non-retryable, message = the
 text); else `structuredContent`; else one text block parsed as JSON when it parses, the
 string otherwise; several texts → an array; none → `null`. Every call counts in

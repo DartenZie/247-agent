@@ -141,7 +141,7 @@ export class ConnectorNoAnswerError extends OutcomeUnknownError {
     reason: string,
     options?: ErrorOptions,
   ) {
-    super(`${connector}.${op}: ${reason}; it may have taken effect, so it is not retried`, options);
+    super(`${connector}.${op}: ${reason}; it may have taken effect`, options);
     this.name = 'ConnectorNoAnswerError';
   }
 }
@@ -513,6 +513,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       throw new ConnectorOpError(connector, op, "not in the manifest's ops");
     }
     const client = this.opsClient(connector, op);
+    // Aborted before the call is sent: the op never ran, so this stays retryable.
+    opts.signal.throwIfAborted();
     const timeoutMs = opts.timeoutMs ?? this.callTimeoutMs;
     const startedAt = Date.now();
     try {
@@ -1046,8 +1048,10 @@ export function toolResultToJson(connector: string, op: string, raw: unknown): J
   return texts.length === 0 ? null : texts;
 }
 
-const REQUEST_TIMEOUT: number = ErrorCode.RequestTimeout;
-const CONNECTION_CLOSED: number = ErrorCode.ConnectionClosed;
+// The errors the MCP client raises itself; a server may answer with the same codes for
+// errors of its own, which are answers.
+const TIMED_OUT = new McpError(ErrorCode.RequestTimeout, 'Request timed out').message;
+const CLOSED = new McpError(ErrorCode.ConnectionClosed, 'Connection closed').message;
 
 /**
  * `ConnectorNoAnswerError` for a call that was sent and got no answer, else `undefined`.
@@ -1064,12 +1068,12 @@ function noAnswer(
     const why = signal.reason instanceof Error ? signal.reason.message : 'aborted';
     return new ConnectorNoAnswerError(connector, op, `cut off (${why})`, { cause: err });
   }
-  if (err instanceof McpError && err.code === REQUEST_TIMEOUT) {
+  if (err instanceof McpError && err.message === TIMED_OUT) {
     return new ConnectorNoAnswerError(connector, op, `timed out after ${String(timeoutMs)} ms`, {
       cause: err,
     });
   }
-  if (err instanceof McpError && err.code === CONNECTION_CLOSED) {
+  if (err instanceof McpError && err.message === CLOSED) {
     return new ConnectorNoAnswerError(connector, op, 'the connector exited before answering', {
       cause: err,
     });

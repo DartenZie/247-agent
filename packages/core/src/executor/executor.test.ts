@@ -489,7 +489,7 @@ describe('Executor retrying a connector op', () => {
     expect(await runOnce('call_timeout')).toEqual({
       status: 'failed',
       attempt: 1,
-      error: 'fake.slow: timed out after 100 ms; it may have taken effect, so it is not retried',
+      error: 'fake.slow: timed out after 100 ms; it may have taken effect',
       calls: 1,
     });
   });
@@ -498,8 +498,7 @@ describe('Executor retrying a connector op', () => {
     expect(await runOnce('task_timeout')).toEqual({
       status: 'failed',
       attempt: 1,
-      error:
-        'fake.slow: cut off (timed out after 200ms); it may have taken effect, so it is not retried',
+      error: 'fake.slow: cut off (timed out after 200ms); it may have taken effect',
       calls: 1,
     });
   });
@@ -508,8 +507,7 @@ describe('Executor retrying a connector op', () => {
     expect(await runOnce('died')).toEqual({
       status: 'failed',
       attempt: 1,
-      error:
-        'fake.die: the connector exited before answering; it may have taken effect, so it is not retried',
+      error: 'fake.die: the connector exited before answering; it may have taken effect',
       calls: 1,
     });
   });

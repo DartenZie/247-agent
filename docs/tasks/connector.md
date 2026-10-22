@@ -57,8 +57,7 @@ sending a message, must not run twice.
 A call that got no answer is not retried for the same reason. The connector may have
 finished the operation, or may still be running it, so a second call could send the
 mail twice or run two syncs on the same folder. The error ends with `it may have taken
-effect, so it is not retried`. Check the remote side, then replay the event if the
-operation did not happen.
+effect`. Check the remote side, then replay the event if the operation did not happen.
 
 > [!TIP]
 > The manifest's `ops` list is a boundary, not just documentation. Give an agent a copy
