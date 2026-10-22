@@ -73,7 +73,11 @@ one, then asks a human before publishing: [Website from email](../recipes/websit
    `${result.summary}`.
 6. The workspace is **kept** when the run succeeds, for the gates, for a later
    publishing task and for inspection, and removed when the run fails. Retention sweeps
-   kept workspaces after `retention.workspaces`, seven days by default.
+   kept workspaces after `retention.workspaces`, seven days by default. A git worktree
+   whose branch holds a commit that is not pushed yet stays until the commit reaches
+   another branch, a remote or a tag, and every retention pass logs it as
+   `retention.workspace_kept`. To let retention remove a change you do not want, reset
+   the branch, for example with `git reset --hard main` in the worktree.
 
 ## The agent program and the model
 

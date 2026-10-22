@@ -78,7 +78,7 @@ export function workspacePath(workDir: string, runId: string): string {
  * environment rather than the daemon's own, which holds the secrets
  * (docs/internal/security.md).
  */
-async function git(args: string[], env: Record<string, string>): Promise<void> {
+async function git(args: string[], env: Record<string, string>): Promise<string> {
   const safe = GIT_NO_PROGRAMS.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
   const r = await execa('git', [...safe, ...args], {
     env,
@@ -92,6 +92,7 @@ async function git(args: string[], env: Record<string, string>): Promise<void> {
       `git ${args.slice(0, 3).join(' ')} failed (exit ${String(r.exitCode ?? '?')}): ${tail}`,
     );
   }
+  return r.stdout;
 }
 
 /**
@@ -211,6 +212,38 @@ function worktreeGitDir(path: string): string | undefined {
   }
   const gitdir = isAbsolute(m[1]) ? m[1] : resolve(path, m[1]);
   return basename(dirname(gitdir)) === 'worktrees' ? dirname(dirname(gitdir)) : undefined;
+}
+
+/**
+ * The number of commits on the `agent/<run_id>` branch of a git worktree at `entry.path`
+ * that no other branch, remote-tracking branch or tag holds: a change committed in the
+ * workspace and not pushed yet. Zero for a `temp` workspace, and when git cannot tell (the
+ * branch is gone).
+ */
+export async function unpushedCommits(
+  entry: WorkspaceEntry,
+  env: Readonly<Record<string, string>>,
+): Promise<number> {
+  const gitDir = worktreeGitDir(entry.path);
+  if (gitDir === undefined) {
+    return 0;
+  }
+  const branch = `agent/${entry.runId}`;
+  const out = await git(
+    [
+      `--git-dir=${gitDir}`,
+      'rev-list',
+      '--count',
+      `refs/heads/${branch}`,
+      '--not',
+      `--exclude=${branch}`,
+      '--branches',
+      '--remotes',
+      '--tags',
+    ],
+    env,
+  ).catch(() => '0');
+  return Number.parseInt(out, 10) || 0;
 }
 
 /**

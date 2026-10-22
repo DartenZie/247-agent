@@ -142,6 +142,45 @@ describe('RetentionJob', () => {
     expect(git('log', '-1', '--format=%s')).toBe('init'); // the base checkout is untouched
   });
 
+  it('keeps a git worktree whose branch holds a commit not yet pushed', async () => {
+    const origin = join(dir, 'origin.git');
+    execaSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+    const repo = join(dir, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]): string => execaSync('git', args, { cwd }).stdout;
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 't');
+    git(repo, 'config', 'user.email', 't@x');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', 'origin', 'main');
+    const workDir = join(dir, 'work');
+    mkdirSync(workDir);
+    const ws = join(workDir, 'run_WT');
+    git(repo, 'worktree', 'add', '-q', '-B', 'agent/run_WT', ws, 'main');
+    writeFileSync(join(ws, 'a.txt'), 'two\n');
+    git(ws, 'commit', '-q', '-am', 'change');
+    run('run_WT', 'succeeded', ago(10));
+
+    const kept = await job(workDir).run();
+    expect(kept?.workspaces).toBe(0);
+    expect(existsSync(ws)).toBe(true);
+    expect(git(repo, 'branch', '--list', 'agent/run_WT')).not.toBe('');
+    expect(lines.find((l) => l.msg === 'retention.workspace_kept')).toMatchObject({
+      run_id: 'run_WT',
+      path: ws,
+      reason: 'unpushed',
+    });
+
+    git(ws, 'push', '-q', 'origin', 'HEAD:main');
+    const swept = await job(workDir).run();
+    expect(swept?.workspaces).toBe(1);
+    expect(existsSync(ws)).toBe(false);
+    expect(git(repo, 'branch', '--list', 'agent/run_WT')).toBe('');
+  });
+
   it('does nothing to workspaces without a work dir, runs on start and stops cleanly', async () => {
     run('run_X', 'succeeded', ago(40));
     const j = job(undefined);
