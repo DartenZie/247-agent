@@ -9,7 +9,7 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order and set `PRAGMA user_version` to the number applied;
-six ship, so a current database reads `user_version = 6`. `store.transaction(fn)` is
+eight ship, so a current database reads `user_version = 8`. `store.transaction(fn)` is
 `BEGIN IMMEDIATE`, which takes the write lock up front so a batch never deadlocks against
 a reader that wants to write.
 
@@ -30,10 +30,12 @@ queries.
 **`runs`**: `id TEXT PRIMARY KEY`, `task`, `event_id REFERENCES events(id)`,
 `correlation_id`, `status` with a CHECK on the six statuses, `attempt INTEGER DEFAULT
 0`, `created_at`, `started_at`, `finished_at`, `result TEXT` (JSON), `error TEXT`,
+`progress TEXT` (the runner's private JSON, cleared when the run finishes),
 `UNIQUE (task, event_id)`. Indexes `runs_task_status(task, status)`,
 `runs_status_created(status, created_at)`, `runs_event(event_id)`. Inserted by the
-dispatcher as `queued`; status, attempt, timings, result and error written by the
-executor.
+dispatcher as `queued`; status, attempt, timings, result, error and progress written by
+the executor. `RunRecord` leaves `progress` out; the executor reads it with
+`runs.progress(id)` and hands it to the next attempt.
 
 **`cursors`**: `name TEXT PRIMARY KEY`, `seq INTEGER`; seeded with `('dispatch', 0)`.
 The dispatcher's position.

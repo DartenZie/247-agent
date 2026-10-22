@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runSequence } from '../actions/sequence.js';
 import { runShell } from '../actions/shell.js';
@@ -6,7 +6,8 @@ import { runWait } from '../actions/wait.js';
 import { createBus, type EventBus } from '../bus/bus.js';
 import { config, testEnv, type TestEnv } from '../bus/testing.js';
 import { Retry } from '../config/schema.js';
-import type { EventRecord, RunRecord } from '../store/types.js';
+import type { ConnectorClients } from '../actions/types.js';
+import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 import { Executor } from './executor.js';
 
 const gateSteps = (timeout: string, onTimeout: 'fail' | 'succeed' = 'fail'): unknown[] => [
@@ -92,6 +93,31 @@ const tasks = config([
     },
   },
   {
+    name: 'send_then_fail',
+    trigger: { kind: 'event', type: 'x.send_then_fail' },
+    retry: { attempts: 2, backoff: 'fixed', base: '10ms' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'connector', connector: 'mail', op: 'send', args: { to: 'a@example.org' } },
+        { kind: 'shell', cmd: ['sh', '-c', 'test ${run.attempt} -gt 1'] },
+        { kind: 'shell', cmd: ['echo', 'sent ${steps[0].id}'] },
+      ],
+    },
+  },
+  {
+    name: 'send_then_fail_slow',
+    trigger: { kind: 'event', type: 'x.send_then_fail_slow' },
+    retry: { attempts: 2, backoff: 'fixed', base: '1h' },
+    action: {
+      kind: 'sequence',
+      steps: [
+        { kind: 'connector', connector: 'mail', op: 'send', args: { to: 'a@example.org' } },
+        { kind: 'shell', cmd: ['sh', '-c', 'test ${run.attempt} -gt 1'] },
+      ],
+    },
+  },
+  {
     name: 'poll',
     trigger: { kind: 'event', type: 'x.poll' },
     action: { kind: 'shell', cmd: ['echo', '[{"q":"a"},{"q":"b"}]'], result: 'json_stdout' },
@@ -111,8 +137,20 @@ const tasks = config([
 let env: TestEnv;
 let bus: EventBus;
 let executor: Executor | undefined;
+/** Every `send` the fake mail connector took, in order. */
+let sent: Record<string, JsonValue>[];
+
+/** A connector whose `send` is not idempotent: each call is one more mail. */
+const mail: ConnectorClients = {
+  names: () => ['mail'],
+  call: (_connector, _op, args) => {
+    sent.push(args);
+    return Promise.resolve({ id: `msg-${String(sent.length)}` });
+  },
+};
 
 beforeEach(() => {
+  sent = [];
   env = testEnv();
   bus = createBus({ store: env.store, clock: env.clock, log: env.log });
   bus.dispatcher.setConfig(tasks);
@@ -131,6 +169,7 @@ function make(): Executor {
     log: env.log,
     config: () => tasks,
     runners: { shell: runShell, wait: runWait, sequence: runSequence },
+    connectors: mail,
     defaultRetry: Retry.parse({}),
   });
   return executor;
@@ -356,6 +395,43 @@ describe('a retry after a resumed wait (#156)', () => {
     expect(run?.status).toBe('succeeded');
     const steps = (run?.result as { steps: { id?: string }[] }).steps;
     expect(steps.map((s) => s.id ?? null)).toEqual([first.id, null, second.id]);
+  });
+});
+
+describe('a retry after a later step failed (#189)', () => {
+  it('does not repeat a connector step that already succeeded', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.send_then_fail');
+    bus.dispatcher.drain();
+    await ex.idle();
+    const run = runOf('send_then_fail', trigger);
+    expect(run?.status).toBe('succeeded');
+    expect(run?.attempt).toBe(2);
+    expect(sent).toHaveLength(1);
+    const steps = (run?.result as { steps: JsonValue[] }).steps;
+    expect(steps[0]).toEqual({ id: 'msg-1' });
+    expect(steps[2]).toEqual('sent msg-1');
+  });
+
+  it('does not repeat it after a restart during the backoff either', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.send_then_fail_slow');
+    bus.dispatcher.drain();
+    await vi.waitFor(() => {
+      expect(runOf('send_then_fail_slow', trigger)?.error).not.toBeNull();
+    });
+    await ex.stop();
+    expect(runOf('send_then_fail_slow', trigger)?.status).toBe('running');
+
+    const next = make();
+    next.start();
+    await next.idle();
+    const run = runOf('send_then_fail_slow', trigger);
+    expect(run?.status).toBe('succeeded');
+    expect(run?.attempt).toBe(2);
+    expect(sent).toHaveLength(1);
   });
 });
 

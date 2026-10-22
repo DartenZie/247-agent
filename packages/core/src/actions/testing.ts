@@ -28,6 +28,7 @@ export function testContext(
     render: () => null,
     renderText: () => '',
     suspend: () => Promise.reject(new Error('suspend is not available in this test context')),
+    saveProgress: () => undefined,
     ...over,
   } as unknown as ActionContext;
   return withScope(base, {});

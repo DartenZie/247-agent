@@ -590,6 +590,10 @@ export class Executor {
       transcripts: this.store.transcripts,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
+      saveProgress: (progress) => {
+        this.store.runs.setProgress(run.id, progress);
+      },
+      progress: this.store.runs.progress(run.id),
     };
     const ctx = withScope(base, {});
     try {
@@ -700,6 +704,7 @@ export class Executor {
     }
     this.store.transaction(() => {
       this.store.waits.delete(run.id);
+      this.store.runs.setProgress(run.id, null);
       if (final.ok) {
         this.store.runs.setStatus(run.id, 'succeeded', {
           finished_at: finishedAt,

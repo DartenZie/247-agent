@@ -4,10 +4,12 @@ import { ACTIVE_STATUSES, type JsonValue, type RunRecord, type RunStatus } from 
 
 interface RunRow extends Omit<RunRecord, 'result'> {
   result: string | null;
+  progress: string | null;
 }
 
 function rowToRun(row: unknown): RunRecord {
-  const r = row as RunRow;
+  // `progress` is the runner's private data, read through `progress()` only.
+  const { progress: _progress, ...r } = row as RunRow;
   return { ...r, result: r.result === null ? null : (JSON.parse(r.result) as JsonValue) };
 }
 
@@ -44,6 +46,8 @@ export class RunStore {
   private readonly setStatusStmt: Statement;
   private readonly finishedBeforeStmt: Statement;
   private readonly deleteStmt: Statement;
+  private readonly progressStmt: Statement;
+  private readonly setProgressStmt: Statement;
 
   constructor(db: Database) {
     this.db = db;
@@ -75,6 +79,8 @@ export class RunStore {
        ORDER BY finished_at LIMIT ?`,
     );
     this.deleteStmt = db.prepare('DELETE FROM runs WHERE id = ?');
+    this.progressStmt = db.prepare('SELECT progress FROM runs WHERE id = ?');
+    this.setProgressStmt = db.prepare('UPDATE runs SET progress = ? WHERE id = ?');
   }
 
   /** Inserts a `queued` run. Returns false when `(task, event_id)` already has one. */
@@ -119,6 +125,17 @@ export class RunStore {
   getByTaskAndEvent(task: string, eventId: string): RunRecord | undefined {
     const row: unknown = this.byTaskEventStmt.get(task, eventId);
     return row === undefined ? undefined : rowToRun(row);
+  }
+
+  /** What an earlier attempt of the run saved with `setProgress`; `undefined` when nothing. */
+  progress(id: string): JsonValue | undefined {
+    const row = this.progressStmt.get(id) as { progress: string | null } | undefined;
+    return row?.progress == null ? undefined : (JSON.parse(row.progress) as JsonValue);
+  }
+
+  /** Records how far the run's action got; `null` clears it. */
+  setProgress(id: string, progress: JsonValue | null): void {
+    this.setProgressStmt.run(progress === null ? null : JSON.stringify(progress), id);
   }
 
   /**
