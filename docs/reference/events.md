@@ -37,7 +37,7 @@ Run ids look the same with `run_`. Ids are unique; `seq` is the order.
 | `scheduler` | cron ticks |
 | `manual` | `oa run` and `POST /v1/runs` |
 | `api` | `POST /v1/events` without a `source` |
-| `core` | `budget.exceeded` and `llm.batch.ended` |
+| `core` | `budget.exceeded`, `llm.batch.ended` and `retention.workspace_kept` |
 | `task:<name>` | the lifecycle and `emit` events of that task's runs |
 
 A task never matches an event whose source is its own `task:<name>`, which is what keeps
@@ -54,6 +54,7 @@ a task that reports failures from looping on its own failure.
 | your `emit` rules | `task:<name>` | the rule's `dedup_key`, rendered | the run's trigger event | the rule's `payload`, rendered |
 | `budget.exceeded` | `core` | `budget:daily:<YYYY-MM-DD>` | none | `{ scope: "daily", day, limit_usd, spent_usd, task, run_id }` |
 | `llm.batch.ended` | `core` | `llm.batch:<batch_id>` | the run's trigger event | see below |
+| `retention.workspace_kept` | `core` | `retention.workspace_kept:<run_id>` | none | `{ run_id, task, path, reason, commits }` |
 | a poller's `event` | the poller's name | `<poller>:<item key>` | none | the item |
 
 Examples:
@@ -110,6 +111,20 @@ refused after it. Route it to the task that tells you.
 `stop_reason` (`end`, `max_tokens`, `refusal`, `other`), `output` or `text`, `usage`,
 `usd`, `priced_by` and `ledger_id`; a failed one carries `error` and `retryable`. The
 event resumes the waiting run, and any other task may trigger on it.
+
+```json
+{ "type": "retention.workspace_kept", "source": "core", "dedup_key": "retention.workspace_kept:run_01J8Z3…",
+  "payload": { "run_id": "run_01J8Z3…", "task": "update_event_list",
+               "path": "/var/lib/247-agent/work/run_01J8Z3…", "reason": "unpushed", "commits": 1 } }
+```
+
+A retention pass publishes it when it keeps an agent worktree past `retention.workspaces`
+because its branch holds commits that are not pushed yet (`reason: unpushed`, with
+`commits`) or because git could not count them (`reason: unknown`, without `commits`).
+`task` is the task of the run that made the worktree, or `null` when that run is already
+deleted. The event is published once per worktree, not on every pass. When
+`retention.events` deletes the event, the next pass publishes it again. To let retention
+remove the worktree, push the commits or reset the branch.
 
 ## Type patterns
 
@@ -192,8 +207,9 @@ The names worth searching for:
 | `agent.cancelling` | warn | the core is cancelling the session (`reason`: `budget`, `tool_calls`, `policy`, `abort`) |
 | `sandbox.net_denied` | warn, then debug | a sandboxed agent asked for a host outside its allowlist (`host`, `port`); the first time per target is a warning |
 | `sandbox.net_dropped` | warn once | a connection past the 256-connection limit was closed |
+| `retention.publish_failed` | error | the `retention.workspace_kept` event of a kept worktree could not be stored (`run_id`, `error`); the next pass tries again |
 | `retention.purged` | info | what a retention pass deleted (`runs`, `ledger`, `transcripts`, `events`, `workspaces`) |
-| `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path` |
+| `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path`; logged on every pass, published once as the event of the same name |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |

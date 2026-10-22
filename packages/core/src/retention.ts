@@ -4,6 +4,8 @@ import {
   unpushedCommits,
   type WorkspaceEntry,
 } from './actions/agent-workspace.js';
+import type { EventBus } from './bus/bus.js';
+import { RETENTION_WORKSPACE_KEPT } from './bus/matcher.js';
 import type { Clock } from './clock.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { Logger } from './log.js';
@@ -17,6 +19,8 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export interface RetentionOptions {
   store: Store;
+  /** Publishes `retention.workspace_kept` for a kept worktree. */
+  bus: EventBus;
   clock: Clock;
   log: Logger;
   policy: RetentionPolicy;
@@ -38,10 +42,12 @@ export interface RetentionReport extends PurgeCounts {
  * stale ledger rows, dispatched events nothing references, and `work/<run_id>` directories
  * of runs finished long enough ago (or of no run at all). Workspaces of runs still queued,
  * running or waiting are never touched, nor is a git worktree whose branch holds a commit
- * not pushed yet. Errors are logged, counted and retried next time.
+ * not pushed yet; such a worktree is published once as `retention.workspace_kept`. Errors
+ * are logged, counted and retried next time.
  */
 export class RetentionJob {
   private readonly store: Store;
+  private readonly bus: EventBus;
   private readonly clock: Clock;
   private readonly log: Logger;
   private readonly metrics: Metrics;
@@ -54,6 +60,7 @@ export class RetentionJob {
 
   constructor(opts: RetentionOptions) {
     this.store = opts.store;
+    this.bus = opts.bus;
     this.clock = opts.clock;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
@@ -167,12 +174,28 @@ export class RetentionJob {
       const unpushed = await unpushedCommits(entry, this.env);
       if (unpushed !== 0) {
         kept++;
-        this.log.warn('retention.workspace_kept', {
+        const details = {
           run_id: entry.runId,
           path: entry.path,
           reason: unpushed === undefined ? 'unknown' : 'unpushed',
           ...(unpushed === undefined ? {} : { commits: unpushed }),
-        });
+        };
+        this.log.warn(RETENTION_WORKSPACE_KEPT, details);
+        // Once per worktree, so every pass does not repeat it to whoever is notified. A
+        // failed publish is retried next pass and must not stop the sweep of the others.
+        try {
+          this.bus.publish({
+            type: RETENTION_WORKSPACE_KEPT,
+            source: 'core',
+            dedup_key: `${RETENTION_WORKSPACE_KEPT}:${entry.runId}`,
+            payload: { ...details, task: this.store.runs.getById(entry.runId)?.task ?? null },
+          });
+        } catch (err) {
+          this.log.error('retention.publish_failed', {
+            run_id: entry.runId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         continue;
       }
       await removeWorkspaceDir(entry, this.env);

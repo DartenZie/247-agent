@@ -100,6 +100,7 @@ export {
   CRON_TICK,
   MANUAL_RUN,
   LLM_BATCH_ENDED,
+  RETENTION_WORKSPACE_KEPT,
   type CompiledConfig,
   type CompiledTask,
 } from './bus/matcher.js';

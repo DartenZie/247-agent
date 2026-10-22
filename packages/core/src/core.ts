@@ -349,6 +349,7 @@ export function createCore(opts: CoreOptions): Core {
       ? undefined
       : new RetentionJob({
           store,
+          bus,
           clock,
           log,
           metrics,

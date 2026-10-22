@@ -62,12 +62,12 @@ a `blocked` agent result and a rejected approval both succeed.
 - name: notify
   trigger:
     kind: event
-    type_any: [task.publish_site.succeeded, "task.*.failed", budget.exceeded]
+    type_any: [task.publish_site.succeeded, "task.*.failed", budget.exceeded, retention.workspace_kept]
   action:
     kind: connector
     connector: chat
     op: send
-    args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
+    args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || event.payload.path || 'ok'}" }
 ```
 
 Safe by construction: a task never triggers on its own `task.notify.failed`.
