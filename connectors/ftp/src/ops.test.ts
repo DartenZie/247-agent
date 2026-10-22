@@ -326,6 +326,20 @@ describe('sync', () => {
     expect(client.files.has('/srv/x/incoming/a.csv')).toBe(true);
   });
 
+  it('refuses to prune from a local tree without files, before connecting', async () => {
+    const local = mkdtempSync(join(tmpdir(), 'ftp-empty-'));
+    mkdirSync(join(local, 'assets'));
+    const { ops, client, connects } = setup({ local_roots: [local] });
+    client.seed('/srv/x/index.html', '<i>');
+    expect(await code(ops.sync({ local, prune: true }))).toBe('path');
+    expect(connects()).toBe(0);
+    expect(client.files.has('/srv/x/index.html')).toBe(true);
+    // Without prune an empty tree is harmless: nothing is uploaded and nothing removed.
+    const r = await ops.sync({ local });
+    expect(r).toMatchObject({ uploaded: [], pruned: [] });
+    expect(client.files.has('/srv/x/index.html')).toBe(true);
+  });
+
   it('defaults to the root and works with a relative root', async () => {
     const local = localSite();
     const { ops, client } = setup({ local_roots: [local] }, '.');

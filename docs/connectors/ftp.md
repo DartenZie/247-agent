@@ -94,7 +94,11 @@ A bad path, a missing file or a size over `max_bytes` fails the calling run with
 `sync` uploads every regular file below `local` to `remote` over one connection, creating
 directories as needed; symlinks and special files are skipped. With `prune: true` it then
 removes remote files and directories under `remote` that the local tree lacks, so the
-remote mirrors the local directory; nothing outside `remote` is touched. Every file is
+remote mirrors the local directory; nothing outside `remote` is touched. A `prune` from a
+local directory without regular files fails with `path` before connecting, so an empty
+build directory never wipes the remote. A tree with even one file is mirrored as it is, so
+run `sync` only after the build succeeds. To empty a remote directory on purpose, use
+`delete` with `recursive: true`. Every file is
 re-uploaded on every call: there is no change detection, which keeps the op stateless and
 correct when the remote was edited by hand. `sync` is not capped by `max_bytes`.
 

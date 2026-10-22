@@ -287,12 +287,20 @@ export class FileOps {
    * directories as needed, over one connection. With `prune`, remote files and
    * directories under `remote` that the local tree lacks are removed afterwards, so the
    * remote directory mirrors the local one. Every remote path is resolved before the
-   * connection opens: a local name that would escape the root fails the whole op.
+   * connection opens: a local name that would escape the root fails the whole op. A
+   * prune from a tree without files is refused, so an empty or failed build cannot wipe
+   * the remote.
    */
   async sync(args: SyncArgs): Promise<SyncResult> {
     const local = this.localDir(args.local);
     const { rel, remote } = this.resolve(args.remote);
     const tree = walkLocal(local);
+    if (args.prune === true && tree.files.size === 0) {
+      throw new FtpOpError(
+        'path',
+        `sync: ${args.local} has no files; refusing to prune ${rel} to an empty tree`,
+      );
+    }
     const remoteOf = (p: string): string => this.resolve(childPath(rel, p)).remote;
     const targets = new Map([...tree.files.keys()].map((p) => [p, remoteOf(p)]));
     const dirTargets = [...tree.dirs].sort().map(remoteOf);

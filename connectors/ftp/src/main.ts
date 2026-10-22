@@ -89,7 +89,7 @@ await runConnector({
       defineTool({
         name: 'sync',
         description:
-          'Uploads every file below a local directory (inside the config’s local_roots) to a remote directory, default the root; prune: true then removes remote files and directories the local tree lacks. Returns {local, remote, uploaded, bytes, pruned}.',
+          'Uploads every file below a local directory (inside the config’s local_roots) to a remote directory, default the root; prune: true then removes remote files and directories the local tree lacks, and is refused when the local tree has no files. Returns {local, remote, uploaded, bytes, pruned}.',
         input: { local: z.string(), remote: z.string().optional(), prune: z.boolean().optional() },
         handler: async (args) => (await ops.sync(args)) as unknown as JsonValue,
       }),
