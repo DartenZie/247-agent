@@ -93,7 +93,7 @@ works.
 | a string comparison | `payload.from == 'editor@example.com'` (single quotes) |
 | a number or boolean comparison | `` payload.uid > `10` ``, `` payload.approved == `true` `` (backticks) |
 | and, or, not | `a && b`, `a \|\| b`, `!a` |
-| a fallback | `payload.summary \|\| payload.error` |
+| a fallback | `payload.result.summary \|\| payload.error` |
 | text search | `contains(payload.subject, 'urgent')`, `starts_with(payload.from, 'bot@')` |
 | a list's length | `` length(payload.items) > `0` `` |
 | the first element | `payload.items[0]` |

@@ -225,7 +225,7 @@ tasks:
       kind: connector
       connector: chat
       op: send
-      args: { text: "[247-agent] ${event.type}: ${event.payload.summary || event.payload.error}" }
+      args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
 ```
 
 ## The agent's manifest

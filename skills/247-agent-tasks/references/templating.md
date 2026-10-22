@@ -41,7 +41,7 @@ scope above. `emit.when` sees `{event, result, state, env, run}`.
   `` payload.uid > `10` ``.
 - `||` and `&&` for logic, `!` for not, `contains(payload.subject, 'urgent')`,
   `starts_with(payload.from, 'bot@')`, `length(payload.items) > `0``.
-- Fallback: `payload.summary || payload.error`.
+- Fallback: `payload.result.summary || payload.error`.
 - Missing keys evaluate to `null` (falsy), so `payload.kind == 'x'` is safe when
   `kind` is absent.
 
@@ -53,7 +53,7 @@ scope above. `emit.when` sees `{event, result, state, env, run}`.
 trigger: { kind: event, type: email.received, filter: "payload.from == 'editor@example.com'" }
 
 # Emit with fallback text (notify task)
-args: { text: "[247-agent] ${event.type}: ${event.payload.summary || event.payload.error}" }
+args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
 
 # Pass a template into a bash script safely, as an argument
 cmd: ["bash", "-c", 'printf "hello (run %s)\n" "$1"', "--", "${run.id}"]

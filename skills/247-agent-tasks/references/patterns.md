@@ -67,7 +67,7 @@ retry is safe. `site.change_pushed` comes from `emit` rules with a `when` on the
     kind: connector
     connector: chat
     op: send
-    args: { text: "[247-agent] ${event.type}: ${event.payload.summary || event.payload.error}" }
+    args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
 ```
 
 Safe by construction: a task never triggers on its own `task.notify.failed`.

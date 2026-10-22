@@ -201,7 +201,7 @@ tasks:
       kind: connector
       connector: chat
       op: send
-      args: { text: "[247-agent] \${event.type}: \${event.payload.summary || event.payload.error}" }
+      args: { text: "[247-agent] \${event.type} (\${event.payload.task}): \${event.payload.error || event.payload.spent_usd || 'ok'}" }
 `;
 
 interface Task {
@@ -374,7 +374,7 @@ describe('website workflow without a model', () => {
     // State: the email cursor advanced, the chat connector recorded the notification.
     expect((await api.getState('email', 'last_uid'))?.value).toBe(2);
     expect((await api.getState('chat', 'sent'))?.value).toEqual([
-      '[247-agent] task.publish_site.succeeded: ',
+      '[247-agent] task.publish_site.succeeded (publish_site): ok',
     ]);
     expect((await api.getState('chat', 'asked'))?.value).toEqual([
       expect.stringContaining('Spring event') as string,

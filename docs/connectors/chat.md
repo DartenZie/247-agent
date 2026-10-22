@@ -242,7 +242,7 @@ tasks:
       kind: connector
       connector: chat
       op: send
-      args: { text: "[247-agent] ${event.type}: ${event.payload.error || event.payload.summary}" }
+      args: { text: "[247-agent] ${event.type}: ${event.payload.error || event.payload.spent_usd}" }
 
   - name: status
     trigger: { kind: event, type: chat.message, filter: "starts_with(payload.text, '/status')" }
