@@ -140,7 +140,7 @@ oa reload
 ok /etc/247-agent/agent.yaml
 ok /etc/247-agent/connectors.d/email.yaml
 ok /etc/247-agent/tasks.d/website.yaml
-reloaded: 8 tasks; connectors: respawned email
+reloaded: 9 tasks; connectors: respawned email
 ```
 
 When a file is invalid, nothing changes: the issues are printed as `<file>: <path>:

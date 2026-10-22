@@ -54,8 +54,10 @@ tasks:
 
   # 3. Routine change: an ACP agent (connectors.d/claude.yaml), narrow scope, few tool calls.
   #    The agent ends with RESULT.json {status: done|blocked, summary, ...}; `done` runs the
-  #    post gates and emits site.change_pushed (task 5 publishes), `blocked` skips them and
+  #    post gates and emits site.change_committed (task 3a pushes), `blocked` skips them and
   #    the editor gets a reply (task 3b). Both succeed, so routing reads result.status.
+  #    The push is a task of its own: a restart during it repeats the push, and a restart
+  #    during this task redoes the change from main, where nothing of it has landed yet.
   - name: update_event_list
     trigger:
       kind: event
@@ -86,17 +88,31 @@ tasks:
       post:                             # only after status: done; a failing gate fails the run
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
-        - shell: ["git", "push", "origin", "HEAD:main"]
     emit:
-      - type: site.change_pushed
+      - type: site.change_committed
         when: "result.status == 'done'"
-        payload: { summary: "${result.summary}" }
+        payload: { summary: "${result.summary}", worktree: "${run.workspace}" }
       - type: site.change_blocked
         when: "result.status == 'blocked'"
         payload:
           summary: ${result.summary}
           missing: ${result.missing}
           email: ${event.payload.email}
+
+  # 3a. Push the committed change. No LLM. The rebase puts it on top of whatever reached
+  #     main since the worktree was made, so a retry after a restart or a rejected push
+  #     succeeds and still emits site.change_pushed.
+  - name: push_event_list
+    trigger: { kind: event, type: site.change_committed }
+    concurrency: 1
+    retry: { attempts: 3 }
+    action:
+      kind: shell
+      cwd: ${event.payload.worktree}
+      cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
+    emit:
+      - type: site.change_pushed
+        payload: { summary: "${event.payload.summary}" }
 
   # 3b. The agent could not do it: tell the editor what is missing. No LLM.
   - name: reply_blocked

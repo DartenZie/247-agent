@@ -3,7 +3,7 @@
 An editor emails changes for a small website. The daemon fetches the mail, lets one
 cheap model call sort it, hands the edit to an agent in a sandboxed worktree, proves the
 site still builds, asks you before anything big is published, mirrors the result over
-SFTP, and tells you how it went. Only two of the eight tasks call a model.
+SFTP, and tells you how it went. Only two of the nine tasks call a model.
 
 This is the reference workflow that ships with every release, in
 `docs/examples/website-updates.yaml`. Read it once; it shows every kind of task working
@@ -105,17 +105,29 @@ tasks:
       post:
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
-        - shell: ["git", "push", "origin", "HEAD:main"]
     emit:
-      - type: site.change_pushed
+      - type: site.change_committed
         when: "result.status == 'done'"
-        payload: { summary: "${result.summary}" }
+        payload: { summary: "${result.summary}", worktree: "${run.workspace}" }
       - type: site.change_blocked
         when: "result.status == 'blocked'"
         payload:
           summary: ${result.summary}
           missing: ${result.missing}
           email: ${event.payload.email}
+
+  # 3a. Push the committed change on top of main. No LLM. A restart during the push repeats it.
+  - name: push_event_list
+    trigger: { kind: event, type: site.change_committed }
+    concurrency: 1
+    retry: { attempts: 3 }
+    action:
+      kind: shell
+      cwd: ${event.payload.worktree}
+      cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
+    emit:
+      - type: site.change_pushed
+        payload: { summary: "${event.payload.summary}" }
 
   # 3b. The agent could not do it: tell the editor what is missing. No LLM.
   - name: reply_blocked
@@ -279,6 +291,7 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `fetch_email` | cron, connector op, cursor in state, fan out with a dedup key | polling, dedup and routing are code; a message becomes exactly one event |
 | `classify_email` | a filter on the sender, then one Haiku call with a schema and a fallback label | only trusted mail reaches a model; `ignore` is dropped by `when` without another call |
 | `update_event_list` | Sonnet at low effort, 20 tool calls, $0.50, one file in scope, `npm run build` the only command | a routine edit needs little intelligence and a tight surface; the build gate proves it did not break anything |
+| `push_event_list` | shell `git pull --rebase` and `git push` on `site.change_committed`, three attempts | the rebase puts the change on top of `main`, so a push that a restart interrupted or that another push beat succeeds on a retry |
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
 | `approve_general_change` | ask, wait, push, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
@@ -286,16 +299,21 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `notify` | one task on failures, the budget event and the one success | you hear about everything without a loop |
 
 Both agent tasks are the same action kind with different `model`, `effort`,
-`max_tool_calls`, `budget`, `tools`, `bash_allow` and `system_file`. The small one pushes
-in its own gates because its scope is a single data file; the big one commits and stops,
-and the push happens only after you approve.
+`max_tool_calls`, `budget`, `tools`, `bash_allow` and `system_file`. Both commit
+in their gates and stop. The small one's change is pushed at once by `push_event_list`
+because its scope is a single data file; the big one's change is pushed only after you
+approve.
+
+The push is a task of its own, so a daemon restart repeats only the push. A restart
+during the agent task loses nothing: the change is not on `main` yet, and the retry
+makes it again in a fresh worktree.
 
 A `blocked` result is a success for the run, not a failure: the agent did its job by
 saying what is missing, and the `site.change_blocked` event carries that to the reply
 task. A rejected approval also succeeds, with the push skipped. That is why
-`publish_site` triggers on `site.change_pushed`, which only a `done` result or an
-approval emits, and not on `task.<name>.succeeded`, which both tasks publish whatever
-the outcome. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
+`publish_site` triggers on `site.change_pushed`, which only a push emits, and not on
+`task.<name>.succeeded`, which `update_event_list` and `approve_general_change` publish
+whatever the outcome. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
 reaches you through `task.*.failed` on chat.
 
 ## Adapt it to your site

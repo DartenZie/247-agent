@@ -53,7 +53,7 @@ afterEach(async () => {
 describe('oa validate', () => {
   it('validates tasks files and agent files, checking the referenced tasks file', async () => {
     expect(await main(['validate', join(EXAMPLES, 'website-updates.yaml')], io)).toBe(0);
-    expect(out).toEqual([`ok ${join(EXAMPLES, 'website-updates.yaml')} (8 tasks)`]);
+    expect(out).toEqual([`ok ${join(EXAMPLES, 'website-updates.yaml')} (9 tasks)`]);
     out = [];
     expect(await main(['validate', join(EXAMPLES, 'decide-triage.yaml')], io)).toBe(0);
     expect(out).toEqual([`ok ${join(EXAMPLES, 'decide-triage.yaml')} (2 tasks)`]);
