@@ -60,6 +60,18 @@ const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 /** A poison update is skipped after this many failed attempts. */
 const MAX_UPDATE_ATTEMPTS = 3;
+/** Socket errors that mean the core is not listening, as while it starts, stops or restarts. */
+const CORE_UNREACHABLE = new Set(['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE']);
+
+/**
+ * Whether handling failed because the core's socket was unreachable. Such a failure is not
+ * the update's fault, so it never counts toward `MAX_UPDATE_ATTEMPTS`: the update waits
+ * for the core however long that takes.
+ */
+export function coreUnreachable(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && CORE_UNREACHABLE.has(code);
+}
 
 export class ChatBot {
   private readonly allowed: Set<string>;
@@ -166,10 +178,17 @@ export class ChatBot {
       try {
         await this.handleUpdate(update);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (coreUnreachable(err)) {
+          // Leave the offset and the attempt count alone: the core comes back.
+          throw new Error(
+            `update ${String(update.update_id)} waits, core unreachable: ${message}`,
+            { cause: err },
+          );
+        }
         const attempts =
           this.failing?.update_id === update.update_id ? this.failing.attempts + 1 : 1;
         this.failing = { update_id: update.update_id, attempts };
-        const message = err instanceof Error ? err.message : String(err);
         if (attempts < MAX_UPDATE_ATTEMPTS) {
           // Leave the offset where it is: the next poll delivers this update again.
           throw new Error(

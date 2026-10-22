@@ -268,7 +268,8 @@ tasks:
 Inspect them with `GET /v1/state/chat`. Deleting `offset` with `initial: all` replays the
 last 24 hours of Telegram updates; the events are deduplicated, but answered questions
 are gone from `pending`, so their taps only get "already answered". An update whose
-handling fails (the daemon unreachable, for instance) is retried on the next poll; after
-three attempts it is skipped with a log line. Poll failures back off from 1 s to 30 s, or
+handling fails is retried on the next poll; after three attempts it is skipped with a log
+line. While the daemon's socket is unreachable, as during a start, stop or restart, the
+update is retried without a limit and never skipped. Poll failures back off from 1 s to 30 s, or
 wait as long as the service asks on a rate limit. A Matrix room with more than 50 new
 events between two syncs logs that the older ones were skipped.

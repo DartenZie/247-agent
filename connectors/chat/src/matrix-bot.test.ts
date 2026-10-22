@@ -441,6 +441,28 @@ describe('sync loop', () => {
     expect(logs.some((l) => l.includes(`giving up on event ${bad.event_id}`))).toBe(true);
   });
 
+  it('keeps a batch while the core socket is unreachable, however long', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const tap = msg('approve');
+    const emit = core.emitEvent.bind(core);
+    core.emitEvent = () =>
+      Promise.reject(Object.assign(new Error('connect ENOENT /run/core.sock'), { code: 'ENOENT' }));
+    for (let i = 0; i < 6; i++) {
+      mx.syncs.push(batch('s1', [tap]));
+    }
+    for (let i = 0; i < 5; i++) {
+      await expect(bot.pollOnce()).rejects.toThrow(/core unreachable/);
+    }
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    expect(logs.some((l) => l.includes('giving up'))).toBe(false);
+
+    core.emitEvent = emit;
+    await bot.pollOnce();
+    expect(core.ofType('chat.message')).toHaveLength(1);
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+  });
+
   it('waits for the rate limit before syncing again', async () => {
     const { bot, mx, sleeps, logs } = await setup();
     mx.syncs.push({ next_batch: 's0' });
