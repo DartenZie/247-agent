@@ -81,7 +81,7 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
       resume = undefined;
     }
     start = cp.step;
-    // Every attempt gets the same resume; a copy keeps this one's steps out of the next.
+    // Attempts share `ctx.resume` and `ctx.progress`; a copy keeps this one's steps out.
     results = [...cp.steps];
   }
   for (let i = start; i < cfg.steps.length; i++) {
@@ -95,6 +95,9 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
       log: ctx.log.child({ step: index, step_kind: step.kind }),
       suspend: (spec) => ctx.suspend(spec, { step: index, steps: results }),
       resume: resume !== undefined && i === start ? resume : undefined,
+      // The sequence owns the run's progress; a step must not overwrite it.
+      saveProgress: () => undefined,
+      progress: undefined,
     };
     // A resumed wait already passed its `when` before it suspended.
     if (stepCtx.resume === undefined && step.when !== undefined) {
