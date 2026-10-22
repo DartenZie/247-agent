@@ -28,7 +28,7 @@ cmd: ["bash", "-c", 'printf "hello (run %s)\n" "$1"', "--", "${run.id}"]
 | `env` | the daemon's environment variables | everywhere |
 | `run` | `run.id`, `run.task`, `run.attempt`, `run.event_id`, `run.correlation_id`, `run.workspace` | everywhere |
 | `item` | the current element of an `emit … each` fan-out | that rule |
-| `steps` | the results of earlier steps in a `sequence`: `steps[0]`, `null` when skipped | later steps |
+| `steps` | the results of earlier steps in a `sequence`: `steps[0]`, `null` when skipped | later steps only; `emit` and `state_updates` read `result.steps` |
 
 With the `env` secrets backend, variables carrying its prefix are removed from `env`.
 With `systemd-credentials` and no `dir`, `CREDENTIALS_DIRECTORY` is removed. A template cannot read
@@ -76,8 +76,9 @@ emit:
 ```
 
 A trigger `filter` sees the **whole event**: `type`, `source`, `payload`,
-`correlation_id`. `when` sees `{ event, result, state, env, run }`, and inside a
-sequence also `steps`.
+`correlation_id`. `when` sees `{ event, result, state, env, run }`, and a step's `when`
+inside a sequence also sees `steps`. An `emit` rule's `when` does not: it reads
+`result.steps`.
 
 One exception: `for.filter` on a [`wait`](wait.md) is first rendered as a template
 against the waiting run, and the rendered text is then evaluated as an expression over

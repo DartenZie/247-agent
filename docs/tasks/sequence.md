@@ -40,8 +40,10 @@ Inside later steps, `steps[i]` is the result of step *i*, counting from zero, so
 falsy is skipped and its result is `null`. `when` is a JMESPath expression over the
 template scope, so `steps`, `event`, `state` and `run` are all available.
 
-The run's result is `{ steps: [...] }` with every step's result in order, and
-`emit` rules read it the same way: `${result.steps[2]}`.
+The run's result is `{ steps: [...] }` with every step's result in order. `emit`
+rules and `state_updates` read it as `result.steps`, for example `${result.steps[2]}`.
+After the sequence, `steps` alone is not defined, and an expression such as
+``length(steps[0].emails)`` fails the run.
 
 ## Waiting inside a sequence
 

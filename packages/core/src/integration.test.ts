@@ -22,6 +22,8 @@ import { createLogger } from './log.js';
 
 const FIXTURES = new URL('../test/fixtures/', import.meta.url).pathname;
 const EXAMPLE = new URL('../../../docs/examples/website-updates.yaml', import.meta.url).pathname;
+const DIGEST = new URL('../../../connectors/email/examples/daily-digest.yaml', import.meta.url)
+  .pathname;
 const PROMPT = new URL('../../../docs/examples/prompts/classify_email.md', import.meta.url)
   .pathname;
 
@@ -208,8 +210,15 @@ tasks:
 const replyBlocked = (
   parse(readFileSync(EXAMPLE, 'utf8')) as { tasks: { name: string }[] }
 ).tasks.find((t) => t.name === 'reply_blocked');
+/** 8. `email_digest` verbatim from the email example, manual instead of its weekday cron. */
+const emailDigest = {
+  ...(parse(readFileSync(DIGEST, 'utf8')) as { tasks: { name: string }[] }).tasks.find(
+    (t) => t.name === 'email_digest',
+  ),
+  trigger: { kind: 'manual' },
+};
 const TASKS = stringify({
-  tasks: [...(parse(TASKS_INLINE) as { tasks: unknown[] }).tasks, replyBlocked],
+  tasks: [...(parse(TASKS_INLINE) as { tasks: unknown[] }).tasks, replyBlocked, emailDigest],
 });
 
 let dir: string;
@@ -455,5 +464,37 @@ describe('ftp inbox import on the fake connector', () => {
       entries: [{ name: 'notes', type: 'dir' }],
     });
     expect(await api.listRuns({ task: 'import_file' })).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('email_digest from the email example', () => {
+  it('sends one digest, advances its cursor and emits email.digest_sent', async () => {
+    await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
+
+    const first = await api.run('email_digest');
+    await until(async () => (await api.getRun(first.run.id)).status !== 'running');
+    await daemon.core.executor.idle();
+    const run = await api.getRun(first.run.id);
+    expect(run, run.error ?? '').toMatchObject({ status: 'succeeded' });
+    expect((await api.getState('digest', 'last_uid'))?.value).toBe(2);
+    expect((await api.getState('email', 'sent'))?.value).toEqual([
+      expect.objectContaining({
+        to: ['team@example.com'],
+        subject: 'Inbox digest — 2 new',
+        text: 'Spring event\nBuy now\n',
+      }),
+    ]);
+    const sent = () =>
+      daemon.core.store.events.listAfter(0, 1000).filter((e) => e.type === 'email.digest_sent');
+    expect(sent().map((e) => e.payload)).toEqual([{ count: 2, last_uid: 2 }]);
+
+    // Nothing new on the next run: no mail, no event, and the run still succeeds.
+    const again = await api.run('email_digest');
+    await until(async () => (await api.getRun(again.run.id)).status !== 'running');
+    await daemon.core.executor.idle();
+    const second = await api.getRun(again.run.id);
+    expect(second, second.error ?? '').toMatchObject({ status: 'succeeded' });
+    expect((await api.getState('email', 'sent'))?.value).toHaveLength(1);
+    expect(sent()).toHaveLength(1);
   }, 30_000);
 });
