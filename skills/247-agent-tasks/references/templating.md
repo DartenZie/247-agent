@@ -18,7 +18,7 @@ Two different things look alike; mixing them up is the most common config bug.
 | `env` | The daemon's environment (minus the secrets backend's variables) | everywhere |
 | `run` | `{id, task, attempt, event_id, correlation_id}` | everywhere |
 | `item` | Current element of an `emit[].each` fan-out | that emit rule |
-| `steps` | Earlier step results in a `sequence` (`steps[0]`, `null` if skipped) | later steps |
+| `steps` | Earlier step results in a `sequence` (`steps[0]`, `null` if skipped) | later steps only; `emit` and `state_updates` read `result.steps` |
 
 Trigger `filter` sees the **whole event** (`payload.from`, `type`, `source`), not the
 scope above. `emit.when` sees `{event, result, state, env, run}`.

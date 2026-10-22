@@ -496,5 +496,6 @@ describe('email_digest from the email example', () => {
     expect(second, second.error ?? '').toMatchObject({ status: 'succeeded' });
     expect((await api.getState('email', 'sent'))?.value).toHaveLength(1);
     expect(sent()).toHaveLength(1);
+    expect((await api.getState('digest', 'last_uid'))?.value).toBe(2);
   }, 30_000);
 });

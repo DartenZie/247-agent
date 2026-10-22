@@ -39,8 +39,8 @@ secrets, env, run, item, steps}`:
 
 - `result` exists only in `emit` and `state_updates`; `item` inside an `emit[].each`
   fan-out; `steps` inside a `sequence` only (`withScope()` adds it; `emit` and
-  `state_updates` read `result.steps`); `run` is `{id, task,
-  attempt, event_id, correlation_id, workspace}`, `workspace` being
+  `state_updates` read `result.steps`); `run` is `{id, task, attempt, event_id,
+  correlation_id, workspace}`, `workspace` being
   `<work_dir>/<run_id>` or `null` without an agent supervisor.
 - `env` is the daemon's environment minus what the secrets backend reads through
   (`secrets/secrets.ts`, `SecretsBackend.scrub()`). For the `env` backend that is every

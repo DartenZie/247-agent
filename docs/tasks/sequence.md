@@ -42,8 +42,8 @@ template scope, so `steps`, `event`, `state` and `run` are all available.
 
 The run's result is `{ steps: [...] }` with every step's result in order. `emit`
 rules and `state_updates` read it as `result.steps`, for example `${result.steps[2]}`.
-After the sequence, `steps` alone is not defined, and an expression such as
-``length(steps[0].emails)`` fails the run.
+After the sequence, `steps` alone is `null`. `length(steps[0].emails)` fails the run,
+and `${steps[0].last_uid}` renders `null` without an error.
 
 ## Waiting inside a sequence
 
