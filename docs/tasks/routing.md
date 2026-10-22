@@ -10,7 +10,7 @@ After each run the daemon publishes one lifecycle event, with no configuration:
 
 | Event | When | Payload |
 |---|---|---|
-| `task.<name>.succeeded` | the run succeeded | the action's result |
+| `task.<name>.succeeded` | the run succeeded | `{ run_id, task, result }`, with the action's result in `result` |
 | `task.<name>.failed` | the run failed, once, after the last retry attempt | `{ run_id, task, error, attempt }` |
 
 These carry the source `task:<name>`, the event that triggered the run as their parent,
@@ -18,13 +18,17 @@ and that event's correlation id. Chain on them when the next step needs nothing 
 "it worked":
 
 ```yaml
-- name: publish_site
-  trigger:
-    kind: event
-    type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
-  concurrency: 1
-  action: { kind: shell, cwd: /var/lib/247-agent/repos/website, cmd: ["bash", "-c", "npm run build && ./deploy.sh"] }
+- name: compress_dump
+  trigger: { kind: event, type: task.dump_database.succeeded }
+  action: { kind: shell, cmd: ["gzip", "-f", "/var/backups/site.sql"] }
 ```
+
+> [!WARNING]
+> `succeeded` means the run ended without an error, not that it changed anything. An
+> `agent` run whose result is `blocked` succeeds, and so does a `sequence` whose push
+> step was skipped because a human rejected it. When the next task must run for one
+> outcome only, such as publishing after a change was pushed, emit your own event with a
+> `when` and trigger on that. See [`emit`](#emit-your-own-events).
 
 And listen on `task.*.failed` once, in a task that tells you:
 

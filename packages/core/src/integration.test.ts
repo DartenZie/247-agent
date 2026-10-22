@@ -156,11 +156,9 @@ tasks:
           cwd: \${event.payload.worktree}
           cmd: [echo, "git push origin HEAD:main"]
 
-  # 5. Publish: holds the FTP secret, replaced by an echo.
+  # 5. Publish: holds the FTP secret, replaced by an echo; the trigger is the example's.
   - name: publish_site
-    trigger:
-      kind: event
-      type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
+    trigger: { kind: manual }
     concurrency: 1
     action:
       kind: shell
@@ -206,10 +204,37 @@ tasks:
       args: { text: "[247-agent] \${event.type}: \${event.payload.summary || event.payload.error}" }
 `;
 
+interface Task {
+  name: string;
+  trigger?: unknown;
+  action?: unknown;
+  emit?: unknown;
+}
+const example = (parse(readFileSync(EXAMPLE, 'utf8')) as { tasks: Task[] }).tasks;
+const fromExample = (name: string): Task => {
+  const task = example.find((t) => t.name === name);
+  if (!task) {
+    throw new Error(`no ${name} in the example`);
+  }
+  return task;
+};
+/**
+ * 3. Stand-in for the agent with the example's routing: the result's `status` comes from
+ *    the trigger event, so a test picks `done` or `blocked`.
+ */
+const updateEventList = {
+  ...fromExample('update_event_list'),
+  action: {
+    kind: 'shell',
+    cmd: [
+      'echo',
+      '{"status":"${event.payload.status}","summary":"${event.payload.summary}","missing":["dates"]}',
+    ],
+    result: 'json_stdout',
+  },
+};
 /** 3b. `reply_blocked` verbatim from the example, so its `send` args meet the connector's rules. */
-const replyBlocked = (
-  parse(readFileSync(EXAMPLE, 'utf8')) as { tasks: { name: string }[] }
-).tasks.find((t) => t.name === 'reply_blocked');
+const replyBlocked = fromExample('reply_blocked');
 /** 8. `email_digest` verbatim from the email example, manual instead of its weekday cron. */
 const emailDigest = {
   ...(parse(readFileSync(DIGEST, 'utf8')) as { tasks: { name: string }[] }).tasks.find(
@@ -217,9 +242,15 @@ const emailDigest = {
   ),
   trigger: { kind: 'manual' },
 };
-const TASKS = stringify({
-  tasks: [...(parse(TASKS_INLINE) as { tasks: unknown[] }).tasks, replyBlocked, emailDigest],
-});
+/** The gate's `emit` and `publish_site`'s trigger are the example's, so its routing is tested. */
+const inline = (parse(TASKS_INLINE) as { tasks: Task[] }).tasks.map((t) =>
+  t.name === 'approve_general_change'
+    ? { ...t, emit: fromExample(t.name).emit }
+    : t.name === 'publish_site'
+      ? { ...t, trigger: fromExample(t.name).trigger }
+      : t,
+);
+const TASKS = stringify({ tasks: [...inline, updateEventList, replyBlocked, emailDigest] });
 
 let dir: string;
 let daemon: Daemon;
@@ -245,6 +276,10 @@ beforeEach(async () => {
       .join('\n') + '\n',
     { mode: 0o600 },
   );
+  await boot();
+});
+
+async function boot(): Promise<void> {
   lines = [];
   daemon = await startDaemon({
     configFile: join(dir, 'agent.yaml'),
@@ -255,7 +290,7 @@ beforeEach(async () => {
     }),
   });
   api = new ApiClient({ socketPath: daemon.config.socket });
-});
+}
 
 afterEach(async () => {
   await daemon.stop();
@@ -372,6 +407,7 @@ describe('website workflow without a model', () => {
       'site.change_ready',
       'chat.reply',
       'task.approve_general_change.succeeded',
+      'site.change_pushed',
       'task.publish_site.succeeded',
       'task.notify.succeeded',
     ]);
@@ -395,6 +431,65 @@ describe('website workflow without a model', () => {
     expect(
       daemon.core.store.events.listAfter(0, 1000).filter((e) => e.type === 'email.received'),
     ).toHaveLength(2);
+  }, 30_000);
+});
+
+/** Runs everything a published event started, then the publish_site runs, if any. */
+async function publishRuns(): Promise<unknown[]> {
+  daemon.core.bus.dispatcher.drain();
+  await daemon.core.executor.idle();
+  return api.listRuns({ task: 'publish_site' });
+}
+
+describe('publishing in the example', () => {
+  it('publishes nothing after a rejected approval', async () => {
+    await daemon.stop();
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      AGENT.replace('delay_ms: 30 }', 'delay_ms: 30, approve: false }'),
+    );
+    await boot();
+    await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
+
+    await api.emit({
+      type: 'site.change_ready',
+      source: 'test',
+      payload: { summary: 'new footer', diff: '1 file changed', worktree: '/tmp' },
+    });
+    await until(
+      async () =>
+        (await api.listRuns({ task: 'approve_general_change', status: 'succeeded' })).length === 1,
+    );
+
+    const [gate] = await api.listRuns({ task: 'approve_general_change' });
+    expect(gate?.result).toMatchObject({ steps: [{}, { payload: { approved: false } }, null] });
+    expect(await publishRuns()).toEqual([]);
+  }, 30_000);
+
+  it('publishes nothing after a blocked agent result, and publishes after a done one', async () => {
+    await until(() => daemon.core.supervisor?.status().every((s) => s.state === 'up') ?? false);
+    const classified = (status: string) => ({
+      type: 'email.classified',
+      source: 'test',
+      payload: {
+        kind: 'event_list_update',
+        summary: `events ${status}`,
+        status,
+        email: { from: 'editor@example.com', message_id: '<m1@x>', subject: 'Events' },
+      },
+    });
+
+    await api.emit(classified('blocked'));
+    await until(
+      async () => (await api.listRuns({ task: 'reply_blocked', status: 'succeeded' })).length === 1,
+    );
+    expect(await publishRuns()).toEqual([]);
+
+    await api.emit(classified('done'));
+    await until(
+      async () => (await api.listRuns({ task: 'publish_site', status: 'succeeded' })).length === 1,
+    );
+    expect(await publishRuns()).toHaveLength(1);
   }, 30_000);
 });
 

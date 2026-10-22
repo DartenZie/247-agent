@@ -235,9 +235,11 @@ code by design, `npm run build` or `npm test`, runs what the agent left in the
 workspace; put such gates under `sandbox: bwrap` when the agent works on content you
 do not trust.
 
-Publishing is not a gate. It is a separate task triggered by `task.<name>.succeeded`,
-the only task holding the deploy secret, with an approval gate in front of it when the
-change is high-impact. The agent never publishes and never sees that secret.
+Publishing is not a gate. It is a separate task, the only one holding the deploy
+secret, with an approval gate in front of it when the change is high-impact. Trigger it
+on an event the agent task emits when `result.status == 'done'`, not on
+`task.<name>.succeeded`: a `blocked` run succeeds too. The agent never publishes and
+never sees that secret.
 
 ## Limits and money
 

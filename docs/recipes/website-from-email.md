@@ -107,6 +107,9 @@ tasks:
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
         - shell: ["git", "push", "origin", "HEAD:main"]
     emit:
+      - type: site.change_pushed
+        when: "result.status == 'done'"
+        payload: { summary: "${result.summary}" }
       - type: site.change_blocked
         when: "result.status == 'blocked'"
         payload:
@@ -173,7 +176,7 @@ tasks:
           missing: ${result.missing}
           email: ${event.payload.email}
 
-  # 4b. Approval gate via chat. No LLM.
+  # 4b. Approval gate via chat. No LLM. Only an approval emits site.change_pushed.
   - name: approve_general_change
     trigger: { kind: event, type: site.change_ready }
     action:
@@ -193,12 +196,14 @@ tasks:
           when: "steps[1].payload.approved == `true`"
           cwd: ${event.payload.worktree}
           cmd: ["git", "push", "origin", "HEAD:main"]
+    emit:
+      - type: site.change_pushed
+        when: "result.steps[1].payload.approved == `true`"
+        payload: { summary: "${event.payload.summary}" }
 
-  # 5. Publish. Deterministic, holds the SFTP secret, nothing else does.
+  # 5. Publish what was pushed. Deterministic, holds the SFTP secret, nothing else does.
   - name: publish_site
-    trigger:
-      kind: event
-      type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
+    trigger: { kind: event, type: site.change_pushed }
     concurrency: 1
     action:
       kind: shell
@@ -276,8 +281,8 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `update_event_list` | Sonnet at low effort, 20 tool calls, $0.50, one file in scope, `npm run build` the only command | a routine edit needs little intelligence and a tight surface; the build gate proves it did not break anything |
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
-| `approve_general_change` | ask, wait, push | the gate is configuration, so routine changes skip it and big ones cannot |
-| `publish_site` | shell, holds the SFTP password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
+| `approve_general_change` | ask, wait, push, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
+| `publish_site` | shell on `site.change_pushed`, holds the SFTP password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
 | `notify` | one task on failures, the budget event and the one success | you hear about everything without a loop |
 
 Both agent tasks are the same action kind with different `model`, `effort`,
@@ -287,7 +292,10 @@ and the push happens only after you approve.
 
 A `blocked` result is a success for the run, not a failure: the agent did its job by
 saying what is missing, and the `site.change_blocked` event carries that to the reply
-task. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
+task. A rejected approval also succeeds, with the push skipped. That is why
+`publish_site` triggers on `site.change_pushed`, which only a `done` result or an
+approval emits, and not on `task.<name>.succeeded`, which both tasks publish whatever
+the outcome. A real failure (over budget, a refused tool call, no RESULT.json after a retry)
 reaches you through `task.*.failed` on chat.
 
 ## Adapt it to your site

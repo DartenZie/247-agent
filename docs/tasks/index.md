@@ -61,7 +61,7 @@ Every task publishes a lifecycle event after each run, without any `emit` rule:
 
 | Event | When | Payload |
 |---|---|---|
-| `task.<name>.succeeded` | the run succeeded | the action's result |
+| `task.<name>.succeeded` | the run succeeded | `{ run_id, task, result }`, with the action's result in `result` |
 | `task.<name>.failed` | the run failed, once, after the last attempt | `{ run_id, task, error, attempt }` |
 
 Other tasks listen on these to chain work ("publish after the build succeeded") or to

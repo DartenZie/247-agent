@@ -147,6 +147,9 @@ action:
     - shell: ["npm", "run", "build"]
     - shell: ["git", "commit", "-am", "events: ${result.summary}"]
 emit:
+  - type: site.change_done              # route approval or publishing on this, never on task.<name>.succeeded
+    when: "result.status == 'done'"
+    payload: { summary: "${result.summary}" }
   - type: site.change_blocked           # the agent could not do it: say what is missing
     when: "result.status == 'blocked'"
     payload: { summary: "${result.summary}", missing: "${result.missing}", email: "${event.payload.email}" }
@@ -172,7 +175,7 @@ Non-negotiables, because they are what make an agent safe to run unattended:
   `status: done | blocked` plus `summary`, then the task's `result.schema`. `done` runs
   the gates; `blocked` skips them and the run still succeeds, so `emit … when:
   "result.status == 'blocked'"` routes "not done because X is missing" to a reply task.
-  Design every agent task with both branches.
+  Design every agent task with both branches, and trigger publishing on the `done` event.
 - **`post` gates are deterministic**, no model. A failing gate fails the run.
 - **`max_tool_calls` and `budget` are hard stops** (the session is cancelled); a turn the
   agent does not report usage or cost for fails the run.

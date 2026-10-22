@@ -54,7 +54,8 @@ tasks:
 
   # 3. Routine change: an ACP agent (connectors.d/claude.yaml), narrow scope, few tool calls.
   #    The agent ends with RESULT.json {status: done|blocked, summary, ...}; `done` runs the
-  #    post gates and publishes, `blocked` skips them and the editor gets a reply (task 3b).
+  #    post gates and emits site.change_pushed (task 5 publishes), `blocked` skips them and
+  #    the editor gets a reply (task 3b). Both succeed, so routing reads result.status.
   - name: update_event_list
     trigger:
       kind: event
@@ -87,6 +88,9 @@ tasks:
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
         - shell: ["git", "push", "origin", "HEAD:main"]
     emit:
+      - type: site.change_pushed
+        when: "result.status == 'done'"
+        payload: { summary: "${result.summary}" }
       - type: site.change_blocked
         when: "result.status == 'blocked'"
         payload:
@@ -153,7 +157,8 @@ tasks:
           missing: ${result.missing}
           email: ${event.payload.email}
 
-  # 4b. Approval gate via chat. No LLM.
+  # 4b. Approval gate via chat. No LLM. A rejection skips the push and still succeeds,
+  #     so only an approval emits site.change_pushed.
   - name: approve_general_change
     trigger: { kind: event, type: site.change_ready }
     action:
@@ -173,12 +178,14 @@ tasks:
           when: "steps[1].payload.approved == `true`"
           cwd: ${event.payload.worktree}
           cmd: ["git", "push", "origin", "HEAD:main"]
+    emit:
+      - type: site.change_pushed
+        when: "result.steps[1].payload.approved == `true`"
+        payload: { summary: "${event.payload.summary}" }
 
-  # 5. Publish. Deterministic, holds the FTP secret, nothing else does.
+  # 5. Publish what was pushed. Deterministic, holds the FTP secret, nothing else does.
   - name: publish_site
-    trigger:
-      kind: event
-      type_any: [task.update_event_list.succeeded, task.approve_general_change.succeeded]
+    trigger: { kind: event, type: site.change_pushed }
     concurrency: 1
     action:
       kind: shell

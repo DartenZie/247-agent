@@ -170,8 +170,8 @@ mutates `ctx.resume`, which every attempt shares. A retry of an attempt that nev
 every `emit` rule and every `state_updates` value **before** opening the transaction;
 a rule that cannot be rendered turns the outcome into a non-retryable failure, so only
 `task.<name>.failed` is published and nothing else is emitted. Then, in one
-transaction: the run's status, the `state_updates`, `task.<name>.succeeded` (payload =
-the result) and the emitted events.
+transaction: the run's status, the `state_updates`, `task.<name>.succeeded` (payload
+`{run_id, task, result}`) and the emitted events.
 
 - `each` must be a single `${…}` (`config/schema.ts`); it renders to an array, one
   event per `item`; `null` emits nothing; anything else fails.
