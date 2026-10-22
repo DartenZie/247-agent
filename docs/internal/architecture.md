@@ -117,8 +117,8 @@ deleted when the run finishes. A wait outlives restarts because it is a row.
 A run's first attempt pins the task definition it starts with to `runs.config`; every
 later attempt and every resume after a wait runs under that copy, also after a restart,
 so a reload changes only runs not yet started and a saved step index always matches the
-steps it was saved for. A run whose task a reload removed still fails as no longer
-configured. The pin is cleared when the run finishes.
+steps it was saved for. A run whose task a reload removed fails: as no longer
+configured when it next runs, or as interrupted when a restart comes first. The pin is cleared when the run finishes.
 
 Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* → `succeeded` or
 `failed`. `cancelled` is in the schema and accepted as a filter, but no code path sets

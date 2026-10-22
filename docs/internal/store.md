@@ -9,7 +9,7 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order and set `PRAGMA user_version` to the number applied;
-eight ship, so a current database reads `user_version = 8`. `store.transaction(fn)` is
+nine ship, so a current database reads `user_version = 9`. `store.transaction(fn)` is
 `BEGIN IMMEDIATE`, which takes the write lock up front so a batch never deadlocks against
 a reader that wants to write.
 
