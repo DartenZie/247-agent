@@ -52,8 +52,8 @@ Copy the shape that fits; all of these validate and run today unless marked.
 ```
 
 The publisher is the only task holding the deploy secret. A mirror is idempotent, so a
-retry is safe. `site.change_pushed` comes from `emit` rules with a `when` on the outcome
-(`result.status == 'done'` on the agent task, the approval on the gate), never from
+retry is safe. `site.change_pushed` comes from the task that pushes (a push task after the agent's
+`done`, the push step after an approval), never from
 `task.<name>.succeeded`: a `blocked` agent result and a rejected approval both succeed.
 
 ## Notify on any failure

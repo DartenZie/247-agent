@@ -233,6 +233,11 @@ const updateEventList = {
     result: 'json_stdout',
   },
 };
+/** 3a. The example's push task with its routing, the push replaced by an echo. */
+const pushEventList = {
+  ...fromExample('push_event_list'),
+  action: { kind: 'shell', cmd: ['echo', 'git push origin HEAD:main'] },
+};
 /** 3b. `reply_blocked` verbatim from the example, so its `send` args meet the connector's rules. */
 const replyBlocked = fromExample('reply_blocked');
 /** 8. `email_digest` verbatim from the email example, manual instead of its weekday cron. */
@@ -250,7 +255,9 @@ const inline = (parse(TASKS_INLINE) as { tasks: Task[] }).tasks.map((t) =>
       ? { ...t, trigger: fromExample(t.name).trigger }
       : t,
 );
-const TASKS = stringify({ tasks: [...inline, updateEventList, replyBlocked, emailDigest] });
+const TASKS = stringify({
+  tasks: [...inline, updateEventList, pushEventList, replyBlocked, emailDigest],
+});
 
 let dir: string;
 let daemon: Daemon;

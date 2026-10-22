@@ -57,11 +57,12 @@ afterEach(async () => {
 const started = () => core.store.runs.listByStatus('running').map((r) => r.task);
 
 describe('createCore with the reference workflow', () => {
-  it('arms the cron task and loads all eight tasks', () => {
+  it('arms the cron task and loads all nine tasks', () => {
     expect(core.config().tasks.map((t) => t.name)).toEqual([
       'fetch_email',
       'classify_email',
       'update_event_list',
+      'push_event_list',
       'reply_blocked',
       'update_site_general',
       'approve_general_change',
@@ -124,14 +125,14 @@ describe('createCore with the reference workflow', () => {
 
   it('publishes a pushed change, not a bare task success', () => {
     core.bus.publish({
-      type: 'task.update_event_list.succeeded',
-      source: taskSource('update_event_list'),
+      type: 'task.push_event_list.succeeded',
+      source: taskSource('push_event_list'),
     });
     core.bus.dispatcher.drain();
     expect(started()).toEqual([]);
     core.bus.publish({
       type: 'site.change_pushed',
-      source: taskSource('update_event_list'),
+      source: taskSource('push_event_list'),
     });
     core.bus.dispatcher.drain();
     expect(started()).toEqual(['publish_site']);
@@ -148,7 +149,7 @@ describe('createCore with the reference workflow', () => {
     writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
     const bad = await core.reload();
     expect(bad.ok).toBe(false);
-    expect(core.config().tasks).toHaveLength(8);
+    expect(core.config().tasks).toHaveLength(9);
     expect(lines.find((l) => l.msg === 'core.config_invalid')).toBeDefined();
 
     writeFileSync(
@@ -207,7 +208,7 @@ describe('createCore with the reference workflow', () => {
   it('dispatches a backlog left from before a restart', async () => {
     core.bus.publish({
       type: 'site.change_pushed',
-      source: taskSource('update_event_list'),
+      source: taskSource('push_event_list'),
     });
     await core.stop(); // before the wake ran
     core = createCore({
@@ -219,6 +220,66 @@ describe('createCore with the reference workflow', () => {
     });
     await core.start();
     expect(started()).toEqual(['publish_site']);
+  });
+
+  it('publishes a change pushed just before a restart', async () => {
+    // A fake `main`: the agent and the shell runner push to it as the example's argv say,
+    // and a push hangs until the core stops, as if the daemon died right after it.
+    const main = { changed: false };
+    let dying = true;
+    const isPush = (argv: unknown) => Array.isArray(argv) && argv.includes('push');
+    const push = (ctx: Parameters<ActionRunner>[1]) => {
+      main.changed = true;
+      return dying ? hang(undefined, ctx) : Promise.resolve('');
+    };
+    const runners: ActionRunners = {
+      ...hangAll,
+      connector: () => Promise.resolve(null),
+      // A fresh worktree from `main` already has a pushed change: nothing to commit.
+      agent: async (action, ctx) => {
+        for (const gate of (action as { post?: { shell: string[] }[] }).post ?? []) {
+          if (gate.shell.includes('commit') && main.changed) {
+            throw new Error('post[1] (git commit) failed: nothing to commit');
+          }
+          if (isPush(gate.shell)) {
+            await push(ctx);
+          }
+        }
+        return { status: 'done', summary: 'spring event' };
+      },
+      shell: (action, ctx) =>
+        isPush((action as { cmd: unknown }).cmd) ? push(ctx) : Promise.resolve(''),
+    };
+    const boot = async () => {
+      await core.stop();
+      core = createCore({
+        tasksFiles: [join(dir, 'tasks.yaml')],
+        dbPath: join(dir, 'state.db'),
+        log: createLogger({ sink: () => undefined }),
+        runners,
+        secrets: staticSecrets({ ftp_pass: 'x' }),
+      });
+      await core.start();
+    };
+    await boot();
+    core.bus.publish({
+      type: 'email.classified',
+      source: 'test',
+      payload: { kind: 'event_list_update', summary: 'spring event', email: {} },
+    });
+    for (let i = 0; i < 100 && !main.changed; i++) {
+      core.bus.dispatcher.drain();
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(main.changed).toBe(true);
+
+    dying = false;
+    await boot();
+    for (let i = 0; i < 5; i++) {
+      core.bus.dispatcher.drain();
+      await core.executor.idle();
+    }
+    expect(core.store.runs.listByStatus('succeeded').map((r) => r.task)).toContain('publish_site');
   });
 
   it('refuses to start on invalid config', async () => {
