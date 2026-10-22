@@ -153,6 +153,18 @@ export class NonRetryableError extends Error {
   }
 }
 
+/**
+ * The action may have had its effect, or may still be having it, but no answer came: a
+ * connector op past its timeout or whose connector exited mid-call. Never retried, even
+ * when the attempt timed out, since a retry could repeat a side effect such as a sent mail.
+ */
+export class OutcomeUnknownError extends NonRetryableError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'OutcomeUnknownError';
+  }
+}
+
 export function isRetryable(err: unknown): boolean {
   return !(err instanceof Error && 'retryable' in err && err.retryable === false);
 }

@@ -48,11 +48,17 @@ string otherwise.
 | the operation reported an error (a bad path, a rejected request, an API error) | the run fails with the connector's error text, without retry |
 | `op` is not in the manifest's `ops` list | the run fails without retry |
 | `connector` names no manifest | the run fails without retry |
-| the call takes longer than `timeout` | the attempt fails and is retried |
+| no answer came: the call took longer than `timeout`, the task's `timeout` cut it off, or the connector exited mid-call | the run fails without retry |
 
 Operation errors are deliberately not retried: a path that does not exist or a request
 the API rejected will not succeed on a second try, and some operations, such as
 sending a message, must not run twice.
+
+A call that got no answer is not retried for the same reason. The connector may have
+finished the operation, or may still be running it, so a second call could send the
+mail twice or run two syncs on the same folder. The error ends with `it may have taken
+effect, so it is not retried`. Check the remote side, then replay the event if the
+operation did not happen.
 
 > [!TIP]
 > The manifest's `ops` list is a boundary, not just documentation. Give an agent a copy
@@ -62,7 +68,8 @@ sending a message, must not run twice.
 ## Timeout
 
 `timeout` bounds one call; the default is 60 seconds. The task's own `timeout` still
-bounds the whole attempt.
+bounds the whole attempt. Set it longer than the slowest call you expect: a call that
+runs past it fails the run without retry (see [Failures](#failures)).
 
 ```yaml
 action:
