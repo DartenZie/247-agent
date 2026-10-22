@@ -372,6 +372,10 @@ export class Metrics {
     'Retention passes, by result (ok, failed)',
     ['result'],
   );
+  readonly retentionWorkspacesKept = this.registry.gauge(
+    'oa_retention_workspaces_kept',
+    'Workspaces past retention.workspaces that the last retention pass kept because they hold commits not pushed yet',
+  );
   readonly retentionLastSuccess = this.registry.gauge(
     'oa_retention_last_success_timestamp_seconds',
     'Unix time of the last completed retention pass',

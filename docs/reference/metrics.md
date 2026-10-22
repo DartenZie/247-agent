@@ -64,6 +64,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_sandbox_net_requests_total` | counter | `connector`, `result` (`allowed`, `denied`, `failed`, `dropped`) | what sandboxed agent programs asked their network allowlist proxy for |
 | `oa_retention_deleted_total` | counter | `kind` (`events`, `runs`, `ledger`, `transcripts`, `workspaces`) | rows and directories removed by retention |
 | `oa_retention_runs_total` | counter | `result` (`ok`, `failed`) | retention passes |
+| `oa_retention_workspaces_kept` | gauge | | workspaces past `retention.workspaces` that the last retention pass kept because they hold commits not pushed yet |
 | `oa_retention_last_success_timestamp_seconds` | gauge | | Unix time of the last completed retention pass |
 | `oa_db_size_bytes` | gauge, at scrape | | size of the SQLite database |
 | `oa_api_requests_total` | counter | `method`, `status` | API requests |

@@ -186,8 +186,9 @@ Layers, each one assuming the one before it can fail
    or deploys on its own. A gate runs as the daemon in a directory the agent wrote, so
    the daemon takes nothing executable from it that the operator did not name: git
    hooks and `core.fsmonitor` are off for every git the daemon runs there and for the
-   cleanup of the workspace, and a replaced `.git` pointer fails the run before the
-   gates. A gate whose command executes project code by design (`npm test`) runs what
+   cleanup of the workspace, the retention check for unpushed commits runs with
+   `GIT_NO_LAZY_FETCH=1` so no promisor remote the agent configured is fetched, and a
+   replaced `.git` pointer fails the run before the gates. A gate whose command executes project code by design (`npm test`) runs what
    the agent left; the documentation tells the operator to sandbox such gates when the
    agent works on untrusted content.
 5. Hard stops: `max_tool_calls`, `budget.max_usd`, the task `timeout`, the daily cap.

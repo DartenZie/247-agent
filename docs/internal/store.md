@@ -104,9 +104,11 @@ the write lock for long. The order and the conditions:
    program homes under `<work_dir>/home/`, are left alone. So is a git worktree whose
    `agent/<run_id>` branch holds a commit that no other branch, remote-tracking branch
    or tag holds (`unpushedCommits`, `rev-list --count`): a later run may still push it
-   (`push_event_list` in the reference workflow). Each pass logs it as
-   `retention.workspace_kept` (warn, `reason: unpushed`) until the commit is pushed or
-   the branch reset.
+   (`push_event_list` in the reference workflow). A `rev-list` that fails for any reason
+   but a missing branch keeps the directory too (`reason: unknown`): the sweep fails
+   closed. Each pass logs a kept worktree as `retention.workspace_kept` (warn) and sets
+   `oa_retention_workspaces_kept` to how many it kept, until the commit is pushed or the
+   branch reset.
 
 Counts go to `retention.purged` (info when anything was deleted) and to
 `oa_retention_deleted_total{kind}`; a throwing pass logs `retention.failed` and leaves

@@ -217,33 +217,41 @@ function worktreeGitDir(path: string): string | undefined {
 /**
  * The number of commits on the `agent/<run_id>` branch of a git worktree at `entry.path`
  * that no other branch, remote-tracking branch or tag holds: a change committed in the
- * workspace and not pushed yet. Zero for a `temp` workspace, and when git cannot tell (the
- * branch is gone).
+ * workspace and not pushed yet. Zero for a `temp` workspace and when the branch is gone;
+ * undefined when git cannot tell, which the sweep treats as unpushed.
  */
 export async function unpushedCommits(
   entry: WorkspaceEntry,
   env: Readonly<Record<string, string>>,
-): Promise<number> {
+): Promise<number | undefined> {
   const gitDir = worktreeGitDir(entry.path);
   if (gitDir === undefined) {
     return 0;
   }
   const branch = `agent/${entry.runId}`;
-  const out = await git(
-    [
-      `--git-dir=${gitDir}`,
-      'rev-list',
-      '--count',
-      `refs/heads/${branch}`,
-      '--not',
-      `--exclude=${branch}`,
-      '--branches',
-      '--remotes',
-      '--tags',
-    ],
-    env,
-  ).catch(() => '0');
-  return Number.parseInt(out, 10) || 0;
+  // The git directory comes from a `.git` the agent can write: never fetch missing
+  // objects from a promisor remote it configured.
+  const inRepo = (args: string[]): Promise<string> =>
+    git([`--git-dir=${gitDir}`, ...args], { ...env, GIT_NO_LAZY_FETCH: '1' });
+  const exists = await inRepo(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).then(
+    () => true,
+    () => false,
+  );
+  if (!exists) {
+    return 0;
+  }
+  const out = await inRepo([
+    'rev-list',
+    '--count',
+    `refs/heads/${branch}`,
+    '--not',
+    `--exclude=${branch}`,
+    '--branches',
+    '--remotes',
+    '--tags',
+  ]).catch(() => undefined);
+  const count = out === undefined ? Number.NaN : Number.parseInt(out, 10);
+  return Number.isNaN(count) ? undefined : count;
 }
 
 /**

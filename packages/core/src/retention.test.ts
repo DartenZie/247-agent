@@ -164,14 +164,17 @@ describe('RetentionJob', () => {
     git(ws, 'commit', '-q', '-am', 'change');
     run('run_WT', 'succeeded', ago(10));
 
-    const kept = await job(workDir).run();
+    const metrics = new Metrics();
+    const kept = await job(workDir, metrics).run();
     expect(kept?.workspaces).toBe(0);
+    expect(metrics.registry.value('oa_retention_workspaces_kept')).toBe(1);
     expect(existsSync(ws)).toBe(true);
     expect(git(repo, 'branch', '--list', 'agent/run_WT')).not.toBe('');
     expect(lines.find((l) => l.msg === 'retention.workspace_kept')).toMatchObject({
       run_id: 'run_WT',
       path: ws,
       reason: 'unpushed',
+      commits: 1,
     });
 
     git(ws, 'push', '-q', 'origin', 'HEAD:main');
@@ -179,6 +182,36 @@ describe('RetentionJob', () => {
     expect(swept?.workspaces).toBe(1);
     expect(existsSync(ws)).toBe(false);
     expect(git(repo, 'branch', '--list', 'agent/run_WT')).toBe('');
+  });
+
+  it('keeps a git worktree when git cannot count its unpushed commits', async () => {
+    const repo = join(dir, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]): string => execaSync('git', args, { cwd }).stdout;
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 't');
+    git(repo, 'config', 'user.email', 't@x');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    const workDir = join(dir, 'work');
+    mkdirSync(workDir);
+    const ws = join(workDir, 'run_WT');
+    git(repo, 'worktree', 'add', '-q', '-B', 'agent/run_WT', ws, 'main');
+    writeFileSync(join(ws, 'a.txt'), 'two\n');
+    git(ws, 'commit', '-q', '-am', 'change');
+    // A missing object makes the walk fail: the base commit is gone from the store.
+    const base = git(repo, 'rev-parse', 'main');
+    rmSync(join(repo, '.git', 'objects', base.slice(0, 2), base.slice(2)));
+    run('run_WT', 'succeeded', ago(10));
+
+    const report = await job(workDir).run();
+    expect(report?.workspaces).toBe(0);
+    expect(existsSync(ws)).toBe(true);
+    expect(lines.find((l) => l.msg === 'retention.workspace_kept')).toMatchObject({
+      run_id: 'run_WT',
+      reason: 'unknown',
+    });
   });
 
   it('does nothing to workspaces without a work dir, runs on start and stops cleanly', async () => {

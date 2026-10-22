@@ -133,7 +133,7 @@ price on an `anthropic` or `openai` provider fails `oa validate`.
 | `retention.events` | How long a dispatched event is kept once no kept run or wait references it. A duration or `never`. | `90d` |
 | `retention.runs` | How long a finished run is kept, with its ledger rows and transcript. A duration of at least `1d`, or `never`. | `90d` |
 | `retention.ledger` | How long the ledger rows of finished runs are kept. At least `1d`; it cannot exceed `runs`. | the value of `runs` |
-| `retention.workspaces` | How long the `<work_dir>/<run_id>` directory of a finished run is kept. | `7d` |
+| `retention.workspaces` | How long the `<work_dir>/<run_id>` directory of a finished run is kept. A git worktree with a commit not pushed yet is kept longer, until the commit is pushed or its branch reset. | `7d` |
 | `retention.interval` | How often the retention pass runs. It also runs once at start. | `1h` |
 
 Active runs, their events and their workspaces are never deleted, whatever the

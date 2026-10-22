@@ -54,6 +54,9 @@ oa_connector_up == 0
 # something has been waiting for an approval for more than a day
 oa_runs_waiting > 0   # then look at oa runs ls --status waiting
 
+# a committed change was never pushed: push it or reset its branch
+oa_retention_workspaces_kept > 0   # then look for retention.workspace_kept in the log
+
 # an agent keeps asking for a host you did not allow
 increase(oa_sandbox_net_requests_total{result="denied"}[1h]) > 0
 ```
@@ -99,7 +102,9 @@ only for finished runs:
    run or wait refers to, so a kept run always keeps the event that triggered it;
 4. agent workspaces under `work/` whose run finished longer ago than
    `retention.workspaces`, and directories with no run at all that old; a git worktree
-   is detached from its repository and its `agent/<run_id>` branch deleted.
+   is detached from its repository and its `agent/<run_id>` branch deleted. A worktree
+   whose branch holds a commit not pushed yet is kept instead and counted in
+   `oa_retention_workspaces_kept` (see [the agent action](../tasks/agent.md)).
 
 ```yaml
 retention: { events: 90d, runs: 90d, ledger: 90d, workspaces: 7d, interval: 1h }   # the defaults
