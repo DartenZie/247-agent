@@ -144,8 +144,9 @@ durations.
 `oa reload` (or `systemctl reload 247-agent`) re-reads this file, every manifest and
 every tasks file and applies them together, or not at all when any file is invalid.
 Every key applies live, with three exceptions: a changed `db`, `socket` or `secrets`
-is reported as requiring a restart, and the running values stay. Runs already in
-flight finish under the settings they started with. A changed `defaults.agent.work_dir`
+is reported as requiring a restart, and the running values stay. A run already in
+flight finishes under the task definition it started with; the `defaults` apply to it
+the next time it starts or resumes. A changed `defaults.agent.work_dir`
 respawns every sandboxed agent program, since the sandbox mounts that directory.
 
 ## Relative paths

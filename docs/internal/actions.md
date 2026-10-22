@@ -176,7 +176,9 @@ attempt of the run the same `ctx.resume`; the runner takes whichever of `ctx.res
 and `ctx.progress` is further along, and on a tie the wait's outcome. The runner copies
 the checkpoint's `steps` and never mutates `ctx.resume`, which every attempt shares. A
 retry of an attempt that finished no step starts at step 0. A step that finished but
-whose progress was not yet saved when the daemon died runs again.
+whose progress was not yet saved when the daemon died runs again. Every attempt and
+resume runs under the steps the run started with (`runs.config`, see
+[`architecture.md`](architecture.md)), so a reload cannot shift a saved index.
 
 ## Routing: `emit` and `state_updates`
 

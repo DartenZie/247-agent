@@ -147,7 +147,9 @@ the manifests and the tasks files and applies them together or not at all:
    (`core.config_reloaded`), then the log level is re-applied (`--log-level` keeps
    winning over the file) and `daemon.reloaded` logged.
 
-Runs in flight finish under the settings they started with. Reloads are serialised.
+A run in flight finishes under the task definition it started with, also across waits,
+retries and restarts (`runs.config`); the executor's defaults (`timeout`, `retry`,
+`sandbox`) apply whenever it next starts or resumes. Reloads are serialised.
 The report (`ReloadReport`) is what `POST /v1/reload` returns, always with status 200.
 
 The `configure()` seams, and what each one takes:

@@ -131,6 +131,11 @@ export const MIGRATIONS: readonly string[] = [
   -- or a recovery does not repeat a finished step; cleared when the run finishes.
   ALTER TABLE runs ADD COLUMN progress TEXT;
   `,
+  `
+  -- The task definition the run's first attempt started with; later attempts and resumes
+  -- run under it, so a reload never changes a run in flight. Cleared when the run finishes.
+  ALTER TABLE runs ADD COLUMN config TEXT;
+  `,
 ];
 
 export function migrate(db: Database): void {

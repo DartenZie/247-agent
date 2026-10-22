@@ -5,11 +5,12 @@ import { ACTIVE_STATUSES, type JsonValue, type RunRecord, type RunStatus } from 
 interface RunRow extends Omit<RunRecord, 'result'> {
   result: string | null;
   progress: string | null;
+  config: string | null;
 }
 
 function rowToRun(row: unknown): RunRecord {
-  // `progress` is the runner's private data, read through `progress()` only.
-  const { progress: _progress, ...r } = row as RunRow;
+  // `progress` and `config` are the executor's, read through `progress()` and `config()` only.
+  const { progress: _progress, config: _config, ...r } = row as RunRow;
   return { ...r, result: r.result === null ? null : (JSON.parse(r.result) as JsonValue) };
 }
 
@@ -48,6 +49,8 @@ export class RunStore {
   private readonly deleteStmt: Statement;
   private readonly progressStmt: Statement;
   private readonly setProgressStmt: Statement;
+  private readonly configStmt: Statement;
+  private readonly setConfigStmt: Statement;
 
   constructor(db: Database) {
     this.db = db;
@@ -81,6 +84,8 @@ export class RunStore {
     this.deleteStmt = db.prepare('DELETE FROM runs WHERE id = ?');
     this.progressStmt = db.prepare('SELECT progress FROM runs WHERE id = ?');
     this.setProgressStmt = db.prepare('UPDATE runs SET progress = ? WHERE id = ?');
+    this.configStmt = db.prepare('SELECT config FROM runs WHERE id = ?');
+    this.setConfigStmt = db.prepare('UPDATE runs SET config = ? WHERE id = ?');
   }
 
   /** Inserts a `queued` run. Returns false when `(task, event_id)` already has one. */
@@ -136,6 +141,17 @@ export class RunStore {
   /** Records how far the run's action got; `null` clears it. */
   setProgress(id: string, progress: JsonValue | null): void {
     this.setProgressStmt.run(progress === null ? null : JSON.stringify(progress), id);
+  }
+
+  /** The task definition the run was pinned to with `setConfig`; `undefined` when none. */
+  config(id: string): unknown {
+    const row = this.configStmt.get(id) as { config: string | null } | undefined;
+    return row?.config == null ? undefined : (JSON.parse(row.config) as unknown);
+  }
+
+  /** Pins the task definition the run runs under; `null` clears it. */
+  setConfig(id: string, config: object | null): void {
+    this.setConfigStmt.run(config === null ? null : JSON.stringify(config), id);
   }
 
   /**
