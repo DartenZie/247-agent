@@ -180,6 +180,8 @@ Ports between the parts, all on `ActionContext` (`actions/types.ts`):
 - `ctx.connectors` (`ConnectorClients`): `call(connector, op, args)` through the
   supervisor's MCP client, with the manifest's `ops` applied.
 - `ctx.suspend`, `ctx.resume`: the wait seam between a runner and the executor.
+- `ctx.saveProgress`, `ctx.progress`: how far an attempt got, kept on the run so the
+  next attempt skips finished work (a sequence's finished steps).
 - `ctx.render`, `ctx.renderText`, `ctx.scope`, `ctx.state`, `ctx.secrets`: templating
   over `{event, result, state, secrets, env, run, item, steps}`.
 - `ctx.transcripts`: where an agent run writes its transcript.

@@ -120,6 +120,13 @@ export interface ActionContext {
   suspend(spec: WaitSpec, resume: JsonValue): Promise<never>;
   /** Set when the run continues after a wait. */
   readonly resume?: ResumeInfo | undefined;
+  /**
+   * Records how far this attempt got, in the store, so the run's next attempt (a retry, or
+   * a recovery after a restart) can skip finished work. A sequence saves after each step.
+   */
+  saveProgress(progress: JsonValue): void;
+  /** What an earlier attempt of this run saved with `saveProgress`. */
+  readonly progress?: JsonValue | undefined;
 }
 
 /**

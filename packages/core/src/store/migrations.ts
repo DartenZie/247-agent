@@ -126,6 +126,11 @@ export const MIGRATIONS: readonly string[] = [
   -- at arming skips them, so one event never ends two waits of a run.
   ALTER TABLE waits ADD COLUMN consumed TEXT NOT NULL DEFAULT '[]';
   `,
+  `
+  -- How far the run's action got (a sequence's next step and earlier results), so a retry
+  -- or a recovery does not repeat a finished step; cleared when the run finishes.
+  ALTER TABLE runs ADD COLUMN progress TEXT;
+  `,
 ];
 
 export function migrate(db: Database): void {

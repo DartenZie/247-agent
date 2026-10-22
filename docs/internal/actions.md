@@ -166,11 +166,17 @@ but still ends a wait.
 `when`; `steps[i]` is the result of step i (`null` when skipped) for later templates
 and `when`s; the run result is `{steps: [...]}`. A `wait` step suspends with
 `{step, steps}`; on resume the runner restarts at that index with the earlier results
-and takes the wait's outcome without waiting again. The executor reads the wait
-record once and hands every attempt of the run the same `ctx.resume`, so a retry after
-a resumed attempt failed starts again at the wait step with the same outcome; steps
-before it are not re-run. The runner copies the checkpoint's `steps` and never
-mutates `ctx.resume`, which every attempt shares. A retry of an attempt that never waited starts at step 0.
+and takes the wait's outcome without waiting again. After each step, skipped or not,
+the runner saves `{step: i + 1, steps}` with `ctx.saveProgress`, which writes
+`runs.progress`; the next attempt of the run (a retry, or a recovery after a restart)
+gets it as `ctx.progress` and starts after the last finished step. A retry therefore
+never repeats a step that finished, which matters for connector ops that are not
+idempotent (`send`, `sync`). The executor reads the wait record once and hands every
+attempt of the run the same `ctx.resume`; the runner takes whichever of `ctx.resume`
+and `ctx.progress` is further along, and on a tie the wait's outcome. The runner copies
+the checkpoint's `steps` and never mutates `ctx.resume`, which every attempt shares. A
+retry of an attempt that finished no step starts at step 0. A step that finished but
+whose progress was not yet saved when the daemon died runs again.
 
 ## Routing: `emit` and `state_updates`
 
@@ -229,7 +235,7 @@ one is `SecretError`, non-retryable, at run time and not at validate time.
 ## Recovery
 
 On start the executor reads runs left `running`: one whose policy allows another
-attempt is re-queued (a sequence continues from its last wait checkpoint), otherwise
+attempt is re-queued (a sequence continues after its last finished step), otherwise
 it is failed as `interrupted: the daemon restarted while the run was in progress`;
 `run.recovered` is logged. `waiting` runs stay waiting; one whose timeout already
 passed ends immediately. A daemon stop during a backoff sleep leaves the run `running`

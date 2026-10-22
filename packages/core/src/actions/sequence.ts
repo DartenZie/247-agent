@@ -31,7 +31,8 @@ export const SequenceStep = z
  * docs/internal/actions.md: a few steps in one run. `steps[i]` in later steps' templates and
  * `when` is the result of step i (`null` when skipped). The run result is `{steps: [...]}`.
  * A `wait` step suspends the whole run; on resume the sequence continues from that step
- * with the earlier results restored, and a retry starts again from that step too.
+ * with the earlier results restored. Each finished step is saved as progress, so a retry
+ * continues after the last step that finished and never repeats a connector op.
  */
 export const SequenceAction = z.strictObject({
   kind: z.literal('sequence'),
@@ -52,17 +53,17 @@ interface Checkpoint {
   steps: JsonValue[];
 }
 
-function checkpointOf(resume: JsonValue): Checkpoint {
+function checkpointOf(data: JsonValue, what: string): Checkpoint {
   if (
-    resume !== null &&
-    typeof resume === 'object' &&
-    !Array.isArray(resume) &&
-    typeof resume.step === 'number' &&
-    Array.isArray(resume.steps)
+    data !== null &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    typeof data.step === 'number' &&
+    Array.isArray(data.steps)
   ) {
-    return { step: resume.step, steps: resume.steps };
+    return { step: data.step, steps: data.steps };
   }
-  throw new NonRetryableError('sequence resume data is corrupt');
+  throw new NonRetryableError(`sequence ${what} data is corrupt`);
 }
 
 export async function runSequence(action: unknown, ctx: ActionContext): Promise<JsonValue> {
@@ -70,10 +71,17 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
   let start = 0;
   let results: JsonValue[] = [];
   let resume = ctx.resume;
-  if (resume !== undefined) {
-    const cp = checkpointOf(resume.resume);
+  const waited = resume === undefined ? undefined : checkpointOf(resume.resume, 'resume');
+  const saved = ctx.progress === undefined ? undefined : checkpointOf(ctx.progress, 'progress');
+  // Progress past the wait means an earlier attempt already took the wait's outcome.
+  const cp =
+    saved !== undefined && (waited === undefined || saved.step > waited.step) ? saved : waited;
+  if (cp !== undefined) {
+    if (cp === saved) {
+      resume = undefined;
+    }
     start = cp.step;
-    // Every attempt gets the same checkpoint; a copy keeps this one's steps out of the next.
+    // Attempts share `ctx.resume` and `ctx.progress`; a copy keeps this one's steps out.
     results = [...cp.steps];
   }
   for (let i = start; i < cfg.steps.length; i++) {
@@ -87,12 +95,16 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
       log: ctx.log.child({ step: index, step_kind: step.kind }),
       suspend: (spec) => ctx.suspend(spec, { step: index, steps: results }),
       resume: resume !== undefined && i === start ? resume : undefined,
+      // The sequence owns the run's progress; a step must not overwrite it.
+      saveProgress: () => undefined,
+      progress: undefined,
     };
     // A resumed wait already passed its `when` before it suspended.
     if (stepCtx.resume === undefined && step.when !== undefined) {
       if (!isJmesTruthy(evaluateExpr(step.when, stepCtx.scope))) {
         stepCtx.log.info('step.skipped');
         results.push(null);
+        ctx.saveProgress({ step: index + 1, steps: results });
         continue;
       }
     }
@@ -102,6 +114,7 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
         ? waitResult(WaitAction.parse(stepAction), stepCtx.resume)
         : await STEP_RUNNERS[step.kind](stepAction, stepCtx);
     results.push(result);
+    ctx.saveProgress({ step: index + 1, steps: results });
     resume = undefined;
   }
   return { steps: results };

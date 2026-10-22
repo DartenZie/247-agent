@@ -58,9 +58,11 @@ remembers which step it reached and the results so far. When the event arrives, 
 after a restart of the daemon, it continues from that step with the matched event as
 its result; the steps before it are not run again.
 
-A retry works the same way: if an attempt fails after the wait was answered, the next
-attempt starts again at the wait step with the same answer, and runs the steps after
-it. An attempt that failed before reaching the wait starts over from the first step.
+A retry works the same way. The sequence records each step that finishes, and the
+next attempt starts at the step that failed, with the earlier results. A step that
+finished is not run again, so a mail that a `send` step sent is not sent twice. A
+retry after a restart of the daemon also starts at the step that failed. If the daemon
+stops after a step finishes but before the sequence records it, that step runs again.
 
 > [!TIP]
 > Keep sequences short and local. Anything another workflow might want to observe or
