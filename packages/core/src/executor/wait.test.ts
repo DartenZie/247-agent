@@ -137,6 +137,8 @@ const tasks = config([
 let env: TestEnv;
 let bus: EventBus;
 let executor: Executor | undefined;
+/** What the executor and the dispatcher read as the current config; a reload replaces it. */
+let current = tasks;
 /** Every `send` the fake mail connector took, in order. */
 let sent: Record<string, JsonValue>[];
 
@@ -153,6 +155,7 @@ beforeEach(() => {
   sent = [];
   env = testEnv();
   bus = createBus({ store: env.store, clock: env.clock, log: env.log });
+  current = tasks;
   bus.dispatcher.setConfig(tasks);
 });
 afterEach(async () => {
@@ -167,7 +170,7 @@ function make(): Executor {
     bus,
     clock: env.clock,
     log: env.log,
-    config: () => tasks,
+    config: () => current,
     runners: { shell: runShell, wait: runWait, sequence: runSequence },
     connectors: mail,
     defaultRetry: Retry.parse({}),
@@ -431,6 +434,62 @@ describe('a retry after a later step failed (#189)', () => {
     const run = runOf('send_then_fail_slow', trigger);
     expect(run?.status).toBe('succeeded');
     expect(run?.attempt).toBe(2);
+    expect(sent).toHaveLength(1);
+  });
+});
+
+/** Reloads `current` with `task`'s steps replaced. */
+function reload(task: string, steps: unknown[]): void {
+  current = config(
+    tasks.tasks.map((t) =>
+      t.name === task ? { ...t.config, action: { kind: 'sequence', steps } } : t.config,
+    ),
+  );
+  bus.dispatcher.setConfig(current);
+}
+
+describe('a reload while a run is in flight (#38)', () => {
+  it('resumes a waiting run under the steps it started with', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = await askAndSuspend(ex);
+    const [ask, ...rest] = gateSteps('1h');
+    reload('gate', [ask, { kind: 'shell', cmd: ['echo', 'INSERTED STEP'] }, ...rest]);
+
+    publish('chat.reply', { correlation_id: trigger.correlation_id, approved: true, text: 'y' });
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(runOf('gate', trigger)).toMatchObject({
+      status: 'succeeded',
+      result: {
+        steps: [
+          'asked ok?',
+          expect.objectContaining({ type: 'chat.reply' }),
+          'pushed after y (asked ok?)',
+        ],
+      },
+    });
+  });
+
+  it('retries a recovered run under the steps it started with', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.send_then_fail_slow');
+    bus.dispatcher.drain();
+    await vi.waitFor(() => {
+      expect(runOf('send_then_fail_slow', trigger)?.error).not.toBeNull();
+    });
+    await ex.stop();
+    reload('send_then_fail_slow', [{ kind: 'shell', cmd: ['echo', 'INSERTED STEP'] }]);
+
+    const next = make();
+    next.start();
+    await next.idle();
+    expect(runOf('send_then_fail_slow', trigger)).toMatchObject({
+      status: 'succeeded',
+      attempt: 2,
+      result: { steps: [{ id: 'msg-1' }, ''] },
+    });
     expect(sent).toHaveLength(1);
   });
 });

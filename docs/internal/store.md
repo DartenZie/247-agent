@@ -30,12 +30,15 @@ queries.
 **`runs`**: `id TEXT PRIMARY KEY`, `task`, `event_id REFERENCES events(id)`,
 `correlation_id`, `status` with a CHECK on the six statuses, `attempt INTEGER DEFAULT
 0`, `created_at`, `started_at`, `finished_at`, `result TEXT` (JSON), `error TEXT`,
-`progress TEXT` (the runner's private JSON, cleared when the run finishes),
+`progress TEXT` (the runner's private JSON, cleared when the run finishes), `config
+TEXT` (the task definition the run's first attempt started with, as JSON; cleared when
+the run finishes),
 `UNIQUE (task, event_id)`. Indexes `runs_task_status(task, status)`,
 `runs_status_created(status, created_at)`, `runs_event(event_id)`. Inserted by the
-dispatcher as `queued`; status, attempt, timings, result, error and progress written by
-the executor. `RunRecord` leaves `progress` out; the executor reads it with
-`runs.progress(id)` and hands it to the next attempt.
+dispatcher as `queued`; status, attempt, timings, result, error, progress and config written by
+the executor. `RunRecord` leaves `progress` and `config` out; the executor reads them
+with `runs.progress(id)` and `runs.config(id)`, hands the progress to the next attempt
+and runs every attempt under the config.
 
 **`cursors`**: `name TEXT PRIMARY KEY`, `seq INTEGER`; seeded with `('dispatch', 0)`.
 The dispatcher's position.

@@ -16,10 +16,16 @@ import {
 import type { SandboxConfig, SandboxHost } from '../actions/sandbox.js';
 import { eventView } from '../actions/wait.js';
 import type { EventBus } from '../bus/bus.js';
-import { MANUAL_RUN, taskSource, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
+import {
+  compileTask,
+  MANUAL_RUN,
+  taskSource,
+  type CompiledConfig,
+  type CompiledTask,
+} from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
-import { Retry, type EmitRuleConfig, type RetryConfig } from '../config/schema.js';
+import { Retry, type EmitRuleConfig, type RetryConfig, type TaskConfig } from '../config/schema.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
 import { newId } from '../ids.js';
 import {
@@ -326,7 +332,7 @@ export class Executor {
       if (this.inFlight.has(run.id)) {
         continue; // ours: start() after stop() in the same process
       }
-      const task = config.byName.get(run.task);
+      const task = this.pinned(run, config.byName.get(run.task));
       const log = this.log.child(runFields(run));
       if (task !== undefined && run.attempt < this.retryFor(task).attempts) {
         log.warn('run.recovered', { attempt: run.attempt });
@@ -405,6 +411,19 @@ export class Executor {
     return { pending: this.pending.length, in_flight: this.inFlight.size };
   }
 
+  /**
+   * The task a run runs under: the definition its first attempt started with, so a reload
+   * changes only runs not yet started (#38). `undefined` when the task is no longer
+   * configured.
+   */
+  private pinned(run: RunRecord, task: CompiledTask | undefined): CompiledTask | undefined {
+    if (task === undefined) {
+      return undefined;
+    }
+    const config = this.store.runs.config(run.id);
+    return config === undefined ? task : compileTask(config as TaskConfig);
+  }
+
   private retryFor(task: CompiledTask | undefined): RetryConfig {
     return task?.config.retry ?? this.defaultRetry;
   }
@@ -430,8 +449,9 @@ export class Executor {
     }
   }
 
-  private async execute(run: RunRecord, task: CompiledTask | undefined): Promise<void> {
+  private async execute(run: RunRecord, current: CompiledTask | undefined): Promise<void> {
     const log = this.log.child(runFields(run));
+    const task = this.pinned(run, current);
     const slot: Slot = { stop: new AbortController() };
     this.inFlight.set(run.id, slot);
     this.perTask.set(run.task, (this.perTask.get(run.task) ?? 0) + 1);
@@ -447,6 +467,10 @@ export class Executor {
       // What the previous attempt failed with (from the store after a recovery), handed to
       // the runner as `ctx.run.error` so an `agent` retry can tell the agent (§10).
       let lastError = attempt > 1 ? run.error : null;
+      // Not pinned yet: this is the run's first start, so pin what it starts with.
+      if (task !== undefined && task === current) {
+        this.store.runs.setConfig(run.id, task.config);
+      }
       for (;;) {
         const current: RunRecord = { ...run, attempt, status: 'running', error: lastError };
         this.store.runs.setStatus(run.id, 'running', {
@@ -705,6 +729,7 @@ export class Executor {
     this.store.transaction(() => {
       this.store.waits.delete(run.id);
       this.store.runs.setProgress(run.id, null);
+      this.store.runs.setConfig(run.id, null);
       if (final.ok) {
         this.store.runs.setStatus(run.id, 'succeeded', {
           finished_at: finishedAt,

@@ -114,6 +114,12 @@ deleted when the run finishes. A wait outlives restarts because it is a row.
 
 ## Runs, attempts, retries
 
+A run's first attempt pins the task definition it starts with to `runs.config`; every
+later attempt and every resume after a wait runs under that copy, also after a restart,
+so a reload changes only runs not yet started and a saved step index always matches the
+steps it was saved for. A run whose task a reload removed still fails as no longer
+configured. The pin is cleared when the run finishes.
+
 Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* → `succeeded` or
 `failed`. `cancelled` is in the schema and accepted as a filter, but no code path sets
 it. `attempt` is 0 while queued; the first attempt is 1; a resume after a wait keeps the
@@ -139,7 +145,7 @@ and `dedup_key` plus `UNIQUE(task, event_id)` make it effectively once. On
 `core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
 
 1. Every `running` run whose task is still configured and whose `attempt <
-   retry.attempts` is re-enqueued (`run.recovered`) and runs as the next attempt;
+   retry.attempts` (of its pinned definition) is re-enqueued (`run.recovered`) and runs as the next attempt;
    otherwise it is failed with `interrupted: the daemon restarted while the run was in
    progress`, which publishes `task.<name>.failed`.
 2. Every `waiting` run without a `waits` row is failed; one whose wait already resolved
