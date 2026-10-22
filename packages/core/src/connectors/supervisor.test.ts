@@ -225,6 +225,34 @@ describe('ConnectorSupervisor', () => {
     expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
   });
 
+  it('keeps a transport: none connector running past 100 MB of output', async () => {
+    // execa's default maxBuffer is 100 MB per stream; the output is logged, not kept.
+    const script = [
+      "const mb = 'x'.repeat(1024 * 1024) + '\\n';",
+      'let n = 0;',
+      'const write = () => {',
+      '  while (n < 110) { n++; if (!process.stderr.write(mb)) { process.stderr.once("drain", write); return; } }',
+      '  process.stderr.write("all written\\n");',
+      '};',
+      'write();',
+      'setInterval(() => undefined, 60000);',
+    ].join('\n');
+    const s = make([manifest({ name: 'loud', transport: 'none', exec: ['node', '-e', script] })]);
+    await s.start();
+    await until(
+      () =>
+        lines.some(
+          (l) =>
+            l.msg === 'connector.exited' ||
+            (l.msg === 'connector.output' && l.line === 'all written'),
+        ),
+      30_000,
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    expect(lines.filter((l) => l.msg === 'connector.exited')).toEqual([]);
+    expect(s.status()[0]).toMatchObject({ name: 'loud', state: 'up', restarts: 0 });
+  }, 60_000);
+
   it('runs a transport: none connector as a plain process and refuses ops on it', async () => {
     const s = make([
       manifest({ name: 'plain', transport: 'none', exec: ['node', `${FIXTURES}fake-plain.ts`] }),

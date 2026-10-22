@@ -192,7 +192,7 @@ The names worth searching for:
 | `connector.up` | info | a connector is up (`pid`, `restarts`, `sandbox`, `network`) |
 | `connector.exited`, `connector.failed` | warn, error | a connector stopped or could not start; a restart is scheduled |
 | `connector.restart_scheduled` | info | the backoff before the next spawn (`delay_ms`, `restarts`) |
-| `connector.output` | info | one line of a connector's stderr (`stream`, `line`) |
+| `connector.output` | info | one line of a connector's stderr, or of its stdout for `transport: none` (`stream`, `line`) |
 | `connector.unhealthy`, `connector.health_failed` | warn, error | a health ping failed; the limit was reached and the connector is respawned |
 | `connector.unit_restart_needed` | warn | a changed manifest of a connector in its own unit needs `systemctl restart` |
 | `poller.polled`, `poller.failed` | info, error | a poll finished (`items`, `new`, `emitted`), or failed (`error`) |

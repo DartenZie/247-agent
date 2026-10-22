@@ -675,6 +675,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',
+        // Logged line by line and dropped: a buffer would hit execa's maxBuffer and kill it.
+        buffer: false,
         reject: false,
       });
       const proc: PlainProcess = {
