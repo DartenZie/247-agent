@@ -217,9 +217,10 @@ the result was read and the gates passed (`blocked` included), for the gates, a 
 publishing task and inspection; otherwise `worktree remove --force`, `rmSync`,
 `worktree prune` and `branch -D agent/<run_id>` (`agent.workspace_removed`); the prune
 frees the branch when `remove` refused a directory that was no longer a worktree.
-Retention sweeps kept workspaces `retention.workspaces` after the run finished
-([`store.md`](store.md)) with `removeWorkspaceDir`, which trusts the `.git` pointer only
-to find a git directory to tidy. Every git the module runs carries
+Retention sweeps kept workspaces `retention.workspaces` after the run finished, except a
+worktree with a commit not pushed yet ([`store.md`](store.md)), with `removeWorkspaceDir`,
+which trusts the `.git` pointer only to find a git directory to tidy (and
+`unpushedCommits` to count commits in). Every git the module runs carries
 `-c core.hooksPath=/dev/null -c core.fsmonitor=false`: the agent can write the
 workspace's `.git`, point it at a git directory of its own, or (with `execute`) change
 the base repository's config, and none of that may choose a program the daemon runs.

@@ -193,6 +193,7 @@ The names worth searching for:
 | `sandbox.net_denied` | warn, then debug | a sandboxed agent asked for a host outside its allowlist (`host`, `port`); the first time per target is a warning |
 | `sandbox.net_dropped` | warn once | a connection past the 256-connection limit was closed |
 | `retention.purged` | info | what a retention pass deleted (`runs`, `ledger`, `transcripts`, `events`, `workspaces`) |
+| `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path` |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |

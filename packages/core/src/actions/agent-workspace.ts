@@ -78,7 +78,7 @@ export function workspacePath(workDir: string, runId: string): string {
  * environment rather than the daemon's own, which holds the secrets
  * (docs/internal/security.md).
  */
-async function git(args: string[], env: Record<string, string>): Promise<void> {
+async function git(args: string[], env: Record<string, string>): Promise<string> {
   const safe = GIT_NO_PROGRAMS.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
   const r = await execa('git', [...safe, ...args], {
     env,
@@ -92,6 +92,7 @@ async function git(args: string[], env: Record<string, string>): Promise<void> {
       `git ${args.slice(0, 3).join(' ')} failed (exit ${String(r.exitCode ?? '?')}): ${tail}`,
     );
   }
+  return r.stdout;
 }
 
 /**
@@ -211,6 +212,46 @@ function worktreeGitDir(path: string): string | undefined {
   }
   const gitdir = isAbsolute(m[1]) ? m[1] : resolve(path, m[1]);
   return basename(dirname(gitdir)) === 'worktrees' ? dirname(dirname(gitdir)) : undefined;
+}
+
+/**
+ * The number of commits on the `agent/<run_id>` branch of a git worktree at `entry.path`
+ * that no other branch, remote-tracking branch or tag holds: a change committed in the
+ * workspace and not pushed yet. Zero for a `temp` workspace and when the branch is gone;
+ * undefined when git cannot tell, which the sweep treats as unpushed.
+ */
+export async function unpushedCommits(
+  entry: WorkspaceEntry,
+  env: Readonly<Record<string, string>>,
+): Promise<number | undefined> {
+  const gitDir = worktreeGitDir(entry.path);
+  if (gitDir === undefined) {
+    return 0;
+  }
+  const branch = `agent/${entry.runId}`;
+  // The git directory comes from a `.git` the agent can write: never fetch missing
+  // objects from a promisor remote it configured.
+  const inRepo = (args: string[]): Promise<string> =>
+    git([`--git-dir=${gitDir}`, ...args], { ...env, GIT_NO_LAZY_FETCH: '1' });
+  const exists = await inRepo(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).then(
+    () => true,
+    () => false,
+  );
+  if (!exists) {
+    return 0;
+  }
+  const out = await inRepo([
+    'rev-list',
+    '--count',
+    `refs/heads/${branch}`,
+    '--not',
+    `--exclude=${branch}`,
+    '--branches',
+    '--remotes',
+    '--tags',
+  ]).catch(() => undefined);
+  const count = out === undefined ? Number.NaN : Number.parseInt(out, 10);
+  return Number.isNaN(count) ? undefined : count;
 }
 
 /**

@@ -189,6 +189,8 @@ tasks:
           email: ${event.payload.email}
 
   # 4b. Approval gate via chat. No LLM. Only an approval emits site.change_pushed.
+  #     A rejection resets the branch to main, so retention can remove the worktree.
+  #     A timeout fails the run and keeps the change for you to push or reset by hand.
   - name: approve_general_change
     trigger: { kind: event, type: site.change_ready }
     action:
@@ -207,7 +209,11 @@ tasks:
         - kind: shell
           when: "steps[1].payload.approved == `true`"
           cwd: ${event.payload.worktree}
-          cmd: ["git", "push", "origin", "HEAD:main"]
+          cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
+        - kind: shell
+          when: "steps[1].payload.approved != `true`"
+          cwd: ${event.payload.worktree}
+          cmd: ["git", "reset", "--hard", "main"]
     emit:
       - type: site.change_pushed
         when: "result.steps[2] != `null`"
@@ -294,7 +300,7 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `push_event_list` | shell `git pull --rebase` and `git push` on `site.change_committed`, three attempts | the rebase puts the change on top of `main`, so a push that a restart interrupted or that another push beat succeeds on a retry |
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
-| `approve_general_change` | ask, wait, push, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
+| `approve_general_change` | ask, wait, rebase and push on approval or reset on rejection, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
 | `publish_site` | shell on `site.change_pushed`, holds the SFTP password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
 | `notify` | one task on failures, the budget event and the one success | you hear about everything without a loop |
 

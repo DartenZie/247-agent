@@ -101,7 +101,14 @@ the write lock for long. The order and the conditions:
    (`actions/agent-workspace.ts`): a git worktree is removed with `worktree remove
    --force`, the directory deleted, `worktree prune` run and the `agent/<run_id>`
    branch deleted; git failures are ignored. Directories of active runs, and the
-   program homes under `<work_dir>/home/`, are left alone.
+   program homes under `<work_dir>/home/`, are left alone. So is a git worktree whose
+   `agent/<run_id>` branch holds a commit that no other branch, remote-tracking branch
+   or tag holds (`unpushedCommits`, `rev-list --count`): a later run may still push it
+   (`push_event_list` in the reference workflow). A `rev-list` that fails for any reason
+   but a missing branch keeps the directory too (`reason: unknown`): the sweep fails
+   closed. Each pass logs a kept worktree as `retention.workspace_kept` (warn) and sets
+   `oa_retention_workspaces_kept` to how many it kept, until the commit is pushed or the
+   branch reset.
 
 Counts go to `retention.purged` (info when anything was deleted) and to
 `oa_retention_deleted_total{kind}`; a throwing pass logs `retention.failed` and leaves

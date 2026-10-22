@@ -174,7 +174,9 @@ tasks:
           email: ${event.payload.email}
 
   # 4b. Approval gate via chat. No LLM. A rejection skips the push and still succeeds,
-  #     so only an approval emits site.change_pushed.
+  #     so only an approval emits site.change_pushed. Retention keeps a worktree that
+  #     holds a commit not pushed yet, so a rejection resets the branch to main. A
+  #     timeout fails the run and keeps the change for you to push or reset by hand.
   - name: approve_general_change
     trigger: { kind: event, type: site.change_ready }
     action:
@@ -193,7 +195,12 @@ tasks:
         - kind: shell
           when: "steps[1].payload.approved == `true`"
           cwd: ${event.payload.worktree}
-          cmd: ["git", "push", "origin", "HEAD:main"]
+          cmd: ["bash", "-c", "git pull --rebase origin main && git push origin HEAD:main"]
+        # Rejected: drop the commit, so retention can remove the worktree.
+        - kind: shell
+          when: "steps[1].payload.approved != `true`"
+          cwd: ${event.payload.worktree}
+          cmd: ["git", "reset", "--hard", "main"]
     emit:
       - type: site.change_pushed
         when: "result.steps[2] != `null`"

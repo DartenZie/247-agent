@@ -1,6 +1,7 @@
 import {
   listWorkspaces,
   removeWorkspaceDir,
+  unpushedCommits,
   type WorkspaceEntry,
 } from './actions/agent-workspace.js';
 import type { Clock } from './clock.js';
@@ -36,7 +37,8 @@ export interface RetentionReport extends PurgeCounts {
  * `interval`, delete what the policy says is old: finished runs with their ledger rows,
  * stale ledger rows, dispatched events nothing references, and `work/<run_id>` directories
  * of runs finished long enough ago (or of no run at all). Workspaces of runs still queued,
- * running or waiting are never touched. Errors are logged, counted and retried next time.
+ * running or waiting are never touched, nor is a git worktree whose branch holds a commit
+ * not pushed yet. Errors are logged, counted and retried next time.
  */
 export class RetentionJob {
   private readonly store: Store;
@@ -155,14 +157,29 @@ export class RetentionJob {
     }
     const cutoff = now.getTime() - ms;
     let removed = 0;
+    let kept = 0;
     for (const entry of listWorkspaces(this.workDir)) {
       if (!this.stale(entry, cutoff)) {
+        continue;
+      }
+      // A later run may still push the change from here (docs/examples/website-updates.yaml).
+      // When git cannot tell, keeping the directory is the side that loses nothing.
+      const unpushed = await unpushedCommits(entry, this.env);
+      if (unpushed !== 0) {
+        kept++;
+        this.log.warn('retention.workspace_kept', {
+          run_id: entry.runId,
+          path: entry.path,
+          reason: unpushed === undefined ? 'unknown' : 'unpushed',
+          ...(unpushed === undefined ? {} : { commits: unpushed }),
+        });
         continue;
       }
       await removeWorkspaceDir(entry, this.env);
       removed++;
       this.log.info('retention.workspace_removed', { run_id: entry.runId, path: entry.path });
     }
+    this.metrics.retentionWorkspacesKept.set(undefined, kept);
     return removed;
   }
 
