@@ -77,7 +77,9 @@ one, then asks a human before publishing: [Website from email](../recipes/websit
    whose branch holds a commit that no other branch, remote-tracking branch or tag
    holds stays, so a later task can still push it. A `git push origin` updates the
    remote-tracking branch; a push to a URL does not. Every retention pass logs such a
-   worktree as `retention.workspace_kept`. To let retention remove a change you do not
+   worktree as `retention.workspace_kept`, and the first pass that keeps it publishes the
+   event of the same name, so a `notify` task can tell you
+   ([events](../reference/events.md)). To let retention remove a change you do not
    want, reset the branch, for example with `git reset --hard main` in the worktree.
 
 ## The agent program and the model

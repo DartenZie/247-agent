@@ -125,6 +125,7 @@ describe('labelledEventTypes', () => {
       'llm.batch.ended',
       'mail.triaged',
       'manual.run',
+      'retention.workspace_kept',
       'task.poll.failed',
       'task.poll.succeeded',
       'task.triage.failed',

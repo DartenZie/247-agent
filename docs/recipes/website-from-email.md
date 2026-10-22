@@ -238,12 +238,12 @@ tasks:
   - name: notify
     trigger:
       kind: event
-      type_any: [task.publish_site.succeeded, "task.*.failed", budget.exceeded]
+      type_any: [task.publish_site.succeeded, "task.*.failed", budget.exceeded, retention.workspace_kept]
     action:
       kind: connector
       connector: chat
       op: send
-      args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
+      args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || event.payload.path || 'ok'}" }
 ```
 
 ## The agent's manifest
@@ -302,7 +302,7 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
 | `approve_general_change` | ask, wait, rebase and push on approval or reset on rejection, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
 | `publish_site` | shell on `site.change_pushed`, holds the SFTP password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
-| `notify` | one task on failures, the budget event and the one success | you hear about everything without a loop |
+| `notify` | one task on failures, the budget event, a kept unpushed change and the one success | you hear about everything without a loop |
 
 Both agent tasks are the same action kind with different `model`, `effort`,
 `max_tool_calls`, `budget`, `tools`, `bash_allow` and `system_file`. Both commit

@@ -103,8 +103,9 @@ only for finished runs:
 4. agent workspaces under `work/` whose run finished longer ago than
    `retention.workspaces`, and directories with no run at all that old; a git worktree
    is detached from its repository and its `agent/<run_id>` branch deleted. A worktree
-   whose branch holds a commit not pushed yet is kept instead and counted in
-   `oa_retention_workspaces_kept` (see [the agent action](../tasks/agent.md)).
+   whose branch holds a commit not pushed yet is kept instead, counted in
+   `oa_retention_workspaces_kept` and published once as the event
+   `retention.workspace_kept` (see [the agent action](../tasks/agent.md)).
 
 ```yaml
 retention: { events: 90d, runs: 90d, ledger: 90d, workspaces: 7d, interval: 1h }   # the defaults

@@ -108,7 +108,10 @@ the write lock for long. The order and the conditions:
    but a missing branch keeps the directory too (`reason: unknown`): the sweep fails
    closed. Each pass logs a kept worktree as `retention.workspace_kept` (warn) and sets
    `oa_retention_workspaces_kept` to how many it kept, until the commit is pushed or the
-   branch reset.
+   branch reset. It also publishes the event `retention.workspace_kept` (`source: core`)
+   with `dedup_key: retention.workspace_kept:<run_id>`, so a `notify` task hears of a
+   worktree once, not every `retention.interval`; the key is free again only after
+   retention deletes that event.
 
 Counts go to `retention.purged` (info when anything was deleted) and to
 `oa_retention_deleted_total{kind}`; a throwing pass logs `retention.failed` and leaves

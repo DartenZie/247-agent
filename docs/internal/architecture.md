@@ -38,8 +38,9 @@ only `seq` orders events reliably.
 - `dedup_key` makes delivery idempotent: `UNIQUE(dedup_key)` and `ON CONFLICT DO
   NOTHING` turn a repeat into `{status: 'duplicate'}`.
 - `source` is `scheduler` (cron ticks), `manual` (`oa run`), `api` (the default of
-  `POST /v1/events`), `core` (`budget.exceeded`, `llm.batch.ended`), a connector's or a
-  poller's manifest name, or `task:<name>` for everything a task's runs publish.
+  `POST /v1/events`), `core` (`budget.exceeded`, `llm.batch.ended`,
+  `retention.workspace_kept`), a connector's or a poller's manifest name, or
+  `task:<name>` for everything a task's runs publish.
 - `depth` is the hop count through `parent_id`; roots are 0.
 
 A **task** matches events through its trigger (`bus/matcher.ts`): a cron task matches
@@ -96,7 +97,8 @@ API call, so `POST /v1/runs` returns the queued run.
 Depth guard: too-deep events still end waits (a resume is not a new hop) but start no
 run. Depth grows only through `parent_id`: lifecycle and `emit` events are parented to
 their trigger, `llm.batch.ended` to the run's trigger; `cron.tick`, `manual.run`,
-`budget.exceeded`, poller and API events without a parent are roots.
+`budget.exceeded`, `retention.workspace_kept`, poller and API events without a parent
+are roots.
 
 ## Waits
 
