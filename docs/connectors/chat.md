@@ -270,6 +270,8 @@ last 24 hours of Telegram updates; the events are deduplicated, but answered que
 are gone from `pending`, so their taps only get "already answered". An update whose
 handling fails is retried on the next poll; after three attempts it is skipped with a log
 line. While the daemon's socket is unreachable, as during a start, stop or restart, the
-update is retried without a limit and never skipped. Poll failures back off from 1 s to 30 s, or
+update waits for the daemon and the attempts are not counted. Telegram keeps an update
+for 24 hours, and a Matrix room that gets more than 50 new events meanwhile loses the
+older ones, as below. Poll failures back off from 1 s to 30 s, or
 wait as long as the service asks on a rate limit. A Matrix room with more than 50 new
 events between two syncs logs that the older ones were skipped.
