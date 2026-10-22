@@ -32,6 +32,20 @@ function setup(overrides: Record<string, unknown> = {}) {
   return { cfg, tg, core, lines, sleeps, bot };
 }
 
+/** A core that, like the real one, reads state when asked and answers 10 ms later with a copy. */
+function slowCore(core: FakeCore): void {
+  core.getState = async (key) => {
+    const value = structuredClone(core.state.get(key));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return value;
+  };
+}
+
+function firstButton(params: Record<string, unknown>): string | undefined {
+  const markup = params.reply_markup as { inline_keyboard: { callback_data: string }[][] };
+  return markup.inline_keyboard.flat()[0]?.callback_data;
+}
+
 describe('send', () => {
   it('posts to the configured chat and returns the message id', async () => {
     const { tg, bot } = setup();
@@ -199,6 +213,39 @@ describe('ask and reply', () => {
     await bot.handleUpdate(callbackUpdate(buttonData(tg), { message_id: asked.message_id }));
     expect(core.events[0]).not.toHaveProperty('correlation_id');
     expect(core.events[0]?.payload).toMatchObject({ correlation_id: null, approved: true });
+  });
+
+  it('keeps both of two concurrent asks, and each tap answers its own', async () => {
+    const { tg, core, bot } = setup();
+    slowCore(core);
+    const [a, b] = await Promise.all([
+      bot.ask({ text: 'A?', correlation_id: 'cor_a' }),
+      bot.ask({ text: 'B?', correlation_id: 'cor_b' }),
+    ]);
+    expect(Object.keys(core.state.get(STATE_PENDING) as object).sort()).toEqual([
+      '42:100',
+      '42:101',
+    ]);
+    const [dataA, dataB] = tg.of('sendMessage').map((c) => firstButton(c.params));
+    await bot.handleUpdate(callbackUpdate(dataA ?? '', { message_id: a.message_id }));
+    await bot.handleUpdate(callbackUpdate(dataB ?? '', { message_id: b.message_id }));
+    expect(core.ofType('chat.reply').map((e) => e.correlation_id)).toEqual(['cor_a', 'cor_b']);
+    expect(core.state.get(STATE_PENDING)).toEqual({});
+  });
+
+  it('keeps an ask that lands while a tap is being answered', async () => {
+    const { tg, core, bot } = setup();
+    const first = await bot.ask({ text: 'A?', correlation_id: 'cor_a' });
+    const data = buttonData(tg);
+    slowCore(core);
+    const [, second] = await Promise.all([
+      bot.handleUpdate(callbackUpdate(data, { message_id: first.message_id })),
+      bot.ask({ text: 'B?', correlation_id: 'cor_b' }),
+    ]);
+    expect(core.ofType('chat.reply')).toHaveLength(1);
+    expect(Object.keys(core.state.get(STATE_PENDING) as object)).toEqual([
+      `42:${String(second.message_id)}`,
+    ]);
   });
 });
 

@@ -80,6 +80,8 @@ export class ChatBot {
   private offsetLoaded = false;
   private stopped = false;
   private failing: { update_id: number; attempts: number } | undefined;
+  /** Serialises read-modify-write of `pending` between `ask` and the poll loop. */
+  private pendingLock: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly config: TelegramConfig,
@@ -121,15 +123,16 @@ export class ChatBot {
       ...replyParameters(args.reply_to),
       reply_markup: { inline_keyboard: inlineKeyboard(options, nonce) },
     });
-    const pending = await this.loadPending();
-    pending[pendingKey(chat_id, result.message_id)] = {
-      correlation_id: args.correlation_id ?? null,
-      options,
-      nonce,
-      chat_id,
-      asked_at: new Date().toISOString(),
-    };
-    await this.savePending(pending);
+    await this.withPending(async (pending) => {
+      pending[pendingKey(chat_id, result.message_id)] = {
+        correlation_id: args.correlation_id ?? null,
+        options,
+        nonce,
+        chat_id,
+        asked_at: new Date().toISOString(),
+      };
+      await this.savePending(pending);
+    });
     return { message_id: result.message_id, chat_id, options };
   }
 
@@ -226,17 +229,22 @@ export class ChatBot {
       return;
     }
     if (incoming.reply_to !== null) {
-      const pending = await this.loadPending();
       const key = pendingKey(incoming.chat_id, incoming.reply_to);
-      const question = pending[key];
-      const choice =
-        question === undefined ? undefined : matchOption(incoming.text, question.options);
-      if (question !== undefined && choice !== undefined) {
+      const answered = await this.withPending(async (pending) => {
+        const question = pending[key];
+        const choice =
+          question === undefined ? undefined : matchOption(incoming.text, question.options);
+        if (question === undefined || choice === undefined) {
+          return false;
+        }
         await this.answer(pending, key, question, choice, {
           text: incoming.text,
           from: incoming.from,
           answer_message_id: incoming.message_id,
         });
+        return true;
+      });
+      if (answered) {
         return;
       }
     }
@@ -258,19 +266,24 @@ export class ChatBot {
   private async handleCallback(
     incoming: Extract<ReturnType<typeof classifyUpdate>, { kind: 'callback' }>,
   ): Promise<void> {
-    const pending = await this.loadPending();
     const key = pendingKey(incoming.chat_id, incoming.message_id);
-    const question = pending[key];
-    const choice = chosenOption(question, decodeCallback(incoming.data));
-    if (question === undefined || choice === undefined) {
+    const choice = await this.withPending(async (pending) => {
+      const question = pending[key];
+      const chosen = chosenOption(question, decodeCallback(incoming.data));
+      if (question === undefined || chosen === undefined) {
+        return undefined;
+      }
+      await this.answer(pending, key, question, chosen, {
+        text: chosen,
+        from: incoming.from,
+        answer_message_id: null,
+      });
+      return chosen;
+    });
+    if (choice === undefined) {
       await this.ack(incoming.query_id, 'This question has already been answered.');
       return;
     }
-    await this.answer(pending, key, question, choice, {
-      text: choice,
-      from: incoming.from,
-      answer_message_id: null,
-    });
     await this.ack(incoming.query_id, `Recorded: ${choice}`);
     try {
       await this.api.call('editMessageReplyMarkup', {
@@ -361,8 +374,14 @@ export class ChatBot {
     await this.core.putState(STATE_OFFSET, offset);
   }
 
-  private async loadPending(): Promise<PendingMap> {
-    return loadPendingState<Pending>(this.core);
+  /** Runs `fn` on the stored questions, one caller at a time, so no save loses another's change. */
+  private withPending<T>(fn: (pending: PendingMap) => Promise<T>): Promise<T> {
+    const run = this.pendingLock.then(async () => fn(await loadPendingState<Pending>(this.core)));
+    this.pendingLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async savePending(pending: PendingMap): Promise<void> {
