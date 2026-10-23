@@ -76,8 +76,11 @@ export interface Daemon {
    * `socket` and `secrets` need a restart and are reported as such.
    */
   reload(): Promise<ReloadReport>;
-  /** Closes the socket, aborts runs in flight, closes the store. */
-  stop(): Promise<void>;
+  /**
+   * Closes the socket, lets runs in flight finish within `shutdown.grace` (`grace: false`
+   * skips it), aborts the rest, closes the store. A second call returns the first stop.
+   */
+  stop(opts?: { grace?: boolean }): Promise<void>;
 }
 
 export class AgentConfigError extends Error {
@@ -141,6 +144,7 @@ interface CoreSettings {
   defaultTimeout: string;
   defaultRetry: RetryConfig;
   defaultSandbox: SandboxConfig;
+  stopGrace: string;
   agents: { defaults: AgentDefaultsConfig; workDir: string };
   llm: CoreLlmOptions;
   retention: RetentionPolicy;
@@ -158,6 +162,7 @@ function coreSettings(
     defaultTimeout: config.defaults.timeout,
     defaultRetry: config.defaults.retry,
     defaultSandbox: config.defaults.sandbox,
+    stopGrace: config.shutdown.grace,
     agents: { defaults: config.defaults.agent, workDir: config.workDir },
     llm: {
       providers: config.providers,
@@ -311,11 +316,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     core,
     api,
     reload,
-    stop: () => {
+    stop: (stopOpts) => {
       stopping ??= (async () => {
         log.info('daemon.stopping');
         await api.close();
-        await core.stop();
+        await core.stop(stopOpts);
         log.info('daemon.stopped');
       })();
       return stopping;

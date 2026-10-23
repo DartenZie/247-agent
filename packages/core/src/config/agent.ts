@@ -42,6 +42,12 @@ export const AgentFile = z.strictObject({
   workers: z.number().int().positive().default(4),
   log: z.strictObject({ level: z.enum(LOG_LEVELS).default('info') }).prefault({}),
   limits: z.strictObject({ max_event_depth: z.number().int().positive().default(32) }).prefault({}),
+  /** How long a stop lets runs in flight finish before aborting them (#39). */
+  shutdown: z
+    .strictObject({
+      grace: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('30s'),
+    })
+    .prefault({}),
   defaults: z
     .strictObject({
       timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('15m'),

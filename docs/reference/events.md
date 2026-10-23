@@ -182,7 +182,7 @@ The names worth searching for:
 | `run.failed` | error | terminal failure (`error`, `attempt`) |
 | `run.retry` | warn | an attempt failed and a retry is scheduled (`attempt`, `attempts`, `delay_ms`, `error`) |
 | `run.waiting` | info | the run parked on a wait (`wait_type`, `expires_at`) |
-| `run.recovered`, `run.abandoned` | warn | a run re-queued after a restart; a run left `running` by a stop |
+| `run.recovered`, `run.abandoned` | warn | a run re-queued after a restart; a run left `running` by a stop, to run again on the next start |
 | `wait.matched`, `wait.timeout` | info | a wait ended (`run_id`, `wait_type`, `event_id`) |
 | `wait.filter_error` | warn | a wait's filter threw on an event; no match |
 | `cron.armed` | info | a cron job armed (`task`, `schedule`, `next_run`) |
@@ -215,5 +215,5 @@ The names worth searching for:
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
-| `daemon.stop_timeout` | error | the stop after an uncaught error took longer than 10 s (`after_ms`); the daemon exits 1 without waiting for it |
+| `daemon.stop_timeout` | error | a stop took longer than `after_ms`: `shutdown.grace` plus 10 s after a signal, 10 s after an uncaught error; the daemon exits 1 without waiting for it |
 | `api.stale_socket_removed` | warn | a dead daemon's socket file was removed at start |

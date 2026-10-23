@@ -45,6 +45,7 @@ ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
+TimeoutStopSec=90
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 ProtectSystem=strict
@@ -61,6 +62,7 @@ WantedBy=multi-user.target
 | `User=` / `Group=` | the daemon and every connector it starts run as the unprivileged `247-agent` user |
 | `ExecReload=` | `systemctl reload 247-agent` sends SIGHUP, which re-reads all configuration (below) |
 | `Restart=always`, `RestartSec=5` | a crash restarts the daemon after five seconds; runs that were in flight are recovered (below) |
+| `TimeoutStopSec=90` | systemd kills the daemon if a stop takes longer than 90 seconds; keep it above `shutdown.grace` plus 10 seconds (below) |
 | `RuntimeDirectory=` | creates `/run/247-agent` for the socket at start |
 | `StateDirectory=` | creates `/var/lib/247-agent`, owned by the service user |
 | `ProtectSystem=strict` | the whole file system is read-only to the service except what `ReadWritePaths=` lists |
@@ -172,9 +174,9 @@ Runs already in flight keep the value they resolved at start.
 
 ## Upgrading and rolling back
 
-Choose a quiet moment: `oa runs ls --status running` shows what is in flight. An
-interrupted agent run is retried from a fresh workspace if its retry policy allows, and
-failed as interrupted otherwise.
+Choose a quiet moment: `oa runs ls --status running` shows what is in flight. The
+restart gives those runs `shutdown.grace` to finish; an agent run that does not finish
+in time runs again from a fresh workspace after the restart.
 
 **Package.** Install the newer `.deb` or `.rpm`; the maintainer scripts restart a running
 service. Roll back by installing the previous file.
@@ -224,13 +226,19 @@ searching for.
 
 ## Stop, crash, restart
 
-`systemctl stop` sends SIGTERM. The daemon stops accepting, aborts the attempts in
-flight and exits 0. After an uncaught error it stops the same way and exits 1, and
-after 10 seconds it exits 1 even if the stop has not finished. On the next start:
+`systemctl stop` sends SIGTERM. The daemon stops accepting, starts no new runs and
+gives the runs in flight `shutdown.grace` in `agent.yaml` (30 seconds by default) to
+finish. Then it aborts the rest and exits 0. An aborted attempt does not count against
+the run's retry policy: the next start runs it again. If the stop is still not done 10
+seconds after the grace window, the daemon logs `daemon.stop_timeout` and exits 1. After
+an uncaught error it aborts the runs in flight at once and exits 1, and after 10 seconds
+it exits 1 even if the stop has not finished. On the next start:
 
-- a run that was `running` is retried if its retry policy has attempts left, otherwise
-  it is failed with `interrupted: the daemon restarted while the run was in progress`
-  and `task.<name>.failed` is published;
+- a run aborted by a stop runs its attempt again;
+- a run that was `running` when the daemon died without a clean stop (a crash, a kill,
+  a power cut) is retried if its retry policy has attempts left, otherwise it is failed
+  with `interrupted: the daemon restarted while the run was in progress` and
+  `task.<name>.failed` is published;
 - a `waiting` run keeps waiting, and one whose event arrived or whose timeout passed in
   the meantime resumes at once;
 - queued runs are picked up where they were.

@@ -56,6 +56,8 @@ export interface ExecutorOptions {
   defaultTimeout?: string;
   /** For tasks without `retry`. */
   defaultRetry?: RetryConfig;
+  /** How long `stop()` lets runs in flight finish before aborting them; defaults to none. */
+  stopGrace?: string;
   /** For `shell` actions without `sandbox`. */
   defaultSandbox?: SandboxConfig;
   /** What every sandbox hides and shows on this host (fixed for the process). */
@@ -84,6 +86,7 @@ export interface ExecutorSettings {
   defaultTimeout?: string | undefined;
   defaultRetry?: RetryConfig | undefined;
   defaultSandbox?: SandboxConfig | undefined;
+  stopGrace?: string | undefined;
 }
 
 export interface RecoveryResult {
@@ -264,6 +267,7 @@ export class Executor {
   private defaultSandbox: SandboxConfig | undefined;
   private readonly sandboxHost: SandboxHost | undefined;
   private defaultRetry: RetryConfig;
+  private stopGrace: string;
   private readonly secrets: SecretsBackend;
   private readonly connectors: ConnectorClients | undefined;
   private readonly llm: LlmPort | undefined;
@@ -295,6 +299,7 @@ export class Executor {
     this.defaultSandbox = opts.defaultSandbox;
     this.sandboxHost = opts.sandboxHost;
     this.defaultRetry = opts.defaultRetry ?? Retry.parse({});
+    this.stopGrace = opts.stopGrace ?? '0s';
     this.secrets = opts.secrets ?? NO_SECRETS;
     this.connectors = opts.connectors;
     this.llm = opts.llm;
@@ -303,6 +308,7 @@ export class Executor {
     this.childEnv = opts.childEnv ?? this.secrets.scrub(process.env);
     this.metrics = opts.metrics ?? new Metrics();
     parseDuration(this.defaultTimeout); // fail fast on a bad default
+    parseDuration(this.stopGrace);
   }
 
   /** Reload seam: new defaults for runs that start from now on; a bigger pool is used at once. */
@@ -319,6 +325,10 @@ export class Executor {
     }
     if ('defaultSandbox' in settings) {
       this.defaultSandbox = settings.defaultSandbox;
+    }
+    if (settings.stopGrace !== undefined) {
+      parseDuration(settings.stopGrace);
+      this.stopGrace = settings.stopGrace;
     }
     this.pump();
   }
@@ -387,16 +397,33 @@ export class Executor {
   }
 
   /**
-   * Stops taking runs, aborts the ones in flight and waits for them to settle. Aborted runs
-   * stay `running` in the store; the next `start()` retries or fails them, exactly as
-   * after a crash. Runs still `queued` are left for the next start too.
+   * Stops taking runs, gives the ones in flight the stop grace window to finish, then aborts
+   * the rest and waits for them to settle (#39). An aborted attempt is not spent: the run
+   * stays `running` with its attempt given back, and the next `start()` runs that attempt
+   * again. Runs waiting out a retry backoff are abandoned at once, and runs still `queued`
+   * are left for the next start. `grace: false` aborts at once (the crash path).
    */
-  async stop(): Promise<void> {
+  async stop(opts: { grace?: boolean } = {}): Promise<void> {
     this.stopping = true;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     for (const run of this.pending.splice(0)) {
       this.known.delete(run.id);
+    }
+    for (const id of this.backingOff) {
+      this.inFlight.get(id)?.stop.abort(new RunStoppedError());
+    }
+    const grace = opts.grace === false ? 0 : parseDuration(this.stopGrace);
+    if (grace > 0 && this.inFlight.size > 0) {
+      this.log.info('executor.draining', { in_flight: this.inFlight.size, grace_ms: grace });
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        this.idle(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, grace);
+        }),
+      ]);
+      clearTimeout(timer);
     }
     for (const slot of this.inFlight.values()) {
       slot.stop.abort(new RunStoppedError());
@@ -536,6 +563,9 @@ export class Executor {
               };
         const performed = await this.perform(current, task, slot, resumeInfo, log);
         if (performed === 'stopped') {
+          // Give the attempt back: the next start runs it again instead of failing the run
+          // as interrupted (#39).
+          this.store.runs.setStatus(run.id, 'running', { attempt: attempt - 1 });
           log.warn('run.abandoned', { attempt });
           return;
         }
@@ -544,8 +574,14 @@ export class Executor {
           return;
         }
         const outcome = performed;
-        if (outcome.ok || !outcome.retryable || attempt >= policy.attempts || this.stopping) {
+        if (outcome.ok || !outcome.retryable || attempt >= policy.attempts) {
           this.finish(current, outcome, task, log);
+          return;
+        }
+        if (this.stopping) {
+          // Failed during a stop's grace window: the next start makes the next attempt.
+          this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
+          log.warn('run.abandoned', { attempt, error: outcome.error });
           return;
         }
         const delay = backoffDelay(policy, attempt);
@@ -583,9 +619,10 @@ export class Executor {
       } else {
         this.perTask.set(run.task, n);
       }
-      if (suspended) {
+      if (suspended && !this.stopping) {
         // The wait may have ended while we were still cleaning up; the dispatcher's hand-off
         // was then refused because the run was still known. Pick it up from the store.
+        // While stopping, the run stays `queued` for the next start.
         const fresh = this.store.runs.getById(run.id);
         if (fresh?.status === 'queued') {
           this.enqueue([fresh]);

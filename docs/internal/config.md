@@ -158,7 +158,7 @@ The `configure()` seams, and what each one takes:
 |---|---|---|
 | `LlmService` (`llm/service.ts`) | `configure` | `providers`, `pricing`, `defaults.llm`, `defaults.decide`, `defaults.agent.budget`, `budgets.daily_usd` |
 | `BatchPoller` (`llm/batches.ts`) | `configure` | `batches.poll` (rearms the timer) |
-| `Executor` (`executor/executor.ts`) | `configure` | `workers`, `defaults.timeout`, `defaults.retry`, `defaults.sandbox` |
+| `Executor` (`executor/executor.ts`) | `configure` | `workers`, `defaults.timeout`, `defaults.retry`, `defaults.sandbox`, `shutdown.grace` |
 | `Dispatcher` (`bus/dispatcher.ts`) | `configure` | `limits.max_event_depth` |
 | `ConnectorSupervisor` (`connectors/supervisor.ts`) | `configure`, `apply` | `defaults.agent` (`work_dir` changed restarts every sandboxed acp connector); `apply` adds, removes and respawns connectors by manifest key, and logs `connector.unit_restart_needed` for a changed `managed_by: systemd` manifest without ops |
 | pollers (`core.ts`) | swapped | every `builtin: poller` manifest is rebuilt |

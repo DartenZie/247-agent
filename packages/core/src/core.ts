@@ -70,6 +70,8 @@ export interface CoreOptions {
   defaultRetry?: RetryConfig;
   /** For `shell` actions without `sandbox`. */
   defaultSandbox?: SandboxConfig;
+  /** How long `stop()` lets runs in flight finish before aborting them; defaults to none. */
+  stopGrace?: string;
   /** What every sandbox (shell or agent program) hides and shows on this host; fixed for the process. */
   sandboxHost?: SandboxHost;
   /** The agent.yaml the settings came from, named in issues about it; defaults to none. */
@@ -140,6 +142,7 @@ export interface CoreReloadOptions {
   defaultTimeout?: string | undefined;
   defaultRetry?: RetryConfig | undefined;
   defaultSandbox?: SandboxConfig | undefined;
+  stopGrace?: string | undefined;
   maxEventDepth?: number | undefined;
   retention?: RetentionPolicy | undefined;
 }
@@ -178,8 +181,12 @@ export interface Core {
   reload(next?: CoreReloadOptions): Promise<ReloadResult>;
   /** `oa run <task>`: queue a run for any task, with an optional input event. */
   runTask(name: string, input?: ManualInput): { event_id: string; run: RunRecord };
-  /** Aborts runs in flight (they are recovered on the next start), stops connectors, closes the store. */
-  stop(): Promise<void>;
+  /**
+   * Lets runs in flight finish within the stop grace window, aborts the rest (they are run
+   * again on the next start), stops connectors, closes the store. `grace: false` skips the
+   * window.
+   */
+  stop(opts?: { grace?: boolean }): Promise<void>;
 }
 
 export class ConfigLoadError extends Error {
@@ -343,6 +350,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.defaultTimeout === undefined ? {} : { defaultTimeout: opts.defaultTimeout }),
     ...(opts.defaultRetry === undefined ? {} : { defaultRetry: opts.defaultRetry }),
     ...(opts.defaultSandbox === undefined ? {} : { defaultSandbox: opts.defaultSandbox }),
+    ...(opts.stopGrace === undefined ? {} : { stopGrace: opts.stopGrace }),
     ...(opts.sandboxHost === undefined ? {} : { sandboxHost: opts.sandboxHost }),
   });
 
@@ -534,6 +542,7 @@ export function createCore(opts: CoreOptions): Core {
       workers: next.workers,
       defaultTimeout: next.defaultTimeout,
       defaultRetry: next.defaultRetry,
+      stopGrace: next.stopGrace,
       ...('defaultSandbox' in next ? { defaultSandbox: next.defaultSandbox } : {}),
     });
     if (next.maxEventDepth !== undefined) {
@@ -623,12 +632,12 @@ export function createCore(opts: CoreOptions): Core {
       return run;
     },
     runTask: (name, input) => runTaskManually(bus, store, compiled, name, input),
-    stop: async () => {
+    stop: async (stopOpts = {}) => {
       scheduler.stop();
       bus.dispatcher.stop();
       await retention?.stop();
       await batchPoller?.stop();
-      await executor.stop();
+      await executor.stop(stopOpts);
       await Promise.all(pollers.map((p) => p.poller.stop()));
       await supervisor?.stop();
       store.close();

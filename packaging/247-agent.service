@@ -9,6 +9,8 @@
 #   LoadCredential=imap_pass:/etc/credstore/imap_pass
 #
 # Add ReadWritePaths= for any other directory a shell task writes to (a site checkout).
+# TimeoutStopSec= must stay above `shutdown.grace` in agent.yaml plus 10 seconds; raise
+# both together.
 [Unit]
 Description=247-agent core
 Documentation=file:///opt/247-agent/share/doc/operations/production.md https://github.com/DartenZie/247-agent/blob/main/docs/operations/production.md
@@ -22,6 +24,7 @@ ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
+TimeoutStopSec=90
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 ProtectSystem=strict
