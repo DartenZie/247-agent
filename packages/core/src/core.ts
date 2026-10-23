@@ -166,7 +166,8 @@ export interface Core {
   config(): CompiledConfig;
   /**
    * Loads config, opens the store, recovers runs, dispatches any backlog, arms cron jobs
-   * and spawns connectors. Throws on invalid config.
+   * and spawns connectors. Throws on invalid config. Resolves without waiting for the
+   * connectors to come up: a slow one shows as `starting` meanwhile (#195).
    */
   start(): Promise<void>;
   /**
@@ -575,6 +576,7 @@ export function createCore(opts: CoreOptions): Core {
     retention,
     batchPoller,
     config: () => compiled,
+    // eslint-disable-next-line @typescript-eslint/require-await -- async so a config error rejects
     start: async () => {
       const result = load(
         tasksFiles,
@@ -601,7 +603,13 @@ export function createCore(opts: CoreOptions): Core {
       });
       scheduler.start(compiled);
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
-      await supervisor?.start();
+      // Not awaited: a connector hanging in setup must not hold up the API or the jobs
+      // below. The supervisor logs and retries a failed spawn; the catch is a backstop.
+      supervisor?.start().catch((err: unknown) => {
+        log.error('core.connectors_start_failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
       for (const { poller } of pollers) {
         poller.start();
       }

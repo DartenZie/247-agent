@@ -75,7 +75,9 @@ without stopping a connector, such as a crash stop past its deadline or a second
 SIGTERM, `signal-exit` SIGKILLs every group still running. Stderr lines
 (and stdout of a `none` process) are logged as `connector.output`, cut at 2000
 characters. Spawn happens at start, after a crash, on `oa connector restart`, and on a
-reload that changed the manifest.
+reload that changed the manifest. `core.start()` does not wait for the spawns: a
+connector that hangs in setup shows as `starting` while the API, pollers, retention and
+batch polling run (#195).
 
 **Environment** (`connectors/child-env.ts`, `connectorChildEnv`). The base
 (`connectorBaseEnv`) is picked from the daemon's scrubbed environment (`ctx.childEnv`):

@@ -208,8 +208,10 @@ Any other flag or a positional argument exits 2. An invalid configuration prints
 `247-agent-core: invalid agent config <file>:` with the issues and exits 1.
 
 Logs are JSON lines on stdout. The first lines of a start are `core.config_loaded`,
-`core.started`, the connectors' spawn lines, `api.listening`, `daemon.started` and
-`daemon.home` (the version and the install root). Relative paths in `agent.yaml` resolve
+`core.started`, `api.listening`, `daemon.started` and `daemon.home` (the version and the
+install root). The daemon does not wait for connectors to start, so their lines can come
+before or after these. A connector that is still starting shows as `starting` in
+`oa connector list`. Relative paths in `agent.yaml` resolve
 against its directory.
 
 If the socket file exists, the daemon probes it: a live daemon makes the start fail with
