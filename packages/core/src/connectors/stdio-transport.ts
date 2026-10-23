@@ -14,7 +14,7 @@ import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/s
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
-import { exitOf, killGroup, sweepGroupAfter } from '../process-group.js';
+import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 
 export interface ProcessTransportOptions {
   command: string;
@@ -60,12 +60,16 @@ export class ProcessClientTransport implements Transport {
     // A spawn error rejects it too; `start` reports that one.
     const pipesClosed = once(child, 'close').catch(() => undefined);
     // The child exited: the rest of its group goes too, and with it the last holder of a
-    // pipe of ours, so that every pipe closes (#198).
+    // pipe of ours (#198). A holder outside the group loses the pipes after a grace (#200).
     const closed = sweepGroupAfter(child.pid, exitOf(child)).then(async () => {
+      await releasePipes(child);
       await pipesClosed;
     });
     this.closed = closed;
     void closed.then(() => {
+      if (!this.stderr.writableEnded) {
+        this.stderr.end(); // a destroyed child.stderr does not end it
+      }
       this.buffer.clear();
       this.onclose?.();
     });

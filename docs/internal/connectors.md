@@ -68,9 +68,11 @@ wrapper in `exec` (`sh -c "node server.js; true"`) started as its child. Once th
 process exits, whatever is left of the group gets SIGKILL (`sweepGroupAfter` on
 `exitOf`, `process-group.ts`), and only then does the supervisor wait for the pipes to
 close: a helper the wrapper started in the background can hold them open, and the
-connector would stay `up` with nothing behind it. If the daemon exits without stopping a
-connector, such as a crash stop past its deadline or a second SIGTERM, `signal-exit`
-SIGKILLs every group still running. Stderr lines
+connector would stay `up` with nothing behind it. A helper that left the group, such as
+one started with `setsid`, survives the SIGKILL, so the pipes get one second to drain
+and then the core destroys its ends of them (`releasePipes`). If the daemon exits
+without stopping a connector, such as a crash stop past its deadline or a second
+SIGTERM, `signal-exit` SIGKILLs every group still running. Stderr lines
 (and stdout of a `none` process) are logged as `connector.output`, cut at 2000
 characters. Spawn happens at start, after a crash, on `oa connector restart`, and on a
 reload that changed the manifest.

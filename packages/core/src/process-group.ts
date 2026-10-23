@@ -1,4 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { onExit } from 'signal-exit';
 
@@ -91,4 +93,26 @@ export function exitOf(child: ChildProcess): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * Waits up to `graceMs` for `child`'s stdout and stderr to close, then destroys our end of
+ * every pipe still open. Called once the child has exited and its group is swept: what
+ * holds a pipe then is a process that left the group, such as a helper started with
+ * `setsid`, which no group signal reaches and which may never exit (#200). The grace lets
+ * the last output of the child drain.
+ */
+export async function releasePipes(child: ChildProcess, graceMs = 1000): Promise<void> {
+  const open = [child.stdout, child.stderr].filter(
+    (s): s is NonNullable<typeof s> => s !== null && !s.closed,
+  );
+  if (open.length > 0) {
+    await Promise.race([
+      Promise.all(open.map((s) => once(s, 'close').catch(() => undefined))),
+      sleep(graceMs, undefined, { ref: false }),
+    ]);
+  }
+  for (const s of [child.stdin, child.stdout, child.stderr]) {
+    s?.destroy();
+  }
 }

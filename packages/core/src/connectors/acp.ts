@@ -29,7 +29,7 @@ import {
 import { execa } from 'execa';
 
 import type { Logger } from '../log.js';
-import { exitOf, killGroup, sweepGroupAfter } from '../process-group.js';
+import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 import {
   PERMISSION_CANCELLED,
   TOOL_KINDS,
@@ -331,6 +331,7 @@ export class AcpAgent {
     pipeLines(child.stderr, 'stderr', opts.log);
     // On the exit, not execa's result, which waits for pipes a helper can hold (#198).
     const exited = sweepGroupAfter(child.pid, exitOf(child)).then(async () => {
+      await releasePipes(child); // even from a helper outside the group (#200)
       await child; // `reject: false`: settles once the pipes have closed
     });
     const kill = (signal: NodeJS.Signals): void => {

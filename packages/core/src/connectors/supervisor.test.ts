@@ -139,6 +139,20 @@ function withHelper(dir: string, program: string): { exec: string[]; pidFile: st
   return { exec: ['sh', '-c', `sleep 300 & echo $! >> ${pidFile}; exec ${program}`], pidFile };
 }
 
+/**
+ * Like `withHelper`, but the helper leads a session of its own, out of reach of a signal to
+ * the connector's process group, as `setsid sleep 300 &` would start it (#200).
+ */
+function withSessionHelper(dir: string, program: string): { exec: string[]; pidFile: string } {
+  const pidFile = join(dir, 'pids');
+  const helper = join(dir, 'helper.cjs');
+  writeFileSync(
+    helper,
+    "const c = require('child_process').spawn('sleep', ['300'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }); require('fs').appendFileSync(process.env.PID_FILE, c.pid + '\\n'); c.unref();",
+  );
+  return { exec: ['sh', '-c', `PID_FILE=${pidFile} node ${helper}; exec ${program}`], pidFile };
+}
+
 /** Kills what is left of the helpers in `pidFile` and removes `dir`. */
 function cleanUpHelpers(dir: string, pidFile: string): void {
   for (const pid of pidsIn(pidFile).filter(alive)) {
@@ -464,6 +478,48 @@ describe('ConnectorSupervisor', () => {
     }
   }, 30_000);
 
+  it('restarts a crashed connector whose helper in another session holds its output (#200)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withSessionHelper(dir, `node ${FIXTURES}fake-mcp.ts`);
+    try {
+      const s = make([manifest({ exec })]);
+      await s.start();
+      await s.call('fake', 'crash', {}, { signal: signal() });
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
+      await expect(s.call('fake', 'echo', { value: 1 }, { signal: signal() })).resolves.toEqual({
+        echoed: 1,
+      });
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
+      );
+      await s.stop();
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
+  it('notices a transport: none program exit while a helper in another session holds the output (#200)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withSessionHelper(
+      dir,
+      'node -e "setTimeout(() => process.exit(3), 200)"',
+    );
+    try {
+      const s = make([manifest({ name: 'plain', transport: 'none', exec })]);
+      await s.start();
+      await until(() => (s.status()[0]?.restarts ?? 0) >= 1, 20_000);
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'exit code 3' }),
+      );
+      await s.stop();
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
   it('notices a transport: none program exit while its helper holds the output (#198)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
     const { exec, pidFile } = withHelper(dir, 'node -e "setTimeout(() => process.exit(3), 200)"');
@@ -661,6 +717,32 @@ describe('ConnectorSupervisor with an acp connector', () => {
         expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
       );
       await until(() => !alive(helper));
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
+  it('restarts a crashed agent whose helper in another session holds its output (#200)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withSessionHelper(dir, `node ${FIXTURES}fake-acp.ts`);
+    try {
+      const s = make([acp({ exec })]);
+      await s.start();
+      const session = await s.open('claude', {
+        cwd: '/tmp',
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'cancelled',
+      });
+      await expect(session.prompt('[[crash]]').next()).rejects.toThrow();
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
+      );
+      await s.stop();
     } finally {
       cleanUpHelpers(dir, pidFile);
     }

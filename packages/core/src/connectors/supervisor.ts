@@ -31,7 +31,7 @@ import {
 import { parseDuration } from '../config/duration.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
-import { exitOf, killGroup, sweepGroupAfter } from '../process-group.js';
+import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
@@ -737,8 +737,10 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
             killGroup(child.pid, signal);
           }
         },
-        // On the exit, not execa's result, which waits for pipes a helper can hold (#198).
+        // On the exit, not execa's result, which waits for pipes a helper can hold (#198),
+        // and the pipes are released, even from a helper outside the group (#200).
         exited: sweepGroupAfter(child.pid, exitOf(child))
+          .then(() => releasePipes(child))
           .then(() => child)
           .then(
             (r) => {
