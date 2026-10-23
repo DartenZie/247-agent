@@ -54,6 +54,8 @@ export interface AcpSpawnOptions {
   version?: string | undefined;
   /** How long `initialize` may take before the spawn counts as failed. */
   initTimeoutMs?: number | undefined;
+  /** Aborting it kills the process and rejects once it has exited. */
+  signal?: AbortSignal | undefined;
 }
 
 /** Bounds a spawn whose program never answers `initialize` (not an ACP agent, or hung). */
@@ -335,6 +337,7 @@ export class AcpAgent {
     };
     const timeoutMs = opts.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
     let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
     try {
       const init = await Promise.race([
         conn.agent.request(methods.agent.initialize, {
@@ -352,6 +355,15 @@ export class AcpAgent {
           timer = setTimeout(() => {
             reject(new Error(`no initialize response after ${String(timeoutMs)}ms`));
           }, timeoutMs);
+        }),
+        new Promise<never>((_, reject) => {
+          onAbort = () => {
+            reject(new Error('stopped before completing initialize'));
+          };
+          if (opts.signal?.aborted === true) {
+            onAbort();
+          }
+          opts.signal?.addEventListener('abort', onAbort, { once: true });
         }),
       ]);
       if (init.protocolVersion !== PROTOCOL_VERSION) {
@@ -372,6 +384,11 @@ export class AcpAgent {
     } catch (err) {
       conn.close(err);
       kill('SIGKILL');
+      if (opts.signal?.aborted === true) {
+        // The caller is about to start a replacement: this one must be gone first.
+        await exited;
+        throw err;
+      }
       // Stdout usually closes a moment before the exit is observed; say which it was.
       await Promise.race([exited, sleep(100)]);
       const code = child.exitCode;
@@ -385,6 +402,9 @@ export class AcpAgent {
     } finally {
       if (timer !== undefined) {
         clearTimeout(timer);
+      }
+      if (onAbort !== undefined) {
+        opts.signal?.removeEventListener('abort', onAbort);
       }
     }
   }
