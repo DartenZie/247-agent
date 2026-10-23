@@ -1,11 +1,13 @@
 /**
  * IMAP mailbox on `imapflow`. One connection per call, so the process stays stateless.
  *
- * Cursor: the highest UID delivered so far. The caller normally passes it back as
- * `since_uid` (the reference workflow keeps it in task state); when it is absent the
- * connector's own `last_uid` state entry is used, and both are kept in step. UIDs only
- * mean something for one UIDVALIDITY value, so that is stored too and the cursor is reset
- * when the server reports a new one.
+ * Cursor: the highest UID delivered so far, owned by the caller. A task keeps it with
+ * `state_updates`, which commit only with a successful run, and passes it back as
+ * `since_uid`; a failed run passes the old one, so its mail comes back. The connector
+ * keeps no cursor of its own: one it moved on every call would skip mail a failed run, or
+ * another task on the same mailbox, has not handled. Absent or `null` means no cursor.
+ * UIDs only mean something for one UIDVALIDITY value, so that is stored and the cursor is
+ * reset when the server reports a new one.
  */
 import { ImapFlow, type ImapFlowOptions } from 'imapflow';
 
@@ -84,6 +86,11 @@ export class ImapMailbox implements Mailbox {
     const limit = Math.min(args.limit ?? this.config.limit, this.config.limit);
     return this.withMailbox(folder, async (client, mailbox) => {
       const validity = mailbox.uidValidity.toString();
+      if (args.since_uid === undefined) {
+        this.log(
+          'imap: fetch_new without since_uid has no cursor; pass last_uid back as since_uid',
+        );
+      }
       let since = await this.resolveCursor(args.since_uid, validity);
       if (since === null) {
         // First run in this mailbox (or UIDVALIDITY changed).
@@ -115,7 +122,6 @@ export class ImapMailbox implements Mailbox {
         }
       }
       const last = uids.at(-1) ?? since;
-      await this.state.putState('last_uid', last);
       await this.state.putState('uidvalidity', validity);
       this.log(
         `imap: fetch_new folder=${folder} since=${String(since)} -> ${String(emails.length)} (last_uid=${String(last)})`,
@@ -160,14 +166,13 @@ export class ImapMailbox implements Mailbox {
       this.log(`imap: UIDVALIDITY changed ${stored} -> ${validity}, cursor reset`);
       return null;
     }
-    const candidate = given ?? (await this.state.getState('last_uid'));
-    if (candidate === undefined || candidate === null || candidate === '') {
+    if (given === undefined || given === null || given === '') {
       return null;
     }
-    const n = Number(candidate);
+    const n = Number(given);
     if (!Number.isInteger(n) || n < 0) {
       throw new Error(
-        `fetch_new: since_uid must be a non-negative integer, got ${JSON.stringify(candidate)}`,
+        `fetch_new: since_uid must be a non-negative integer, got ${JSON.stringify(given)}`,
       );
     }
     return n;

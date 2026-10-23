@@ -20,9 +20,11 @@ await runConnector({
       description: 'New messages since a UID',
       input: { folder: z.string().optional(), since_uid: z.number().nullable().optional() },
       handler: async (args) => {
-        const cursor = (await rt.core.getState('last_uid')) ?? 0;   // own namespace
+        // The task owns the cursor: it stores last_uid with state_updates, which commit
+        // only with a successful run, and passes it back. Keep the connector's own state
+        // (rt.core.getState/putState) for what is not per-caller, such as UIDVALIDITY.
+        const cursor = args.since_uid ?? 0;
         // ...
-        await rt.core.putState('last_uid', 42);
         return { emails: [] as JsonValue[], last_uid: 42 };        // must be JSON
       },
     }),

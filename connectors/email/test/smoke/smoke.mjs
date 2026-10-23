@@ -76,7 +76,11 @@ function mailbox(rig, name, user, incoming, outgoing) {
       outgoing: { host: HOST, from: `Smoke <${address(user)}>`, footer: FOOTER, ...outgoing },
     },
   });
-  rig.op(`${name}_fetch`, name, 'fetch_new', ['limit']);
+  // The cursor lives in task state, as in docs/connectors/email.md.
+  rig.op(`${name}_fetch`, name, 'fetch_new', ['limit'], {
+    args: { since_uid: `\${state.${name}.last_uid}` },
+    state_updates: { [`${name}.last_uid`]: '${result.last_uid}' },
+  });
   rig.op(`${name}_send`, name, 'send', ['to', 'subject', 'text']);
   rig.op(`${name}_mark_read`, name, 'mark_read', ['uid']);
 }

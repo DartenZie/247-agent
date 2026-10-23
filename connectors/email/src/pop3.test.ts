@@ -208,16 +208,35 @@ describe('Pop3Mailbox', () => {
 
     server.add('new1', mail('n1', 'first'));
     server.add('new2', mail('n2', 'second'));
-    const r = await mb.fetchNew({ since_uid: 'ignored' });
+    const r = await mb.fetchNew({ since_uid: null });
     expect(r.emails.map((e) => [e.uid, e.message_id, e.body])).toEqual([
       ['new1', '<n1@x>', 'first'],
       ['new2', '<n2@x>', 'second'],
     ]);
     expect(r.last_uid).toBe('new2');
-    expect(await state.getState('seen_uidls')).toEqual(['old', 'new1', 'new2']);
     expect(server.mails).toHaveLength(3);
 
-    expect(await mb.fetchNew({})).toEqual({ emails: [], last_uid: 'new2' });
+    expect(await mb.fetchNew({ since_uid: 'new2' })).toEqual({ emails: [], last_uid: 'new2' });
+    expect(await state.getState('seen_uidls')).toEqual(['old', 'new1', 'new2']);
+    expect(await state.getState('last_uid')).toBeUndefined();
+  });
+
+  it('delivers a batch again until a call passes its last_uid back', async () => {
+    server = new FakePop3Server();
+    server.add('a', mail('a', '1'));
+    server.add('b', mail('b', '2'));
+    await server.start();
+    const { mailbox: mb, state } = mailbox({ initial: 'all' });
+    expect((await mb.fetchNew({})).emails.map((e) => e.uid)).toEqual(['a', 'b']);
+    expect(await state.getState('seen_uidls')).toEqual([]);
+    // The run failed, so the task's cursor is still null: the same mail comes back.
+    const retry = await mb.fetchNew({ since_uid: null });
+    expect(retry.emails.map((e) => e.uid)).toEqual(['a', 'b']);
+    expect(retry.last_uid).toBe('b');
+    // That run succeeded and stored 'b'.
+    server.add('c', mail('c', '3'));
+    expect((await mb.fetchNew({ since_uid: 'b' })).emails.map((e) => e.uid)).toEqual(['c']);
+    expect(await state.getState('seen_uidls')).toEqual(['a', 'b']);
   });
 
   it('delivers everything with initial: all, honours limit, forgets UIDLs gone from the server', async () => {
@@ -229,22 +248,28 @@ describe('Pop3Mailbox', () => {
     const { mailbox: mb, state } = mailbox({ initial: 'all', limit: 2 });
     expect((await mb.fetchNew({})).emails.map((e) => e.uid)).toEqual(['a', 'b']);
     server.mails.splice(0, 1); // 'a' removed by another client
-    expect((await mb.fetchNew({})).emails.map((e) => e.uid)).toEqual(['c']);
-    expect(await state.getState('seen_uidls')).toEqual(['b', 'c']);
+    expect((await mb.fetchNew({ since_uid: 'b' })).emails.map((e) => e.uid)).toEqual(['c']);
+    expect(await state.getState('seen_uidls')).toEqual(['b']);
   });
 
-  it('deletes fetched mail on the server when configured', async () => {
+  it('deletes mail on the server only once a call passes its last_uid back', async () => {
     server = new FakePop3Server();
     server.add('a', mail('a', '1'));
     server.add('b', mail('b', '2'));
     await server.start();
     const { mailbox: mb, state } = mailbox({ initial: 'all', delete_after_fetch: true });
     expect((await mb.fetchNew({})).emails.map((e) => e.uid)).toEqual(['a', 'b']);
+    expect(server.mails).toHaveLength(2);
+    expect(server.log.filter((l) => l.startsWith('DELE'))).toEqual([]);
+    // A failed run: nothing was deleted, so nothing is lost.
+    expect((await mb.fetchNew({ since_uid: null })).emails.map((e) => e.uid)).toEqual(['a', 'b']);
+    expect(server.mails).toHaveLength(2);
+
+    expect(await mb.fetchNew({ since_uid: 'b' })).toEqual({ emails: [], last_uid: 'b' });
     expect(server.mails).toEqual([]);
     expect(server.log).toContain('DELE 1');
     expect(server.log).toContain('DELE 2');
     expect(await state.getState('seen_uidls')).toEqual([]);
-    expect(await mb.fetchNew({})).toEqual({ emails: [], last_uid: 'b' });
   });
 
   it('fails the call when the login is refused and reports mark_read as unsupported', async () => {

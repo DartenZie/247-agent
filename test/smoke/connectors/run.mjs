@@ -208,8 +208,10 @@ const rig = {
    * Declares the manual task `name` calling `connector.op` with `fields` taken from the
    * event payload. A field absent from the payload would render as null, which an op's
    * schema rejects, so `call` must pass exactly these fields; declare one task per shape.
+   * `extra.args` adds fixed args (a cursor from state, say); the rest of `extra` goes on
+   * the task (`state_updates`).
    */
-  op(name, connector, op, fields) {
+  op(name, connector, op, fields, { args = {}, ...extra } = {}) {
     this.task({
       name,
       trigger: { kind: 'manual' },
@@ -217,8 +219,12 @@ const rig = {
         kind: 'connector',
         connector,
         op,
-        args: Object.fromEntries(fields.map((f) => [f, `\${event.payload.${f}}`])),
+        args: {
+          ...Object.fromEntries(fields.map((f) => [f, `\${event.payload.${f}}`])),
+          ...args,
+        },
       },
+      ...extra,
     });
     fieldsOf.set(name, [...fields].sort());
   },

@@ -95,7 +95,7 @@ state_updates:
 Keys are `<namespace>.<key>`, each part lowercase letters, digits, `_` or `-`. Values
 are templated. They are written only after a successful run, and read back in any
 template as `${state.email.last_uid}`, a snapshot taken when the run starts. Connectors
-keep their own cursors in the same store under their own name, and `oa` can read and
+keep their own memory in the same store under their own name, and `oa` can read and
 change any value through the API: see [the API reference](../reference/api.md).
 
 ## One transaction

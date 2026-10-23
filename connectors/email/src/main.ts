@@ -54,7 +54,7 @@ await runConnector({
       defineTool({
         name: 'fetch_new',
         description:
-          'Messages newer than the cursor: IMAP UIDs above since_uid, or POP3 messages not delivered before. Returns {emails, last_uid}.',
+          "Messages newer than the cursor since_uid: IMAP UIDs above it, or POP3 messages not handled yet (passing a batch's last_uid back marks it handled). Returns {emails, last_uid}.",
         input: {
           folder: z.string().optional(),
           since_uid: z.union([z.number(), z.string(), z.null()]).optional(),

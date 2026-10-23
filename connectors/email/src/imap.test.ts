@@ -98,7 +98,7 @@ function setup(extra: Record<string, unknown> = {}, uidList: number[] = [1, 2, 3
 }
 
 describe('ImapMailbox.fetchNew', () => {
-  it('returns UIDs above since_uid in order and advances the cursor', async () => {
+  it('returns UIDs above since_uid in order, with the cursor to pass back', async () => {
     const { mailbox, state, server } = setup();
     const r = await mailbox.fetchNew({ since_uid: 1 });
     expect(r.emails.map((e) => [e.uid, e.subject, e.message_id])).toEqual([
@@ -106,7 +106,6 @@ describe('ImapMailbox.fetchNew', () => {
       [3, 'Mail 3', '<m3@x>'],
     ]);
     expect(r.last_uid).toBe(3);
-    expect(await state.getState('last_uid')).toBe(3);
     expect(await state.getState('uidvalidity')).toBe('100');
     expect(server.calls).toEqual([
       'connect',
@@ -130,17 +129,27 @@ describe('ImapMailbox.fetchNew', () => {
     expect(r.emails.map((e) => e.uid)).toEqual([1, 2, 3]);
   });
 
-  it('falls back to its own stored cursor when since_uid is absent', async () => {
+  it('keeps no cursor of its own, so mail from a failed run comes back', async () => {
+    // The task commits `last_uid` only when its run succeeds; a run that failed passes the
+    // old cursor again. The connector's namespace is the one the task writes `last_uid` to.
     const { mailbox, state } = setup();
+    expect((await mailbox.fetchNew({ since_uid: 1 })).emails.map((e) => e.uid)).toEqual([2, 3]);
+    expect(await state.getState('last_uid')).toBeUndefined();
+    expect((await mailbox.fetchNew({ since_uid: 1 })).emails.map((e) => e.uid)).toEqual([2, 3]);
+  });
+
+  it('treats an absent since_uid as no cursor, whatever another caller stored', async () => {
+    const { mailbox, state, log } = setup({ initial: 'all' });
     await state.putState('last_uid', 2);
     await state.putState('uidvalidity', '100');
     const r = await mailbox.fetchNew({});
-    expect(r.emails.map((e) => e.uid)).toEqual([3]);
+    expect(r.emails.map((e) => e.uid)).toEqual([1, 2, 3]);
+    expect(log[0]).toMatch(/without since_uid has no cursor/);
+    expect(await state.getState('last_uid')).toBe(2);
   });
 
   it('resets the cursor when UIDVALIDITY changes', async () => {
     const { mailbox, state, server, log } = setup({ initial: 'all' });
-    await state.putState('last_uid', 3);
     await state.putState('uidvalidity', '99');
     server.uidValidity = 100n;
     const r = await mailbox.fetchNew({ since_uid: 3 });

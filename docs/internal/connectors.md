@@ -216,7 +216,7 @@ in [`security.md`](security.md); the metrics are `oa_sandbox_net_requests_total`
 
 | Connector | Wraps | Shape | Ops | State it writes |
 |---|---|---|---|---|
-| `email` | imapflow (IMAP), an own POP3 client, nodemailer (SMTP), mailparser | poll-style: a cron task calls `fetch_new` and fans out `email.received` | `fetch_new`, `mark_read`, `send` | `last_uid`, `uidvalidity` (IMAP), `seen_uidls` (POP3, capped at 20 000) |
+| `email` | imapflow (IMAP), an own POP3 client, nodemailer (SMTP), mailparser | poll-style: a cron task calls `fetch_new` and fans out `email.received` | `fetch_new`, `mark_read`, `send` | `uidvalidity` (IMAP), `seen_uidls` (POP3, capped at 20 000) and `pending_uidls` (POP3); the cursor is the calling task's state |
 | `ftp` | ssh2-sftp-client, basic-ftp | ops only, one connection per call, every path confined to `root`; `sync` is the one op that reads local disk, under `local_roots` | `list`, `stat`, `read`, `write`, `delete`, `rename`, `mkdir`, `sync` (eight) | none |
 | `chat` | Telegram Bot API, or the Matrix Client-Server API with `backend: matrix` | push-style: long polls and emits `chat.message` and `chat.reply`; `ask` stores the question | `send`, `ask` | `offset` (Telegram) or `since` (Matrix), `pending` |
 | `webhook` | `node:http` | push-style, `transport: none`: one event per verified request | none | none |
