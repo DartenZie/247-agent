@@ -170,11 +170,11 @@ packages/core/src/
   executor/          executor.ts: the worker pool and run lifecycle
   actions/           one runner per kind, agent-*.ts helpers, sandbox.ts, sandbox-net.ts, types.ts (ActionContext, the ports)
   llm/               service.ts (the ctx.llm port), config.ts, pricing.ts, models.ts, batches.ts, errors.ts, one adapter per provider type
-  connectors/        supervisor.ts, acp.ts, acp-types.ts, mcp-bridge.ts, net-proxy.ts, poller.ts, host.ts, socket-transport.ts, child-env.ts
+  connectors/        supervisor.ts, acp.ts, acp-types.ts, mcp-bridge.ts, net-proxy.ts, poller.ts, host.ts, socket-transport.ts, stdio-transport.ts, child-env.ts
   secrets/           env, file, systemd-credentials
   api/               routes.ts (transport-free handlers), server.ts, client.ts
   expr/              glob.ts (type patterns), jmespath.ts, template.ts
-  metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts
+  metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts, process-group.ts
 ```
 
 Ports between the parts, all on `ActionContext` (`actions/types.ts`):

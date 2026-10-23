@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -90,9 +91,18 @@ function pidsIn(file: string): number[] {
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
+  }
+  if (process.platform !== 'linux') {
+    return true;
+  }
+  // A zombie has exited. An orphan stays one where nothing reaps it, as in a container
+  // whose PID 1 is `sleep`.
+  try {
+    return !/^\d+ \(.*\) Z /.test(readFileSync(`/proc/${String(pid)}/stat`, 'utf8'));
+  } catch {
+    return false; // gone since the signal
   }
 }
 
@@ -105,6 +115,42 @@ const until = async (pred: () => boolean, ms = 5000): Promise<void> => {
     await new Promise((r) => setTimeout(r, 10));
   }
 };
+
+/**
+ * `program` run by an `sh` wrapper that does not replace itself, so the program is a
+ * grandchild of the core. A preload records its pid in `$PID_FILE` and keeps it from
+ * exiting when its stdin closes. Returns the exec and the pid file.
+ */
+function wrapped(dir: string, program: string): { exec: string[]; pidFile: string } {
+  const preload = join(dir, 'preload.cjs');
+  writeFileSync(
+    preload,
+    "require('fs').appendFileSync(process.env.PID_FILE, process.pid + '\\n'); setInterval(() => undefined, 60000);",
+  );
+  return { exec: ['sh', '-c', `node -r ${preload} ${program}; true`], pidFile: join(dir, 'pids') };
+}
+
+/** Restarts then stops connector `name`: one copy runs after the restart, none after the stop. */
+async function expectNoLeftovers(
+  s: ConnectorSupervisor,
+  name: string,
+  pidFile: string,
+): Promise<void> {
+  await s.start();
+  await until(() => pidsIn(pidFile).length === 1);
+  await s.restart(name);
+  await until(() => pidsIn(pidFile).length === 2);
+  const pids = pidsIn(pidFile);
+  try {
+    expect(pids.filter(alive)).toEqual(pids.slice(1));
+    await s.stop();
+    expect(pids.filter(alive)).toEqual([]);
+  } finally {
+    for (const pid of pids.filter(alive)) {
+      process.kill(pid, 'SIGKILL');
+    }
+  }
+}
 
 describe('ConnectorSupervisor', () => {
   it("renders ${env.X} in a manifest from the daemon's environment, not the child's", async () => {
@@ -280,9 +326,25 @@ describe('ConnectorSupervisor', () => {
     const startedAt = Date.now();
     await s.stop();
     expect(Date.now() - startedAt).toBeLessThan(10_000);
-    for (const pid of pidsIn(pidFile).filter(alive)) {
-      process.kill(pid, 'SIGKILL'); // the SDK signals only its direct child
-    }
+    expect(pidsIn(pidFile).filter(alive)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('stops every process a wrapper started, on restart and on stop (#196)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = wrapped(dir, `${FIXTURES}fake-mcp.ts`);
+    const s = make([manifest({ exec, env: { PID_FILE: pidFile } })]);
+    await expectNoLeftovers(s, 'fake', pidFile);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('stops every process a wrapper started for a transport: none connector (#196)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = wrapped(dir, '-e 0');
+    const s = make([
+      manifest({ name: 'plain', transport: 'none', exec, env: { PID_FILE: pidFile } }),
+    ]);
+    await expectNoLeftovers(s, 'plain', pidFile);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -436,6 +498,14 @@ describe('ConnectorSupervisor with an acp connector', () => {
     expect(alive(first ?? 0)).toBe(false);
     await s.stop();
     expect(pidsIn(pidFile).filter(alive)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('stops every process a wrapper started for an unsandboxed agent (#196)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = wrapped(dir, `${FIXTURES}fake-acp.ts`);
+    const s = make([acp({ exec, env: { PID_FILE: pidFile } })]);
+    await expectNoLeftovers(s, 'claude', pidFile);
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
+import { killGroup } from '../process-group.js';
 import type { JsonValue } from '../store/types.js';
 import { buildSandboxArgv, Sandbox } from './sandbox.js';
 import type { ActionContext } from './types.js';
@@ -52,20 +53,6 @@ function tail(text: string): string {
 function withTail(message: string, stderr: string): string {
   const t = tail(stderr);
   return t === '' ? message : `${message}: ${t}`;
-}
-
-/**
- * Signals the process group `pid` leads; a group that is already gone is not an error.
- * Never called with a missing pid: `kill(-0)` would be the daemon's own group.
- */
-function killGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
-      throw err;
-    }
-  }
 }
 
 function abortReason(signal: AbortSignal): Error {

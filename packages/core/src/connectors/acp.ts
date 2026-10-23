@@ -29,6 +29,7 @@ import {
 import { execa } from 'execa';
 
 import type { Logger } from '../log.js';
+import { killGroup } from '../process-group.js';
 import {
   PERMISSION_CANCELLED,
   TOOL_KINDS,
@@ -304,6 +305,8 @@ export class AcpAgent {
       stderr: 'pipe',
       buffer: false,
       reject: false,
+      // Its own process group, so a stop reaches what a wrapper started too (#196).
+      detached: true,
     });
     const sessions = new Map<string, Registered>();
     const app = client({ name: '247-agent-core' }).onRequest(
@@ -332,7 +335,7 @@ export class AcpAgent {
     );
     const kill = (signal: NodeJS.Signals): void => {
       if (child.pid !== undefined) {
-        child.kill(signal);
+        killGroup(child.pid, signal);
       }
     };
     const timeoutMs = opts.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
