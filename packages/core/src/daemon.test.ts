@@ -516,6 +516,31 @@ describe('/v1/connectors', () => {
     expect((await raw('GET', '/v1/connectors/fake/restart')).status).toBe(405);
   });
 
+  it('listens before a connector that hangs in initialize is up (#195)', async () => {
+    await daemon.stop();
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      [
+        'db: state.db',
+        'socket: core.sock',
+        'connectors:',
+        '  - { name: slow, exec: [node, -e, "process.stdin.resume()"] }',
+        '',
+      ].join('\n'),
+    );
+    const started = startDaemon({ configFile: join(dir, 'agent.yaml'), log: log() });
+    const timedOut = new Promise<'timeout'>((r) =>
+      setTimeout(() => {
+        r('timeout');
+      }, 2000),
+    );
+    const first = await Promise.race([started, timedOut]);
+    daemon = await started; // stopped by afterEach either way
+    expect(first).not.toBe('timeout');
+    api = new ApiClient({ socketPath: daemon.config.socket });
+    expect(await api.listConnectors()).toMatchObject([{ name: 'slow', state: 'starting' }]);
+  }, 90_000); // before the fix startDaemon waited out the 60 s connect timeout
+
   it('lists supervised and built-in connectors and restarts a supervised one', async () => {
     await daemon.stop();
     writeFileSync(

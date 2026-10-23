@@ -211,6 +211,7 @@ The names worth searching for:
 | `retention.purged` | info | what a retention pass deleted (`runs`, `ledger`, `transcripts`, `events`, `workspaces`) |
 | `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path`; logged on every pass, published once as the event of the same name |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
+| `core.connectors_start_failed` | error | starting the connectors threw (`error`); the daemon keeps running |
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart` | info, error, warn | a reload applied, refused, or changed a key that needs a restart |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
