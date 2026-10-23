@@ -308,6 +308,11 @@ export class Pop3Mailbox implements Mailbox {
     const storedPending = await this.state.getState('pending_uidls');
     const pending = Array.isArray(storedPending) ? storedPending.map(String) : [];
     const handled = given !== null && pending.at(-1) === given ? pending : [];
+    if (args.since_uid === undefined && pending.length > 0) {
+      this.log(
+        'pop3: fetch_new without since_uid delivers the last batch again; pass last_uid back as since_uid',
+      );
+    }
 
     const client = await this.connect({
       host: this.config.host,

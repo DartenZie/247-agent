@@ -197,8 +197,8 @@ emit:
 
 ## State
 
-The connector keeps its cursor in the daemon's state store, under its own name
-(`GET /v1/state/email`):
+The connector keeps what is not per caller in the daemon's state store, under its own
+name (`GET /v1/state/email`):
 
 | Key | Backend | Value |
 |---|---|---|

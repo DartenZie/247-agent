@@ -139,11 +139,12 @@ describe('ImapMailbox.fetchNew', () => {
   });
 
   it('treats an absent since_uid as no cursor, whatever another caller stored', async () => {
-    const { mailbox, state } = setup({ initial: 'all' });
+    const { mailbox, state, log } = setup({ initial: 'all' });
     await state.putState('last_uid', 2);
     await state.putState('uidvalidity', '100');
     const r = await mailbox.fetchNew({});
     expect(r.emails.map((e) => e.uid)).toEqual([1, 2, 3]);
+    expect(log[0]).toMatch(/without since_uid has no cursor/);
     expect(await state.getState('last_uid')).toBe(2);
   });
 

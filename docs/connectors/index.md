@@ -141,9 +141,10 @@ A connector started by the daemon gets a small environment, not the daemon's who
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` (either case), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` | inherited from the daemon when set, so a connector reaches the network through a proxy or a private CA |
 | the manifest's `env` | added on top |
 
-A connector keeps nothing on disk. Cursors and other memory go into the daemon's state
-store under the connector's own name (`${state.email.last_uid}` in a task;
-`GET /v1/state/email` over the API), so a connector can be restarted at any time. The
+A connector keeps nothing on disk. Its memory goes into the daemon's state store under
+the connector's own name (`GET /v1/state/email` over the API), so a connector can be
+restarted at any time. A cursor that an op returns belongs to the calling task: the task
+stores it with `state_updates`, which commit only with a successful run. The
 bundled connectors delete `OA_CONFIG_JSON` from their environment once they have read it,
 so a program they start does not inherit the secrets.
 

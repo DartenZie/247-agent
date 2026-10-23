@@ -86,6 +86,11 @@ export class ImapMailbox implements Mailbox {
     const limit = Math.min(args.limit ?? this.config.limit, this.config.limit);
     return this.withMailbox(folder, async (client, mailbox) => {
       const validity = mailbox.uidValidity.toString();
+      if (args.since_uid === undefined) {
+        this.log(
+          'imap: fetch_new without since_uid has no cursor; pass last_uid back as since_uid',
+        );
+      }
       let since = await this.resolveCursor(args.since_uid, validity);
       if (since === null) {
         // First run in this mailbox (or UIDVALIDITY changed).
