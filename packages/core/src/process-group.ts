@@ -75,10 +75,12 @@ export async function sweepGroupAfter(
  * Resolves when `child` exits or cannot be spawned. Unlike its `close` event, or an execa
  * result, it does not wait for the pipes: another member of the group, such as a helper a
  * wrapper started in the background, can hold them open long after the program is gone (#198).
+ * A child without a pid never started: execa answers a spawn that throws with one that
+ * emits neither `exit` nor `error`.
  */
 export function exitOf(child: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
       resolve();
       return;
     }

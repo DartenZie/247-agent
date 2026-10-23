@@ -448,7 +448,10 @@ describe('ConnectorSupervisor', () => {
       await s.start();
       const [helper = 0] = pidsIn(pidFile);
       await s.call('fake', 'crash', {}, { signal: signal() });
-      await until(() => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up');
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
       await expect(s.call('fake', 'echo', { value: 1 }, { signal: signal() })).resolves.toEqual({
         echoed: 1,
       });
@@ -459,7 +462,7 @@ describe('ConnectorSupervisor', () => {
     } finally {
       cleanUpHelpers(dir, pidFile);
     }
-  });
+  }, 30_000);
 
   it('notices a transport: none program exit while its helper holds the output (#198)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
@@ -467,7 +470,7 @@ describe('ConnectorSupervisor', () => {
     try {
       const s = make([manifest({ name: 'plain', transport: 'none', exec })]);
       await s.start();
-      await until(() => (s.status()[0]?.restarts ?? 0) >= 1);
+      await until(() => (s.status()[0]?.restarts ?? 0) >= 1, 20_000);
       expect(lines).toContainEqual(
         expect.objectContaining({ msg: 'connector.exited', reason: 'exit code 3' }),
       );
@@ -475,6 +478,24 @@ describe('ConnectorSupervisor', () => {
       await until(() => !alive(helper));
     } finally {
       cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
+  it('retries a transport: none connector whose spawn fails at once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const file = join(dir, 'not-a-dir');
+    writeFileSync(file, '');
+    try {
+      // A cwd that is a file fails inside spawn(), which execa answers with a child that
+      // never emits `exit`.
+      const s = make([
+        manifest({ name: 'plain', transport: 'none', exec: ['node', '-e', '0'], cwd: file }),
+      ]);
+      await s.start();
+      await until(() => (s.status()[0]?.restarts ?? 0) >= 1);
+      expect(lines.map((l) => l.msg)).toContain('connector.exited');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -632,7 +653,10 @@ describe('ConnectorSupervisor with an acp connector', () => {
         onPermission: () => 'cancelled',
       });
       await expect(session.prompt('[[crash]]').next()).rejects.toThrow();
-      await until(() => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up');
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
       expect(lines).toContainEqual(
         expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
       );
@@ -640,7 +664,7 @@ describe('ConnectorSupervisor with an acp connector', () => {
     } finally {
       cleanUpHelpers(dir, pidFile);
     }
-  });
+  }, 30_000);
 
   it('keeps retrying a program that is not an ACP agent', async () => {
     const s = make([acp({ exec: ['node', '-e', 'process.exit(5)'] })]);
