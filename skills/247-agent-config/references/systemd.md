@@ -44,6 +44,7 @@ Restart=always
 RestartSec=5
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
+StateDirectoryMode=0750
 ProtectSystem=strict
 ReadWritePaths=/var/lib/247-agent
 PrivateTmp=yes
@@ -55,7 +56,8 @@ WantedBy=multi-user.target
 
 With `secrets: { backend: systemd-credentials }` each `LoadCredential=` name is a
 secret of the same name. `RuntimeDirectory` creates `/run/247-agent` for the socket;
-`StateDirectory` creates `/var/lib/247-agent`. Add `ReadWritePaths` for any other
+`StateDirectory` creates `/var/lib/247-agent`, and `StateDirectoryMode=0750` keeps
+other local users out of it. Add `ReadWritePaths` for any other
 directory a `shell` task writes to (a site checkout, for example).
 
 ## Install and upgrade

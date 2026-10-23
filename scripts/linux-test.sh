@@ -200,6 +200,9 @@ for _ in $(seq 30); do [ -S /run/247-agent/core.sock ] && break; sleep 1; done
 [ -S /run/247-agent/core.sock ] || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
 oa --version
 oa run hello --wait
+# The state directory and the database are closed to other local users (issue #42).
+open=$(find /var/lib/247-agent -maxdepth 1 -perm /o=rwx)
+[ -z "$open" ] || { ls -la /var/lib/247-agent; echo "readable by other users: $open"; exit 1; }
 apt-get purge -y 247-agent
 '
 fi
