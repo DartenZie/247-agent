@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   lstatSync,
   mkdirSync,
   readdirSync,
@@ -105,13 +106,15 @@ export async function createWorkspace(
   runId: string,
   env: Readonly<Record<string, string>>,
 ): Promise<WorkspaceHandle> {
-  mkdirSync(workDir, { recursive: true });
+  // Workspaces hold the agent's checkout and transcript inputs: closed to other users
+  // whatever the umask (the unit's UMask= covers what the agent creates inside).
+  mkdirSync(workDir, { recursive: true, mode: 0o750 });
   // The real path: an agent reports the paths it touches resolved (macOS's /var is
   // /private/var), and the policy compares them with this one.
   const path = workspacePath(realpathSync(workDir), runId);
   if (cfg.kind === 'temp') {
     rmSync(path, { recursive: true, force: true });
-    mkdirSync(path);
+    mkdirSync(path, { mode: 0o750 });
     return {
       path,
       assertIntact: () => undefined,
@@ -126,6 +129,7 @@ export async function createWorkspace(
   await git(['-C', repo, 'worktree', 'remove', '--force', path], env).catch(() => undefined);
   rmSync(path, { recursive: true, force: true });
   await git(['-C', repo, 'worktree', 'add', '-B', branch, path, cfg.branch], env);
+  chmodSync(path, 0o750);
   const pointer = readFileSync(join(path, '.git'), 'utf8');
   return {
     path,

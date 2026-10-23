@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -46,6 +46,29 @@ describe('openStore', () => {
     store.close();
     store = openStore(path);
     expect(store.db.pragma('user_version', { simple: true })).toBe(9);
+  });
+
+  it('creates the database and its WAL files closed to other users under a permissive umask', () => {
+    const prev = process.umask(0o022);
+    try {
+      const path = join(dir, 'fresh.db');
+      const fresh = openStore(path);
+      fresh.events.insert(event());
+      for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+        expect(statSync(file).mode & 0o007, file).toBe(0);
+      }
+      fresh.close();
+    } finally {
+      process.umask(prev);
+    }
+  });
+
+  it('closes an existing world-readable database to other users on open', () => {
+    const path = join(dir, 'state.db');
+    store.close();
+    chmodSync(path, 0o644);
+    store = openStore(path);
+    expect(statSync(path).mode & 0o777).toBe(0o640);
   });
 });
 

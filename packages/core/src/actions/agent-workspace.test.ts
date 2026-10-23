@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -63,6 +64,23 @@ describe('createWorkspace', () => {
     expect(existsSync(ws.path)).toBe(true);
     await ws.remove();
     expect(existsSync(ws.path)).toBe(false);
+  });
+
+  it('keeps work_dir and each workspace closed to other users under a permissive umask', async () => {
+    const prev = process.umask(0o022);
+    try {
+      const work = join(root, 'work');
+      const temp = await createWorkspace({ kind: 'temp' }, work, 'run_01TEMP', hostEnv);
+      const repo = seedRepo(join(root, 'repo'));
+      const cfg = { kind: 'git-worktree' as const, repo, branch: 'main' };
+      const tree = await createWorkspace(cfg, work, 'run_01TREE', hostEnv);
+      for (const path of [work, temp.path, tree.path]) {
+        expect(statSync(path).mode & 0o007, path).toBe(0);
+      }
+      await tree.remove();
+    } finally {
+      process.umask(prev);
+    }
   });
 
   it('creates and removes a worktree without running the repository hooks', async () => {
