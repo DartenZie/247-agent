@@ -18,14 +18,12 @@ import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 
-import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
-
 import { loadAgentFile } from '../config/agent.js';
 import { unitSocket, type ConnectorConfig } from '../config/connector.js';
 import { loadConnectors, type ConfigIssue } from '../config/load.js';
 import type { Logger } from '../log.js';
 import { createSecretsBackend } from '../secrets/secrets.js';
-import { connectorChildEnv } from './child-env.js';
+import { connectorBaseEnv, connectorChildEnv } from './child-env.js';
 
 export interface ConnectorHostOptions {
   /** agent.yaml, as the daemon reads it. */
@@ -103,12 +101,14 @@ export function prepareLaunch(
     throw new ConnectorHostError(`connector "${opts.name}" has no exec`);
   }
   const secrets = createSecretsBackend(config.secrets, dirname(config.file), opts.env);
+  const templateEnv = secrets.scrub(opts.env);
   let env: Record<string, string>;
   try {
     env = connectorChildEnv({
       manifest,
       secrets,
-      baseEnv: getDefaultEnvironment(),
+      baseEnv: connectorBaseEnv(templateEnv),
+      templateEnv,
       socketPath: config.socket,
     });
   } catch (err) {

@@ -52,6 +52,12 @@ connectors:
     managed_by: systemd
   - name: child
     exec: [node, ${FIXTURES}fake-mcp.ts]
+  - name: ca
+    exec: [node, ${FIXTURES}fake-mcp.ts]
+    managed_by: systemd
+    socket: ${dir}/ca.sock
+    config: { ca: "\${env.MY_CA}" }
+    env: { NODE_EXTRA_CA_CERTS: "\${env.MY_CA}" }
 `,
   );
 });
@@ -133,6 +139,37 @@ describe('prepareLaunch', () => {
       OA_CONFIG_JSON: JSON.stringify({ token: 'from-the-unit' }),
       FAKE_EXTRA: 'from-the-unit-x',
     });
+    expect(launch.env.OA_SECRET_TOK).toBeUndefined();
+  });
+
+  it("renders ${env.X} from the unit's environment and passes its proxy, CA, locale and zone", () => {
+    const launch = prepareLaunch({
+      configFile,
+      name: 'ca',
+      env: {
+        ...env,
+        MY_CA: '/etc/ssl/private-ca.pem',
+        HTTPS_PROXY: 'http://proxy.internal:3128',
+        no_proxy: 'localhost',
+        SSL_CERT_FILE: '/etc/ssl/bundle.pem',
+        TZ: 'Europe/Prague',
+        LANG: 'cs_CZ.UTF-8',
+        LC_TIME: 'C',
+        UNRELATED: 'stays-out',
+      },
+    });
+    expect(launch.env).toMatchObject({
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/private-ca.pem',
+      OA_CONFIG_JSON: JSON.stringify({ ca: '/etc/ssl/private-ca.pem' }),
+      HTTPS_PROXY: 'http://proxy.internal:3128',
+      no_proxy: 'localhost',
+      SSL_CERT_FILE: '/etc/ssl/bundle.pem',
+      TZ: 'Europe/Prague',
+      LANG: 'cs_CZ.UTF-8',
+      LC_TIME: 'C',
+    });
+    expect(launch.env.UNRELATED).toBeUndefined();
+    expect(launch.env.MY_CA).toBeUndefined();
     expect(launch.env.OA_SECRET_TOK).toBeUndefined();
   });
 

@@ -127,9 +127,13 @@ tick; nothing is published and the seen list is untouched. `cwd`, `env`, `health
 
 ## What a connector process receives
 
-A `stdio` or `none` connector is started with these variables, plus the manifest's
-`env`, on top of a minimal environment (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
-`USER`) where `PATH` begins with the install's `bin/` and its Node:
+A `stdio` or `none` connector is started with a minimal environment, the manifest's
+`env` and the variables in the table below. The minimal environment copies these
+variables from the daemon when they are set: `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
+`USER`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`,
+`ALL_PROXY` (in either case), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `SSL_CERT_DIR`.
+`PATH` begins with the install's `bin/` and its Node. To pass any other variable, add it
+to `env`, for example `MY_VAR: "${env.MY_VAR}"`.
 
 | Variable | Value |
 |---|---|
@@ -139,7 +143,8 @@ A `stdio` or `none` connector is started with these variables, plus the manifest
 
 An `acp` connector gets that minimal environment, `OA_CONNECTOR_NAME` and its `env`,
 never the socket or a config. Sandboxed, its whole environment is `PATH`, `HOME` (its
-own home under `work_dir`), `OA_CONNECTOR_NAME` and the manifest's `env`.
+own home under `work_dir`), `LANG` when the daemon has it, `OA_CONNECTOR_NAME` and the
+manifest's `env`.
 
 Secrets are rendered when the process starts. After rotating one, `oa connector
 restart <name>` respawns the connector with the new value; the built-in poller renders

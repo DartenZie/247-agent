@@ -270,6 +270,7 @@ export function createCore(opts: CoreOptions): Core {
           manifests: processes,
           socketPath: opts.socketPath,
           secrets,
+          templateEnv: childEnv,
           log,
           metrics,
           agents:

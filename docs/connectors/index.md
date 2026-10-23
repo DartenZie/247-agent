@@ -137,6 +137,8 @@ A connector started by the daemon gets a small environment, not the daemon's who
 | `OA_CONNECTOR_NAME` | the manifest's `name` |
 | `OA_CONFIG_JSON` | the manifest's `config` as JSON, secrets filled in |
 | `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM` | inherited from the daemon when set; `PATH` starts with the install's `bin/`, so the bundled connectors and the daemon's own `node` are found first |
+| `TZ`, `LANG`, `LANGUAGE`, `LC_*` | inherited from the daemon when set |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` (either case), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` | inherited from the daemon when set, so a connector reaches the network through a proxy or a private CA |
 | the manifest's `env` | added on top |
 
 A connector keeps nothing on disk. Cursors and other memory go into the daemon's state

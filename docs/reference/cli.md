@@ -256,5 +256,8 @@ again. See [A connector in its own unit](../connectors/own-unit.md).
 | `OA_CONNECTOR_NAME` | connectors, agent programs | the manifest's `name` |
 | `OA_CONFIG_JSON` | connectors | the manifest's `config` as JSON with secrets rendered; the SDK deletes it after reading |
 
-A connector child otherwise inherits only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and
-`USER` from the daemon, plus its manifest's `env`.
+A connector child otherwise inherits only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`,
+`USER`, the locale and zone variables (`TZ`, `LANG`, `LANGUAGE`, `LC_*`) and the proxy and
+CA variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` in either case,
+`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`) from the daemon, plus its
+manifest's `env`.
