@@ -69,7 +69,9 @@ describe('createWorkspace', () => {
   it('keeps work_dir and each workspace closed to other users under a permissive umask', async () => {
     const prev = process.umask(0o022);
     try {
+      // An existing work_dir from an older install is tightened too.
       const work = join(root, 'work');
+      mkdirSync(work, { mode: 0o755 });
       const temp = await createWorkspace({ kind: 'temp' }, work, 'run_01TEMP', hostEnv);
       const repo = seedRepo(join(root, 'repo'));
       const cfg = { kind: 'git-worktree' as const, repo, branch: 'main' };

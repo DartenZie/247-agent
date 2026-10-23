@@ -14,10 +14,11 @@ nine ship, so a current database reads `user_version = 9`. `store.transaction(fn
 a reader that wants to write.
 
 The file holds every payload, result and transcript, so `openDatabase` creates it 0640
-whatever the umask and clears the other-user bits of an existing file, `-wal` or `-shm`;
-SQLite gives the `-wal` and `-shm` it creates the main file's mode. The unit adds
-`StateDirectoryMode=0750` and `UMask=0007`, and `createWorkspace` makes `work_dir` and
-each run's directory 0750.
+whatever the umask. It also clears the other-user bits of an existing file, `-wal` or
+`-shm` that the daemon owns (`private-fs.ts`). SQLite gives the `-wal` and `-shm` it
+creates the main file's mode. `work_dir`, each run's workspace and each agent home are
+0750 the same way. The unit adds `StateDirectoryMode=0750` and sets no `UMask=`, so
+files a `shell` task writes elsewhere, such as a deployed site, keep the usual modes.
 
 `better-sqlite3` is synchronous: every store call is a short transaction on the main
 thread, there is no await between a read and the write that depends on it, and that is

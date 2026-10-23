@@ -20,10 +20,10 @@ configuration and the daemon's environment. Moving secrets from the environment 
 file or a pipe would change nothing; only the namespace split does.
 
 The units add the OS layer: `User=247-agent`, `ProtectSystem=strict`, `PrivateTmp`,
-`NoNewPrivileges`, `RuntimeDirectory` for the socket, `StateDirectory` (mode 0750,
-with `UMask=0007`) for the database and workspaces, which no other local user reads. A setuid `bwrap` does not work under `NoNewPrivileges=yes`
-and the unit must not set `RestrictNamespaces=`: sandboxing needs unprivileged user
-namespaces. Paths a sandboxed step writes to still need `ReadWritePaths=`, because
+`NoNewPrivileges`, `RuntimeDirectory` for the socket, `StateDirectory` with
+`StateDirectoryMode=0750` for the database and workspaces, which no other local user
+reads. A setuid `bwrap` does not work under `NoNewPrivileges=yes`, and the unit must
+not set `RestrictNamespaces=`: sandboxing needs unprivileged user namespaces. Paths a sandboxed step writes to still need `ReadWritePaths=`, because
 the sandbox lives inside the unit's mount namespace.
 
 ## Secrets

@@ -1,14 +1,15 @@
-import { chmodSync, closeSync, existsSync, openSync, statSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, openSync } from 'node:fs';
 
 import Database from 'better-sqlite3';
 
+import { closeToOthers } from '../private-fs.js';
 import { migrate } from './migrations.js';
 
 /**
  * Opens (creating if needed) the state database with WAL and runs pending migrations. The
  * file holds every payload, result and transcript, so it is created 0640 whatever the
- * umask, and an existing file, `-wal` or `-shm` loses its bits for other users; SQLite
- * gives the `-wal` and `-shm` it creates the main file's mode.
+ * umask, and an existing file, `-wal` or `-shm` the daemon owns loses its bits for other
+ * users; SQLite gives the `-wal` and `-shm` it creates the main file's mode.
  */
 export function openDatabase(path: string): Database.Database {
   if (path !== ':memory:') {
@@ -17,12 +18,7 @@ export function openDatabase(path: string): Database.Database {
       chmodSync(path, 0o640);
     }
     for (const file of [path, `${path}-wal`, `${path}-shm`]) {
-      if (existsSync(file)) {
-        const mode = statSync(file).mode & 0o777;
-        if (mode & 0o007) {
-          chmodSync(file, mode & ~0o007);
-        }
-      }
+      closeToOthers(file);
     }
   }
   const db = new Database(path);

@@ -31,6 +31,7 @@ import {
 import { parseDuration } from '../config/duration.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
+import { mkdirPrivate } from '../private-fs.js';
 import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
@@ -642,7 +643,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       return { exec, cwd: m.manifest.cwd, env, proxy: undefined };
     }
     const home = agentHome(this.agentWorkDir, m.manifest.name);
-    mkdirSync(home, { recursive: true });
+    // The agent's login and config live here: closed to other users like its workspaces.
+    mkdirPrivate(home);
     const allow = sandbox.network?.allow ?? [];
     const proxy = allow.length === 0 ? undefined : await this.openNetProxy(m, allow, log);
     return {

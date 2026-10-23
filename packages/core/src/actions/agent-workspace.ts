@@ -13,6 +13,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { z } from 'zod';
 
+import { mkdirPrivate } from '../private-fs.js';
 import { NonRetryableError } from './types.js';
 
 /**
@@ -108,7 +109,7 @@ export async function createWorkspace(
 ): Promise<WorkspaceHandle> {
   // Workspaces hold the agent's checkout and transcript inputs: closed to other users
   // whatever the umask (the unit's UMask= covers what the agent creates inside).
-  mkdirSync(workDir, { recursive: true, mode: 0o750 });
+  mkdirPrivate(workDir);
   // The real path: an agent reports the paths it touches resolved (macOS's /var is
   // /private/var), and the policy compares them with this one.
   const path = workspacePath(realpathSync(workDir), runId);

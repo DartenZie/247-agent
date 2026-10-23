@@ -49,7 +49,6 @@ TimeoutStopSec=90
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 StateDirectoryMode=0750
-UMask=0007
 ProtectSystem=strict
 ReadWritePaths=/var/lib/247-agent
 PrivateTmp=yes
@@ -67,7 +66,7 @@ WantedBy=multi-user.target
 | `TimeoutStopSec=90` | systemd kills the daemon if a stop takes longer than 90 seconds; keep it above `shutdown.grace` plus 10 seconds (below) |
 | `RuntimeDirectory=` | creates `/run/247-agent` for the socket at start |
 | `StateDirectory=` | creates `/var/lib/247-agent`, owned by the service user |
-| `StateDirectoryMode=`, `UMask=` | the state directory, the database and every agent workspace are readable by the service user and group only, never by other local users |
+| `StateDirectoryMode=` | other local users cannot open `/var/lib/247-agent`, so they cannot read the database or the agent workspaces |
 | `ProtectSystem=strict` | the whole file system is read-only to the service except what `ReadWritePaths=` lists |
 | `ReadWritePaths=` | the state directory is writable; add any other directory a `shell` task writes to, such as a site checkout |
 | `PrivateTmp=yes` | the service has its own `/tmp` |

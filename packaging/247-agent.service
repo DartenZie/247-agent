@@ -28,7 +28,6 @@ TimeoutStopSec=90
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 StateDirectoryMode=0750
-UMask=0007
 ProtectSystem=strict
 ReadWritePaths=/var/lib/247-agent
 PrivateTmp=yes
