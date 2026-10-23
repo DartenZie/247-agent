@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   ErrorCode,
   McpError,
@@ -32,6 +31,7 @@ import {
 import { parseDuration } from '../config/duration.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
+import { killGroup, sweepGroupAfter } from '../process-group.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
@@ -41,6 +41,7 @@ import { connectorBaseEnv, connectorChildEnv, sandboxOf } from './child-env.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
 import { openNetProxy, type NetProxy } from './net-proxy.js';
 import { SocketClientTransport } from './socket-transport.js';
+import { ProcessClientTransport } from './stdio-transport.js';
 
 export interface SupervisorOptions {
   manifests: readonly ConnectorConfig[];
@@ -179,7 +180,7 @@ interface Managed {
   state: ConnectorState;
   client: Client | undefined;
   /** A child's stdio, or the unit's socket for a `managed_by: systemd` connector. */
-  transport: StdioClientTransport | SocketClientTransport | undefined;
+  transport: ProcessClientTransport | SocketClientTransport | undefined;
   /** A `none` child, or the `acp` agent (which is also a plain process to watch and stop). */
   process: PlainProcess | undefined;
   acp: AcpAgent | undefined;
@@ -726,32 +727,38 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         // Logged line by line and dropped: a buffer would hit execa's maxBuffer and kill it.
         buffer: false,
         reject: false,
+        // Its own process group, so a stop reaches what a wrapper started too (#196).
+        detached: true,
       });
       const proc: PlainProcess = {
         pid: child.pid,
         kill: (signal) => {
-          child.kill(signal);
+          if (child.pid !== undefined) {
+            killGroup(child.pid, signal);
+          }
         },
-        exited: child.then(
-          (r) => {
-            if (m.process !== proc) {
-              return; // killed on purpose (stop/restart); not a crash
-            }
-            m.process = undefined;
-            const why =
-              r.exitCode === undefined
-                ? `killed by ${r.signal ?? '?'}`
-                : `exit code ${String(r.exitCode)}`;
-            this.exited(m, why, log);
-          },
-          (err: unknown) => {
-            if (m.process !== proc) {
-              return;
-            }
-            m.process = undefined;
-            this.exited(m, errorMessage(err), log);
-          },
-        ),
+        exited: sweepGroupAfter(child.pid, child)
+          .then(() => child)
+          .then(
+            (r) => {
+              if (m.process !== proc) {
+                return; // killed on purpose (stop/restart); not a crash
+              }
+              m.process = undefined;
+              const why =
+                r.exitCode === undefined
+                  ? `killed by ${r.signal ?? '?'}`
+                  : `exit code ${String(r.exitCode)}`;
+              this.exited(m, why, log);
+            },
+            (err: unknown) => {
+              if (m.process !== proc) {
+                return;
+              }
+              m.process = undefined;
+              this.exited(m, errorMessage(err), log);
+            },
+          ),
       };
       m.process = proc;
       pipeLines(child.stdout, 'stdout', log);
@@ -803,18 +810,17 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       this.up(m, log);
       return;
     }
-    const transport = new StdioClientTransport({
+    const transport = new ProcessClientTransport({
       command,
       args,
       env,
       ...(cwd === undefined ? {} : { cwd }),
-      stderr: 'pipe',
     });
     const client = new Client({ name: '247-agent-core', version: VERSION });
     transport.onerror = (err) => {
       log.warn('connector.transport_error', { error: err.message });
     };
-    pipeLines(transport.stderr as NodeJS.ReadableStream | null, 'stderr', log);
+    pipeLines(transport.stderr, 'stderr', log);
     try {
       await connectUntil(client, transport, signal);
     } catch (err) {
@@ -1045,7 +1051,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
  */
 async function connectUntil(
   client: Client,
-  transport: StdioClientTransport | SocketClientTransport,
+  transport: ProcessClientTransport | SocketClientTransport,
   signal: AbortSignal,
 ): Promise<void> {
   let closing: Promise<void> | undefined;
@@ -1079,7 +1085,7 @@ async function connectUntil(
 
 function pidOf(m: Managed): number | null {
   const t = m.transport;
-  return (t instanceof StdioClientTransport ? t.pid : null) ?? m.process?.pid ?? null;
+  return (t instanceof ProcessClientTransport ? t.pid : null) ?? m.process?.pid ?? null;
 }
 
 interface ToolResult {

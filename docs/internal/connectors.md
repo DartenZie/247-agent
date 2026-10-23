@@ -58,12 +58,20 @@ stderr) and nothing else.
 
 `connectors/supervisor.ts` owns every connector process and the clients on top of them.
 
-**Spawn.** A `stdio` connector is started through the MCP SDK's `StdioClientTransport`
-with its stderr piped; a `none` connector through `execa` with `extendEnv: false`; an
-`acp` connector through `AcpAgent.spawn` (`connectors/acp.ts`), inside `bwrap` when the
-manifest says so. Stderr lines (and stdout of a `none` process) are logged as
-`connector.output`, cut at 2000 characters. Spawn happens at start, after a crash, on
-`oa connector restart`, and on a reload that changed the manifest.
+**Spawn.** A `stdio` connector is started through `ProcessClientTransport`
+(`connectors/stdio-transport.ts`, the MCP stdio framing over the child's pipes) with its
+stderr piped; a `none` connector through `execa` with `extendEnv: false`; an `acp`
+connector through `AcpAgent.spawn` (`connectors/acp.ts`), inside `bwrap` when the
+manifest says so. Each process leads a process group of its own, and every signal the
+supervisor sends goes to the whole group, so a stop also reaches a program that a
+wrapper in `exec` (`sh -c "node server.js; true"`) started as its child. Once the
+process exits and its pipes close, whatever is left of the group gets SIGKILL
+(`sweepGroupAfter`, `process-group.ts`). If the daemon exits without stopping a
+connector, such as a crash stop past its deadline or a second SIGTERM, `signal-exit`
+SIGKILLs every group still running. Stderr lines
+(and stdout of a `none` process) are logged as `connector.output`, cut at 2000
+characters. Spawn happens at start, after a crash, on `oa connector restart`, and on a
+reload that changed the manifest.
 
 **Environment** (`connectors/child-env.ts`, `connectorChildEnv`). The base
 (`connectorBaseEnv`) is picked from the daemon's scrubbed environment (`ctx.childEnv`):
@@ -96,9 +104,10 @@ an error) count as a crash: kill, respawn with backoff (`connector.unhealthy`,
 `connector.health_failed`). `GET /v1/connectors` carries `health: {ok, checked_at,
 failures}`; `ok` is `null` until the first check after a start.
 
-**Restart.** `POST /v1/connectors/<name>/restart` kills the process (SIGTERM, 5 s,
-SIGKILL), resets the counter, re-resolves the secrets and respawns; it is the step after
-rotating a secret. A restart requested while one is in flight joins it
+**Restart.** `POST /v1/connectors/<name>/restart` kills the process group (a `stdio`
+connector's stdin is closed first; then SIGTERM and SIGKILL, with a grace before each),
+resets the counter, re-resolves the secrets and respawns; it is the step after rotating a
+secret. A restart requested while one is in flight joins it
 (`connector.restart_joined`), so two never spawn two processes. A restart, reload or
 stop that lands while a process is still starting (before `initialize` is answered)
 stops that process and waits for it to exit before a replacement spawns: the stdio
