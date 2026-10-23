@@ -247,11 +247,15 @@ describe('Executor', () => {
   });
 
   describe('a run waiting out its retry backoff', () => {
-    /** `flaky` fails once with a retryable error, then succeeds; `urgent` is held by `d`. */
+    /**
+     * `flaky`'s first attempt fails with a retryable error when the test calls `failFlaky`,
+     * its second succeeds; `urgent` is held by `d`.
+     */
     function setup(base: string): {
       ex: Executor;
       d: ReturnType<typeof deferredRunner>;
       flakyCalls: () => number;
+      failFlaky: () => void;
     } {
       current = config([
         {
@@ -265,25 +269,49 @@ describe('Executor', () => {
       bus.dispatcher.setConfig(current);
       const d = deferredRunner();
       let flakyCalls = 0;
+      let failFlaky = (): void => {
+        throw new Error('flaky has not started');
+      };
       const runner: ActionRunner = (action, ctx) => {
         if (ctx.run.task !== 'flaky') {
           return d.runner(action, ctx);
         }
         flakyCalls++;
-        return flakyCalls === 1 ? Promise.reject(new Error('flaky')) : Promise.resolve('ok');
+        if (flakyCalls > 1) {
+          return Promise.resolve('ok');
+        }
+        return new Promise((_resolve, reject) => {
+          failFlaky = () => {
+            reject(new Error('flaky'));
+          };
+        });
       };
-      return { ex: make({ shell: runner }, 1), d, flakyCalls: () => flakyCalls };
+      return {
+        ex: make({ shell: runner }, 1),
+        d,
+        flakyCalls: () => flakyCalls,
+        failFlaky: () => {
+          failFlaky();
+        },
+      };
+    }
+
+    /** Starts `flaky`, queues `urgent` behind it, then fails `flaky`'s first attempt. */
+    async function failWhileUrgentQueued(failFlaky: () => void): Promise<EventRecord> {
+      const flaky = publish('x.flaky');
+      bus.dispatcher.drain();
+      await until(() => env.store.runs.listByStatus('running').length === 1);
+      publish('x.urgent');
+      bus.dispatcher.drain();
+      await tick();
+      failFlaky();
+      return flaky;
     }
 
     it('frees its worker slot for other runs (#37)', async () => {
-      const { ex, d } = setup('1h');
+      const { ex, d, failFlaky } = setup('1h');
       ex.start();
-      const flaky = publish('x.flaky');
-      bus.dispatcher.drain();
-      await until(() => env.lines.some((l) => l.msg === 'run.retry'));
-
-      publish('x.urgent');
-      bus.dispatcher.drain();
+      const flaky = await failWhileUrgentQueued(failFlaky);
       await until(() => d.active() === 1);
       d.finish('done');
       await until(() => env.store.runs.listByStatus('succeeded').length === 1);
@@ -299,13 +327,10 @@ describe('Executor', () => {
     });
 
     it('takes a worker slot again before its next attempt', async () => {
-      const { ex, d, flakyCalls } = setup('20ms');
+      const { ex, d, flakyCalls, failFlaky } = setup('20ms');
       ex.start();
-      const flaky = publish('x.flaky');
-      bus.dispatcher.drain();
-      await until(() => env.lines.some((l) => l.msg === 'run.retry'));
-      publish('x.urgent');
-      bus.dispatcher.drain();
+      // `urgent` takes the worker as soon as `flaky` backs off, before the 20ms are over.
+      const flaky = await failWhileUrgentQueued(failFlaky);
       await until(() => d.active() === 1);
 
       // The backoff is over, but `urgent` holds the only worker.

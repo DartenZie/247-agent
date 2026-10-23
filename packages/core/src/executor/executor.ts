@@ -470,6 +470,10 @@ export class Executor {
   /** Resolves when `pump` hands the backed-off run `id` a worker; rejects on `signal`. */
   private workerFor(id: string, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason as Error);
+        return;
+      }
       const onAbort = (): void => {
         const i = this.retryReady.findIndex((r) => r.id === id);
         if (i >= 0) {
