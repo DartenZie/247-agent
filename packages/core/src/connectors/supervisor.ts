@@ -31,7 +31,7 @@ import {
 import { parseDuration } from '../config/duration.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
-import { killGroup } from '../process-group.js';
+import { killGroup, sweepGroupAfter } from '../process-group.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
@@ -737,26 +737,28 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
             killGroup(child.pid, signal);
           }
         },
-        exited: child.then(
-          (r) => {
-            if (m.process !== proc) {
-              return; // killed on purpose (stop/restart); not a crash
-            }
-            m.process = undefined;
-            const why =
-              r.exitCode === undefined
-                ? `killed by ${r.signal ?? '?'}`
-                : `exit code ${String(r.exitCode)}`;
-            this.exited(m, why, log);
-          },
-          (err: unknown) => {
-            if (m.process !== proc) {
-              return;
-            }
-            m.process = undefined;
-            this.exited(m, errorMessage(err), log);
-          },
-        ),
+        exited: sweepGroupAfter(child.pid, child)
+          .then(() => child)
+          .then(
+            (r) => {
+              if (m.process !== proc) {
+                return; // killed on purpose (stop/restart); not a crash
+              }
+              m.process = undefined;
+              const why =
+                r.exitCode === undefined
+                  ? `killed by ${r.signal ?? '?'}`
+                  : `exit code ${String(r.exitCode)}`;
+              this.exited(m, why, log);
+            },
+            (err: unknown) => {
+              if (m.process !== proc) {
+                return;
+              }
+              m.process = undefined;
+              this.exited(m, errorMessage(err), log);
+            },
+          ),
       };
       m.process = proc;
       pipeLines(child.stdout, 'stdout', log);

@@ -18,7 +18,8 @@ Candidates and verdicts:
 Commitment: the core stays small and reuses aggressively underneath: systemd for
 supervision, SQLite for every table, MCP for connector operations, ACP for agent loops,
 and one library each for cron (`croner`), schemas (`zod`), expressions (`jmespath`),
-SQLite (`better-sqlite3`), YAML (`yaml`) and subprocesses (`execa`).
+SQLite (`better-sqlite3`), YAML (`yaml`) and subprocesses (`execa`, with the
+`signal-exit` it already uses, for the detached process groups execa does not clean up).
 
 ## TypeScript on Node.js 22
 

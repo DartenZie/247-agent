@@ -142,9 +142,11 @@ async function expectNoLeftovers(
   await until(() => pidsIn(pidFile).length === 2);
   const pids = pidsIn(pidFile);
   try {
+    // An orphan is gone only once its new parent reaps it, a moment after the kill.
+    await until(() => pids.filter(alive).length === 1);
     expect(pids.filter(alive)).toEqual(pids.slice(1));
     await s.stop();
-    expect(pids.filter(alive)).toEqual([]);
+    await until(() => pids.filter(alive).length === 0);
   } finally {
     for (const pid of pids.filter(alive)) {
       process.kill(pid, 'SIGKILL');
@@ -326,7 +328,7 @@ describe('ConnectorSupervisor', () => {
     const startedAt = Date.now();
     await s.stop();
     expect(Date.now() - startedAt).toBeLessThan(10_000);
-    expect(pidsIn(pidFile).filter(alive)).toEqual([]);
+    await until(() => pidsIn(pidFile).filter(alive).length === 0);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -346,6 +348,32 @@ describe('ConnectorSupervisor', () => {
     ]);
     await expectNoLeftovers(s, 'plain', pidFile);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('stops a helper that holds none of the pipes once the program exits on stop', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const pidFile = join(dir, 'pids');
+    const s = make([
+      manifest({
+        exec: [
+          'sh',
+          '-c',
+          `sleep 300 </dev/null >/dev/null 2>&1 & echo $! > ${pidFile}; exec node ${FIXTURES}fake-mcp.ts`,
+        ],
+      }),
+    ]);
+    await s.start();
+    await until(() => pidsIn(pidFile).length === 1);
+    const [helper = 0] = pidsIn(pidFile);
+    try {
+      await s.stop();
+      await until(() => !alive(helper));
+    } finally {
+      if (alive(helper)) {
+        process.kill(helper, 'SIGKILL');
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('restart() of a plain process does not double-spawn it', async () => {

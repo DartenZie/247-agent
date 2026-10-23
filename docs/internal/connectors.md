@@ -64,7 +64,11 @@ stderr piped; a `none` connector through `execa` with `extendEnv: false`; an `ac
 connector through `AcpAgent.spawn` (`connectors/acp.ts`), inside `bwrap` when the
 manifest says so. Each process leads a process group of its own, and every signal the
 supervisor sends goes to the whole group, so a stop also reaches a program that a
-wrapper in `exec` (`sh -c "node server.js; true"`) started as its child. Stderr lines
+wrapper in `exec` (`sh -c "node server.js; true"`) started as its child. Once the
+process exits and its pipes close, whatever is left of the group gets SIGKILL
+(`sweepGroupAfter`, `process-group.ts`). If the daemon exits without stopping a
+connector, such as a crash stop past its deadline or a second SIGTERM, `signal-exit`
+SIGKILLs every group still running. Stderr lines
 (and stdout of a `none` process) are logged as `connector.output`, cut at 2000
 characters. Spawn happens at start, after a crash, on `oa connector restart`, and on a
 reload that changed the manifest.

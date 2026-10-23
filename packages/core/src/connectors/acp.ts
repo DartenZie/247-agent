@@ -29,7 +29,7 @@ import {
 import { execa } from 'execa';
 
 import type { Logger } from '../log.js';
-import { killGroup } from '../process-group.js';
+import { killGroup, sweepGroupAfter } from '../process-group.js';
 import {
   PERMISSION_CANCELLED,
   TOOL_KINDS,
@@ -329,10 +329,7 @@ export class AcpAgent {
     );
     const conn = app.connect(stream);
     pipeLines(child.stderr, 'stderr', opts.log);
-    const exited: Promise<void> = child.then(
-      () => undefined,
-      () => undefined,
-    );
+    const exited = sweepGroupAfter(child.pid, child);
     const kill = (signal: NodeJS.Signals): void => {
       if (child.pid !== undefined) {
         killGroup(child.pid, signal);
