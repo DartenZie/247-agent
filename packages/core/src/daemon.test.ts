@@ -529,12 +529,14 @@ describe('/v1/connectors', () => {
       ].join('\n'),
     );
     const started = startDaemon({ configFile: join(dir, 'agent.yaml'), log: log() });
-    const timedOut = new Promise<'timeout'>((r) =>
-      setTimeout(() => {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<'timeout'>((r) => {
+      timer = setTimeout(() => {
         r('timeout');
-      }, 2000),
-    );
+      }, 2000);
+    });
     const first = await Promise.race([started, timedOut]);
+    clearTimeout(timer);
     daemon = await started; // stopped by afterEach either way
     expect(first).not.toBe('timeout');
     api = new ApiClient({ socketPath: daemon.config.socket });

@@ -604,7 +604,7 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.start(compiled);
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
       // Not awaited: a connector hanging in setup must not hold up the API or the jobs
-      // below. Each failure is logged and retried by the supervisor itself.
+      // below. The supervisor logs and retries a failed spawn; the catch is a backstop.
       supervisor?.start().catch((err: unknown) => {
         log.error('core.connectors_start_failed', {
           error: err instanceof Error ? err.message : String(err),
