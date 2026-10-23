@@ -76,7 +76,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | a `wait` timed out right after a restart | the timeout passed while the daemon was down | expected; the run failed once and `task.<name>.failed` fired |
 | `oa emit` says `duplicate dedup_key=…` | an event with that key already exists | intended; change the key if it is a genuinely new item |
 | a run has been `running` for a long time | it is between retry attempts, or its attempt has not reached `timeout` yet | `oa runs show <id>` shows the attempt and the last error; for an agent run `oa runs logs <id> --follow` shows what it is doing |
-| `interrupted: the daemon restarted while the run was in progress` | the daemon stopped mid-run and the retry policy had no attempts left | give the task `retry.attempts: 2` or more if a second try is worth it, or replay the event |
+| `interrupted: the daemon restarted while the run was in progress` | the daemon crashed or was killed mid-run and the retry policy had no attempts left | give the task `retry.attempts: 2` or more if a second try is worth it, or replay the event |
 
 ## Reload and restart
 

@@ -221,7 +221,7 @@ removed with a `api.stale_socket_removed` warning. The socket is created with mo
 | Signal | Effect |
 |---|---|
 | `SIGHUP` | reload: the same as `oa reload`, outcome in the log (`daemon.reloaded`, `daemon.reload_invalid`, `daemon.reload_needs_restart`) |
-| `SIGTERM`, `SIGINT` | stop: runs in flight are aborted and recovered on the next start; exit 0 |
+| `SIGTERM`, `SIGINT` | stop: no new runs start, runs in flight get `shutdown.grace` to finish, the rest are aborted and run again on the next start; exit 0, or 1 if the stop is not done 10 s after the grace window |
 
 The daemon sets `OA_HOME` to its install root and puts `<root>/bin` and its own Node
 first on `PATH` for everything it spawns. Exit codes: 0 after a clean stop, 1 on a

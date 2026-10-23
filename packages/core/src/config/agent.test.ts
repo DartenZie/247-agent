@@ -34,6 +34,7 @@ describe('parseAgent', () => {
       workers: 4,
       log: { level: 'info' },
       limits: { max_event_depth: 32 },
+      shutdown: { grace: '30s' },
       defaults: {
         timeout: '15m',
         retry: { attempts: 1, backoff: 'exponential', base: '30s', max: '1h' },

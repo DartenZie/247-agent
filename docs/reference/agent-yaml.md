@@ -18,6 +18,7 @@ connectors: []                       # manifest files, directories, or inline ma
 workers: 4
 log: { level: info }
 limits: { max_event_depth: 32 }
+shutdown: { grace: 30s }
 defaults:
   timeout: 15m
   retry: { attempts: 1, backoff: exponential, base: 30s, max: 1h }
@@ -45,6 +46,7 @@ Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`.
 | `connectors` | Manifest files, directories of manifests, or inline manifests (objects in the list). Connector names must be unique across all of them. | none |
 | `workers` | Runs executing at the same time, across every task. | `4` |
 | `log.level` | `debug`, `info`, `warn` or `error`. `247-agent-core --log-level` overrides it. | `info` |
+| `shutdown.grace` | How long a stop (SIGTERM, `systemctl restart`, an upgrade) lets runs in flight finish before aborting them. An aborted run runs the same attempt again on the next start. Keep the unit's `TimeoutStopSec=` above this plus 10 seconds. | `30s` |
 | `limits.max_event_depth` | An event deeper than this in a causal chain (hops from the root event) starts no run. It still ends a `wait` that matches it. | `32` |
 
 ## Defaults for tasks

@@ -403,7 +403,7 @@ describe('Executor', () => {
     expect(env.store.runs.listByStatus('succeeded')).toHaveLength(1);
   });
 
-  it('stop() aborts runs in flight, leaves them running for recovery, and drops pending ones', async () => {
+  it('stop() aborts runs in flight without spending their attempt, and leaves pending ones queued (#39)', async () => {
     const d = deferredRunner();
     const ex = make({ shell: d.runner }, 1);
     ex.start();
@@ -414,18 +414,112 @@ describe('Executor', () => {
     expect(ex.stats()).toEqual({ pending: 1, in_flight: 1 });
 
     await ex.stop();
-    expect(env.store.runs.getByTaskAndEvent('serial', a.id)?.status).toBe('running');
+    expect(env.store.runs.getByTaskAndEvent('serial', a.id)).toMatchObject({
+      status: 'running',
+      attempt: 0,
+    });
     expect(env.store.runs.getByTaskAndEvent('serial', b.id)?.status).toBe('queued');
     expect(lifecycle()).toEqual([]);
     expect(env.lines.some((l) => l.msg === 'run.abandoned')).toBe(true);
 
-    // The next start recovers both, as after a crash.
-    expect(ex.start()).toEqual({ interrupted: 1, resumed: 1, waiting: 0 });
-    await tick();
+    // With `attempts: 1`, the next start reruns the aborted attempt instead of failing it.
+    expect(ex.start()).toEqual({ interrupted: 0, resumed: 2, waiting: 0 });
+    await until(() => d.active() === 1);
+    d.finish('ok');
+    await until(() => d.active() === 1);
     d.finish('ok');
     await ex.idle();
-    expect(env.store.runs.getByTaskAndEvent('serial', a.id)?.status).toBe('failed');
+    expect(env.store.runs.getByTaskAndEvent('serial', a.id)).toMatchObject({
+      status: 'succeeded',
+      attempt: 1,
+    });
     expect(env.store.runs.getByTaskAndEvent('serial', b.id)?.status).toBe('succeeded');
+    expect(lifecycle().map((e) => e.type)).toEqual([
+      'task.serial.succeeded',
+      'task.serial.succeeded',
+    ]);
+  });
+
+  describe('a stop with a grace window (#39)', () => {
+    it('lets runs in flight finish and takes no new ones', async () => {
+      const d = deferredRunner();
+      const ex = make({ shell: d.runner });
+      ex.configure({ stopGrace: '5s' });
+      ex.start();
+      const a = publish('x.serial');
+      bus.dispatcher.drain();
+      await until(() => d.active() === 1);
+
+      const started = Date.now();
+      const stopped = ex.stop();
+      const b = publish('x.wide');
+      bus.dispatcher.drain();
+      await tick();
+      expect(d.calls).toBe(1);
+      d.finish('ok');
+      await stopped;
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(env.store.runs.getByTaskAndEvent('serial', a.id)?.status).toBe('succeeded');
+      expect(env.store.runs.getByTaskAndEvent('wide', b.id)?.status).toBe('queued');
+    });
+
+    it('aborts what is still in flight when the window ends', async () => {
+      const d = deferredRunner();
+      const ex = make({ shell: d.runner });
+      ex.configure({ stopGrace: '50ms' });
+      ex.start();
+      const a = publish('x.serial');
+      bus.dispatcher.drain();
+      await until(() => d.active() === 1);
+
+      const started = Date.now();
+      await ex.stop();
+      expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+      expect(d.active()).toBe(0);
+      expect(env.store.runs.getByTaskAndEvent('serial', a.id)).toMatchObject({
+        status: 'running',
+        attempt: 0,
+      });
+      expect(lifecycle()).toEqual([]);
+    });
+
+    it('leaves a run that fails with attempts left to the next start', async () => {
+      const d = deferredRunner();
+      current = config([
+        {
+          name: 'retried',
+          trigger: { kind: 'event', type: 'x.retried' },
+          action: shell,
+          retry: { attempts: 2, backoff: 'fixed', base: '1h' },
+        },
+      ]);
+      bus.dispatcher.setConfig(current);
+      const ex = make({ shell: d.runner });
+      ex.configure({ stopGrace: '5s' });
+      ex.start();
+      const a = publish('x.retried');
+      bus.dispatcher.drain();
+      await until(() => d.active() === 1);
+
+      const stopped = ex.stop();
+      d.finish(undefined, new Error('flaky'));
+      await stopped;
+      expect(env.store.runs.getByTaskAndEvent('retried', a.id)).toMatchObject({
+        status: 'running',
+        attempt: 1,
+        error: 'flaky',
+      });
+      expect(lifecycle()).toEqual([]);
+
+      expect(ex.start()).toEqual({ interrupted: 0, resumed: 1, waiting: 0 });
+      await until(() => d.active() === 1);
+      d.finish('ok');
+      await ex.idle();
+      expect(env.store.runs.getByTaskAndEvent('retried', a.id)).toMatchObject({
+        status: 'succeeded',
+        attempt: 2,
+      });
+    });
   });
 
   it('presents a manual run its inner event, or the manual.run event itself', async () => {

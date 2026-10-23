@@ -153,9 +153,17 @@ and `dedup_key` plus `UNIQUE(task, event_id)` make it effectively once. On
    is set `queued` and enqueued; the rest keep waiting.
 3. Every `queued` run is enqueued.
 
-`executor.stop()` aborts in-flight runs with `RunStoppedError`; they stay `running` in
-the store for the next start. A stop during a retry backoff abandons the run the same
-way (`run.abandoned`). An `agent` run recovered this way starts in a fresh workspace.
+`executor.stop()` stops taking runs (`pump` is a no-op, the `onQueued` subscription is
+dropped, pending runs are forgotten and stay `queued`) and abandons runs in a retry
+backoff at once. It then waits up to `shutdown.grace` (`executor.draining`) for the runs
+in flight to settle, and aborts the rest with `RunStoppedError` (`run.abandoned`). An
+aborted attempt is given back: the run stays `running` with `attempt − 1`, so step 1
+above reruns that attempt instead of failing the run as interrupted (#39); a resumed
+attempt resumes again because its resolved `waits` row is kept. A retryable failure
+during the window keeps the run `running` with its error for step 1 to retry, and a
+crash leaves the attempt counted. `main.ts` exits 1 (`daemon.stop_timeout`) when a
+stop outlasts the grace window by 10 s; the unit's `TimeoutStopSec=90` is the outer
+bound. An `agent` run recovered this way starts in a fresh workspace.
 
 ## Module map
 

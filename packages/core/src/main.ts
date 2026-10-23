@@ -7,6 +7,7 @@
 import { parseArgs } from 'node:util';
 
 import { LOG_LEVELS } from './config/agent.js';
+import { parseDuration } from './config/duration.js';
 import { startDaemon, type Daemon } from './daemon.js';
 import { findHome, homeEnv } from './home.js';
 import { createLogger, type LogLevel } from './log.js';
@@ -23,6 +24,8 @@ options:
 
 /** How long a stop after an uncaught error may take before the process exits anyway. */
 const CRASH_STOP_DEADLINE_MS = 10_000;
+/** How long a stop may take after `shutdown.grace` (aborted runs settling, connectors stopping). */
+const STOP_DEADLINE_MARGIN_MS = 10_000;
 
 function isLogLevel(v: string): v is LogLevel {
   return (LOG_LEVELS as readonly string[]).includes(v);
@@ -81,6 +84,13 @@ async function main(argv: string[]): Promise<number> {
   return new Promise<number>((resolve) => {
     const shutdown = (signal: string): void => {
       log.info('daemon.signal', { signal });
+      // An upper bound on the stop, so a run or connector that ignores its abort cannot hold
+      // the process; systemd's TimeoutStopSec is the outer one.
+      const deadline = parseDuration(daemon.config.shutdown.grace) + STOP_DEADLINE_MARGIN_MS;
+      setTimeout(() => {
+        log.error('daemon.stop_timeout', { after_ms: deadline });
+        process.exit(1);
+      }, deadline).unref();
       daemon.stop().then(
         () => {
           resolve(0);

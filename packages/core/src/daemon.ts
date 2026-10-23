@@ -141,6 +141,7 @@ interface CoreSettings {
   defaultTimeout: string;
   defaultRetry: RetryConfig;
   defaultSandbox: SandboxConfig;
+  stopGrace: string;
   agents: { defaults: AgentDefaultsConfig; workDir: string };
   llm: CoreLlmOptions;
   retention: RetentionPolicy;
@@ -158,6 +159,7 @@ function coreSettings(
     defaultTimeout: config.defaults.timeout,
     defaultRetry: config.defaults.retry,
     defaultSandbox: config.defaults.sandbox,
+    stopGrace: config.shutdown.grace,
     agents: { defaults: config.defaults.agent, workDir: config.workDir },
     llm: {
       providers: config.providers,

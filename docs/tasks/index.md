@@ -106,8 +106,11 @@ An `agent` retry starts in a fresh workspace with the previous error in its prom
 a build the agent broke gets a second chance. Set `retry.attempts` with the cost of a
 second session in mind.
 
-When the daemon restarts, a run that was `running` is retried if its policy allows
-another attempt and failed as interrupted otherwise. Waiting runs keep waiting.
+When the daemon stops, runs in flight get `shutdown.grace` in `agent.yaml` to finish.
+A run aborted by the stop runs the same attempt again after the restart; the abort does
+not count as a failed attempt. After a crash, a run that was `running` is retried if its
+policy allows another attempt and failed as interrupted otherwise. Waiting runs keep
+waiting.
 
 ## Budgets
 
