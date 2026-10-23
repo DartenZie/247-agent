@@ -130,6 +130,23 @@ function wrapped(dir: string, program: string): { exec: string[]; pidFile: strin
   return { exec: ['sh', '-c', `node -r ${preload} ${program}; true`], pidFile: join(dir, 'pids') };
 }
 
+/**
+ * `program` run by an `sh` that first starts a helper inheriting its stdout and stderr,
+ * then replaces itself with the program. The helper's pid is appended to the pid file.
+ */
+function withHelper(dir: string, program: string): { exec: string[]; pidFile: string } {
+  const pidFile = join(dir, 'pids');
+  return { exec: ['sh', '-c', `sleep 300 & echo $! >> ${pidFile}; exec ${program}`], pidFile };
+}
+
+/** Kills what is left of the helpers in `pidFile` and removes `dir`. */
+function cleanUpHelpers(dir: string, pidFile: string): void {
+  for (const pid of pidsIn(pidFile).filter(alive)) {
+    process.kill(pid, 'SIGKILL');
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
 /** Restarts then stops connector `name`: one copy runs after the restart, none after the stop. */
 async function expectNoLeftovers(
   s: ConnectorSupervisor,
@@ -423,6 +440,65 @@ describe('ConnectorSupervisor', () => {
     expect(s.status()[0]).toMatchObject({ name: 'loud', state: 'up', restarts: 0 });
   }, 60_000);
 
+  it('restarts a crashed connector whose helper still holds its output (#198)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withHelper(dir, `node ${FIXTURES}fake-mcp.ts`);
+    try {
+      const s = make([manifest({ exec })]);
+      await s.start();
+      const [helper = 0] = pidsIn(pidFile);
+      await s.call('fake', 'crash', {}, { signal: signal() });
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
+      await expect(s.call('fake', 'echo', { value: 1 }, { signal: signal() })).resolves.toEqual({
+        echoed: 1,
+      });
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
+      );
+      await until(() => !alive(helper));
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
+  it('notices a transport: none program exit while its helper holds the output (#198)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withHelper(dir, 'node -e "setTimeout(() => process.exit(3), 200)"');
+    try {
+      const s = make([manifest({ name: 'plain', transport: 'none', exec })]);
+      await s.start();
+      await until(() => (s.status()[0]?.restarts ?? 0) >= 1, 20_000);
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'exit code 3' }),
+      );
+      const [helper = 0] = pidsIn(pidFile);
+      await until(() => !alive(helper));
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
+
+  it('retries a transport: none connector whose spawn fails at once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const file = join(dir, 'not-a-dir');
+    writeFileSync(file, '');
+    try {
+      // A cwd that is a file fails inside spawn(), which execa answers with a child that
+      // never emits `exit`.
+      const s = make([
+        manifest({ name: 'plain', transport: 'none', exec: ['node', '-e', '0'], cwd: file }),
+      ]);
+      await s.start();
+      await until(() => (s.status()[0]?.restarts ?? 0) >= 1);
+      expect(lines.map((l) => l.msg)).toContain('connector.exited');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('runs a transport: none connector as a plain process and refuses ops on it', async () => {
     const s = make([
       manifest({ name: 'plain', transport: 'none', exec: ['node', `${FIXTURES}fake-plain.ts`] }),
@@ -562,6 +638,33 @@ describe('ConnectorSupervisor with an acp connector', () => {
       expect.arrayContaining(['connector.exited', 'connector.restart_scheduled', 'connector.up']),
     );
   });
+
+  it('restarts a crashed agent whose helper still holds its output (#198)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const { exec, pidFile } = withHelper(dir, `node ${FIXTURES}fake-acp.ts`);
+    try {
+      const s = make([acp({ exec })]);
+      await s.start();
+      const [helper = 0] = pidsIn(pidFile);
+      const session = await s.open('claude', {
+        cwd: '/tmp',
+        signal: signal(),
+        log: createLogger({ sink: () => undefined }),
+        onPermission: () => 'cancelled',
+      });
+      await expect(session.prompt('[[crash]]').next()).rejects.toThrow();
+      await until(
+        () => (s.status()[0]?.restarts ?? 0) === 1 && s.status()[0]?.state === 'up',
+        20_000,
+      );
+      expect(lines).toContainEqual(
+        expect.objectContaining({ msg: 'connector.exited', reason: 'process exited' }),
+      );
+      await until(() => !alive(helper));
+    } finally {
+      cleanUpHelpers(dir, pidFile);
+    }
+  }, 30_000);
 
   it('keeps retrying a program that is not an ACP agent', async () => {
     const s = make([acp({ exec: ['node', '-e', 'process.exit(5)'] })]);

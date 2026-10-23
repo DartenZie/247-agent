@@ -65,8 +65,10 @@ connector through `AcpAgent.spawn` (`connectors/acp.ts`), inside `bwrap` when th
 manifest says so. Each process leads a process group of its own, and every signal the
 supervisor sends goes to the whole group, so a stop also reaches a program that a
 wrapper in `exec` (`sh -c "node server.js; true"`) started as its child. Once the
-process exits and its pipes close, whatever is left of the group gets SIGKILL
-(`sweepGroupAfter`, `process-group.ts`). If the daemon exits without stopping a
+process exits, whatever is left of the group gets SIGKILL (`sweepGroupAfter` on
+`exitOf`, `process-group.ts`), and only then does the supervisor wait for the pipes to
+close: a helper the wrapper started in the background can hold them open, and the
+connector would stay `up` with nothing behind it. If the daemon exits without stopping a
 connector, such as a crash stop past its deadline or a second SIGTERM, `signal-exit`
 SIGKILLs every group still running. Stderr lines
 (and stdout of a `none` process) are logged as `connector.output`, cut at 2000
