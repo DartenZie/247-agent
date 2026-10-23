@@ -183,9 +183,10 @@ export interface Core {
   runTask(name: string, input?: ManualInput): { event_id: string; run: RunRecord };
   /**
    * Lets runs in flight finish within the stop grace window, aborts the rest (they are run
-   * again on the next start), stops connectors, closes the store.
+   * again on the next start), stops connectors, closes the store. `grace: false` skips the
+   * window.
    */
-  stop(): Promise<void>;
+  stop(opts?: { grace?: boolean }): Promise<void>;
 }
 
 export class ConfigLoadError extends Error {
@@ -631,12 +632,12 @@ export function createCore(opts: CoreOptions): Core {
       return run;
     },
     runTask: (name, input) => runTaskManually(bus, store, compiled, name, input),
-    stop: async () => {
+    stop: async (stopOpts = {}) => {
       scheduler.stop();
       bus.dispatcher.stop();
       await retention?.stop();
       await batchPoller?.stop();
-      await executor.stop();
+      await executor.stop(stopOpts);
       await Promise.all(pollers.map((p) => p.poller.stop()));
       await supervisor?.stop();
       store.close();

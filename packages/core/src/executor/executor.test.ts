@@ -483,6 +483,24 @@ describe('Executor', () => {
       expect(lifecycle()).toEqual([]);
     });
 
+    it('is skipped by a stop that asks for none', async () => {
+      const d = deferredRunner();
+      const ex = make({ shell: d.runner });
+      ex.configure({ stopGrace: '5s' });
+      ex.start();
+      const a = publish('x.serial');
+      bus.dispatcher.drain();
+      await until(() => d.active() === 1);
+
+      const started = Date.now();
+      await ex.stop({ grace: false });
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(env.store.runs.getByTaskAndEvent('serial', a.id)).toMatchObject({
+        status: 'running',
+        attempt: 0,
+      });
+    });
+
     it('leaves a run that fails with attempts left to the next start', async () => {
       const d = deferredRunner();
       current = config([

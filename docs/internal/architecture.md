@@ -160,8 +160,11 @@ in flight to settle, and aborts the rest with `RunStoppedError` (`run.abandoned`
 aborted attempt is given back: the run stays `running` with `attempt − 1`, so step 1
 above reruns that attempt instead of failing the run as interrupted (#39); a resumed
 attempt resumes again because its resolved `waits` row is kept. A retryable failure
-during the window keeps the run `running` with its error for step 1 to retry, and a
-crash leaves the attempt counted. `main.ts` exits 1 (`daemon.stop_timeout`) when a
+during the window keeps the run `running` with its error for step 1 to retry. A run
+that parks in a wait during the window and is matched at once stays `queued` for the
+next start instead of being re-enqueued, so `idle()` can resolve. A crash leaves the
+attempt counted; the crash path in `main.ts` stops with `{ grace: false }`, which
+aborts at once. `main.ts` exits 1 (`daemon.stop_timeout`) when a
 stop outlasts the grace window by 10 s; the unit's `TimeoutStopSec=90` is the outer
 bound. An `agent` run recovered this way starts in a fresh workspace.
 

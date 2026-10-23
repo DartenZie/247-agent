@@ -126,7 +126,8 @@ async function main(argv: string[]): Promise<number> {
         log.error('daemon.stop_timeout', { after_ms: CRASH_STOP_DEADLINE_MS });
         process.exit(1);
       }, CRASH_STOP_DEADLINE_MS).unref();
-      void daemon.stop().finally(() => {
+      // No grace window: the state is unknown, and the deadline above is shorter.
+      void daemon.stop({ grace: false }).finally(() => {
         process.exit(1);
       });
     };

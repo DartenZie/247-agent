@@ -365,6 +365,46 @@ describe('wait inside a sequence', () => {
     });
     expect(events().some((e) => e.type === 'task.gate_slow.failed')).toBe(false);
   });
+
+  it('lets a stop finish when a run parks during the grace window on a reply already in (#39)', async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), 'oa-wait-')), 'go');
+    current = config([
+      {
+        name: 'ask_then_wait',
+        trigger: { kind: 'event', type: 'x.ask_then_wait' },
+        action: {
+          kind: 'sequence',
+          steps: [
+            { kind: 'shell', cmd: ['sh', '-c', `while [ ! -e ${marker} ]; do sleep 0.02; done`] },
+            { kind: 'wait', for: { type: 'chat.reply' }, timeout: '1h' },
+          ],
+        },
+      },
+    ]);
+    bus.dispatcher.setConfig(current);
+    const ex = make();
+    ex.configure({ stopGrace: '5s' });
+    ex.start();
+    const trigger = publish('x.ask_then_wait');
+    bus.dispatcher.drain();
+    await vi.waitFor(() => {
+      expect(runOf('ask_then_wait', trigger)?.status).toBe('running');
+    });
+    publish('chat.reply', { approved: true });
+    bus.dispatcher.drain();
+
+    const started = Date.now();
+    const stopped = ex.stop();
+    writeFileSync(marker, '');
+    await stopped;
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(runOf('ask_then_wait', trigger)?.status).toBe('queued');
+
+    const ex2 = make();
+    expect(ex2.start()).toMatchObject({ interrupted: 0, resumed: 1 });
+    await ex2.idle();
+    expect(runOf('ask_then_wait', trigger)?.status).toBe('succeeded');
+  });
 });
 
 describe('several waits in one run (#12)', () => {

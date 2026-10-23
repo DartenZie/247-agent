@@ -401,9 +401,9 @@ export class Executor {
    * the rest and waits for them to settle (#39). An aborted attempt is not spent: the run
    * stays `running` with its attempt given back, and the next `start()` runs that attempt
    * again. Runs waiting out a retry backoff are abandoned at once, and runs still `queued`
-   * are left for the next start.
+   * are left for the next start. `grace: false` aborts at once (the crash path).
    */
-  async stop(): Promise<void> {
+  async stop(opts: { grace?: boolean } = {}): Promise<void> {
     this.stopping = true;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
@@ -413,7 +413,7 @@ export class Executor {
     for (const id of this.backingOff) {
       this.inFlight.get(id)?.stop.abort(new RunStoppedError());
     }
-    const grace = parseDuration(this.stopGrace);
+    const grace = opts.grace === false ? 0 : parseDuration(this.stopGrace);
     if (grace > 0 && this.inFlight.size > 0) {
       this.log.info('executor.draining', { in_flight: this.inFlight.size, grace_ms: grace });
       let timer: NodeJS.Timeout | undefined;
@@ -619,9 +619,10 @@ export class Executor {
       } else {
         this.perTask.set(run.task, n);
       }
-      if (suspended) {
+      if (suspended && !this.stopping) {
         // The wait may have ended while we were still cleaning up; the dispatcher's hand-off
         // was then refused because the run was still known. Pick it up from the store.
+        // While stopping, the run stays `queued` for the next start.
         const fresh = this.store.runs.getById(run.id);
         if (fresh?.status === 'queued') {
           this.enqueue([fresh]);
