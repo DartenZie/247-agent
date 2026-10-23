@@ -65,7 +65,7 @@ restart: { base: 1s, max: 60s }
 | Form | Meaning |
 |---|---|
 | `sandbox: none` | The program runs as the daemon's child, unconfined. Accepted on any connector. |
-| `sandbox: bwrap` | The program runs in bubblewrap for its whole life: the operating system and the install read-only, `defaults.agent.work_dir` the only writable path (every run's workspace and the program's home, `<work_dir>/home/<name>`), its own process namespace, the daemon's database, socket, `agent.yaml` and secrets file hidden, and an environment of `PATH`, `HOME`, `OA_CONNECTOR_NAME` and this manifest's `env`. The host's network. |
+| `sandbox: bwrap` | The program runs in bubblewrap for its whole life: the operating system and the install read-only, `defaults.agent.work_dir` the only writable path (every run's workspace and the program's home, `<work_dir>/home/<name>`), its own process namespace, the daemon's database, socket, `agent.yaml` and secrets file hidden, and an environment of `PATH`, `HOME`, `LANG` when the daemon has it, `OA_CONNECTOR_NAME` and this manifest's `env`. The host's network. |
 | `sandbox.ro_binds`, `sandbox.rw_binds` | Host paths mounted inside at the same location, read-only or read-write. List every repository that `git-worktree` workspaces use in `ro_binds`. A bind may not expose the daemon's files. |
 | `sandbox.extra_args` | Raw bubblewrap flags, added after the built-in ones. `--share-net` is refused together with `network`. |
 | `sandbox.network.allow` | The hosts the program may reach, through a filtering proxy the daemon runs for it; everything else is refused with a 403 and logged. Needs `backend: bwrap`. Without `network` the sandbox shares the host's network; `allow: []` is no network at all. |
