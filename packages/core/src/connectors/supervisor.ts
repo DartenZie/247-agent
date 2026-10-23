@@ -1013,8 +1013,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       m.healthTimer = undefined;
     }
     m.state = 'stopped';
+    // Left set until the spawn settles, so a second kill waits for the same process.
     const starting = m.starting;
-    m.starting = undefined;
     const transport = m.transport;
     const child = m.process;
     m.client = undefined;
@@ -1050,13 +1050,23 @@ async function connectUntil(
 ): Promise<void> {
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => (closing ??= transport.close().catch(() => undefined));
+  // The connect itself ends only when stdout closes, which a grandchild can hold open.
+  let rejectAborted: (reason: unknown) => void = () => undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAborted = reject;
+  });
+  aborted.catch(() => undefined);
   const onAbort = (): void => {
-    void close();
+    void close().then(() => {
+      rejectAborted(signal.reason);
+    });
   };
   signal.addEventListener('abort', onAbort, { once: true });
   try {
     signal.throwIfAborted();
-    await client.connect(transport);
+    const connecting = client.connect(transport);
+    connecting.catch(() => undefined);
+    await Promise.race([connecting, aborted]);
     // `initialize` may have been answered just as the abort came.
     signal.throwIfAborted();
   } catch (err) {

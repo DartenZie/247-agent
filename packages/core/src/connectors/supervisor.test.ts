@@ -265,6 +265,27 @@ describe('ConnectorSupervisor', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('stop() during initialize returns once the transport closes, though a grandchild holds stdout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const pidFile = join(dir, 'pids');
+    const inner = `${HANGS_IN_INIT[2] ?? ''} setInterval(() => undefined, 60000);`;
+    const s = make([
+      manifest({
+        exec: ['sh', '-c', `node -e "${inner}"; true`],
+        env: { PID_FILE: pidFile },
+      }),
+    ]);
+    void s.start();
+    await until(() => pidsIn(pidFile).length === 1);
+    const startedAt = Date.now();
+    await s.stop();
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    for (const pid of pidsIn(pidFile).filter(alive)) {
+      process.kill(pid, 'SIGKILL'); // the SDK signals only its direct child
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('restart() of a plain process does not double-spawn it', async () => {
     // fake-plain.ts exits once its emit to the test socket fails; an idle process is needed here.
     const s = make([
