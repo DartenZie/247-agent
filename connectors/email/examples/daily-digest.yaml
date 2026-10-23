@@ -1,7 +1,8 @@
 # Example 2 — one digest mail per day instead of a message per event.
 #
-# Two independent cursors on the same mailbox are fine: each task keeps its own
+# Two independent cursors on the same IMAP mailbox are fine: each task keeps its own
 # `since_uid` in state, so the digest does not consume what another workflow polls.
+# A POP3 mailbox has one polling task (docs/connectors/email.md).
 # The whole flow is deterministic; the optional third task shows where a single cheap
 # model call would go if you want prose instead of a subject list.
 #

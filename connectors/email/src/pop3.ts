@@ -4,8 +4,11 @@
  * than an unmaintained package: USER/PASS, STAT, UIDL, RETR, DELE, QUIT.
  *
  * POP3 has no stable numbering across sessions and no flags, so "new" is decided with the
- * set of UIDLs already delivered, kept in the connector's state (`seen_uidls`). Deletions
- * (`delete_after_fetch`) take effect at QUIT, as the RFC says.
+ * set of UIDLs already handled, kept in the connector's state (`seen_uidls`). A batch is
+ * handled once the caller passes its `last_uid` back as `since_uid`: a task commits that
+ * cursor only with a successful run, so until then the batch stays in `pending_uidls` and
+ * comes back on the next call. Deletions (`delete_after_fetch`) are for handled mail only,
+ * and take effect at QUIT, as the RFC says.
  */
 import { isIP, connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
@@ -296,7 +299,15 @@ export class Pop3Mailbox implements Mailbox {
     const stored = await this.state.getState('seen_uidls');
     const firstRun = stored === undefined;
     const seen = new Set<string>(Array.isArray(stored) ? stored.map(String) : []);
-    const previousLast = await this.state.getState('last_uid');
+    const given =
+      args.since_uid === undefined || args.since_uid === null || args.since_uid === ''
+        ? null
+        : String(args.since_uid);
+    // The previous batch is handled when its cursor comes back; any other cursor means
+    // the run that got it failed, and the batch is delivered again.
+    const storedPending = await this.state.getState('pending_uidls');
+    const pending = Array.isArray(storedPending) ? storedPending.map(String) : [];
+    const handled = given !== null && pending.at(-1) === given ? pending : [];
 
     const client = await this.connect({
       host: this.config.host,
@@ -314,11 +325,19 @@ export class Pop3Mailbox implements Mailbox {
 
       if (firstRun && this.config.initial === 'none') {
         this.log(`pop3: no cursor, skipping ${String(listing.length)} existing messages`);
-        await this.saveSeen(current, current, previousLast);
         await client.quit();
-        return { emails: [], last_uid: typeof previousLast === 'string' ? previousLast : null };
+        await this.saveSeen(current, current, []);
+        return { emails: [], last_uid: given };
       }
 
+      for (const uidl of handled) {
+        seen.add(uidl);
+      }
+      if (this.config.delete_after_fetch) {
+        for (const entry of listing.filter((e) => handled.includes(e.uidl))) {
+          await client.dele(entry.num);
+        }
+      }
       const fresh = listing
         .filter((e) => !seen.has(e.uidl))
         .sort((a, b) => a.num - b.num)
@@ -329,26 +348,24 @@ export class Pop3Mailbox implements Mailbox {
         emails.push(
           await parseMessage(source, { uid: entry.uidl, maxBodyChars: this.config.max_body_chars }),
         );
-        if (this.config.delete_after_fetch) {
-          await client.dele(entry.num);
-        }
       }
-      // Deletions are committed by QUIT; only record the batch as seen once that succeeded.
+      // Deletions are committed by QUIT; only record the batch as handled once that succeeded.
+      // If the reply is lost after the server committed, the batch was handled already and
+      // the next call with the same cursor finds nothing left to delete.
       await client.quit();
       if (this.config.delete_after_fetch) {
-        for (const entry of fresh) {
-          current.delete(entry.uidl);
+        for (const uidl of handled) {
+          current.delete(uidl);
         }
       }
 
-      const delivered = new Set([...seen, ...fresh.map((e) => e.uidl)]);
-      const last = fresh.at(-1)?.uidl ?? previousLast;
-      const lastUid = typeof last === 'string' ? last : null;
-      await this.saveSeen(delivered, current, lastUid);
+      const freshUidls = fresh.map((e) => e.uidl);
+      await this.saveSeen(seen, current, freshUidls);
       this.log(
-        `pop3: fetch_new -> ${String(emails.length)} of ${String(listing.length)} on server`,
+        `pop3: fetch_new -> ${String(emails.length)} of ${String(listing.length)} on server` +
+          ` (${String(handled.length)} handled)`,
       );
-      return { emails, last_uid: lastUid };
+      return { emails, last_uid: freshUidls.at(-1) ?? given };
     } catch (err) {
       client.close();
       throw err;
@@ -361,21 +378,20 @@ export class Pop3Mailbox implements Mailbox {
   }
 
   /**
-   * Remembers `delivered ∩ current`: a UIDL that left the server can never come back as
-   * new, so forgetting it keeps the list bounded by the mailbox size.
+   * Remembers `handled ∩ current`: a UIDL that left the server can never come back as
+   * new, so forgetting it keeps the list bounded by the mailbox size. `pending` is the batch
+   * just delivered, handled once its last UIDL comes back as `since_uid`.
    */
   private async saveSeen(
-    delivered: Set<string>,
+    handled: Set<string>,
     current: Set<string>,
-    last: unknown,
+    pending: string[],
   ): Promise<void> {
-    let keep = [...delivered].filter((u) => current.has(u));
+    let keep = [...handled].filter((u) => current.has(u));
     if (keep.length > MAX_SEEN) {
       keep = keep.slice(keep.length - MAX_SEEN);
     }
     await this.state.putState('seen_uidls', keep);
-    if (typeof last === 'string') {
-      await this.state.putState('last_uid', last);
-    }
+    await this.state.putState('pending_uidls', pending);
   }
 }

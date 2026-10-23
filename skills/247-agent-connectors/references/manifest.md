@@ -135,8 +135,8 @@ the daemon as `connector.output`.
 ## The email connector (`connectors/email`)
 
 IMAP or POP3 in (`incoming`), SMTP out (`outgoing`), each side optional. Ops `fetch_new`
-(`{since_uid?, folder?, limit?}` → `{emails, last_uid}`; POP3 tracks delivered UIDLs in
-state instead of a cursor), `mark_read` (IMAP only) and `send` (the configured `footer` is
+(`{since_uid?, folder?, limit?}` → `{emails, last_uid}`; the task owns the cursor and
+passes `last_uid` back, which on POP3 also confirms the batch and allows its deletion), `mark_read` (IMAP only) and `send` (the configured `footer` is
 appended to every mail; `in_reply_to` threads replies). `initial: none` (default) makes
 the first fetch skip mail already in the box. Full reference: `connectors/email/README.md`.
 

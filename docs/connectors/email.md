@@ -88,7 +88,7 @@ Shared by `incoming` and `outgoing`:
 | `initial` | `none` | what the first `fetch_new` without a cursor does: `none` marks everything present as seen and returns nothing; `all` returns it, `limit` at a time |
 | `limit` | `50` | the most messages one `fetch_new` returns, 1 to 1000. An op's own `limit` argument can only lower it |
 | `max_body_chars` | `100000` | `body` is cut at this length; `truncated` says so |
-| `delete_after_fetch` | `false` | POP3 only: delete each message from the server after fetching it |
+| `delete_after_fetch` | `false` | POP3 only: delete each message from the server once a later `fetch_new` passes its batch's `last_uid` back, so only after the run that got it succeeded |
 
 `outgoing` only:
 
@@ -117,13 +117,21 @@ action:
 Arguments: `folder` (IMAP only), `since_uid` (the cursor; `null` on the first run),
 `limit` (at most the configured `limit`). Result: `{ emails, last_uid }`.
 
+The cursor belongs to your task. Store `last_uid` with `state_updates` and pass it back
+as `since_uid` on the next run. `state_updates` are written only when the run succeeds,
+so after a failed run the next call passes the old cursor and gets the same mail again.
+The connector keeps no cursor of its own: a missing or `null` `since_uid` means "no
+cursor", and `initial` decides what comes back.
+
 - **IMAP** uses UIDs as the cursor: messages with a UID above `since_uid` come back in
-  UID order. Without a `since_uid` argument the connector uses its own stored cursor.
-  If the server changes its `UIDVALIDITY`, the cursor resets and the mailbox is treated
-  as new.
-- **POP3** has no cursor. The connector remembers the identifiers it has delivered in
-  its state and returns the ones it has not seen. `since_uid` is ignored; `last_uid` is
-  the last delivered identifier.
+  UID order. If the server changes its `UIDVALIDITY`, the cursor resets and the mailbox
+  is treated as new.
+- **POP3** has no ordered identifiers, so the connector remembers which ones were
+  handled. `last_uid` is the identifier of the last message in the batch. When the next
+  call passes it back as `since_uid`, the connector records the batch as handled and,
+  with `delete_after_fetch`, deletes it on the server. Any other `since_uid` delivers the
+  batch again. One task polls a POP3 mailbox: a second task with its own cursor would
+  confirm or redeliver the first task's batches.
 
 Each entry of `emails`:
 
@@ -194,13 +202,13 @@ The connector keeps its cursor in the daemon's state store, under its own name
 
 | Key | Backend | Value |
 |---|---|---|
-| `last_uid` | IMAP, POP3 | the highest delivered UID, or the last delivered POP3 identifier |
 | `uidvalidity` | IMAP | the folder's `UIDVALIDITY`, to detect a reset |
-| `seen_uidls` | POP3 | the identifiers delivered so far that are still on the server |
+| `seen_uidls` | POP3 | the handled identifiers that are still on the server |
+| `pending_uidls` | POP3 | the last batch delivered, handled once its `last_uid` comes back |
 
-A task usually keeps its own copy of the cursor too (`state_updates: { email.last_uid:
-${result.last_uid} }`), so two tasks can read the same mailbox with independent cursors,
-as the daily-digest example does.
+The cursor itself is task state (`state_updates: { email.last_uid: ${result.last_uid} }`).
+On IMAP, two tasks can read the same mailbox with independent cursors, as the
+daily-digest example does.
 
 ## Tasks
 
@@ -261,4 +269,4 @@ tasks:
 Two complete examples ship with the connector:
 [`auto-reply.yaml`](../../connectors/email/examples/auto-reply.yaml) acknowledges every
 message and marks it read, and [`daily-digest.yaml`](../../connectors/email/examples/daily-digest.yaml)
-keeps a second cursor on the same mailbox for one digest mail per weekday morning.
+keeps a second cursor on the same IMAP mailbox for one digest mail per weekday morning.
