@@ -191,6 +191,11 @@ interface Managed {
   health: ConnectorHealth | null;
   /** Bumped by every `kill`, so a spawn still starting knows it was superseded. */
   epoch: number;
+  /**
+   * The spawn in flight, until its process is up or given up: its process is not on
+   * `transport`/`process` yet, so `kill` aborts it and waits for it to stop.
+   */
+  starting: { abort: AbortController; done: Promise<void> } | undefined;
 }
 
 /** The manifest without its origin: two manifests that differ only in `file` are the same connector. */
@@ -214,6 +219,7 @@ function newManaged(manifest: ConnectorConfig): Managed {
     healthTimer: undefined,
     health: manifest.health === undefined ? null : { ok: null, checked_at: null, failures: 0 },
     epoch: 0,
+    starting: undefined,
   };
 }
 
@@ -671,6 +677,20 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   }
 
   private async spawn(m: Managed): Promise<void> {
+    const abort = new AbortController();
+    const starting = { abort, done: this.spawnOnce(m, abort.signal) };
+    m.starting = starting;
+    try {
+      await starting.done;
+    } finally {
+      if (m.starting === starting) {
+        m.starting = undefined;
+      }
+    }
+  }
+
+  /** One start; aborting `signal` stops the process it began and resolves once it has exited. */
+  private async spawnOnce(m: Managed, signal: AbortSignal): Promise<void> {
     if (this.stopping || !this.current(m)) {
       return;
     }
@@ -679,7 +699,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     m.state = 'starting';
     m.error = null;
     if (m.manifest.managed_by === 'systemd') {
-      await this.attach(m, epoch, log);
+      await this.attach(m, epoch, signal, log);
       return;
     }
     let env: Record<string, string>;
@@ -750,7 +770,13 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
           void proxy?.close();
           return;
         }
-        agent = await AcpAgent.spawn({ exec: spawn.exec, cwd: spawn.cwd, env: spawn.env, log });
+        agent = await AcpAgent.spawn({
+          exec: spawn.exec,
+          cwd: spawn.cwd,
+          env: spawn.env,
+          log,
+          signal,
+        });
       } catch (err) {
         void proxy?.close();
         if (this.stillWanted(m, epoch)) {
@@ -790,9 +816,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     };
     pipeLines(transport.stderr as NodeJS.ReadableStream | null, 'stderr', log);
     try {
-      await client.connect(transport);
+      await connectUntil(client, transport, signal);
     } catch (err) {
-      await transport.close().catch(() => undefined);
       if (this.stillWanted(m, epoch)) {
         this.failed(m, `cannot start: ${errorMessage(err)}`, log);
       }
@@ -823,7 +848,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
    * no secret is resolved here. One without ops is `external`; one with ops is reached on
    * the unit's socket, reconnected with the restart backoff when the connection drops.
    */
-  private async attach(m: Managed, epoch: number, log: Logger): Promise<void> {
+  private async attach(m: Managed, epoch: number, signal: AbortSignal, log: Logger): Promise<void> {
     if (m.manifest.transport !== 'stdio') {
       m.state = 'external';
       log.info('connector.external', { unit: `247-agent-connector@${m.manifest.name}` });
@@ -836,9 +861,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       log.warn('connector.transport_error', { error: err.message });
     };
     try {
-      await client.connect(transport);
+      await connectUntil(client, transport, signal);
     } catch (err) {
-      await transport.close().catch(() => undefined);
       if (this.stillWanted(m, epoch)) {
         this.failed(
           m,
@@ -989,12 +1013,18 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       m.healthTimer = undefined;
     }
     m.state = 'stopped';
+    const starting = m.starting;
+    m.starting = undefined;
     const transport = m.transport;
     const child = m.process;
     m.client = undefined;
     m.transport = undefined;
     m.process = undefined;
     m.acp = undefined;
+    if (starting !== undefined) {
+      starting.abort.abort();
+      await starting.done.catch(() => undefined);
+    }
     if (transport !== undefined) {
       await transport.close().catch(() => undefined);
     }
@@ -1006,6 +1036,34 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         await child.exited;
       }
     }
+  }
+}
+
+/**
+ * `client.connect(transport)`, cut short by `signal`, which closes the transport. Rejects
+ * on failure or abort only once the transport is closed, so a child it ran has exited.
+ */
+async function connectUntil(
+  client: Client,
+  transport: StdioClientTransport | SocketClientTransport,
+  signal: AbortSignal,
+): Promise<void> {
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => (closing ??= transport.close().catch(() => undefined));
+  const onAbort = (): void => {
+    void close();
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    await client.connect(transport);
+    // `initialize` may have been answered just as the abort came.
+    signal.throwIfAborted();
+  } catch (err) {
+    await close();
+    throw err;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
   }
 }
 

@@ -76,6 +76,26 @@ afterEach(async () => {
 
 const signal = (): AbortSignal => new AbortController().signal;
 
+/** A program that records its pid in `file` and never answers the protocol's `initialize`. */
+const HANGS_IN_INIT = [
+  'node',
+  '-e',
+  "require('fs').appendFileSync(process.env.PID_FILE, process.pid + '\\n'); process.stdin.resume();",
+];
+
+function pidsIn(file: string): number[] {
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(Number) : [];
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const until = async (pred: () => boolean, ms = 5000): Promise<void> => {
   const end = Date.now() + ms;
   while (!pred()) {
@@ -229,6 +249,22 @@ describe('ConnectorSupervisor', () => {
     expect(lines.map((l) => l.msg)).toContain('connector.restart_requested');
   });
 
+  it('restart() during initialize stops the starting process before spawning another', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const pidFile = join(dir, 'pids');
+    const s = make([manifest({ exec: HANGS_IN_INIT, env: { PID_FILE: pidFile } })]);
+    void s.start();
+    await until(() => pidsIn(pidFile).length === 1);
+    expect(s.status()[0]?.state).toBe('starting');
+    void s.restart('fake').catch(() => undefined);
+    await until(() => pidsIn(pidFile).length === 2);
+    const [first] = pidsIn(pidFile);
+    expect(alive(first ?? 0)).toBe(false);
+    await s.stop();
+    expect(pidsIn(pidFile).filter(alive)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('restart() of a plain process does not double-spawn it', async () => {
     // fake-plain.ts exits once its emit to the test socket fails; an idle process is needed here.
     const s = make([
@@ -365,6 +401,21 @@ describe('ConnectorSupervisor with an acp connector', () => {
     expect(s.status()[0]?.pid).toBe(a.pid);
     expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
     await s.stop();
+  });
+
+  it('restart() during initialize stops the starting agent before spawning another', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const pidFile = join(dir, 'pids');
+    const s = make([acp({ exec: HANGS_IN_INIT, env: { PID_FILE: pidFile } })]);
+    void s.start();
+    await until(() => pidsIn(pidFile).length === 1);
+    void s.restart('claude').catch(() => undefined);
+    await until(() => pidsIn(pidFile).length === 2);
+    const [first] = pidsIn(pidFile);
+    expect(alive(first ?? 0)).toBe(false);
+    await s.stop();
+    expect(pidsIn(pidFile).filter(alive)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('restarts a crashed agent with backoff and reports it down meanwhile', async () => {
