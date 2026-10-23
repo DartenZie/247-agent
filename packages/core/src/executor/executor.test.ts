@@ -126,6 +126,17 @@ function deferredRunner(): {
 
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
 
+/** Resolves once `cond` holds; fails after `ms`. */
+async function until(cond: () => boolean, ms = 2000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) {
+      throw new Error('condition not met in time');
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe('Executor', () => {
   it('runs a queued shell action and publishes task.<name>.succeeded from the task', async () => {
     const ex = make();
@@ -233,6 +244,107 @@ describe('Executor', () => {
     await ex.idle();
     expect(env.store.runs.listByStatus('succeeded')).toHaveLength(6);
     expect(d.calls).toBe(6);
+  });
+
+  describe('a run waiting out its retry backoff', () => {
+    /**
+     * `flaky`'s first attempt fails with a retryable error when the test calls `failFlaky`,
+     * its second succeeds; `urgent` is held by `d`.
+     */
+    function setup(base: string): {
+      ex: Executor;
+      d: ReturnType<typeof deferredRunner>;
+      flakyCalls: () => number;
+      failFlaky: () => void;
+    } {
+      current = config([
+        {
+          name: 'flaky',
+          trigger: { kind: 'event', type: 'x.flaky' },
+          action: { kind: 'shell', cmd: ['flaky'] },
+          retry: { attempts: 2, backoff: 'fixed', base },
+        },
+        { name: 'urgent', trigger: { kind: 'event', type: 'x.urgent' }, action: shell },
+      ]);
+      bus.dispatcher.setConfig(current);
+      const d = deferredRunner();
+      let flakyCalls = 0;
+      let failFlaky = (): void => {
+        throw new Error('flaky has not started');
+      };
+      const runner: ActionRunner = (action, ctx) => {
+        if (ctx.run.task !== 'flaky') {
+          return d.runner(action, ctx);
+        }
+        flakyCalls++;
+        if (flakyCalls > 1) {
+          return Promise.resolve('ok');
+        }
+        return new Promise((_resolve, reject) => {
+          failFlaky = () => {
+            reject(new Error('flaky'));
+          };
+        });
+      };
+      return {
+        ex: make({ shell: runner }, 1),
+        d,
+        flakyCalls: () => flakyCalls,
+        failFlaky: () => {
+          failFlaky();
+        },
+      };
+    }
+
+    /** Starts `flaky`, queues `urgent` behind it, then fails `flaky`'s first attempt. */
+    async function failWhileUrgentQueued(failFlaky: () => void): Promise<EventRecord> {
+      const flaky = publish('x.flaky');
+      bus.dispatcher.drain();
+      await until(() => env.store.runs.listByStatus('running').length === 1);
+      publish('x.urgent');
+      bus.dispatcher.drain();
+      await tick();
+      failFlaky();
+      return flaky;
+    }
+
+    it('frees its worker slot for other runs (#37)', async () => {
+      const { ex, d, failFlaky } = setup('1h');
+      ex.start();
+      const flaky = await failWhileUrgentQueued(failFlaky);
+      await until(() => d.active() === 1);
+      d.finish('done');
+      await until(() => env.store.runs.listByStatus('succeeded').length === 1);
+      expect(env.store.runs.getByTaskAndEvent('flaky', flaky.id)).toMatchObject({
+        status: 'running',
+        attempt: 1,
+        error: 'flaky',
+      });
+
+      // stop() cuts the backoff short and leaves the run for recovery.
+      await ex.stop();
+      expect(env.store.runs.getByTaskAndEvent('flaky', flaky.id)?.status).toBe('running');
+    });
+
+    it('takes a worker slot again before its next attempt', async () => {
+      const { ex, d, flakyCalls, failFlaky } = setup('20ms');
+      ex.start();
+      // `urgent` takes the worker as soon as `flaky` backs off, before the 20ms are over.
+      const flaky = await failWhileUrgentQueued(failFlaky);
+      await until(() => d.active() === 1);
+
+      // The backoff is over, but `urgent` holds the only worker.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(flakyCalls()).toBe(1);
+
+      d.finish('done');
+      await ex.idle();
+      expect(flakyCalls()).toBe(2);
+      expect(env.store.runs.getByTaskAndEvent('flaky', flaky.id)).toMatchObject({
+        status: 'succeeded',
+        attempt: 2,
+      });
+    });
   });
 
   it('times out a run by the task timeout and kills the process', async () => {
