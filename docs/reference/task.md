@@ -33,7 +33,7 @@ tasks:
 | `concurrency` | Runs of this task executing at the same time. The daemon's `workers` cap applies on top. | `1` |
 | `timeout` | Wall-clock limit per attempt of active work. Time spent `waiting` does not count. When it expires the attempt is aborted and retried if `retry` allows. | `defaults.timeout`, normally `15m` |
 | `retry.attempts` | Attempts a run may make, 1 to 100. Attempts belong to one run; `task.<name>.failed` is published once, after the last. | `1` |
-| `retry.backoff` | `fixed` waits `base` between attempts; `exponential` doubles `base` on each attempt, capped at `max`. | `exponential` |
+| `retry.backoff` | `fixed` waits `base` between attempts; `exponential` doubles `base` on each attempt, capped at `max`. A run that waits between attempts counts toward `concurrency` but leaves its worker free for other tasks. | `exponential` |
 | `retry.base` | The first wait between attempts. | `30s` |
 | `retry.max` | The longest wait between attempts. | `1h` |
 | `budget.max_usd` | The most a run may spend on models, summed over all its attempts. | none |

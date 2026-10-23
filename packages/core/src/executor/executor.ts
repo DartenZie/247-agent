@@ -243,7 +243,8 @@ interface Slot {
  * `concurrency` and the global `workers` cap are enforced here, never by the dispatcher.
  *
  * Per run: secrets named by the task's templates are resolved, the action runs with a
- * timeout per attempt, failures are retried per `retry` with backoff, and on success
+ * timeout per attempt, failures are retried per `retry` with backoff (which frees the
+ * worker slot but keeps the task's `concurrency`), and on success
  * `state_updates` are applied and `emit` events published in one transaction with the
  * `task.<name>.succeeded` event (`source: task:<name>`, the trigger event as parent).
  * `task.<name>.failed` fires after the last attempt only. A `wait` parks the run in
@@ -273,6 +274,10 @@ export class Executor {
   private readonly pending: RunRecord[] = [];
   private readonly known = new Set<string>();
   private readonly inFlight = new Map<string, Slot>();
+  /** Runs in flight that wait out a retry backoff and hold no worker (#37). */
+  private readonly backingOff = new Set<string>();
+  /** Runs whose backoff is over, in order, waiting for a worker for their next attempt. */
+  private readonly retryReady: { id: string; resume: () => void }[] = [];
   private readonly perTask = new Map<string, number>();
   private readonly idleWaiters: (() => void)[] = [];
   private unsubscribe: (() => void) | undefined;
@@ -408,7 +413,7 @@ export class Executor {
   }
 
   stats(): { pending: number; in_flight: number } {
-    return { pending: this.pending.length, in_flight: this.inFlight.size };
+    return { pending: this.pending.length, in_flight: this.busyWorkers() };
   }
 
   /**
@@ -432,8 +437,17 @@ export class Executor {
     if (this.stopping) {
       return;
     }
+    // A retry waits for a free worker like a new run, but goes first.
+    for (let next = this.retryReady[0]; next !== undefined; next = this.retryReady[0]) {
+      if (this.busyWorkers() >= this.workers) {
+        return;
+      }
+      this.retryReady.shift();
+      this.backingOff.delete(next.id);
+      next.resume();
+    }
     const config = this.config();
-    for (let i = 0; i < this.pending.length && this.inFlight.size < this.workers;) {
+    for (let i = 0; i < this.pending.length && this.busyWorkers() < this.workers;) {
       const run = this.pending[i];
       if (run === undefined) {
         break;
@@ -447,6 +461,32 @@ export class Executor {
       this.pending.splice(i, 1);
       void this.execute(run, task);
     }
+  }
+
+  private busyWorkers(): number {
+    return this.inFlight.size - this.backingOff.size;
+  }
+
+  /** Resolves when `pump` hands the backed-off run `id` a worker; rejects on `signal`. */
+  private workerFor(id: string, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        const i = this.retryReady.findIndex((r) => r.id === id);
+        if (i >= 0) {
+          this.retryReady.splice(i, 1);
+        }
+        reject(signal.reason as Error);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.retryReady.push({
+        id,
+        resume: () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        },
+      });
+      this.pump();
+    });
   }
 
   private async execute(run: RunRecord, current: CompiledTask | undefined): Promise<void> {
@@ -513,8 +553,12 @@ export class Executor {
         });
         this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
         lastError = outcome.error;
+        // The backoff holds the task's `concurrency` but not a worker.
+        this.backingOff.add(run.id);
+        this.pump();
         try {
           await sleep(delay, undefined, { signal: slot.stop.signal });
+          await this.workerFor(run.id, slot.stop.signal);
         } catch {
           log.warn('run.abandoned', { attempt });
           return; // stopping: stays `running`, recovered on the next start
@@ -527,6 +571,7 @@ export class Executor {
       log.error('run.bookkeeping_failed', { error: errorMessage(err) });
     } finally {
       this.inFlight.delete(run.id);
+      this.backingOff.delete(run.id);
       this.known.delete(run.id);
       const n = (this.perTask.get(run.task) ?? 1) - 1;
       if (n <= 0) {

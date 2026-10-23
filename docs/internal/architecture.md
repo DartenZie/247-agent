@@ -129,7 +129,8 @@ Retry policy is `task.retry ?? defaults.retry` (`attempts` 1, `exponential`, `ba
 30s, `max` 1h). A failed attempt retries when the error is retryable, `attempt <
 attempts` and the executor is not stopping; the delay is `base` for `fixed` and
 `min(base × 2^(attempt−1), max)` for `exponential`. Between attempts the run stays
-`running` with the attempt's error; `task.<name>.failed` is published once, after the
+`running` with the attempt's error and keeps its task's `concurrency`, but gives up its
+worker; when the delay is over it waits for a free worker ahead of queued runs; `task.<name>.failed` is published once, after the
 last attempt, with `{run_id, task, error, attempt}`. Retryability is a flag on the
 error (`actions/types.ts`, `NonRetryableError`, `isRetryable`); the inventory per
 runner is in [`actions.md`](actions.md).
