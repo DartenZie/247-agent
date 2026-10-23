@@ -64,6 +64,10 @@ finished is not run again, so a mail that a `send` step sent is not sent twice. 
 retry after a restart of the daemon also starts at the step that failed. If the daemon
 stops after a step finishes but before the sequence records it, that step runs again.
 
+If you edit the task and run `oa reload` while a run waits or retries, that run keeps
+the steps it started with. Only runs that start after the reload use the new steps. If
+you remove the task, its runs in flight fail.
+
 > [!TIP]
 > Keep sequences short and local. Anything another workflow might want to observe or
 > reuse, such as "the site was published", should be its own task publishing its own

@@ -3,7 +3,8 @@
 Pause the run until a matching event arrives. This is how a human gets into the loop:
 ask a question on chat, wait for the answer, act on it. The run holds no worker while
 it waits, survives a restart of the daemon, and resumes the moment the event is
-published.
+published. An `oa reload` while it waits does not change it: the run resumes under the
+task definition it started with.
 
 ## The smallest example
 
