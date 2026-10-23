@@ -87,6 +87,21 @@ const until = async (pred: () => boolean, ms = 5000): Promise<void> => {
 };
 
 describe('ConnectorSupervisor', () => {
+  it("renders ${env.X} in a manifest from the daemon's environment, not the child's", async () => {
+    lines = [];
+    sup = new ConnectorSupervisor({
+      manifests: [manifest({ env: { FAKE_EXTRA: '${env.MY_CA}' } })],
+      socketPath: '/tmp/oa-test.sock',
+      secrets: staticSecrets({}),
+      log: createLogger({ sink: () => undefined }),
+      templateEnv: { PATH: process.env.PATH ?? '', MY_CA: '/etc/ssl/private-ca.pem' },
+    });
+    await sup.start();
+    await expect(sup.call('fake', 'env', {}, { signal: signal() })).resolves.toMatchObject({
+      extra: '/etc/ssl/private-ca.pem',
+    });
+  });
+
   it('spawns an MCP connector with the documented env, calls ops and maps results', async () => {
     const s = make(
       [

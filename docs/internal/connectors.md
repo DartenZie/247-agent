@@ -65,18 +65,22 @@ manifest says so. Stderr lines (and stdout of a `none` process) are logged as
 `connector.output`, cut at 2000 characters. Spawn happens at start, after a crash, on
 `oa connector restart`, and on a reload that changed the manifest.
 
-**Environment** (`connectors/child-env.ts`, `connectorChildEnv`). The base is the MCP
-SDK's default set, because `createCore` passes no `env`: `HOME`, `LOGNAME`, `PATH`,
-`SHELL`, `TERM`, `USER` copied from the daemon, with `PATH` already prefixed by
-`<OA_HOME>/bin` and the daemon's Node (`home.ts`), which is how `exec:
-["247-agent-connector-email"]` and `exec: ["node", …]` resolve. `OA_HOME` itself is not
-in that set; the `bin/` launchers export it themselves. On top:
+**Environment** (`connectors/child-env.ts`, `connectorChildEnv`). The base
+(`connectorBaseEnv`) is picked from the daemon's scrubbed environment (`ctx.childEnv`):
+the MCP SDK's default set, `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, plus `TZ`,
+`LANG`, `LANGUAGE`, `LC_*`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` (either
+case), `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `SSL_CERT_DIR`, so a connector behind a
+proxy or a private CA reaches the network. `PATH` is already prefixed by `<OA_HOME>/bin`
+and the daemon's Node (`home.ts`), which is how `exec: ["247-agent-connector-email"]` and
+`exec: ["node", …]` resolve. `OA_HOME` itself is not in that set; the `bin/` launchers
+export it themselves. `${env.<VAR>}` in a manifest renders from the whole scrubbed
+environment, as in a task, not from the base. On top:
 
 | Kind | Added |
 |---|---|
-| `stdio`, `none` | the manifest's `env` rendered with `{secrets, env: base}`, then `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON` (the rendered `config`) |
+| `stdio`, `none` | the manifest's `env` rendered with `{secrets, env}`, then `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON` (the rendered `config`) |
 | `acp`, unsandboxed | the manifest's `env`, `OA_CONNECTOR_NAME`; never `OA_CORE_SOCKET` or `OA_CONFIG_JSON` |
-| `acp`, `sandbox: bwrap` | after `--clearenv`: `PATH` (the host's, or `/usr/local/bin:/usr/bin:/bin`), `HOME=<work_dir>/home/<name>`, the manifest's `env`, `OA_CONNECTOR_NAME`; `LANG` and `OA_HOME` only when the base has them, which the daemon's default base does not |
+| `acp`, `sandbox: bwrap` | after `--clearenv`: `PATH` (the host's, or `/usr/local/bin:/usr/bin:/bin`), `HOME=<work_dir>/home/<name>`, the manifest's `env`, `OA_CONNECTOR_NAME`; `LANG` when the daemon has it; `OA_HOME` only when the base has it, which the daemon's default base does not |
 
 Secrets are rendered into that environment at spawn and nowhere else; the SDK deletes
 `OA_CONFIG_JSON` after reading it so subprocesses do not inherit it.

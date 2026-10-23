@@ -80,7 +80,8 @@ read-only, `defaults.agent.work_dir` the only writable path (every run's workspa
 the program's home, `<work_dir>/home/<name>`, for npm and Claude Code caches), the
 listed binds, and nothing else: no core socket, no database, no config directory or
 secrets file (their directories are masked), no other process, an environment of
-`PATH`/`HOME`/`LANG`/`OA_HOME`/`OA_CONNECTOR_NAME` plus the manifest's `env`. Put every
+`PATH`, `HOME`, `LANG` (when the daemon has it) and `OA_CONNECTOR_NAME` plus the
+manifest's `env`. Put every
 repository the tasks' `git-worktree` workspaces use in `ro_binds` (`rw_binds` only when
 the agent itself must commit); `oa validate` refuses a repository the sandbox cannot see,
 a bind or `work_dir` covering the daemon's files, and a `cwd` outside every bind. Needs
@@ -122,9 +123,13 @@ permission requests, so prefer agents that ask before acting.
 | `OA_CONNECTOR_NAME` | The manifest's `name` |
 | `OA_CONFIG_JSON` | `config` as JSON, secrets rendered; read it once at start and delete it from the environment (`connectorEnv()` does) so child processes do not inherit it |
 
-Plus the manifest's `env`, on top of a minimal environment (`PATH`, `HOME`, …). An `acp`
-agent gets `OA_CONNECTOR_NAME` and its `env` only; sandboxed, also nothing of the
-daemon's environment beyond `PATH`, `HOME`, `LANG`, `OA_HOME`. Stderr lines are logged by
+Plus the manifest's `env`, on top of a minimal environment: `HOME`, `LOGNAME`, `PATH`,
+`SHELL`, `TERM`, `USER`, and the proxy, CA, locale and zone variables (`HTTP_PROXY`,
+`HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` in either case, `NODE_EXTRA_CA_CERTS`,
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`) when the daemon has
+them. `${env.<VAR>}` in `config` and `env` sees the daemon's whole environment minus
+secrets. An `acp` agent gets that minimal environment, `OA_CONNECTOR_NAME` and its `env`;
+sandboxed, nothing of the daemon's environment beyond `PATH`, `HOME` and `LANG`. Stderr lines are logged by
 the daemon as `connector.output`.
 
 ## The email connector (`connectors/email`)

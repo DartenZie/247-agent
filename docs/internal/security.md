@@ -108,10 +108,11 @@ protected set masked, and after `--clearenv` an environment of exactly `PATH` (w
 `<OA_HOME>/bin` and the daemon's Node first), `HOME` (that home), the manifest's `env`
 and `OA_CONNECTOR_NAME`, nothing of the daemon's (`connectors/child-env.ts`,
 `connectorChildEnv()`; `actions/sandbox.ts`, `buildSandboxArgv()`). `LANG` and
-`OA_HOME` are passed only when the supervisor's base environment has them, and that
-base is the MCP SDK's default set, `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`
-(`connectors/supervisor.ts`, `getDefaultEnvironment()`; `core.ts` passes no `env`), so
-in the daemon they are not. An unsandboxed `acp` agent gets that base set plus the
+`OA_HOME` are passed only when the supervisor's base environment has them. That base
+(`connectorBaseEnv()`) is the MCP SDK's default set, `HOME`, `LOGNAME`, `PATH`, `SHELL`,
+`TERM`, `USER`, plus the proxy, CA, locale and zone variables (docs/internal/connectors.md),
+picked from the scrubbed environment, so `LANG` passes when the daemon has it and
+`OA_HOME` does not. An unsandboxed `acp` agent gets that base set plus the
 manifest's `env` and `OA_CONNECTOR_NAME`; a `stdio` or `none` connector gets the base
 set plus the manifest's `env`, `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and
 `OA_CONFIG_JSON`. No `acp` connector, sandboxed or not, receives `OA_CORE_SOCKET` or

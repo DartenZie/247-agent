@@ -4,10 +4,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import {
-  getDefaultEnvironment,
-  StdioClientTransport,
-} from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   ErrorCode,
   McpError,
@@ -40,7 +37,7 @@ import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
 import type { AgentInfo, AgentSession } from './acp-types.js';
 import { AcpAgent, pipeLines } from './acp.js';
-import { connectorChildEnv, sandboxOf } from './child-env.js';
+import { connectorBaseEnv, connectorChildEnv, sandboxOf } from './child-env.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
 import { openNetProxy, type NetProxy } from './net-proxy.js';
 import { SocketClientTransport } from './socket-transport.js';
@@ -51,7 +48,9 @@ export interface SupervisorOptions {
   socketPath: string;
   secrets: SecretsBackend;
   log: Logger;
-  /** Base environment for connector processes; defaults to a safe subset of the daemon's. */
+  /** The `${env…}` scope of manifests: the daemon's environment, scrubbed (`ctx.childEnv`). */
+  templateEnv?: Record<string, string>;
+  /** Base environment for connector processes; defaults to `connectorBaseEnv(templateEnv)`. */
   env?: Record<string, string>;
   /** Per-op default when the action names none. */
   callTimeoutMs?: number;
@@ -234,6 +233,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private readonly log: Logger;
   private readonly metrics: Metrics;
   private readonly baseEnv: Record<string, string>;
+  private readonly templateEnv: Record<string, string>;
   private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
   /** Where the allowlist proxies listen (`netProxyDir`): made on first use, 0700. */
@@ -250,7 +250,8 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     this.secrets = opts.secrets;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
-    this.baseEnv = opts.env ?? getDefaultEnvironment();
+    this.templateEnv = opts.templateEnv ?? opts.secrets.scrub(process.env);
+    this.baseEnv = opts.env ?? connectorBaseEnv(this.templateEnv);
     this.sandboxHost = opts.sandboxHost;
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
     this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
@@ -574,6 +575,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       manifest: m.manifest,
       secrets: this.secrets,
       baseEnv: this.baseEnv,
+      templateEnv: this.templateEnv,
       socketPath: this.socketPath,
     });
   }
