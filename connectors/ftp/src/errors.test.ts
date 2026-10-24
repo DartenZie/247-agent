@@ -25,8 +25,12 @@ describe('isTransientFileError', () => {
     }
   });
 
-  it('takes only a 4xx that was not carried out as transient for a write', () => {
+  it('takes only a 4xx that comes before any change as transient for a write', () => {
     expect(isTransientFileError(libError('450 File busy', { code: 450 }), write)).toBe(true);
+    expect(isTransientFileError(libError('425 No data connection', { code: 425 }), write)).toBe(
+      true,
+    );
+    expect(isTransientFileError(libError('451 Aborted', { code: 451 }), write)).toBe(false);
     expect(isTransientFileError(libError('426 Transfer aborted', { code: 426 }), write)).toBe(
       false,
     );

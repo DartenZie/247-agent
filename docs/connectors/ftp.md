@@ -79,8 +79,8 @@ config:
 All paths are relative to `root`; `.` or an empty string is the root itself. Results carry
 the same relative paths, so `${result.entries[0].path}` feeds straight back into `read`.
 A bad path, a missing file, a refused login or a size over `max_bytes` fails the calling
-run without retry. An FTP `4xx` reply that says the command was not carried out (`421`
-service not available, `450` file busy) is [transient](../tasks/connector.md#failures), and so is a server that cannot
+run without retry. An FTP `4xx` reply while the op connects or reads (`421` service not
+available, `450` file busy), or a `425` or `450` while it writes, is [transient](../tasks/connector.md#failures), and so is a server that cannot
 be reached: the run is retried under the task's `retry` policy. A connection that breaks
 or times out is transient while the op reads (`list`, `stat`, `read`), and not once it
 writes, deletes, renames or creates a directory, since the server may have done it.
