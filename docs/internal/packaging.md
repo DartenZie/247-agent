@@ -64,7 +64,10 @@ only needs the Node download for the target.
 notification through a `systemd-notify` child, which is why the access is `all` and not
 `main`. `TimeoutStartSec=300` covers a database migration before `READY=1`. The connector
 template's `After=247-agent.service` therefore waits for a daemon that is ready, not one
-that was forked. `docs/operations/production.md` shows the unit and must match it.
+that was forked. A notification from a short-lived child counts only if systemd can
+still attribute it to the unit; the rigs prove it on systemd 255 (CI, Ubuntu 24.04) and
+257 (`npm run test:linux`, Debian 13). `docs/operations/production.md` shows the unit and
+must match it.
 
 ## The packages
 

@@ -51,8 +51,9 @@ function checkDatabase(core: Core, now: Date): DatabaseCheck {
 }
 
 /**
- * A connector being spawned (`starting`) counts as neither up nor down, so a daemon that
- * just started, or one respawning its only connector, is `degraded` rather than `failing`.
+ * A connector on its first spawn (`starting`, no restarts yet) counts as neither up nor
+ * down, so a daemon that just started is `degraded` rather than `failing`. A respawn
+ * counts as down, so a crash-looping connector does not flip the report between the two.
  */
 function checkConnectors(core: Core): ConnectorsCheck {
   let up = core.pollers.length;
@@ -60,7 +61,7 @@ function checkConnectors(core: Core): ConnectorsCheck {
   const down: string[] = [];
   const processes = core.supervisor?.status() ?? [];
   for (const c of processes) {
-    if (c.state === 'starting') {
+    if (c.state === 'starting' && c.restarts === 0) {
       starting++;
     } else if ((c.state === 'up' || c.state === 'external') && c.health?.ok !== false) {
       up++;

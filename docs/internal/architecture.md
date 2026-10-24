@@ -237,8 +237,10 @@ loaded, store open, socket bound), then `WATCHDOG=1` from a timer every third of
 `WATCHDOG_USEC`, so a blocked event loop misses the deadline and systemd restarts the
 process. A failing health check does not stop the pings: a restart does not mend a full
 disk. `systemd.ts` removes `NOTIFY_SOCKET` and the watchdog variables from the process
-environment before anything is spawned, so no task or connector can notify for the
-daemon ([`packaging.md`](packaging.md) has the unit side).
+environment before anything is spawned, so a child does not notify by accident. It does
+not stop one on purpose: under `NotifyAccess=all` any process in the unit's cgroup may
+write to `/run/systemd/notify` ([`security.md`](security.md#systemd-notifications),
+[`packaging.md`](packaging.md) has the unit side).
 
 ## Module map
 

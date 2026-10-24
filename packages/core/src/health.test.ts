@@ -73,11 +73,18 @@ describe('checkHealth', () => {
     expect(h.connectors).toEqual({ status: 'degraded', up: 1, total: 4, down: ['chat', 'jira'] });
   });
 
-  it('is failing when no connector is up, but not while one is starting', () => {
+  it('is failing when no connector is up, but not while one starts for the first time', () => {
     const down = [connector('mail', 'down'), connector('chat', 'stopped')];
     expect(checkHealth(core({ connectors: down }), NOW).status).toBe('failing');
     const starting = [connector('mail', 'down'), connector('chat', 'starting')];
     expect(checkHealth(core({ connectors: starting }), NOW).status).toBe('degraded');
+    const respawning = [{ ...connector('mail', 'starting'), restarts: 2 }];
+    expect(checkHealth(core({ connectors: respawning }), NOW).connectors).toEqual({
+      status: 'failing',
+      up: 0,
+      total: 1,
+      down: ['mail'],
+    });
   });
 
   it('is failing when the dispatcher fails or the database refuses a commit', () => {

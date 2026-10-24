@@ -199,6 +199,20 @@ as data in a delimited block and the system prompt says so, and it enters `decid
 `state`, never as a question. The capability surface, not the prompt, is what limits
 damage.
 
+## systemd notifications
+
+The unit is `NotifyAccess=all` because the daemon notifies through a `systemd-notify`
+child (`packages/core/src/systemd.ts`). systemd therefore accepts `READY=1`,
+`WATCHDOG=1`, `STOPPING=1`, `EXTEND_TIMEOUT_USEC=` and `MAINPID=` from any process in the
+unit's cgroup, which includes unsandboxed shell tasks, connectors the core spawns and
+unsandboxed agent programs. Removing `NOTIFY_SOCKET` from their environment only stops
+an accidental notification; the socket path is well known. A child that pings the
+watchdog can keep a hung daemon alive, and one that sends `STOPPING=1` or `MAINPID=` can
+confuse systemd's view of the service. This sits inside the existing boundary: such a
+child already runs as the daemon's uid and could kill or stall the daemon directly. A
+bwrap sandbox does not see `/run/systemd`. Sending from the main pid, which would allow
+`NotifyAccess=main`, needs a Unix datagram socket that Node does not offer.
+
 ## Invariants a change must keep
 
 - Nothing that runs as the daemon's uid executes untrusted content outside a sandbox.

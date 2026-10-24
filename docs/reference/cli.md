@@ -266,8 +266,8 @@ Under a systemd unit with `Type=notify` (`NOTIFY_SOCKET` set), the daemon report
 `READY=1` once it has loaded its configuration, opened the database and bound the
 socket (log line `systemd.ready`), `WATCHDOG=1` every third of `WatchdogSec=` while its
 event loop runs, and `STOPPING=1` on SIGTERM or SIGINT. It sends each one with
-`systemd-notify`, so the unit needs `NotifyAccess=all`. Nothing it starts sees
-`NOTIFY_SOCKET`.
+`systemd-notify`, so the unit needs `NotifyAccess=all`. The daemon passes
+`NOTIFY_SOCKET` to none of the programs it starts.
 
 The daemon sets `OA_HOME` to its install root and puts `<root>/bin` and its own Node
 first on `PATH` for everything it spawns. Exit codes: 0 after a clean stop, 1 on a

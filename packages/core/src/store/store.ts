@@ -28,7 +28,8 @@ export interface Store {
   transaction<T>(fn: () => T): T;
   /**
    * Commits one tiny write (the `health` cursor, set to `at` in epoch ms) and throws what
-   * SQLite throws: a read-only file, a full disk, a lock held past `busy_timeout`.
+   * SQLite throws: a read-only file, a full disk, a lock held past 250 ms. The short wait
+   * keeps a lock held elsewhere from stalling the event loop on every health poll.
    */
   probeWrite(at: number): void;
   close(): void;
@@ -50,9 +51,15 @@ export function openStore(path: string): Store {
     pauses: new PauseStore(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
     probeWrite: (at) => {
-      db.transaction(() => {
-        cursors.set('health', at);
-      }).immediate();
+      const busy = db.pragma('busy_timeout', { simple: true }) as number;
+      db.pragma('busy_timeout = 250');
+      try {
+        db.transaction(() => {
+          cursors.set('health', at);
+        }).immediate();
+      } finally {
+        db.pragma(`busy_timeout = ${String(busy)}`);
+      }
     },
     close: () => {
       db.close();

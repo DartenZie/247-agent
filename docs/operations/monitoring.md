@@ -143,7 +143,7 @@ connectors	degraded	up=2/3 down=chat
 | Status | Meaning | Exit |
 |---|---|---|
 | `ok` | every check passes | 0 |
-| `degraded` | the daemon works, but some connectors are down, failing their health pings or still starting | 1 |
+| `degraded` | the daemon works, but some connectors are down, failing their health pings or not started yet | 1 |
 | `failing` | events are not turned into runs, the database refuses writes, or no connector is up | 1 |
 
 A daemon that does not answer within 10 seconds also exits 1. Use `oa health` in a

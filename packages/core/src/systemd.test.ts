@@ -79,12 +79,33 @@ describe('systemdNotifier', () => {
     expect(notifier).toMatchObject({ enabled: true, watchdogMs: undefined });
   });
 
-  it('warns once when systemd-notify is missing or fails', async () => {
+  it('warns once per failing message until it succeeds again', async () => {
+    let code = 1;
+    const { notifier, lines } = setup({ NOTIFY_SOCKET: '/run/systemd/notify' }, () =>
+      Promise.resolve(code),
+    );
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    const warnings = () => lines.filter((l) => l.msg === 'systemd.notify_failed').length;
+    notifier.ready();
+    notifier.ready();
+    notifier.stopping();
+    await tick();
+    expect(warnings()).toBe(2);
+    code = 0;
+    notifier.ready();
+    await tick();
+    code = 1;
+    notifier.ready();
+    await tick();
+    expect(warnings()).toBe(3);
+  });
+
+  it('warns once when systemd-notify is missing', async () => {
     const { notifier, lines } = setup({ NOTIFY_SOCKET: '/run/systemd/notify' }, () =>
       Promise.reject(new Error('spawn systemd-notify ENOENT')),
     );
     notifier.ready();
-    notifier.stopping();
+    notifier.ready();
     await new Promise((resolve) => setImmediate(resolve));
     expect(lines.filter((l) => l.msg === 'systemd.notify_failed')).toEqual([
       expect.objectContaining({ message: 'READY=1', error: 'spawn systemd-notify ENOENT' }),

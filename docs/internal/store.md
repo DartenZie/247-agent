@@ -66,8 +66,8 @@ the executor. `RunRecord` leaves `progress` and `config` out; the executor reads
 with `runs.progress(id)` and `runs.config(id)`, hands the progress to the next attempt
 and runs every attempt under the config.
 
-**`cursors`**: `name TEXT PRIMARY KEY`, `seq INTEGER`; seeded with `('dispatch', 0)`. `GET /v1/health` writes `('health', <epoch ms>)` on every call to prove the database still takes a commit.
-The dispatcher's position.
+**`cursors`**: `name TEXT PRIMARY KEY`, `seq INTEGER`; seeded with `('dispatch', 0)`.
+The dispatcher's position. `GET /v1/health` also writes `('health', <epoch ms>)` on every call to prove the database still takes a commit.
 
 **`state`**: `namespace`, `key`, `value TEXT` (JSON), `updated_at`, `PRIMARY KEY
 (namespace, key)`. Written by the executor (`state_updates`, after a successful run),

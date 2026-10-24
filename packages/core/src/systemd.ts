@@ -66,7 +66,8 @@ export function systemdNotifier(
     NOTIFY_SOCKET: socket,
     PATH: path ?? '/usr/local/bin:/usr/bin:/bin',
   };
-  let warned = false;
+  /** Messages that failed since they last succeeded: one warning each, not one per ping. */
+  const failing = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
 
   const send = (message: string): void => {
@@ -75,14 +76,16 @@ export function systemdNotifier(
     }
     run([message], childEnv).then(
       (code) => {
-        if (code !== 0 && !warned) {
-          warned = true;
+        if (code === 0) {
+          failing.delete(message);
+        } else if (!failing.has(message)) {
+          failing.add(message);
           opts.log.warn('systemd.notify_failed', { message, exit_code: code });
         }
       },
       (err: unknown) => {
-        if (!warned) {
-          warned = true;
+        if (!failing.has(message)) {
+          failing.add(message);
           opts.log.warn('systemd.notify_failed', {
             message,
             error: err instanceof Error ? err.message : String(err),

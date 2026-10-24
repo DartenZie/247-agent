@@ -48,7 +48,7 @@ curl --unix-socket "$OA_CORE_SOCKET" -X PUT http://unix/v1/state/email/last_uid 
 | `ok` | `true` only when `status` is `ok` |
 | `checks.dispatcher` | `failing` when the last pass that turns events into runs threw; `error` is its message and `failing_since` when the failures started. It is `ok` again after one pass succeeds |
 | `checks.database` | `failing` when the daemon cannot commit a write to its database: the file is read-only, the disk is full, or a lock is held for more than 5 seconds |
-| `checks.connectors` | `ok` when every connector is up; `degraded` when some are down, stopped, failing their `health:` pings or still starting (`down` lists them by name, not the starting ones); `failing` when none is up and none is starting. Built-in pollers and connectors in their own unit without ops count as up. With no connector configured it is `ok` |
+| `checks.connectors` | `ok` when every connector is up; `degraded` when some are down, stopped, restarting, failing their `health:` pings or starting for the first time (`down` lists them by name, except those starting for the first time); `failing` when none is up and none is starting for the first time. Built-in pollers and connectors in their own unit without ops count as up. With no connector configured it is `ok` |
 
 `runs.pending` are runs queued for a worker, `runs.in_flight` runs executing now. Each
 request commits one small write to prove the database takes it.
