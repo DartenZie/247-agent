@@ -58,7 +58,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | `stdout is not JSON: …` | `result: json_stdout` and the command printed something else | print only JSON on stdout, diagnostics to stderr |
 | `<connector>.<op>: not in the manifest's ops` | the op is not in the manifest's `ops` allowlist | add it, or set `ops: []` to allow every op the connector serves |
 | `<connector>.<op>: <message>`, no retry | the connector's op raised an error | fix the arguments or the remote side; op errors are never retried on purpose |
-| `unknown connector "x"` | no manifest with that name is loaded | `oa connector list`; check `connectors:` in `agent.yaml` and the file names under `connectors.d/` |
+| `unknown connector "x"` | no manifest with that name is loaded; `oa validate agent.yaml` reports it before a run | `oa connector list`; check `connectors:` in `agent.yaml` and the file names under `connectors.d/` |
 | `<connector>.<op>: … it may have taken effect`, no retry | the op timed out, or the connector exited before answering; the op may have run | check the remote side (the mailbox, the FTP folder) and replay the event if nothing happened; raise the action's `timeout` if the op is just slow |
 | `connector "x" is down`, the run is retried | the connector process is not up | read its `connector.output` lines in the log; `oa connector list` shows the last error |
 | a connector restarts every few seconds | it exits or crashes at start (bad credentials, a port in use, invalid config); the log shows `connector.exited` and `connector.restart_scheduled` with a growing delay | run it by hand with `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and `OA_CONFIG_JSON` set and read its stderr |

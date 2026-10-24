@@ -15,6 +15,7 @@ import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
 import {
   checkAgentTools,
+  checkConnectorActions,
   checkLlmTasks,
   checkSandboxes,
   type SandboxCheckContext,
@@ -665,8 +666,8 @@ function joined(names: readonly string[] | undefined): string | null {
 }
 
 /**
- * Applies `checkLlmTasks`, `checkSandboxes` and `checkAgentTools` to a merged load; an issue on a task fails
- * the file the task came from, one on a manifest or on agent.yaml is reported under that
+ * Applies `checkLlmTasks`, `checkSandboxes`, `checkAgentTools` and `checkConnectorActions` to a
+ * merged load; an issue on a task fails the file the task came from, one on a manifest or on agent.yaml is reported under that
  * file.
  */
 function crossCheck(
@@ -681,6 +682,7 @@ function crossCheck(
   issues.push(...(sb?.tasks ?? []));
   if (sandboxes !== undefined) {
     issues.push(...checkAgentTools(tasks, sandboxes.manifests));
+    issues.push(...checkConnectorActions(tasks, sandboxes.manifests));
   }
   // One entry per file: an inline manifest's issues and agent.yaml's own share a file.
   const byFile = new Map<string, ConfigIssue[]>();

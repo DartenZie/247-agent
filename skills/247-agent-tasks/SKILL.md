@@ -48,7 +48,9 @@ never invent a way for one task to reference another by name.
 
    `oa validate` checks schema, template syntax, JMESPath syntax, cron syntax, that
    `secrets` appear only in actions, and that no task triggers on its own lifecycle
-   event. The daemon does not need to run for `validate`. For run inspection and
+   event. Run on `agent.yaml`, it also checks that every `connector` action names a
+   loaded connector and an op its manifest lists. The daemon does not need to run for
+   `validate`. For run inspection and
    debugging, use the `247-agent-operate` skill.
 
 ## Rules that the validator or the runtime will enforce

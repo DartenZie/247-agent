@@ -181,6 +181,41 @@ export function checkAgentTools(
   return issues;
 }
 
+/**
+ * Every `connector` action (a task's own or a sequence step) names a process connector
+ * that serves ops (`transport: stdio`), and an op in the manifest's own `ops` when it has
+ * some: the supervisor calls nothing else, and the run would fail without retry. Run with
+ * the manifests at daemon start, on reload and by `oa validate agent.yaml`.
+ */
+export function checkConnectorActions(
+  tasks: readonly TaskConfig[],
+  manifests: readonly ConnectorConfig[],
+): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  tasks.forEach((task, i) => {
+    for (const { action: a, at } of taskActions(task, `tasks[${String(i)}].action`)) {
+      if (a.kind !== 'connector') {
+        continue;
+      }
+      const m = manifests.find((x) => x.name === a.connector);
+      if (m === undefined) {
+        issues.push({ path: `${at}.connector`, message: `unknown connector "${a.connector}"` });
+      } else if (m.transport !== 'stdio' || m.builtin !== undefined) {
+        issues.push({
+          path: `${at}.connector`,
+          message: `connector "${m.name}" serves no ops (${m.builtin === undefined ? `transport ${m.transport}` : `built-in ${m.builtin}`})`,
+        });
+      } else if (m.ops.length > 0 && !m.ops.includes(a.op)) {
+        issues.push({
+          path: `${at}.op`,
+          message: `op "${a.op}" is not in the ops of connector "${m.name}" (${m.file})`,
+        });
+      }
+    }
+  });
+  return issues;
+}
+
 /** What `checkSandboxes` needs from agent.yaml and the manifests. */
 export interface SandboxCheckContext {
   manifests: readonly ConnectorConfig[];
