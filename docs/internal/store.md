@@ -11,11 +11,10 @@ migration, or retention.
 (`store/migrations.ts`) run in order and set `PRAGMA user_version` to the number applied;
 nine ship, so a current database reads `user_version = 9`. A `user_version` above the
 number this build ships means a newer release migrated the file: `migrate` throws before
-it writes, `openDatabase` closes the handle, and the daemon exits 1 with both numbers in
-the message. Nothing copies the file before a migration; the operator's backup is the way
-back. `store.transaction(fn)` is
-`BEGIN IMMEDIATE`, which takes the write lock up front so a batch never deadlocks against
-a reader that wants to write.
+it runs a migration, `openDatabase` closes the handle, and the daemon exits 1 with both
+numbers in the message. Nothing copies the file before a migration; the operator's backup
+is the way back. `store.transaction(fn)` is `BEGIN IMMEDIATE`, which takes the write lock
+up front so a batch never deadlocks against a reader that wants to write.
 
 The file holds every payload, result and transcript, so `openDatabase` creates it 0640
 whatever the umask. It also clears the other-user bits of an existing file, `-wal` or

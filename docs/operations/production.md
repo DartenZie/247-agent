@@ -183,6 +183,11 @@ Choose a quiet moment: `oa runs ls --status running` shows what is in flight. Th
 restart gives those runs `shutdown.grace` to finish; an agent run that does not finish
 in time runs again from a fresh workspace after the restart.
 
+An upgrade can migrate `state.db` to a newer schema. An older release refuses to start
+on that file and logs `database schema version <n> is newer than this build's <m>`. This
+applies to both rollback paths below. Take a [backup](#backups) of `state.db` before you
+upgrade, and restore it if you roll back past such an upgrade.
+
 **Package.** Install the newer `.deb` or `.rpm`; the maintainer scripts restart a running
 service. Roll back by installing the previous file.
 
@@ -197,11 +202,6 @@ ln -sfn /opt/247-agent-<previous version> /opt/247-agent
 systemctl restart 247-agent
 ```
 
-An upgrade can migrate `state.db` to a newer schema. An older release refuses to start
-on that file and logs `database schema version <n> is newer than this build's <m>`. To
-roll back past such an upgrade, restore a [backup](#backups) of `state.db` taken before
-it, or keep the newer release. Take that backup before you upgrade.
-
 Do not mix the package and the installer on one machine: both own `/opt/247-agent`.
 
 ## Backups
@@ -211,6 +211,17 @@ Do not mix the package and the installer on one machine: both own `/opt/247-agen
   file while the daemon runs, or take a consistent snapshot with `sqlite3
   /var/lib/247-agent/state.db ".backup /backup/state.db"`.
 - `/etc/credstore` holds the secrets; back it up where you back up root's files.
+
+To restore `state.db` from a `.backup` snapshot, stop the service first. Otherwise it
+reopens the file while you copy it. A copy taken with its `-wal` file goes back with that
+file instead of the `rm`.
+
+```sh
+systemctl stop 247-agent
+rm -f /var/lib/247-agent/state.db-wal /var/lib/247-agent/state.db-shm
+install -o 247-agent -g 247-agent -m 0640 /backup/state.db /var/lib/247-agent/state.db
+systemctl start 247-agent
+```
 
 ## Logs
 
