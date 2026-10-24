@@ -166,9 +166,9 @@ outcome:
 |---|---|
 | `authserv_id` | the trusted server the results come from; `null` when the mail has no header from it |
 | `dkim` | `pass` when any DKIM signature verified, otherwise the first DKIM result |
-| `dkim_domains` | the domains (`header.d`) of the signatures that verified |
-| `spf` | the SPF result for the envelope sender |
-| `dmarc` | the DMARC result, if it is for the domain of `from`; otherwise `none` |
+| `dkim_domains` | the domains (`header.d`, else `header.i`) of the signatures that verified |
+| `spf` | the SPF result for the envelope sender. `none` when the header holds more than one SPF result |
+| `dmarc` | the DMARC result, if the header holds exactly one and it names the domain of `from` (`header.from`); otherwise `none` |
 
 A result is one of the words the server wrote, in lower case: `pass`, `fail`,
 `softfail`, `neutral`, `none`, `temperror` or `permerror`. A method the server did not
@@ -197,13 +197,20 @@ To set it up:
    `payload.auth.dmarc` must be `pass`.
 
 The connector reads only the topmost header with a trusted authserv-id. The receiving
-server puts its own header above any header the sender wrote.
+server puts its own header above any header the sender wrote. Every result you filter
+on must therefore be in that one header.
 
 > [!WARNING]
-> This works only when the server adds its header to every mail it accepts. Most
-> hosted providers do. On a server you run yourself, check that the DKIM, SPF and
-> DMARC filters write `Authentication-Results` with that authserv-id, and that they
-> remove any header with the same authserv-id that arrives from outside.
+> This works only when the server adds one header with all its results to every mail
+> it accepts. On a server you run yourself, separate DKIM, SPF and DMARC filters often
+> write one header each; then only the topmost one counts and `dmarc` is often `none`.
+> Make the server write the results in one header, and make it remove any header with
+> its own authserv-id that arrives from outside.
+
+> [!NOTE]
+> Microsoft 365 and Outlook.com write `Authentication-Results` without an authserv-id
+> (`Authentication-Results: spf=pass …`). The connector cannot tell such a header from
+> one the sender wrote, so it ignores it, and every result in `auth` is `none`.
 
 ### `mark_read`
 

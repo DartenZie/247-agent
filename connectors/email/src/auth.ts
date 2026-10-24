@@ -12,10 +12,10 @@ export interface SenderAuth {
   authserv_id: string | null;
   /** `pass` when any DKIM signature passed, else the first DKIM result, else `none`. */
   dkim: string;
-  /** The `header.d` domains of the passing DKIM signatures. */
+  /** The domains (`header.d`, else `header.i`) of the passing DKIM signatures. */
   dkim_domains: string[];
   spf: string;
-  /** `none` unless the DMARC result is for the domain of `from`. */
+  /** `none` unless the header holds exactly one DMARC result and it names the domain of `from`. */
   dmarc: string;
   [key: string]: JsonValue;
 }
@@ -49,23 +49,28 @@ export function senderAuth(headers: string[], trusted: string[], from: string): 
       parsed.results.filter((r) => r.method === method);
     const dkim = of('dkim');
     const passed = dkim.filter((r) => r.result === 'pass');
-    const dmarc = of('dmarc')[0];
+    // A message has one SPF and one DMARC verdict. Two in one header mean text the server
+    // copied from the sender (an unescaped `)` in a comment) forged one, so neither counts.
+    const single = (method: string): MethodResult | undefined => {
+      const found = of(method);
+      return found.length === 1 ? found[0] : undefined;
+    };
+    const dmarc = single('dmarc');
     const fromDomain = from.slice(from.lastIndexOf('@') + 1);
-    const dmarcDomain = dmarc?.props.get('header.from')?.toLowerCase();
     return {
       authserv_id: parsed.authservId,
       dkim: passed.length > 0 ? 'pass' : (dkim[0]?.result ?? 'none'),
       dkim_domains: passed.flatMap((r) => {
-        const d = r.props.get('header.d');
-        return d === undefined ? [] : [d.toLowerCase()];
+        const d = r.props.get('header.d') ?? r.props.get('header.i')?.replace(/^.*@/, '');
+        return d === undefined || d === '' ? [] : [d.toLowerCase()];
       }),
-      spf: of('spf')[0]?.result ?? 'none',
+      spf: single('spf')?.result ?? 'none',
       dmarc:
-        dmarc === undefined ||
-        from === '' ||
-        (dmarcDomain !== undefined && dmarcDomain !== fromDomain)
-          ? 'none'
-          : dmarc.result,
+        dmarc !== undefined &&
+        from !== '' &&
+        dmarc.props.get('header.from')?.toLowerCase() === fromDomain
+          ? dmarc.result
+          : 'none',
     };
   }
   return { ...NO_AUTH, dkim_domains: [] };
@@ -77,7 +82,8 @@ export function parseAuthResults(
 ): { authservId: string; results: MethodResult[] } | null {
   const [head, ...rest] = splitStatements(stripComments(value.replace(/\r?\n[ \t]+/g, ' ')));
   const authservId = unquote(head?.trim().split(/\s+/)[0] ?? '').toLowerCase();
-  if (authservId === '') {
+  // Microsoft writes `spf=pass …` where the authserv-id belongs; such a header names no server.
+  if (authservId === '' || authservId.includes('=')) {
     return null;
   }
   const results: MethodResult[] = [];
