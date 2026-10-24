@@ -54,8 +54,8 @@ connectors:
     config:
       user: "\${secrets.imap_user}"
       mails:
-        - { uid: 1, message_id: "<m1@x>", from: editor@example.com, subject: Spring event, body: Please add the spring event on May 3. }
-        - { uid: 2, message_id: "<m2@x>", from: spam@example.com, subject: Buy now, body: no }
+        - { uid: 1, message_id: "<m1@x>", from: editor@example.com, auth: { dmarc: pass }, subject: Spring event, body: Please add the spring event on May 3. }
+        - { uid: 2, message_id: "<m2@x>", from: editor@example.com, auth: { dmarc: fail }, subject: Forged, body: Publish this. }
   - name: chat
     exec: [node, ${FIXTURES}fake-chat.ts]
     emits: [chat.reply]
@@ -93,7 +93,7 @@ tasks:
     trigger:
       kind: event
       type: email.received
-      filter: "payload.from == 'editor@example.com'"
+      filter: "payload.from == 'editor@example.com' && payload.auth.dmarc == 'pass'"
     action:
       kind: llm
       max_tokens: 512
@@ -334,7 +334,7 @@ describe('website workflow without a model', () => {
       'publish_site',
       'update_site_general',
     ]);
-    expect(runs).toHaveLength(6); // the spam mail never reaches the classifier
+    expect(runs).toHaveLength(6); // the forged mail never reaches the classifier
     // The tick keeps its correlation; the mail starts its own, which every later run shares.
     const mail = byTask.get('classify_email')?.correlation_id;
     expect(mail).not.toBe(first.correlation_id);
@@ -393,13 +393,13 @@ describe('website workflow without a model', () => {
     expect(events[0]?.id).toBe(event_id);
     const tick = new Set(['manual.run', 'task.fetch_email.succeeded']);
     const received = events.filter((e) => e.type === 'email.received');
-    const spam = received.find((e) => e.correlation_id !== mail);
-    expect(spam?.correlation_id).not.toBe(first.correlation_id);
+    const forged = received.find((e) => e.correlation_id !== mail);
+    expect(forged?.correlation_id).not.toBe(first.correlation_id);
     for (const e of events) {
       const expected = tick.has(e.type)
         ? first.correlation_id
-        : e === spam
-          ? spam.correlation_id
+        : e === forged
+          ? forged.correlation_id
           : mail;
       expect(e.correlation_id, e.type).toBe(expected);
     }
@@ -583,7 +583,7 @@ describe('email_digest from the email example', () => {
       expect.objectContaining({
         to: ['team@example.com'],
         subject: 'Inbox digest — 2 new',
-        text: 'Spring event\nBuy now\n',
+        text: 'Spring event\nForged\n',
       }),
     ]);
     const sent = () =>

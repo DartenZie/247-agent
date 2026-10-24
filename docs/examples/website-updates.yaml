@@ -20,11 +20,13 @@ tasks:
         payload: ${item}
 
   # 2. Only the trusted sender's mail reaches a model. Cheapest tier, one call, JSON out.
+  #    `From:` is easy to forge, so the filter also wants the receiving server's DMARC
+  #    pass for that address (`incoming.authserv_id` in connectors.d/email.yaml).
   - name: classify_email
     trigger:
       kind: event
       type: email.received
-      filter: "payload.from == 'editor@example.com'"
+      filter: "payload.from == 'editor@example.com' && payload.auth.dmarc == 'pass'"
     action:
       kind: llm
       provider: anthropic           # from providers: in agent.yaml; default: defaults.llm.provider
@@ -58,6 +60,8 @@ tasks:
   #    the editor gets a reply (task 3b). Both succeed, so routing reads result.status.
   #    The push is a task of its own: a restart during it repeats the push, and a restart
   #    during this task redoes the change from main, where nothing of it has landed yet.
+  #    No approval: the mail is from the authenticated editor, and the gates refuse any
+  #    change outside data/events.yaml and any change that does not build.
   - name: update_event_list
     trigger:
       kind: event
@@ -86,6 +90,7 @@ tasks:
         </email>
       result: { path: RESULT.json, schema: schemas/site_change.json }
       post:                             # only after status: done; a failing gate fails the run
+        - shell: ["git", "diff", "--quiet", "--", ".", ":(exclude)data/events.yaml"]   # fails on any other tracked change
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
     emit:

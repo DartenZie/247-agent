@@ -13,8 +13,16 @@ describe('parseConfig', () => {
       port: 993,
       secure: true,
       folder: 'INBOX',
+      authserv_id: [],
     });
     expect(c.outgoing).toMatchObject({ port: 465, secure: true });
+  });
+
+  it('takes one authserv_id or a list', () => {
+    const one = parseConfig({ incoming: { host: 'h', authserv_id: 'mx.example.net' } });
+    expect(one.incoming?.authserv_id).toEqual(['mx.example.net']);
+    const two = parseConfig({ incoming: { host: 'h', authserv_id: ['a', 'b'] } });
+    expect(two.incoming?.authserv_id).toEqual(['a', 'b']);
   });
 
   it('treats a plain port as STARTTLS unless told otherwise', () => {

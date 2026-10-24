@@ -53,6 +53,7 @@ config:
     initial: none                       # first fetch with no cursor: skip what is there | all
     limit: 50                           # most messages one fetch_new returns
     max_body_chars: 100000              # body is cut here
+    authserv_id: mx.example.com         # whose Authentication-Results fill `auth`
     delete_after_fetch: false           # POP3 only
   outgoing:
     host: smtp.example.com
@@ -88,6 +89,7 @@ Shared by `incoming` and `outgoing`:
 | `initial` | `none` | what the first `fetch_new` without a cursor does: `none` marks everything present as seen and returns nothing; `all` returns it, `limit` at a time |
 | `limit` | `50` | the most messages one `fetch_new` returns, 1 to 1000. An op's own `limit` argument can only lower it |
 | `max_body_chars` | `100000` | `body` is cut at this length; `truncated` says so |
+| `authserv_id` | none | one name or a list: the authserv-id your receiving mail server writes into `Authentication-Results`. Only those headers fill `auth`; with none set, every result in `auth` is `none`. See [Trust the sender](#trust-the-sender) |
 | `delete_after_fetch` | `false` | POP3 only: delete each message from the server once a later `fetch_new` passes its batch's `last_uid` back, so only after the run that got it succeeded |
 
 `outgoing` only:
@@ -141,6 +143,8 @@ Each entry of `emails`:
   "subject": "Spring event", "date": "2026-06-01T08:00:00.000Z",
   "body": "Please add it.", "truncated": false,
   "in_reply_to": null, "references": [],
+  "auth": { "authserv_id": "mx.example.com", "dkim": "pass", "dkim_domains": ["example.com"],
+            "spf": "pass", "dmarc": "pass" },
   "attachments": [{ "filename": "programme.pdf", "content_type": "application/pdf", "size": 12345 }] }
 ```
 
@@ -148,7 +152,65 @@ Each entry of `emails`:
 `payload.from == 'editor@example.com'` works. `body` is the text part, or a plain-text
 rendering of an HTML-only mail. Attachment contents are never fetched, only their names
 and sizes. A message without a `Message-ID` gets one derived from a hash of the message,
-so a `dedup_key` built from it still works.
+so a `dedup_key` built from it still works. `auth` holds the sender authentication
+results; [Trust the sender](#trust-the-sender) explains them.
+
+### Trust the sender
+
+Anyone can write any address into `From:`. A filter on `payload.from` alone lets a
+forged mail through. Your receiving mail server checks the sender when the mail arrives
+and records the outcome in an `Authentication-Results` header. `auth` reports that
+outcome:
+
+| Field | Meaning |
+|---|---|
+| `authserv_id` | the trusted server the results come from; `null` when the mail has no header from it |
+| `dkim` | `pass` when any DKIM signature verified, otherwise the first DKIM result |
+| `dkim_domains` | the domains (`header.d`, else `header.i`) of the signatures that verified |
+| `spf` | the SPF result for the envelope sender. `none` when the header holds more than one SPF result |
+| `dmarc` | the DMARC result, if the header holds exactly one and it names the domain of `from` (`header.from`); otherwise `none` |
+
+A result is one of the words the server wrote, in lower case: `pass`, `fail`,
+`softfail`, `neutral`, `none`, `temperror` or `permerror`. A method the server did not
+report is `none`.
+
+Require `dmarc` in the filter. A DMARC pass means a DKIM signature or the SPF check
+passed for the domain in `From:`. A DKIM pass alone can come from the sender's own
+domain, not the one in `From:`.
+
+```yaml
+trigger:
+  kind: event
+  type: email.received
+  filter: "payload.from == 'editor@example.com' && payload.auth.dmarc == 'pass'"
+```
+
+To set it up:
+
+1. Open the raw source of a mail that reached the mailbox ("Show original" or "View
+   source" in most mail clients). Find the topmost `Authentication-Results:` line. The
+   word after the colon is the authserv-id, for example `mx.example.com` in
+   `Authentication-Results: mx.example.com; dkim=pass …`.
+2. Set it as `incoming.authserv_id` in the manifest. Your provider may use more than
+   one; list each.
+3. Send a test mail from the trusted address and check its event:
+   `payload.auth.dmarc` must be `pass`.
+
+The connector reads only the topmost header with a trusted authserv-id. The receiving
+server puts its own header above any header the sender wrote. Every result you filter
+on must therefore be in that one header.
+
+> [!WARNING]
+> This works only when the server adds one header with all its results to every mail
+> it accepts. On a server you run yourself, separate DKIM, SPF and DMARC filters often
+> write one header each; then only the topmost one counts and `dmarc` is often `none`.
+> Make the server write the results in one header, and make it remove any header with
+> its own authserv-id that arrives from outside.
+
+> [!NOTE]
+> Microsoft 365 and Outlook.com write `Authentication-Results` without an authserv-id
+> (`Authentication-Results: spf=pass …`). The connector cannot tell such a header from
+> one the sender wrote, so it ignores it, and every result in `auth` is `none`.
 
 ### `mark_read`
 

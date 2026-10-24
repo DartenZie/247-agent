@@ -3,11 +3,14 @@ import { createHash } from 'node:crypto';
 
 import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser';
 
+import { senderAuth } from './auth.js';
 import type { EmailMessage } from './types.js';
 
 export interface ParseOptions {
   uid: number | string;
   maxBodyChars: number;
+  /** The receiving server's authserv-ids; `Authentication-Results` from anyone else are ignored. */
+  authservIds: string[];
 }
 
 export async function parseMessage(source: Buffer, opts: ParseOptions): Promise<EmailMessage> {
@@ -47,6 +50,13 @@ export function toEmailMessage(mail: ParsedMail, source: Buffer, opts: ParseOpti
         : Array.isArray(mail.references)
           ? mail.references
           : [mail.references],
+    auth: senderAuth(
+      mail.headerLines
+        .filter((h) => h.key === 'authentication-results')
+        .map((h) => h.line.slice(h.line.indexOf(':') + 1)),
+      opts.authservIds,
+      from.address,
+    ),
     attachments: mail.attachments
       .filter((a) => !a.related)
       .map((a) => ({

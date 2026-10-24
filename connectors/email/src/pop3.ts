@@ -351,7 +351,11 @@ export class Pop3Mailbox implements Mailbox {
       for (const entry of fresh) {
         const source = await client.retr(entry.num);
         emails.push(
-          await parseMessage(source, { uid: entry.uidl, maxBodyChars: this.config.max_body_chars }),
+          await parseMessage(source, {
+            uid: entry.uidl,
+            maxBodyChars: this.config.max_body_chars,
+            authservIds: this.config.authserv_id,
+          }),
         );
       }
       // Deletions are committed by QUIT; only record the batch as handled once that succeeded.

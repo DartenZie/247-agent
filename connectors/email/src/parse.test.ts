@@ -22,7 +22,7 @@ describe('parseMessage', () => {
         '',
         'Please add it.',
       ]),
-      { uid: 7, maxBodyChars: 1000 },
+      { uid: 7, maxBodyChars: 1000, authservIds: [] },
     );
     expect(m).toMatchObject({
       uid: 7,
@@ -62,7 +62,7 @@ describe('parseMessage', () => {
         'JVBERi0xLjQK',
         '--B--',
       ]),
-      { uid: 'p1', maxBodyChars: 1000 },
+      { uid: 'p1', maxBodyChars: 1000, authservIds: [] },
     );
     expect(m.body).toBe('Hello & welcome\nBye');
     expect(m.attachments).toEqual([
@@ -74,11 +74,11 @@ describe('parseMessage', () => {
 
   it('truncates long bodies and synthesises a Message-ID when missing', async () => {
     const source = raw(['From: a@example.com', 'Subject: long', '', 'x'.repeat(50)]);
-    const m = await parseMessage(source, { uid: 1, maxBodyChars: 10 });
+    const m = await parseMessage(source, { uid: 1, maxBodyChars: 10, authservIds: [] });
     expect(m.body).toBe('x'.repeat(10));
     expect(m.truncated).toBe(true);
     expect(m.message_id).toMatch(/^<sha256-[0-9a-f]{32}@missing-message-id>$/);
-    const again = await parseMessage(source, { uid: 2, maxBodyChars: 10 });
+    const again = await parseMessage(source, { uid: 2, maxBodyChars: 10, authservIds: [] });
     expect(again.message_id).toBe(m.message_id);
   });
 
@@ -86,9 +86,32 @@ describe('parseMessage', () => {
     const nested = '<div>'.repeat(1200) + 'hello' + '</div>'.repeat(1200);
     const m = await parseMessage(
       raw(['From: a@example.com', 'Content-Type: text/html; charset=utf-8', '', nested]),
-      { uid: 1, maxBodyChars: 1000 },
+      { uid: 1, maxBodyChars: 1000, authservIds: [] },
     );
     expect(m.body).toBe('hello');
+  });
+
+  it("reports the receiving server's authentication results, not the sender's", async () => {
+    const m = await parseMessage(
+      raw([
+        'Authentication-Results: mx.example.net; dkim=pass header.d=example.com;',
+        '  spf=pass smtp.mailfrom=example.com; dmarc=pass header.from=example.com',
+        'Received: from mail.example.com by mx.example.net',
+        'Authentication-Results: mx.example.net; dmarc=fail header.from=example.com',
+        'From: Editor <editor@example.com>',
+        'Message-ID: <a@example.com>',
+        '',
+        'hi',
+      ]),
+      { uid: 1, maxBodyChars: 1000, authservIds: ['mx.example.net'] },
+    );
+    expect(m.auth).toEqual({
+      authserv_id: 'mx.example.net',
+      dkim: 'pass',
+      dkim_domains: ['example.com'],
+      spf: 'pass',
+      dmarc: 'pass',
+    });
   });
 });
 
@@ -99,7 +122,9 @@ describe('toEmailMessage', () => {
     const m = toEmailMessage(mail, Buffer.from('From: a@example.com\r\n\r\n'), {
       uid: 1,
       maxBodyChars: 100,
+      authservIds: [],
     });
+    expect(m.auth.dmarc).toBe('none');
     expect(m.body).toBe('');
     expect(m.truncated).toBe(false);
   });

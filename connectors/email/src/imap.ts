@@ -117,7 +117,11 @@ export class ImapMailbox implements Mailbox {
             continue;
           }
           emails.push(
-            await parseMessage(m.source, { uid: m.uid, maxBodyChars: this.config.max_body_chars }),
+            await parseMessage(m.source, {
+              uid: m.uid,
+              maxBodyChars: this.config.max_body_chars,
+              authservIds: this.config.authserv_id,
+            }),
           );
         }
       }
