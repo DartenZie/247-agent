@@ -10,6 +10,13 @@ import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import { NonRetryableError } from '../actions/types.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
+import {
+  checkHealth,
+  type ConnectorsCheck,
+  type DatabaseCheck,
+  type DispatcherCheck,
+  type HealthStatus,
+} from '../health.js';
 import { RunNotActiveError } from '../executor/executor.js';
 import type { ReloadReport } from '../daemon.js';
 import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
@@ -67,15 +74,22 @@ export class ApiError extends Error {
   }
 }
 
+/** 200 while `status` is `ok` or `degraded`, 503 when it is `failing`. */
 export interface HealthBody {
-  ok: true;
+  /** `status === 'ok'`. */
+  ok: boolean;
+  status: HealthStatus;
   pid: number;
   started_at: string;
   uptime_s: number;
   config_file: string;
   tasks: number;
   runs: { pending: number; in_flight: number };
-  [key: string]: JsonValue;
+  checks: {
+    dispatcher: DispatcherCheck;
+    database: DatabaseCheck;
+    connectors: ConnectorsCheck;
+  };
 }
 
 export interface RunResponse {
@@ -184,17 +198,21 @@ function parse<T extends z.ZodType>(schema: T, input: unknown, what: string): z.
   return r.data;
 }
 
-function health(ctx: RouteContext): HealthBody {
+function health(ctx: RouteContext): ApiResponse {
   const now = ctx.clock.now();
-  return {
-    ok: true,
+  const { status, ...checks } = checkHealth(ctx.core, now);
+  const body: HealthBody = {
+    ok: status === 'ok',
+    status,
     pid: process.pid,
     started_at: ctx.startedAt.toISOString(),
     uptime_s: Math.max(0, Math.round((now.getTime() - ctx.startedAt.getTime()) / 1000)),
     config_file: ctx.configFile,
     tasks: ctx.core.config().tasks.length,
     runs: ctx.core.executor.stats(),
+    checks,
   };
+  return { status: status === 'failing' ? 503 : 200, body: body as unknown as JsonValue };
 }
 
 function emit(ctx: RouteContext, body: unknown): ApiResponse {
@@ -451,7 +469,7 @@ const STATE_KEY_PATH = /^\/v1\/state\/([^/]+)\/([^/]+)$/;
 export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise<ApiResponse> {
   const { method, path } = req;
   if (path === '/v1/health') {
-    return only(method, 'GET', () => ({ status: 200, body: health(ctx) }));
+    return only(method, 'GET', () => health(ctx));
   }
   if (path === '/metrics') {
     return only(method, 'GET', () => ({

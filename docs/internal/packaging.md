@@ -57,6 +57,15 @@ in `dist-release/`.
 `npm run release` is the same script for this machine; `--target` cross-builds, which
 only needs the Node download for the target.
 
+## The units
+
+`packaging/247-agent.service` is `Type=notify` with `NotifyAccess=all` and
+`WatchdogSec=60`. Node cannot send a datagram on a Unix socket, so `systemd.ts` sends each
+notification through a `systemd-notify` child, which is why the access is `all` and not
+`main`. `TimeoutStartSec=300` covers a database migration before `READY=1`. The connector
+template's `After=247-agent.service` therefore waits for a daemon that is ready, not one
+that was forked. `docs/operations/production.md` shows the unit and must match it.
+
 ## The packages
 
 `scripts/build-package.sh [--target …]` turns the staged tree into a `.deb` and an
@@ -105,7 +114,8 @@ the root `package.json`. Bump both together. `oa --version` and `247-agent-core
 `.github/workflows/ci.yml` on every push to `main` and every pull request: `npm ci`,
 build, lint, test, `oa validate` on the examples, the docs checker, a release tarball
 (`--skip-build`), the packages, and an install of the `.deb` on the runner that checks
-the unit is active and `sudo oa run hello --wait` succeeds, then purges it.
+the unit is active, `oa health` exits 0, a stopped daemon is restarted by the watchdog
+and `sudo oa run hello --wait` succeeds, then purges it.
 
 `.github/workflows/release.yml` on a `v*` tag: a matrix of `linux-x64` and
 `linux-arm64` runners checks the tag against `package.json`, builds, tests, builds the

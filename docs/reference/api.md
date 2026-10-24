@@ -30,14 +30,28 @@ curl --unix-socket "$OA_CORE_SOCKET" -X PUT http://unix/v1/state/email/last_uid 
 
 ### `GET /v1/health`
 
-200:
+200 when `status` is `ok` or `degraded`, 503 when it is `failing`, with the same body:
 
 ```json
-{ "ok": true, "pid": 4242, "started_at": "2026-10-04T08:00:00.000Z", "uptime_s": 3600,
-  "config_file": "/etc/247-agent/agent.yaml", "tasks": 8, "runs": { "pending": 0, "in_flight": 1 } }
+{ "ok": false, "status": "degraded", "pid": 4242, "started_at": "2026-10-04T08:00:00.000Z",
+  "uptime_s": 3600, "config_file": "/etc/247-agent/agent.yaml", "tasks": 8,
+  "runs": { "pending": 0, "in_flight": 1 },
+  "checks": {
+    "dispatcher": { "status": "ok", "error": null, "failing_since": null },
+    "database": { "status": "ok", "error": null },
+    "connectors": { "status": "degraded", "up": 2, "total": 3, "down": ["chat"] } } }
 ```
 
-`runs.pending` are runs queued for a worker, `runs.in_flight` runs executing now.
+| Field | Meaning |
+|---|---|
+| `status` | the worst of the three checks: `ok`, `degraded` or `failing` |
+| `ok` | `true` only when `status` is `ok` |
+| `checks.dispatcher` | `failing` when the last pass that turns events into runs threw; `error` is its message and `failing_since` when the failures started. It is `ok` again after one pass succeeds |
+| `checks.database` | `failing` when the daemon cannot commit a write to its database: the file is read-only, the disk is full, or a lock is held for more than 5 seconds |
+| `checks.connectors` | `ok` when every connector is up; `degraded` when some are down, stopped, failing their `health:` pings or still starting (`down` lists them by name, not the starting ones); `failing` when none is up and none is starting. Built-in pollers and connectors in their own unit without ops count as up. With no connector configured it is `ok` |
+
+`runs.pending` are runs queued for a worker, `runs.in_flight` runs executing now. Each
+request commits one small write to prove the database takes it.
 
 ### `GET /metrics`
 

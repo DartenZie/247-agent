@@ -2,7 +2,8 @@
 /**
  * `247-agent-core --config /etc/247-agent/agent.yaml` (docs/internal/packaging.md).
  * SIGTERM/SIGINT stop the daemon; SIGHUP reloads agent.yaml, the connector manifests and
- * the tasks files. Logs are JSON lines on stdout for journald.
+ * the tasks files. Logs are JSON lines on stdout for journald. Under a `Type=notify` unit
+ * it reports readiness, liveness and shutdown to systemd (`systemd.ts`).
  */
 import { parseArgs } from 'node:util';
 
@@ -11,6 +12,7 @@ import { parseDuration } from './config/duration.js';
 import { startDaemon, type Daemon } from './daemon.js';
 import { findHome, homeEnv } from './home.js';
 import { createLogger, type LogLevel } from './log.js';
+import { systemdNotifier } from './systemd.js';
 import { VERSION } from './version.js';
 
 const USAGE = `usage: 247-agent-core [--config <agent.yaml>] [--log-level <level>]
@@ -68,6 +70,9 @@ async function main(argv: string[]): Promise<number> {
     Object.assign(process.env, homeEnv(home, process.env));
   }
 
+  // Before the daemon reads the environment, so no child inherits NOTIFY_SOCKET.
+  const systemd = systemdNotifier(process.env, { log: createLogger({ level: level ?? 'info' }) });
+
   let daemon: Daemon;
   try {
     daemon = await startDaemon({
@@ -80,10 +85,17 @@ async function main(argv: string[]): Promise<number> {
   }
   const log = createLogger({ level: level ?? daemon.config.log.level });
   log.info('daemon.home', { version: VERSION, home: home ?? null });
+  // startDaemon resolves once the config is loaded, the store open and the socket bound.
+  systemd.ready();
+  systemd.startWatchdog();
+  if (systemd.enabled) {
+    log.info('systemd.ready', { watchdog_ms: systemd.watchdogMs ?? null });
+  }
 
   return new Promise<number>((resolve) => {
     const shutdown = (signal: string): void => {
       log.info('daemon.signal', { signal });
+      systemd.stopping();
       // An upper bound on the stop, so a run or connector that ignores its abort cannot hold
       // the process; systemd's TimeoutStopSec is the outer one.
       const deadline = parseDuration(daemon.config.shutdown.grace) + STOP_DEADLINE_MARGIN_MS;

@@ -98,6 +98,10 @@ coalesces into one `setImmediate` drain; a 1 s timer is the safety net, so a wai
 timeout is noticed within a second. A `manual.run` is drained synchronously inside the
 API call, so `POST /v1/runs` returns the queued run.
 
+A drain that throws is logged (`dispatch.failed`), counted
+(`oa_dispatch_failures_total`) and kept by `Dispatcher.health()` until the next drain
+succeeds (`dispatch.recovered`); the events wait past the cursor meanwhile.
+
 Depth guard: too-deep events still end waits (a resume is not a new hop) but start no
 run. Depth grows only through `parent_id`: lifecycle and `emit` events are parented to
 their trigger, `llm.batch.ended` to the run's trigger; `cron.tick`, `manual.run`,
@@ -219,11 +223,30 @@ aborts at once. `main.ts` exits 1 (`daemon.stop_timeout`) when a
 stop outlasts the grace window by 10 s; the unit's `TimeoutStopSec=90` is the outer
 bound. An `agent` run recovered this way starts in a fresh workspace.
 
+## Health and liveness
+
+`GET /v1/health` (`health.ts`) reports the worst of three checks. The dispatcher check
+reads `Dispatcher.health()`; the database check commits one row (`Store.probeWrite`, the
+`health` cursor) so a read-only file, a full disk or a stuck lock shows; the connectors
+check reads the supervisor's states, with pollers and `external` connectors as up and
+`starting` as neither. `failing` answers 503, `degraded` and `ok` 200; `oa health` exits 0
+only on `ok`.
+
+Liveness belongs to systemd. `main.ts` sends `READY=1` after `startDaemon` resolves (config
+loaded, store open, socket bound), then `WATCHDOG=1` from a timer every third of
+`WATCHDOG_USEC`, so a blocked event loop misses the deadline and systemd restarts the
+process. A failing health check does not stop the pings: a restart does not mend a full
+disk. `systemd.ts` removes `NOTIFY_SOCKET` and the watchdog variables from the process
+environment before anything is spawned, so no task or connector can notify for the
+daemon ([`packaging.md`](packaging.md) has the unit side).
+
 ## Module map
 
 ```
 packages/core/src/
-  main.ts            the 247-agent-core binary: flags, OA_HOME, signals (SIGHUP reload, SIGTERM/SIGINT stop)
+  main.ts            the 247-agent-core binary: flags, OA_HOME, signals (SIGHUP reload, SIGTERM/SIGINT stop), systemd notifications
+  systemd.ts         sd_notify through systemd-notify: READY, WATCHDOG, STOPPING
+  health.ts          the checks behind GET /v1/health and oa health
   daemon.ts          agent.yaml → secrets backend → manifests → core → API; reload with FIXED_KEYS
   core.ts            wires everything, defaultRunners, start/stop/reload, scrape-time gauges
   config/            zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), load.ts, validators.ts, crosscheck.ts, check.ts, lint.ts, walk.ts

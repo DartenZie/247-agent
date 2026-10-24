@@ -26,16 +26,22 @@ export interface Store {
   readonly pauses: PauseStore;
   /** Runs `fn` in a `BEGIN IMMEDIATE` transaction (nested calls become savepoints). */
   transaction<T>(fn: () => T): T;
+  /**
+   * Commits one tiny write (the `health` cursor, set to `at` in epoch ms) and throws what
+   * SQLite throws: a read-only file, a full disk, a lock held past `busy_timeout`.
+   */
+  probeWrite(at: number): void;
   close(): void;
 }
 
 export function openStore(path: string): Store {
   const db = openDatabase(path);
+  const cursors = new CursorStore(db);
   return {
     db,
     events: new EventStore(db),
     runs: new RunStore(db),
-    cursors: new CursorStore(db),
+    cursors,
     state: new StateStore(db),
     waits: new WaitStore(db),
     ledger: new LedgerStore(db),
@@ -43,6 +49,11 @@ export function openStore(path: string): Store {
     batches: new BatchStore(db),
     pauses: new PauseStore(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
+    probeWrite: (at) => {
+      db.transaction(() => {
+        cursors.set('health', at);
+      }).immediate();
+    },
     close: () => {
       db.close();
     },

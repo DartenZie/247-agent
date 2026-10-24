@@ -127,16 +127,39 @@ and `oa_retention_last_success_timestamp_seconds`.
 
 ## Health
 
-`GET /v1/health` answers without touching anything expensive:
+`oa health` asks the daemon whether it can do its job and exits 0 only when it can:
+
+```sh
+oa health
+```
+
+```
+degraded	pid=4120	uptime=48213s	tasks=8	runs=0 pending, 1 in flight
+dispatcher	ok
+database	ok
+connectors	degraded	up=2/3 down=chat
+```
+
+| Status | Meaning | Exit |
+|---|---|---|
+| `ok` | every check passes | 0 |
+| `degraded` | the daemon works, but some connectors are down, failing their health pings or still starting | 1 |
+| `failing` | events are not turned into runs, the database refuses writes, or no connector is up | 1 |
+
+A daemon that does not answer within 10 seconds also exits 1. Use `oa health` in a
+monitoring check or a deploy script. A monitor that cannot run `oa` can read the same
+report over the socket; it answers 503 when the daemon is `failing`:
 
 ```sh
 curl --unix-socket /run/247-agent/core.sock http://unix/v1/health
 ```
 
-```json
-{ "ok": true, "pid": 4120, "started_at": "2026-10-04T06:00:00.000Z", "uptime_s": 48213,
-  "config_file": "/etc/247-agent/agent.yaml", "tasks": 8, "runs": { "pending": 0, "in_flight": 1 } }
-```
+The [API reference](../reference/api.md#get-v1health) lists every field.
+
+Under systemd you need no extra check for a hung daemon. The unit is `Type=notify` with
+`WatchdogSec=60`: `systemctl start 247-agent` returns once the daemon is ready, and if
+the daemon stops responding for a minute, systemd kills it and starts it again. The
+journal then shows `Watchdog timeout`. See [the unit](production.md#the-unit).
 
 `oa connector list` shows every connector's state, pid, restart count, sandbox and
 network setting and, for a manifest with `health:`, the last MCP ping (`health=ok`,

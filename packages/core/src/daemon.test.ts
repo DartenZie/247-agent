@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient, ApiConnectionError, ApiError } from './api/client.js';
 import { AgentConfigError, startDaemon, type Daemon } from './daemon.js';
@@ -83,14 +83,39 @@ describe('startDaemon', () => {
     const health = await api.health();
     expect(health).toMatchObject({
       ok: true,
+      status: 'ok',
       pid: process.pid,
       config_file: join(dir, 'agent.yaml'),
       tasks: 3,
       runs: { pending: 0, in_flight: 0 },
+      checks: {
+        dispatcher: { status: 'ok' },
+        database: { status: 'ok' },
+        connectors: { status: 'ok', up: 0, total: 0 },
+      },
     });
+    expect(daemon.core.store.cursors.get('health')).toBeGreaterThan(0);
     expect(lines.map((l) => l.msg)).toEqual(
       expect.arrayContaining(['core.started', 'api.listening', 'daemon.started']),
     );
+  });
+
+  it('answers 503 with the report when the database refuses a commit', async () => {
+    const spy = vi.spyOn(daemon.core.store, 'probeWrite').mockImplementation(() => {
+      throw new Error('attempt to write a readonly database');
+    });
+    await expect(raw('GET', '/v1/health')).resolves.toMatchObject({
+      status: 503,
+      body: { ok: false, status: 'failing' },
+    });
+    await expect(api.health()).resolves.toMatchObject({
+      status: 'failing',
+      checks: {
+        database: { status: 'failing', error: 'attempt to write a readonly database' },
+      },
+    });
+    spy.mockRestore();
+    await expect(api.health()).resolves.toMatchObject({ ok: true, status: 'ok' });
   });
 
   it('refuses a bad agent file and a bad tasks file without leaving anything open', async () => {

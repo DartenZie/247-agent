@@ -78,8 +78,10 @@ export class ApiClient {
     this.timeoutMs = opts.timeoutMs ?? 10_000;
   }
 
-  health(): Promise<HealthBody> {
-    return this.request<HealthBody>('GET', '/v1/health');
+  /** The report also when the daemon answers 503 (`status: failing`). */
+  async health(): Promise<HealthBody> {
+    const { status, text } = await this.raw('GET', '/v1/health');
+    return this.parse(status === 503 ? 200 : status, text) as HealthBody;
   }
 
   emit(event: NewEvent): Promise<PublishResult> {
@@ -257,6 +259,10 @@ export class ApiClient {
     body?: unknown,
   ): Promise<T> {
     const { status, text } = await this.raw(method, path, body);
+    return this.parse(status, text) as T;
+  }
+
+  private parse(status: number, text: string): unknown {
     let parsed: unknown = null;
     if (text !== '') {
       try {
@@ -266,7 +272,7 @@ export class ApiClient {
       }
     }
     if (status >= 200 && status < 300) {
-      return parsed as T;
+      return parsed;
     }
     const e = (parsed ?? {}) as ErrorBody;
     const message = typeof e.error === 'string' ? e.error : `HTTP ${String(status)}`;

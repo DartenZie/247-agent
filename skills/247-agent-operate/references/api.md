@@ -5,7 +5,7 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /v1/health` | Daemon status |
+| `GET /v1/health` | `{ok, status, pid, uptime_s, tasks, runs, checks: {dispatcher, database, connectors}}`; `status` is `ok`, `degraded` (some connectors down) or `failing` (dispatcher throwing, database refusing writes, no connector up); 503 when `failing` |
 | `POST /v1/events` | Publish an event `{type, source?, payload?, dedup_key?, parent_id?, correlation_id?}` → 201 inserted, 200 duplicate |
 | `GET /v1/events?type=&after=&limit=` | The newest `limit` events in `seq` order, or those after a `seq`; `type` exact or a pattern (`*` = one segment) |
 | `GET /v1/events/{id}` | One event |

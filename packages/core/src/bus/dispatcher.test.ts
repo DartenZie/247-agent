@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Metrics } from '../metrics.js';
 import type { RunRecord } from '../store/types.js';
 import { Dispatcher } from './dispatcher.js';
 import { publishEvent } from './publish.js';
@@ -319,6 +320,32 @@ describe('Dispatcher', () => {
       dispatcher.stop();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a failing drain in health() and the counter until one succeeds', () => {
+    vi.useFakeTimers();
+    const metrics = new Metrics();
+    const d = new Dispatcher({ store: env.store, clock: env.clock, log: env.log, metrics });
+    d.setConfig(tasks);
+    try {
+      expect(d.health()).toEqual({ ok: true, error: null, failing_since: null });
+      publish('x.happened');
+      const spy = vi.spyOn(env.store.runs, 'insertQueued').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      d.start(10);
+      vi.advanceTimersByTime(25);
+      const since = env.clock.now().toISOString();
+      expect(d.health()).toEqual({ ok: false, error: 'disk full', failing_since: since });
+      expect(metrics.render()).toMatch(/^oa_dispatch_failures_total 2$/m);
+      spy.mockRestore();
+      vi.advanceTimersByTime(10);
+      expect(d.health()).toEqual({ ok: true, error: null, failing_since: null });
+      expect(env.lines.map((l) => l.msg)).toContain('dispatch.recovered');
+    } finally {
+      d.stop();
       vi.useRealTimers();
     }
   });
