@@ -97,7 +97,7 @@ example of both and is the pattern for a new integration test.
 
 | Signal | Effect |
 |---|---|
-| `SIGHUP` (`systemctl reload 247-agent`) or `oa reload` | Re-reads agent.yaml, the manifests and the tasks files and applies them together; running runs finish under the old config; if any file is invalid nothing changes (`daemon.reload_invalid`; `oa reload` prints the issues). Connectors whose manifest changed are respawned. `db`, `socket`, `secrets` still need a restart (`daemon.reload_needs_restart`). |
+| `SIGHUP` (`systemctl reload 247-agent`) or `oa reload` | Re-reads agent.yaml, the manifests and the tasks files and applies them together; running runs finish under the old config; if any file is invalid nothing changes (one error line per issue with `file`, `path`, `issue`: `daemon.reload_invalid` for agent.yaml or a manifest, `core.config_invalid` for the tasks files and cross-checks; `oa reload` prints the same issues). Connectors whose manifest changed are respawned. `db`, `socket`, `secrets` still need a restart (`daemon.reload_needs_restart`). |
 | `oa connector restart <name>` | Respawns one connector with freshly resolved secrets; the daemon and the other connectors keep running. Refused (409) for a built-in poller. |
 | `SIGTERM`/`SIGINT` | Stops the daemon; runs in flight are aborted. |
 

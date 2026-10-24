@@ -238,6 +238,25 @@ const noConnectors: ConnectorClients = {
   call: (connector) => Promise.reject(new Error(`unknown connector "${connector}"`)),
 };
 
+/**
+ * Logs every issue of every invalid file as its own error line (`file`, `path`, `issue`),
+ * so a reload refused on SIGHUP explains itself in the journal (#44).
+ */
+export function logConfigIssues(
+  log: Logger,
+  msg: string,
+  files: readonly { file: string; ok: boolean; issues?: readonly ConfigIssue[] | undefined }[],
+): void {
+  for (const f of files) {
+    if (f.ok) {
+      continue;
+    }
+    for (const issue of f.issues ?? []) {
+      log.error(msg, { file: f.file, path: issue.path, issue: issue.message });
+    }
+  }
+}
+
 export function createCore(opts: CoreOptions): Core {
   const clock = opts.clock ?? systemClock;
   const log = opts.log ?? createLogger();
@@ -516,12 +535,7 @@ export function createCore(opts: CoreOptions): Core {
     );
     if (!result.ok) {
       metrics.configReloads.inc({ result: 'invalid' });
-      log.error('core.config_invalid', {
-        files: result.files
-          .filter((f) => !f.ok)
-          .map((f) => f.file)
-          .join(', '),
-      });
+      logConfigIssues(log, 'core.config_invalid', result.files);
       return result;
     }
     tasksFiles = files;

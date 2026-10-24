@@ -138,12 +138,14 @@ it at start and exits 1), whether a `transport: acp` connector really speaks ACP
 the manifests and the tasks files and applies them together or not at all:
 
 1. `agent.yaml` invalid: `ok: false`, that file listed, nothing changes
-   (`daemon.reload_invalid`).
+   (`daemon.reload_invalid`, one error line per issue with `file`, `path`, `issue`, so a
+   SIGHUP reload explains itself in the journal: `logConfigIssues` in `core.ts`).
 2. `db`, `socket` or `secrets` changed (`FIXED_KEYS`): reported in `restart_required`
    and logged `daemon.reload_needs_restart`; the running values stay.
-3. Manifests invalid: `ok: false` with every file listed, nothing changes.
+3. Manifests invalid: `ok: false` with every file listed, nothing changes
+   (`daemon.reload_invalid`, per issue).
 4. `core.reload()` loads and cross-checks the tasks files; invalid → `core.config_invalid`
-   and nothing changes; valid → every component is reconfigured and the tasks activated
+   per issue and nothing changes; valid → every component is reconfigured and the tasks activated
    (`core.config_reloaded`), then the log level is re-applied (`--log-level` keeps
    winning over the file) and `daemon.reloaded` logged.
 

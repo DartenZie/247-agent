@@ -16,7 +16,7 @@ import type { AgentDefaultsConfig } from './actions/agent-config.js';
 import { sandboxHost, type SandboxConfig } from './actions/sandbox.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
-import { createCore, type Core, type CoreLlmOptions } from './core.js';
+import { createCore, logConfigIssues, type Core, type CoreLlmOptions } from './core.js';
 import { PricingError, resolvePricing, type PricingTable } from './llm/pricing.js';
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
@@ -232,11 +232,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const tasks = (): number => core.config().tasks.length;
     const next = readAgentConfig(opts.configFile);
     if (!next.ok) {
-      log.error('daemon.reload_invalid', { file: next.file });
+      const files = [{ file: next.file, ok: false, issues: next.issues }];
+      logConfigIssues(log, 'daemon.reload_invalid', files);
       core.metrics.configReloads.inc({ result: 'invalid' });
       return {
         ok: false,
-        files: [{ file: next.file, ok: false, issues: next.issues }],
+        files,
         restart_required: [],
         tasks: tasks(),
       };
@@ -257,12 +258,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       }
     }
     if (!nextManifests.ok) {
-      log.error('daemon.reload_invalid', {
-        files: files
-          .filter((f) => !f.ok)
-          .map((f) => f.file)
-          .join(', '),
-      });
+      logConfigIssues(log, 'daemon.reload_invalid', files);
       core.metrics.configReloads.inc({ result: 'invalid' });
       return { ok: false, files, restart_required: restartRequired, tasks: tasks() };
     }
