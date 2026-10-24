@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentDefaults } from '../actions/agent-config.js';
 import { NET_BRIDGE_SOURCE, SANDBOX_NET_SOCKET } from '../actions/sandbox-net.js';
 import { isInsidePath } from '../actions/sandbox.js';
+import { isRetryable } from '../actions/types.js';
 import type { ConnectorConfig } from '../config/connector.js';
 import { parseManifest } from '../config/connector.js';
 import { createLogger } from '../log.js';
@@ -881,6 +882,26 @@ describe('toolResultToJson', () => {
     expect(() =>
       toolResultToJson('c', 'o', { isError: true, content: [{ type: 'text', text: 'bad' }] }),
     ).toThrow('c.o: bad');
+  });
+
+  it('makes an isError result retryable only when its _meta marks it transient', () => {
+    const errorOf = (meta?: Record<string, unknown>): unknown => {
+      try {
+        toolResultToJson('c', 'o', {
+          isError: true,
+          content: [{ type: 'text', text: 'bad' }],
+          ...(meta === undefined ? {} : { _meta: meta }),
+        });
+      } catch (err) {
+        return err;
+      }
+      throw new Error('did not throw');
+    };
+    expect(isRetryable(errorOf())).toBe(false);
+    expect(isRetryable(errorOf({ 'oa/transient': 'yes' }))).toBe(false);
+    const transient = errorOf({ 'oa/transient': true });
+    expect(transient).toBeInstanceOf(ConnectorOpError);
+    expect(isRetryable(transient)).toBe(true);
   });
 });
 

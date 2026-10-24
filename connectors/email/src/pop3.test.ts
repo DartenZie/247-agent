@@ -2,6 +2,7 @@ import { createServer, type AddressInfo, type Server, type Socket } from 'node:n
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { isTransientMailError } from './errors.js';
 import { Pop3Client, Pop3Mailbox, serverName, unstuff } from './pop3.js';
 import { incomingConfig, MemoryState } from './test-helpers.js';
 
@@ -73,7 +74,13 @@ class FakePop3Server {
             break;
           case 'PASS':
             authed = user === this.creds.user && arg === this.creds.pass;
-            socket.write(authed ? '+OK logged in\r\n' : '-ERR bad password\r\n');
+            socket.write(
+              authed
+                ? '+OK logged in\r\n'
+                : arg === 'locked'
+                  ? '-ERR [IN-USE] mailbox locked\r\n'
+                  : '-ERR bad password\r\n',
+            );
             break;
           case 'STAT':
             socket.write(`+OK ${String(snapshot.length - deleted.size)} 0\r\n`);
@@ -176,8 +183,47 @@ describe('Pop3Client', () => {
       starttls: false,
       rejectUnauthorized: true,
     });
-    await expect(c.login('u', 'wrong')).rejects.toThrow(/PASS \*\*\*\* failed: -ERR bad password/);
+    const refused = await c.login('u', 'wrong').catch((e: unknown) => e);
+    expect((refused as Error).message).toMatch(/PASS \*\*\*\* failed: -ERR bad password/);
+    expect(isTransientMailError(refused)).toBe(false);
     c.close();
+  });
+
+  it('reports a locked mailbox, a silent server and a refused connection as transient (#32)', async () => {
+    server = new FakePop3Server();
+    await server.start();
+    const opts = {
+      host: '127.0.0.1',
+      port: server.port,
+      secure: false,
+      starttls: false,
+      rejectUnauthorized: true,
+    };
+    const c = await Pop3Client.connect(opts);
+    const locked = await c.login('u', 'locked').catch((e: unknown) => e);
+    expect((locked as Error).message).toMatch(/-ERR \[IN-USE\] mailbox locked/);
+    expect(isTransientMailError(locked)).toBe(true);
+    c.close();
+
+    const silent = createServer(() => undefined);
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    const silentPort = (silent.address() as AddressInfo).port;
+    const timedOut = await Pop3Client.connect({ ...opts, port: silentPort, timeoutMs: 50 }).catch(
+      (e: unknown) => e,
+    );
+    expect((timedOut as Error).message).toBe('pop3: connection timed out');
+    expect(isTransientMailError(timedOut)).toBe(true);
+    await new Promise<void>((resolve) => {
+      silent.close(() => {
+        resolve();
+      });
+    });
+
+    const refused = await Pop3Client.connect({ ...opts, port: silentPort }).catch(
+      (e: unknown) => e,
+    );
+    expect((refused as NodeJS.ErrnoException).code).toBe('ECONNREFUSED');
+    expect(isTransientMailError(refused)).toBe(true);
   });
 });
 

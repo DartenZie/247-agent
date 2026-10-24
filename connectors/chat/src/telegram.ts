@@ -4,6 +4,8 @@
  * `retry_after` so the poll loop can back off.
  */
 
+import { isTransientStatus } from '@247-agent/connector-sdk';
+
 export interface TelegramApi {
   call<T>(method: string, params?: Record<string, unknown>, opts?: CallOptions): Promise<T>;
 }
@@ -18,11 +20,14 @@ export class TelegramError extends Error {
   readonly code: number;
   /** Seconds to wait, from a 429's `parameters.retry_after`. */
   readonly retryAfter: number | undefined;
+  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  readonly transient: boolean;
   constructor(method: string, code: number, description: string, retryAfter?: number) {
     super(`${method}: ${description}${code > 0 ? ` (${String(code)})` : ''}`);
     this.name = 'TelegramError';
     this.code = code;
     this.retryAfter = retryAfter;
+    this.transient = isTransientStatus(code);
   }
 }
 

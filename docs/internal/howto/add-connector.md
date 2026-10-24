@@ -22,15 +22,17 @@ example manifest, a user page and a skill reference. `../connectors.md` has the 
 4. **Write `src/main.ts`** on `runConnector({version, setup?, tools})`: read config from
    `rt.env.config`, do any start-up call (a `whoami`) in `setup`, define ops with
    `defineTool`, keep cursors in `rt.core.getState`/`putState`, log to `rt.log`, throw
-   for an op error, and for a push-style connector emit with `rt.core.emitEvent` using
-   a `dedup_key` and, for replies to a question, the `correlation_id` the asking task
-   passed. Never write to stdout. Done when the connector starts under a scratch daemon
+   for an op error, mark the transient ones (a client error's `transient` flag, a
+   `TransientError`, or a `runConnector({transient})` rule; `../connectors.md`), and
+   for a push-style connector emit with `rt.core.emitEvent` using a `dedup_key` and,
+   for replies to a question, the `correlation_id` the asking task passed. Never write to stdout. Done when the connector starts under a scratch daemon
    with an inline manifest and `oa connector list` shows it `up`.
 5. **Write the fake** under `packages/core/test/fixtures/fake-<name>.ts`, serving the
    same op and event shapes from data in its manifest `config`, runnable from source.
    Done when `integration.test.ts` or a new integration test drives a task through it.
 6. **Test without the network.** Unit tests next to the code inject a fake `fetch` or a
-   fake protocol library and cover every op, every error text and the start-up failure.
+   fake protocol library and cover every op, every error text, which errors are
+   transient, and the start-up failure.
    Done when `npm test` passes and the connector's directory has no test that opens a
    socket to the outside.
 7. **Add the example manifest** `docs/examples/connectors.d/<name>.yaml`, annotated.

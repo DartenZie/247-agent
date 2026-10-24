@@ -182,6 +182,30 @@ describe('init', () => {
     expect(err).toBeInstanceOf(MatrixError);
     expect((err as MatrixError).errcode).toBe('M_UNKNOWN_TOKEN');
     expect((err as Error).message).toBe('GET /account/whoami: Invalid token (401)');
+    expect((err as MatrixError).transient).toBe(false);
+  });
+
+  it('marks a rate limit, a server error or no response transient (#32)', async () => {
+    const answers = [
+      Response.json({ errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 10 }, { status: 429 }),
+      new Response('<html>bad gateway</html>', { status: 502 }),
+    ];
+    const api = createMatrixApi({
+      homeserver: 'https://matrix.example.org',
+      token: 'tok',
+      timeoutMs: 1000,
+      fetch: () => {
+        const next = answers.shift();
+        return next === undefined
+          ? Promise.reject(new TypeError('fetch failed'))
+          : Promise.resolve(next);
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      const err = await api.call('GET', '/account/whoami').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MatrixError);
+      expect((err as MatrixError).transient).toBe(true);
+    }
   });
 });
 

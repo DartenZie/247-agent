@@ -3,6 +3,7 @@
  * `Authorization` header, errors that name the status and GitHub's message (and when a
  * rate limit resets) but never the token.
  */
+import { isTransientStatus } from '@247-agent/connector-sdk';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -22,10 +23,22 @@ export interface GitHubApi {
 export class GitHubError extends Error {
   /** HTTP status, or 0 for a transport failure. */
   readonly status: number;
-  constructor(method: string, path: string, status: number, message: string) {
+  /**
+   * Worth retrying: no response, a 408, 429 or 5xx, or a rate limit GitHub answered with
+   * 403 (`x-ratelimit-remaining: 0` for the primary one, `retry-after` for a secondary one).
+   */
+  readonly transient: boolean;
+  constructor(
+    method: string,
+    path: string,
+    status: number,
+    message: string,
+    opts: { rateLimited?: boolean } = {},
+  ) {
     super(`${method} ${path}: ${message}${status > 0 ? ` (${String(status)})` : ''}`);
     this.name = 'GitHubError';
     this.status = status;
+    this.transient = isTransientStatus(status) || opts.rateLimited === true;
   }
 }
 
@@ -71,7 +84,10 @@ export function createGitHubApi(opts: GitHubClientOptions): GitHubApi {
       );
     }
     if (!res.ok) {
-      throw new GitHubError(method, path, res.status, hide(await errorMessage(res)));
+      throw new GitHubError(method, path, res.status, hide(await errorMessage(res)), {
+        rateLimited:
+          res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'),
+      });
     }
     return res;
   }

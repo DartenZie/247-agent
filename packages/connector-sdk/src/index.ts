@@ -181,6 +181,76 @@ function statePath(namespace: string, key: string): string {
   return `/v1/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`;
 }
 
+/**
+ * The `_meta` key of an `isError` tool result that tells the core the failure is transient:
+ * the op did not take effect and may succeed later (a connection failure, a timeout, a
+ * rate limit, a 5xx), so the core retries the run under the task's `retry` policy. Any
+ * other op error fails the run for good.
+ */
+export const TRANSIENT_META_KEY = 'oa/transient';
+
+/** An op failure worth retrying. Throw it, or any error with `transient: true`, from a handler. */
+export class TransientError extends Error {
+  readonly transient = true as const;
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TransientError';
+  }
+}
+
+/** Whether `err`, or an error in its `cause` chain, carries `transient: true`. */
+export function isTransient(err: unknown): boolean {
+  return causes(err).some((e) => (e as { transient?: unknown }).transient === true);
+}
+
+/**
+ * Node's codes for a connection that could not be made or broke, and for a resolver that
+ * did not answer. `ENOTFOUND` is not among them: a name that does not exist is a config error.
+ */
+const NETWORK_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'EHOSTDOWN',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+/** Whether `err`, or an error in its `cause` chain, is a network failure by its Node `code`. */
+export function isNetworkError(err: unknown): boolean {
+  return causes(err).some((e) => {
+    const code = (e as { code?: unknown }).code;
+    return typeof code === 'string' && NETWORK_CODES.has(code);
+  });
+}
+
+/**
+ * Whether an HTTP status is worth retrying: 0 (no response: a connection failure or a
+ * timeout), 408, 429 and every 5xx but 501 (the server does not implement the request).
+ */
+export function isTransientStatus(status: number): boolean {
+  return status === 0 || status === 408 || status === 429 || (status >= 500 && status !== 501);
+}
+
+/** `err` and its `cause`s, at most eight deep, objects only. */
+function causes(err: unknown): object[] {
+  const out: object[] = [];
+  let e = err;
+  while (typeof e === 'object' && e !== null && out.length < 8 && !out.includes(e)) {
+    out.push(e);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return out;
+}
+
 /** One op. `input` is a zod raw shape (`{ folder: z.string() }`); the handler gets parsed args. */
 export interface ToolDef<Shape extends z.ZodRawShape = z.ZodRawShape> {
   name: string;
@@ -198,11 +268,17 @@ export interface ConnectorServerOptions {
   name: string;
   version?: string;
   tools: ToolDef[];
+  /**
+   * Which thrown errors are transient besides those `isTransient` already finds: the
+   * connector's own rule for its libraries' errors (an SMTP 4xx, an HTTP 503).
+   */
+  transient?: (err: unknown) => boolean;
 }
 
 /**
  * An MCP server exposing `tools` as ops. Each handler's JSON result is returned as one text
- * content block (the core parses it back); a thrown error becomes an `isError` result.
+ * content block (the core parses it back); a thrown error becomes an `isError` result,
+ * marked with `_meta["oa/transient"]: true` when it is transient (`TRANSIENT_META_KEY`).
  */
 export function createConnectorServer(opts: ConnectorServerOptions): McpServer {
   const server = new McpServer({ name: opts.name, version: opts.version ?? '0.0.0' });
@@ -218,11 +294,13 @@ export function createConnectorServer(opts: ConnectorServerOptions): McpServer {
           const result = await tool.handler(args as never);
           return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
         } catch (err) {
+          const transient = isTransient(err) || opts.transient?.(err) === true;
           return {
             isError: true,
             content: [
               { type: 'text' as const, text: err instanceof Error ? err.message : String(err) },
             ],
+            ...(transient ? { _meta: { [TRANSIENT_META_KEY]: true } } : {}),
           };
         }
       },
@@ -251,6 +329,8 @@ export async function runConnector(opts: {
   version?: string;
   tools: (rt: ConnectorRuntime) => ToolDef[];
   setup?: (rt: ConnectorRuntime) => void | Promise<void>;
+  /** As in `createConnectorServer`. */
+  transient?: (err: unknown) => boolean;
 }): Promise<ConnectorRuntime> {
   const env = connectorEnv();
   const rt: ConnectorRuntime = {
@@ -265,6 +345,7 @@ export async function runConnector(opts: {
     name: env.name,
     ...(opts.version === undefined ? {} : { version: opts.version }),
     tools: opts.tools(rt),
+    ...(opts.transient === undefined ? {} : { transient: opts.transient }),
   });
   await serveStdio(server);
   return rt;

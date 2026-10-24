@@ -110,15 +110,28 @@ export interface ApplyResult {
   changed: string[];
 }
 
-/** The connector reported the op failed (`isError`), or the op is unknown to it. */
-export class ConnectorOpError extends NonRetryableError {
+/**
+ * The `_meta` key of an `isError` result that marks the failure transient (the SDK's
+ * `TRANSIENT_META_KEY`; docs/internal/connectors.md).
+ */
+export const TRANSIENT_META_KEY = 'oa/transient';
+
+/**
+ * The connector reported the op failed (`isError`), or the op is unknown to it. Final,
+ * unless the connector marked the failure transient: then the op did not take effect and
+ * the run is retried by policy.
+ */
+export class ConnectorOpError extends Error {
+  readonly retryable: boolean;
   constructor(
     readonly connector: string,
     readonly op: string,
     message: string,
+    opts: { transient?: boolean } = {},
   ) {
     super(`${connector}.${op}: ${message}`);
     this.name = 'ConnectorOpError';
+    this.retryable = opts.transient === true;
   }
 }
 
@@ -1097,12 +1110,14 @@ interface ToolResult {
   content?: { type: string; text?: string }[];
   structuredContent?: unknown;
   isError?: boolean;
+  _meta?: Record<string, unknown>;
 }
 
 /**
  * An MCP tool result as a JSON value: `structuredContent` when the tool declares an output
  * schema, otherwise the text content (parsed as JSON when it is JSON, one string, or an
- * array of strings). An `isError` result fails the op with its text.
+ * array of strings). An `isError` result fails the op with its text, retryably when its
+ * `_meta` marks it transient.
  */
 export function toolResultToJson(connector: string, op: string, raw: unknown): JsonValue {
   const result = raw as ToolResult;
@@ -1110,7 +1125,9 @@ export function toolResultToJson(connector: string, op: string, raw: unknown): J
     c.type === 'text' && typeof c.text === 'string' ? [c.text] : [],
   );
   if (result.isError === true) {
-    throw new ConnectorOpError(connector, op, texts.join('\n') || 'tool returned an error');
+    throw new ConnectorOpError(connector, op, texts.join('\n') || 'tool returned an error', {
+      transient: result._meta?.[TRANSIENT_META_KEY] === true,
+    });
   }
   if (result.structuredContent !== undefined) {
     return result.structuredContent as JsonValue;

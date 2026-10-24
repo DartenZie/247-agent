@@ -96,11 +96,11 @@ What a retry helps with and what it does not:
 | Retried | Not retried |
 |---|---|
 | a timeout of the attempt | a `wait` that timed out, a connector operation that got no answer |
-| a connector that is down | a secret that is not set, an unknown connector |
+| a connector that is down, or an op error the connector marked transient (connection failure, timeout, rate limit, server error) | a secret that is not set, an unknown connector |
 | a provider's rate limit or server error | a provider rejecting the request (bad key, bad schema) |
 | an agent's failed `post` gate, or a missing or invalid `RESULT.json` | a model call over budget, a truncated or refused answer |
 | | an agent that broke its policy or hit its tool-call cap |
-| | an `emit` rule that cannot be rendered, an op the connector reported as an error |
+| | an `emit` rule that cannot be rendered, any other op error the connector reported |
 
 An `agent` retry starts in a fresh workspace with the previous error in its prompt, so
 a build the agent broke gets a second chance. Set `retry.attempts` with the cost of a

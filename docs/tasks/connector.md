@@ -45,14 +45,26 @@ string otherwise.
 | What happened | Outcome |
 |---|---|
 | the connector is down (crashed, restarting, not yet up) | the attempt fails and is retried under the task's `retry` policy |
-| the operation reported an error (a bad path, a rejected request, an API error) | the run fails with the connector's error text, without retry |
+| the operation reported a transient error (the service could not be reached, it timed out, it is rate limiting or answered with a server error) | the attempt fails with the connector's error text and is retried under the task's `retry` policy |
+| the operation reported any other error (a bad path, a rejected request, an API error) | the run fails with the connector's error text, without retry |
 | `op` is not in the manifest's `ops` list | the run fails without retry |
 | `connector` names no manifest | the run fails without retry |
 | no answer came: the call took longer than `timeout`, the task's `timeout` cut it off, or the connector exited mid-call | the run fails without retry |
 
-Operation errors are deliberately not retried: a path that does not exist or a request
-the API rejected will not succeed on a second try, and some operations, such as
-sending a message, must not run twice.
+The connector decides which of its errors are transient. A transient error means the
+operation did not get through and can succeed later: a connection that failed, broke or
+timed out, a rate limit (HTTP 429), or a server error (HTTP 5xx). The bundled connectors
+mark these, so a short outage or a rate limit of the mail server, GitHub, Jira, Telegram,
+Matrix or the FTP server costs an attempt, not the message. Set `retry` on the task to
+use it; with the default of one attempt, a transient error fails the run as any other.
+
+Every other operation error is deliberately not retried: a path that does not exist or a
+request the API rejected will not succeed on a second try.
+
+> [!NOTE]
+> A connection that broke or timed out after the request was sent can, rarely, hide a
+> request that did get through. A retry then repeats it, for example a second chat
+> message or a second mail. Mail servers behave the same way.
 
 A call that got no answer is not retried for the same reason. The connector may have
 finished the operation, or may still be running it, so a second call could send the

@@ -7,6 +7,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { isTransient } from '@247-agent/connector-sdk';
+
 import {
   accessOptions,
   connectFtp,
@@ -168,6 +170,25 @@ describe('connectFtp', () => {
       /^ftp connect h:21: 530/,
     );
     expect(failing.closed).toBe(true);
+  });
+
+  it('marks a connection that failed transient, a refused login not (#32)', async () => {
+    const reset = fakeFtp();
+    reset.lib.access = () =>
+      Promise.reject(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    const transient = await connectFtp(ftpConfig({ protocol: 'ftp' }), () => reset.lib).catch(
+      (e: unknown) => e,
+    );
+    expect((transient as Error).message).toBe('ftp connect h:21: read ECONNRESET');
+    expect(isTransient(transient)).toBe(true);
+
+    const refused = fakeFtp();
+    refused.lib.access = () =>
+      Promise.reject(Object.assign(new Error('530 Login incorrect'), { code: 530 }));
+    const permanent = await connectFtp(ftpConfig({ protocol: 'ftp' }), () => refused.lib).catch(
+      (e: unknown) => e,
+    );
+    expect(isTransient(permanent)).toBe(false);
   });
 });
 

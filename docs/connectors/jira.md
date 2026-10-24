@@ -89,7 +89,9 @@ passes through as wiki markup.
 
 Jira's error messages come back as the op's error text, for example
 `POST /issue: summary: Field 'summary' cannot be set (400)`, and fail the calling run
-without retry. A transition that does not exist lists the available ones in the error.
+without retry. A rate limit (`429`), a server error (`5xx` but `501`), a timeout and a
+failed connection are [transient](../tasks/connector.md#failures) instead: the run is retried under the task's `retry`
+policy. A transition that does not exist lists the available ones in the error.
 
 ## Events, through the poller
 

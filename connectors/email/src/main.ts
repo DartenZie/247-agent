@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { defineTool, runConnector, type JsonValue } from '@247-agent/connector-sdk';
 
 import { parseConfig } from './config.js';
+import { isTransientMailError } from './errors.js';
 import { ImapMailbox } from './imap.js';
 import { Pop3Mailbox } from './pop3.js';
 import { buildMessage, createSmtpTransport, sendMail, type SmtpTransport } from './send.js';
@@ -16,6 +17,7 @@ const address = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
 await runConnector({
   version: '0.1.0',
+  transient: isTransientMailError,
   tools: (rt) => {
     const config = parseConfig(rt.env.config);
     const incoming = config.incoming;

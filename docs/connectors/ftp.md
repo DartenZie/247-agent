@@ -78,7 +78,10 @@ config:
 
 All paths are relative to `root`; `.` or an empty string is the root itself. Results carry
 the same relative paths, so `${result.entries[0].path}` feeds straight back into `read`.
-A bad path, a missing file or a size over `max_bytes` fails the calling run without retry.
+A bad path, a missing file, a refused login or a size over `max_bytes` fails the calling
+run without retry. A server that cannot be reached, a connection that breaks or times
+out, and an FTP `4xx` reply (`421` service not available, `450` file busy) are
+[transient](../tasks/connector.md#failures): the run is retried under the task's `retry` policy.
 
 | Op | Arguments | Result |
 |---|---|---|

@@ -32,7 +32,10 @@ These hold in every language, and the daemon relies on them:
 - **Log to standard error.** The daemon records it as `connector.output`. With
   `transport: stdio`, standard output is the protocol channel and a stray print breaks it.
 - **Return JSON-serialisable results** from ops. Throw, or return an MCP error, to signal
-  an op failure; the calling run fails without retry, on purpose.
+  an op failure; the calling run fails without retry, on purpose. Mark the failure
+  transient when the op did not get through and may succeed later (the service is
+  unreachable, timed out, rate limiting, or answered `5xx`): the run is then retried
+  under the task's `retry` policy. See [transient errors](#transient-errors).
 - **Exit non-zero on an unrecoverable error** (a bad token, a port in use). The daemon
   restarts you with backoff and shows the error in `oa connector list`.
 - **Name events `<connector>.<what happened>`**, lower-case dotted segments:
@@ -85,6 +88,25 @@ zod shape.
 | `serveStdio(server)` | connect it to standard input and output |
 | `ConnectorRuntime` | `{ env, core, log }`; `log(line)` writes to standard error |
 | `CoreApiError` | thrown by the client on a non-2xx answer, with `.status` |
+| `TransientError` | throw it from a handler to mark the op failure transient; any error with `transient: true`, itself or in its `cause` chain, counts too |
+| `isTransient(err)` | whether `err` or its `cause` chain carries `transient: true` |
+| `isNetworkError(err)` | whether `err` or its `cause` chain has a network error `code` (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, …) |
+| `isTransientStatus(status)` | `true` for HTTP `0` (no response), `408`, `429` and every `5xx` but `501` |
+
+### Transient errors
+
+An op error fails the calling run for good unless you mark it transient. Mark it only
+when the op did not get through and a later call can succeed. Throw a `TransientError`,
+or give `runConnector` a `transient` rule for your library's errors:
+
+```ts
+await runConnector({
+  transient: (err) => isNetworkError(err) || (err instanceof ApiError && isTransientStatus(err.status)),
+  tools: () => [
+    // your tools
+  ],
+});
+```
 
 A push-style connector emits from `setup`:
 
@@ -139,8 +161,10 @@ A missing key answers `404`. Tasks can read the same value as
 **Expose ops:** speak MCP over standard input and output: JSON-RPC, tools listed by
 `tools/list` and called by `tools/call`. Return the result as `structuredContent`, or as
 one text block containing JSON, which the daemon parses. Signal a failure with
-`isError: true` and a message. Any MCP SDK works (Python, Go, …), and any existing MCP
-server is a connector unchanged.
+`isError: true` and a message. To mark the failure transient, so the daemon retries the
+run, add `"_meta": { "oa/transient": true }` to that result. Any MCP SDK works (Python,
+Go, …), and any existing MCP server is a connector unchanged; its errors are never
+transient.
 
 ## Using an existing MCP server
 
@@ -175,7 +199,7 @@ and arguments), or point a scratch `agent.yaml` at the manifest and use
 | Symptom | Cause and fix |
 |---|---|
 | the run fails with `op … not allowed` | the op is not in the manifest's `ops`; add it, or use `ops: []` |
-| the run fails with your error text and no retry | the handler threw; fix the handler, the run is not retried on purpose |
+| the run fails with your error text and no retry | the handler threw an error that is not transient; fix the handler, or mark the error transient when a later call can succeed |
 | the run fails with `connector … is down` and retries | the process is not up: read its `connector.output` lines, look for a crash loop with a growing backoff |
 | the connector restarts every few seconds | it exits at start; run it by hand as above and read standard error |
 | MCP handshake errors | something wrote to standard output; route all logging to standard error |

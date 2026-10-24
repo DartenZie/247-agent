@@ -242,8 +242,11 @@ The footer is appended to `text`, `footer_html` to `html`. `in_reply_to` is also
 the `References` header, so your reply threads under the original in the recipient's
 client.
 
-Every op failure (a bad folder, no `incoming` configured, SMTP refusing a recipient)
-fails the calling run without retry; a connector that is down fails it with retry.
+A mail server that cannot be reached, a connection that breaks or times out, a POP3
+mailbox locked by another session, and an SMTP `4xx` reply are [transient](../tasks/connector.md#failures): the calling run
+is retried under the task's `retry` policy. Every other op failure (a bad folder, no
+`incoming` configured, a refused login, SMTP refusing a recipient with a `5xx`) fails the
+calling run without retry. A connector that is down fails it with retry.
 
 ## Events
 

@@ -319,6 +319,19 @@ describe('ops on Cloud', () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(JiraError);
     expect((err as Error).message).toBe('POST /issue: summary: bad <credential> (400)');
+    expect((err as JiraError).transient).toBe(false);
+  });
+
+  it('marks rate limits, 5xx and transport failures transient (#32)', async () => {
+    const jira = new FakeJira()
+      .on('POST /rest/api/3/issue', () => ({ status: 429, body: { message: 'slow down' } }))
+      .on('GET /rest/api/3/issue/SITE-1', () => ({ status: 503, body: 'unavailable' }));
+    const ops = jira.ops();
+    const limited = await ops.createIssue({ summary: 'x' }).catch((e: unknown) => e);
+    expect((limited as JiraError).transient).toBe(true);
+    const down = await ops.getIssue({ key: 'SITE-1' }).catch((e: unknown) => e);
+    expect((down as JiraError).transient).toBe(true);
+    expect(new JiraError('GET', '/x', 0, 'fetch failed').transient).toBe(true);
   });
 });
 

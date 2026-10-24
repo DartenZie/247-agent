@@ -13,6 +13,8 @@
 import { isIP, connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 
+import { TransientError } from '@247-agent/connector-sdk';
+
 import type { IncomingConfig } from './config.js';
 import { parseMessage } from './parse.js';
 import type {
@@ -81,20 +83,31 @@ export class Pop3Client {
           })
         : netConnect({ host: opts.host, port: opts.port });
       s.setTimeout(timeoutMs);
+      const onTimeout = (): void => {
+        s.destroy();
+        reject(new TransientError('pop3: connection timed out'));
+      };
       s.once(opts.secure ? 'secureConnect' : 'connect', () => {
         s.removeListener('error', reject);
+        s.removeListener('timeout', onTimeout);
         resolve(s);
       });
       s.once('error', reject);
+      s.once('timeout', onTimeout);
     });
     const client = new Pop3Client(socket, timeoutMs);
-    const greeting = await client.read(false);
-    if (!greeting.ok) {
+    try {
+      const greeting = await client.read(false);
+      if (!greeting.ok) {
+        throw new Error(`pop3: server refused connection: ${greeting.line}`);
+      }
+      if (!opts.secure && opts.starttls) {
+        await client.startTls(opts);
+      }
+    } catch (err) {
+      // A silent server or a failed STLS would otherwise keep the socket open.
       client.close();
-      throw new Error(`pop3: server refused connection: ${greeting.line}`);
-    }
-    if (!opts.secure && opts.starttls) {
-      await client.startTls(opts);
+      throw err;
     }
     return client;
   }
@@ -177,10 +190,10 @@ export class Pop3Client {
       this.fail(err);
     });
     socket.on('timeout', () => {
-      this.fail(new Error('pop3: connection timed out'));
+      this.fail(new TransientError('pop3: connection timed out'));
     });
     socket.on('close', () => {
-      this.fail(new Error('pop3: connection closed'));
+      this.fail(new TransientError('pop3: connection closed'));
     });
   }
 
@@ -203,7 +216,11 @@ export class Pop3Client {
     this.socket.write(line + '\r\n');
     const r = await this.read(multiline);
     if (!r.ok) {
-      throw new Error(`pop3: ${logAs} failed: ${r.line}`);
+      const message = `pop3: ${logAs} failed: ${r.line}`;
+      // A mailbox locked by another session, or a temporary server problem (RFC 2449, 3206).
+      throw /^-ERR \[(IN-USE|SYS\/TEMP)\]/i.test(r.line)
+        ? new TransientError(message)
+        : new Error(message);
     }
     return r;
   }

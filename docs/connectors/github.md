@@ -84,8 +84,10 @@ request.
 
 GitHub's errors come back as the op's error text, for example
 `POST /repos/acme/site/issues: Validation Failed: title is too long (422)`; a rate limit
-adds `(rate limited until <time>)`. Either fails the calling run without retry, like
-every op error.
+adds `(rate limited until <time>)`. A rate limit (`429`, or a `403` that GitHub marks
+as one), a server error (`5xx` but `501`), a timeout and a failed connection are
+[transient](../tasks/connector.md#failures): the run is retried under the task's `retry` policy. Every other error fails the
+calling run without retry.
 
 ## Events, through the poller
 

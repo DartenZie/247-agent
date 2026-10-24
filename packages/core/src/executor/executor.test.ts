@@ -648,6 +648,18 @@ describe('Executor retrying a connector op', () => {
         action: op('die'),
         retry,
       },
+      {
+        name: 'transient',
+        trigger: { kind: 'event', type: 'c.transient' },
+        action: op('fail', { message: 'try later', transient: true }),
+        retry,
+      },
+      {
+        name: 'permanent',
+        trigger: { kind: 'event', type: 'c.permanent' },
+        action: op('fail', { message: 'bad args' }),
+        retry,
+      },
     ]);
     bus.dispatcher.setConfig(current);
     const m = parseManifest(
@@ -723,6 +735,24 @@ describe('Executor retrying a connector op', () => {
       status: 'failed',
       attempt: 1,
       error: 'fake.slow: cut off (timed out after 200ms); it may have taken effect',
+      calls: 1,
+    });
+  });
+
+  it('retries an op error the connector marked transient, up to the policy (#32)', async () => {
+    expect(await runOnce('transient')).toEqual({
+      status: 'failed',
+      attempt: 2,
+      error: 'fake.fail: try later',
+      calls: 2,
+    });
+  });
+
+  it('does not retry any other op error', async () => {
+    expect(await runOnce('permanent')).toEqual({
+      status: 'failed',
+      attempt: 1,
+      error: 'fake.fail: bad args',
       calls: 1,
     });
   });

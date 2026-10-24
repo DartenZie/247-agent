@@ -3,6 +3,7 @@
  * JSON in and out, the access token only in the `Authorization` header. Errors expose
  * the HTTP status, Matrix's `errcode` and a rate limit's wait so the sync loop can back off.
  */
+import { isTransientStatus } from '@247-agent/connector-sdk';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -25,6 +26,8 @@ export class MatrixError extends Error {
   readonly errcode: string | undefined;
   /** Milliseconds to wait, from a 429. */
   readonly retryAfterMs: number | undefined;
+  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  readonly transient: boolean;
   constructor(
     method: string,
     path: string,
@@ -38,6 +41,7 @@ export class MatrixError extends Error {
     this.status = status;
     this.errcode = errcode;
     this.retryAfterMs = retryAfterMs;
+    this.transient = isTransientStatus(status);
   }
 }
 

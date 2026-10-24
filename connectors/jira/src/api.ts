@@ -2,6 +2,8 @@
  * A thin Jira REST client over `fetch`: JSON in and out, credentials only in the
  * `Authorization` header, errors that carry Jira's messages but never a credential.
  */
+import { isTransientStatus } from '@247-agent/connector-sdk';
+
 import { authorization, credentials, type JiraConfig } from './config.js';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -18,10 +20,13 @@ export interface JiraApi {
 export class JiraError extends Error {
   /** HTTP status, or 0 for a transport failure. */
   readonly status: number;
+  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  readonly transient: boolean;
   constructor(method: string, path: string, status: number, message: string) {
     super(`${method} ${path}: ${message}${status > 0 ? ` (${String(status)})` : ''}`);
     this.name = 'JiraError';
     this.status = status;
+    this.transient = isTransientStatus(status);
   }
 }
 

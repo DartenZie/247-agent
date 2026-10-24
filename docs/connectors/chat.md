@@ -162,6 +162,13 @@ Each question is answered once: the first answer removes it from state and the b
 from the message, and the bot confirms with `Recorded: <choice>`. Later taps get "already
 answered".
 
+### Errors
+
+A rate limit (`429`), a server error (`5xx` but `501`), a timeout and a failed
+connection to Telegram or the homeserver are [transient](../tasks/connector.md#failures): the calling run is retried under the
+task's `retry` policy. Every other error, such as a `chat_id` that is not allowed or a
+chat the bot cannot post to, fails the calling run without retry.
+
 ## Events
 
 Both events carry a `dedup_key`, so a replayed update never produces a second event.
