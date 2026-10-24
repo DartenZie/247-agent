@@ -35,6 +35,8 @@ export interface Template {
   readonly secrets: readonly string[];
   /** True when an expression uses `secrets` other than as `secrets.<name>`. */
   readonly wholeSecrets: boolean;
+  /** True when an expression reads the scope itself (`${@}`, `${[@][0]}`, `${*}`). */
+  readonly wholeScope: boolean;
   render(scope: TemplateScope): unknown;
   renderText(scope: TemplateScope): string;
 }
@@ -71,19 +73,51 @@ interface Refs {
   roots: Set<string>;
   secrets: string[];
   wholeSecrets: boolean;
+  wholeScope: boolean;
+}
+
+/**
+ * Drops a leading `@.` from a subexpression chain: at the top `@` is the scope, so
+ * `@.secrets.token` reads the same as `secrets.token`.
+ */
+function stripCurrent(node: AstNode | null | undefined): AstNode | null | undefined {
+  if (node?.type !== 'Subexpression') {
+    return node;
+  }
+  const [left, right] = node.children ?? [];
+  const l = stripCurrent(left);
+  if (l?.type === 'Current') {
+    return right;
+  }
+  return l === left ? node : { ...node, children: [l ?? null, right ?? null] };
 }
 
 /**
  * Collects the root identifiers of an expression: identifiers that resolve against the
  * scope itself, not against an intermediate value (`a` in `a.b`, `x` and `y` in
- * `x == y`, `z` in `length(z)`). Also records `secrets.<name>` references.
+ * `x == y`, `z` in `length(z)`). Also records `secrets.<name>` references, and any other
+ * `@` or projection that reads the scope rather than an element (`inElement`, set inside
+ * `&expr`).
  */
-function collectRefs(node: AstNode | null | undefined, refs: Refs, scopeOnly = false): void {
+function collectRefs(
+  node: AstNode | null | undefined,
+  refs: Refs,
+  scopeOnly = false,
+  inElement = false,
+): void {
+  node = stripCurrent(node);
   if (node === null || node === undefined) {
     return;
   }
   const kids = node.children ?? [];
   switch (node.type) {
+    case 'Current':
+    case 'Identity':
+      // `@`, or the implicit left side of a top-level `*`, `[*]` or `[0]`: the scope itself.
+      if (!inElement) {
+        refs.wholeScope = true;
+      }
+      return;
     case 'Field':
       if (node.name !== undefined) {
         refs.roots.add(node.name);
@@ -103,7 +137,7 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs, scopeOnly = f
         }
         return;
       }
-      collectRefs(left, refs, scopeOnly);
+      collectRefs(left, refs, scopeOnly, inElement);
       return;
     }
     case 'IndexExpression':
@@ -112,16 +146,16 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs, scopeOnly = f
     case 'FilterProjection':
     case 'Pipe':
     case 'Flatten':
-      collectRefs(kids[0], refs, scopeOnly);
+      collectRefs(kids[0], refs, scopeOnly, inElement);
       return;
     case 'KeyValuePair':
-      collectRefs(node.value as AstNode, refs, scopeOnly);
+      collectRefs(node.value as AstNode, refs, scopeOnly, inElement);
       return;
     case 'ExpressionReference':
       // `&expr` is usually evaluated against each element (`sort_by(xs, &date)`), but can
       // see the scope (`map(&secrets.x, [@])`), so it counts unless only scope roots matter.
       if (!scopeOnly) {
-        collectRefs(kids[0], refs);
+        collectRefs(kids[0], refs, false, true);
       }
       return;
     case 'NotExpression':
@@ -132,11 +166,11 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs, scopeOnly = f
     case 'MultiSelectList':
     case 'MultiSelectHash':
       for (const child of kids) {
-        collectRefs(child, refs, scopeOnly);
+        collectRefs(child, refs, scopeOnly, inElement);
       }
       return;
     default:
-      // Literal, Identity, Current, Index, Slice: no references.
+      // Literal, Index, Slice: no references.
       return;
   }
 }
@@ -233,7 +267,7 @@ function evaluate(expr: string, scope: TemplateScope): unknown {
  */
 export function expressionRoots(expr: string): ReadonlySet<string> {
   const p = parseJmespath(expr);
-  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false };
+  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false, wholeScope: false };
   if (p.ok) {
     collectRefs(p.ast as AstNode, refs, true);
   }
@@ -243,7 +277,7 @@ export function expressionRoots(expr: string): ReadonlySet<string> {
 /** Compiles a string into a template; throws `TemplateSyntaxError` on bad `${…}` or JMESPath. */
 export function compileTemplate(text: string): Template {
   const parts = parseTemplate(text);
-  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false };
+  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false, wholeScope: false };
   for (const part of parts) {
     if (!('expr' in part)) {
       continue;
@@ -267,6 +301,7 @@ export function compileTemplate(text: string): Template {
     roots: refs.roots,
     secrets: refs.secrets,
     wholeSecrets: refs.wholeSecrets,
+    wholeScope: refs.wholeScope,
     render: (scope) => (wholeExpr === undefined ? renderText(scope) : evaluate(wholeExpr, scope)),
     renderText,
   };
@@ -334,6 +369,8 @@ export interface TemplateRefs {
   secrets: string[];
   /** Templates that use `secrets` other than as `secrets.<name>`. */
   wholeSecrets: string[];
+  /** Templates that read the scope itself (`@`, `*`), which holds `secrets` in an action. */
+  wholeScope: string[];
   /** Template strings that failed to compile, with the error. */
   errors: { template: string; message: string }[];
 }
@@ -362,7 +399,13 @@ export function forEachTemplate(
 
 /** Walks a JSON-like value and reports what its templates reference. */
 export function collectTemplateRefs(value: unknown, refs?: TemplateRefs): TemplateRefs {
-  const out: TemplateRefs = refs ?? { roots: new Set(), secrets: [], wholeSecrets: [], errors: [] };
+  const out: TemplateRefs = refs ?? {
+    roots: new Set(),
+    secrets: [],
+    wholeSecrets: [],
+    wholeScope: [],
+    errors: [],
+  };
   forEachTemplate(value, (text) => {
     let t: Template;
     try {
@@ -384,6 +427,9 @@ export function collectTemplateRefs(value: unknown, refs?: TemplateRefs): Templa
     }
     if (t.wholeSecrets) {
       out.wholeSecrets.push(text);
+    }
+    if (t.wholeScope) {
+      out.wholeScope.push(text);
     }
   });
   return out;

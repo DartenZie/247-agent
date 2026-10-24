@@ -12,7 +12,7 @@ import { NonRetryableError, type ActionContext, type ResumeInfo } from './types.
  * passes `for.filter` (a JMESPath over the event, templated first: `${event.correlation_id}`
  * is the *current* run's event, and every value lands as data, `expr/filter-template.ts`)
  * or `timeout` elapses. The wait survives restarts. The rendered filter is written to the
- * wait record, so `secrets` are refused in it.
+ * wait record, so `secrets` are refused in it, and so is any read of the whole scope (`@`, `*`).
  */
 export const WaitAction = z.strictObject({
   kind: z.literal('wait'),
@@ -30,12 +30,18 @@ export const WaitAction = z.strictObject({
         const err = validateTemplate(f.filter);
         if (err !== null) {
           ctx.addIssue({ code: 'custom', path: ['filter'], message: err });
-        } else if (collectTemplateRefs(f.filter).roots.has('secrets')) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['filter'],
-            message: 'secrets cannot be used here: the rendered filter is written to the store',
-          });
+        } else {
+          const refs = collectTemplateRefs(f.filter);
+          if (refs.roots.has('secrets') || refs.wholeScope.length > 0) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['filter'],
+              message:
+                refs.wholeScope.length > 0
+                  ? 'secrets cannot be used here: this reads the whole scope, secrets included, and the rendered filter is written to the store'
+                  : 'secrets cannot be used here: the rendered filter is written to the store',
+            });
+          }
         }
       }
     }),
