@@ -130,6 +130,14 @@ every `${…}` template, wherever a task holds one. They flag a comparison that:
 - orders against a quoted number, as in `payload.amount > '100'`. JMESPath orders only
   numbers. Write `` payload.amount > `100` ``.
 
+A name that does not exist where it stands gets a warning too, because it reads as
+null and the task misbehaves silently. Examples are a typo such as `${evnt.payload.x}`
+or `${reslt.kind}`, `steps[0]` in `emit` or `state_updates` (write `result.steps[0]`),
+`result` in an action other than an `agent`'s `post` gates, `item` outside an `emit` rule with `each`, and
+`event.payload` in a trigger `filter`, which sees the event itself (write `payload`).
+The warning names the root and suggests the name you probably meant.
+[Templates and expressions](../tasks/templates.md) lists what each position can read.
+
 A `wait`'s `for.filter` gets one more warning. `oa validate` parses the filter with
 each template replaced by a value. If the filter is not valid JMESPath even then, the
 wait would never match.

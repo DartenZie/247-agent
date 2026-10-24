@@ -78,7 +78,7 @@ interface Refs {
  * scope itself, not against an intermediate value (`a` in `a.b`, `x` and `y` in
  * `x == y`, `z` in `length(z)`). Also records `secrets.<name>` references.
  */
-function collectRefs(node: AstNode | null | undefined, refs: Refs): void {
+function collectRefs(node: AstNode | null | undefined, refs: Refs, scopeOnly = false): void {
   if (node === null || node === undefined) {
     return;
   }
@@ -103,7 +103,7 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs): void {
         }
         return;
       }
-      collectRefs(left, refs);
+      collectRefs(left, refs, scopeOnly);
       return;
     }
     case 'IndexExpression':
@@ -112,12 +112,18 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs): void {
     case 'FilterProjection':
     case 'Pipe':
     case 'Flatten':
-      collectRefs(kids[0], refs);
+      collectRefs(kids[0], refs, scopeOnly);
       return;
     case 'KeyValuePair':
-      collectRefs(node.value as AstNode, refs);
+      collectRefs(node.value as AstNode, refs, scopeOnly);
       return;
     case 'ExpressionReference':
+      // `&expr` is usually evaluated against each element (`sort_by(xs, &date)`), but can
+      // see the scope (`map(&secrets.x, [@])`), so it counts unless only scope roots matter.
+      if (!scopeOnly) {
+        collectRefs(kids[0], refs);
+      }
+      return;
     case 'NotExpression':
     case 'OrExpression':
     case 'AndExpression':
@@ -126,7 +132,7 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs): void {
     case 'MultiSelectList':
     case 'MultiSelectHash':
       for (const child of kids) {
-        collectRefs(child, refs);
+        collectRefs(child, refs, scopeOnly);
       }
       return;
     default:
@@ -219,6 +225,19 @@ function evaluate(expr: string, scope: TemplateScope): unknown {
   } catch (err) {
     throw new TemplateRenderError(expr, err);
   }
+}
+
+/**
+ * The root names a bare expression reads from its scope (`collectRefs`), leaving out those
+ * inside `&expr`, which reads each element; none when it does not parse.
+ */
+export function expressionRoots(expr: string): ReadonlySet<string> {
+  const p = parseJmespath(expr);
+  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false };
+  if (p.ok) {
+    collectRefs(p.ast as AstNode, refs, true);
+  }
+  return refs.roots;
 }
 
 /** Compiles a string into a template; throws `TemplateSyntaxError` on bad `${…}` or JMESPath. */

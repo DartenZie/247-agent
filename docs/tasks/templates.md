@@ -22,7 +22,7 @@ cmd: ["bash", "-c", 'printf "hello (run %s)\n" "$1"', "--", "${run.id}"]
 | Name | What it is | Available |
 |---|---|---|
 | `event` | the event that triggered the run: `event.type`, `event.payload`, `event.correlation_id`, `event.id`, `event.source` | everywhere |
-| `result` | the action's result | `emit` and `state_updates` only |
+| `result` | the action's result | `emit`, `state_updates` and an `agent` action's `post` gates |
 | `state` | the state store, as it was when the run started: `state.<namespace>.<key>` | everywhere |
 | `secrets` | secret values, only as `secrets.<name>` | inside `action` only |
 | `env` | the daemon's environment variables | everywhere |
@@ -76,9 +76,13 @@ emit:
 ```
 
 A trigger `filter` sees the **whole event**: `type`, `source`, `payload`,
-`correlation_id`. `when` sees `{ event, result, state, env, run }`, and a step's `when`
-inside a sequence also sees `steps`. An `emit` rule's `when` does not: it reads
-`result.steps`.
+`correlation_id`. An `emit` rule's `when` sees `{ event, result, state, env, run }`. A
+step's `when` inside a sequence sees what the step's templates see, `steps` included,
+and an `agent` gate's `when` also sees `result`. An `emit` rule's `when` has no
+`steps`: it reads `result.steps`.
+
+`oa validate` warns about a name that does not exist where it stands, such as a typo
+like `evnt`, or `steps` in an `emit` rule. Such a name reads as null at run time.
 
 One exception: `for.filter` on a [`wait`](wait.md) is first rendered as a template
 against the waiting run, and the rendered text is then evaluated as an expression over

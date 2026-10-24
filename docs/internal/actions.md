@@ -37,11 +37,12 @@ the chain it belongs to.
 `expr/template.ts` renders `${ <JMESPath> }` against the scope `{event, result, state,
 secrets, env, run, item, steps}`:
 
-- `result` exists only in `emit` and `state_updates`; `item` inside an `emit[].each`
-  fan-out; `steps` inside a `sequence` only (`withScope()` adds it; `emit` and
-  `state_updates` read `result.steps`); `run` is `{id, task, attempt, event_id,
-  correlation_id, workspace}`, `workspace` being
-  `<work_dir>/<run_id>` or `null` without an agent supervisor.
+- `result` exists only in `emit`, `state_updates` and an `agent`'s `post` gates
+  (`agent.ts` adds it with `withScope()`); `item` inside an `emit[].each` fan-out;
+  `steps` inside a `sequence` only (`withScope()` adds it; `emit` and `state_updates`
+  read `result.steps`); `run` is `{id, task, attempt, event_id, correlation_id,
+  workspace}`, `workspace` being `<work_dir>/<run_id>` or `null` without an agent
+  supervisor.
 - `env` is the daemon's environment minus what the secrets backend reads through
   (`secrets/secrets.ts`, `SecretsBackend.scrub()`). For the `env` backend that is every
   variable with its prefix. For `systemd-credentials` without a `dir` it is
@@ -64,8 +65,8 @@ secrets, env, run, item, steps}`:
 
 `oa validate` checks the syntax of every template and expression, except a `wait`'s
 `for.filter` as a whole, which only exists once rendered (`expr/filter-template.ts`);
-the lint warns when it cannot parse even with each template standing for a value
-([`config.md`](config.md)).
+the lint warns when it cannot parse even with each template standing for a value, and
+about a root a position does not provide ([`config.md`](config.md)).
 Rendering happens at run time against the run's scope; a template that fails to render
 fails the attempt.
 
