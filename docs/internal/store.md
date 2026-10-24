@@ -12,9 +12,17 @@ migration, or retention.
 nine ship, so a current database reads `user_version = 9`. A `user_version` above the
 number this build ships means a newer release migrated the file: `migrate` throws before
 it runs a migration, `openDatabase` closes the handle, and the daemon exits 1 with both
-numbers in the message. Nothing copies the file before a migration; the operator's backup
-is the way back. `store.transaction(fn)` is `BEGIN IMMEDIATE`, which takes the write lock
+numbers in the message. `store.transaction(fn)` is `BEGIN IMMEDIATE`, which takes the write lock
 up front so a batch never deadlocks against a reader that wants to write.
+
+Before it runs pending migrations on a file that already has a schema, `openDatabase`
+writes a consistent copy with `VACUUM INTO` to `<path>.schema-<n>.bak`, `n` being the old
+`user_version`. That copy is what a failed migration or a rollback restores (issue #45).
+A new or current file gets none. The copy is 0640 like the database. Once it is written,
+older `<path>.schema-*.bak` files go, because they predate data the daemon has since
+recorded. Retention never touches the copy. A file that cannot be copied, for example on a
+full disk, is not migrated: the open throws and the daemon exits 1. The copy needs
+as much free disk as the database, once per upgrade that adds a migration.
 
 The file holds every payload, result and transcript, so `openDatabase` creates it 0640
 whatever the umask. It also clears the other-user bits of an existing file, `-wal` or

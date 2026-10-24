@@ -17,6 +17,7 @@ place; this page is for operating it afterwards.
   schemas/*.json         result schemas for agent tasks
 /var/lib/247-agent/
   state.db               SQLite: events, runs, state, the cost ledger, transcripts
+  state.db.schema-<n>.bak the database as it was before the last upgrade that migrated it
   repos/                 base checkouts for agent worktrees
   work/<run_id>/         per-run agent workspaces, swept by retention
 /run/247-agent/core.sock the API socket, created by the daemon with mode 0660
@@ -183,10 +184,12 @@ Choose a quiet moment: `oa runs ls --status running` shows what is in flight. Th
 restart gives those runs `shutdown.grace` to finish; an agent run that does not finish
 in time runs again from a fresh workspace after the restart.
 
-An upgrade can migrate `state.db` to a newer schema. An older release refuses to start
-on that file and logs `database schema version <n> is newer than this build's <m>`. This
-applies to both rollback paths below. Take a [backup](#backups) of `state.db` before you
-upgrade, and restore it if you roll back past such an upgrade.
+An upgrade can migrate `state.db` to a newer schema. Before it does, the daemon copies
+the database to `/var/lib/247-agent/state.db.schema-<n>.bak`, where `<n>` is the old schema
+version, and keeps only the newest such copy. An older release refuses to start on the
+migrated file and logs `database schema version <n> is newer than this build's <m>`. This
+applies to both rollback paths below. To roll back past such an upgrade,
+[restore](#backups) that copy. It holds nothing the daemon recorded after the upgrade.
 
 **Package.** Install the newer `.deb` or `.rpm`; the maintainer scripts restart a running
 service. Roll back by installing the previous file.
@@ -212,9 +215,10 @@ Do not mix the package and the installer on one machine: both own `/opt/247-agen
   /var/lib/247-agent/state.db ".backup /backup/state.db"`.
 - `/etc/credstore` holds the secrets; back it up where you back up root's files.
 
-To restore `state.db` from a `.backup` snapshot, stop the service first. Otherwise it
-reopens the file while you copy it. A copy taken with its `-wal` file goes back with that
-file instead of the `rm`.
+To restore `state.db` from a `.backup` snapshot or from the copy taken before a migration
+(`state.db.schema-<n>.bak`), stop the service first. Otherwise it reopens the file while
+you copy it. A copy taken with its `-wal` file goes back with that file instead of the
+`rm`.
 
 ```sh
 systemctl stop 247-agent

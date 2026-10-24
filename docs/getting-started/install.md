@@ -39,9 +39,10 @@ The package:
   manager never overwrites;
 - on a fresh install, enables and starts the service; on an upgrade, restarts it.
 
-To upgrade, install the newer file the same way. Back up `state.db` first: if the new
-version migrates the database, an older package refuses to start on it
-([backups](../operations/production.md#backups)). `apt remove` keeps your configuration,
+To upgrade, install the newer file the same way. If the new version migrates the
+database, an older package refuses to start on it. The daemon keeps a copy from before
+the migration for that case
+([upgrading and rolling back](../operations/production.md#upgrading-and-rolling-back)). `apt remove` keeps your configuration,
 the state database, any unit drop-ins and the user; `apt purge` removes those too.
 Secrets under `/etc/credstore` are never touched. Packages exist for `arm64` and
 `aarch64` as well.
@@ -76,8 +77,8 @@ sudo systemctl restart 247-agent
 ```
 
 If the new version migrated the database, the old one refuses to start on it. Restore
-the copy of `state.db` you took before the upgrade
-([backups](../operations/production.md#backups)).
+`/var/lib/247-agent/state.db.schema-<n>.bak`, the copy the daemon took before the
+migration ([backups](../operations/production.md#backups)).
 
 Options, passed after `sh -s --`:
 
