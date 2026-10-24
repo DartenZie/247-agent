@@ -17,17 +17,20 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** A release tarball with only what install.sh reads: VERSION and the two launchers. */
+/**
+ * A release tarball with only what install.sh reads: VERSION and the two launchers. Its
+ * entries are closed to other users, as a release built under umask 077 records them.
+ */
 function fakeRelease(): string {
   const tree = join(root, 'src', '247-agent-9.9.9');
   mkdirSync(join(tree, 'bin'), { recursive: true });
   writeFileSync(join(tree, 'VERSION'), `version=9.9.9\ntarget=${target}\nnode=22\n`);
-  chmodSync(tree, 0o755);
-  chmodSync(join(tree, 'bin'), 0o755);
-  chmodSync(join(tree, 'VERSION'), 0o644);
+  chmodSync(tree, 0o700);
+  chmodSync(join(tree, 'bin'), 0o700);
+  chmodSync(join(tree, 'VERSION'), 0o600);
   for (const name of ['247-agent-core', 'oa']) {
     writeFileSync(join(tree, 'bin', name), '#!/bin/sh\necho 9.9.9\n');
-    chmodSync(join(tree, 'bin', name), 0o755);
+    chmodSync(join(tree, 'bin', name), 0o700);
   }
   const tarball = join(root, 'release.tar.gz');
   const tar = spawnSync('tar', ['-czf', tarball, '-C', join(root, 'src'), '247-agent-9.9.9']);
@@ -36,7 +39,7 @@ function fakeRelease(): string {
 }
 
 describe.skipIf(process.platform === 'win32')('install.sh', () => {
-  it('installs a tree other users can run under a restrictive umask', () => {
+  it('installs a tree other users can run from a closed tarball under a restrictive umask', () => {
     const prefix = join(root, 'opt', '247-agent');
     const run = spawnSync(
       'sh',

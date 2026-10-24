@@ -29,9 +29,10 @@
 #                                                       with `managed_by: systemd`, enabled by hand
 #   /var/lib/247-agent, /run/247-agent                 by systemd (StateDirectory, RuntimeDirectory)
 set -eu
-# The tree is unpacked and copied under this umask, and the service user must be able to
-# read and run it; a caller's 027 or 077 would close it to that user. What must stay
-# closed (/etc/247-agent, the config) is created with an explicit mode.
+# The service user must be able to read and run the tree, and a caller's 027 or 077 would
+# close it to that user. sudo can impose its own umask (`Defaults umask=0077`), so what
+# goes through `root` sets its modes explicitly as well; what must stay closed
+# (/etc/247-agent, the config) is created with an explicit mode.
 umask 022
 
 version=${OA_VERSION:-}
@@ -94,6 +95,8 @@ if [ $needs_root = 1 ] && [ "$(id -u)" -ne 0 ]; then
   if command -v sudo > /dev/null 2>&1; then sudo=sudo; else die "run as root, or install sudo"; fi
 fi
 root() { $sudo "$@"; }
+# mkdir -p as root, with any directory it creates 755 whatever sudo's umask.
+root_mkdir() { root sh -c 'umask 022 && mkdir -p "$1"' sh "$1"; }
 
 sha256() {
   if command -v sha256sum > /dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
@@ -178,9 +181,11 @@ fi
 # --- stage the new version's tree ----------------------------------------------------
 say "installing 247-agent $version for $target into $tree"
 root rm -rf "$tree.new"
-root mkdir -p "$(dirname "$tree")"
+root_mkdir "$(dirname "$tree")"
 root cp -R "$tree_src" "$tree.new"
 [ $needs_root = 1 ] && root chown -R 0:0 "$tree.new"
+# Readable by all, writable by the owner only, whatever the tarball or the umask held.
+root chmod -R u+rwX,go+rX,go-w "$tree.new"
 
 # --- the config must satisfy the new version before anything changes -----------------
 config=/etc/247-agent/agent.yaml
@@ -214,7 +219,7 @@ root rm -rf "$tree.old"
 
 # --- switch --------------------------------------------------------------------------
 root ln -sfn "$tree" "$prefix"
-root mkdir -p "$bin_dir"
+root_mkdir "$bin_dir"
 root ln -sfn "$prefix/bin/oa" "$bin_dir/oa"
 
 # --- service -------------------------------------------------------------------------
@@ -276,7 +281,8 @@ if [ -n "$current" ] && [ "$current" != "$version" ]; then
 else
   say "installed 247-agent $version ($prefix -> $tree)"
 fi
-say "oa: $bin_dir/oa ($("$tree/bin/oa" --version))"
+oa_version=$("$tree/bin/oa" --version) || die "$tree/bin/oa does not run"
+say "oa: $bin_dir/oa ($oa_version)"
 if [ $service = 1 ]; then
   say "config: /etc/247-agent    logs: journalctl -u 247-agent -o cat -f | jq"
   say "try:    sudo oa run hello --wait"
