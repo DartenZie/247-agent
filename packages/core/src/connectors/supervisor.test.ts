@@ -363,13 +363,15 @@ describe('ConnectorSupervisor', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // The program outlives its closed stdin, so the restart and the stop each wait out the
+  // transport's 2 s grace before the group SIGTERM: 4 s before any spawn, too close to 5 s (#208).
   it('stops every process a wrapper started, on restart and on stop (#196)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
     const { exec, pidFile } = wrapped(dir, `${FIXTURES}fake-mcp.ts`);
     const s = make([manifest({ exec, env: { PID_FILE: pidFile } })]);
     await expectNoLeftovers(s, 'fake', pidFile);
     rmSync(dir, { recursive: true, force: true });
-  });
+  }, 20_000);
 
   it('stops every process a wrapper started for a transport: none connector (#196)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
