@@ -47,6 +47,20 @@ reduced set.
 - A missing field is `null`, never an error: `${event.payload.missing}` renders empty
   in text and `null` as a whole value.
 
+### Writing a literal `${`
+
+Write `$${` where the text needs a literal `${`, such as a shell parameter expansion in
+an inline script or a code sample in a prompt. `$${` renders to `${` and nothing after
+it is read as an expression.
+
+```yaml
+cmd: ["bash", "-c", 'since="$${1:-0}"; echo "since $since, token has $${#TOKEN} chars"', "--", "${state.feed.since}"]
+```
+
+Other `$` signs need no escape: `$1`, `$$` and `$HOME` render as written. Without the
+escape, `${1:-0}` is not valid JMESPath and `oa validate` reports it. `${HOME}` is valid
+JMESPath, so it renders as an empty string; `oa validate` warns about it.
+
 > [!WARNING]
 > Inside a YAML flow mapping, the one written with braces, quote the template:
 > `{ since_uid: "${state.email.last_uid}" }`. Unquoted, the `{` of `${` would start a
@@ -114,7 +128,8 @@ Before the daemon runs anything, `oa validate` compiles every template and every
 expression and reports the file, the path and the mistake:
 
 - a template that does not parse: an unterminated `${`, an empty `${}`, invalid
-  JMESPath inside it;
+  JMESPath inside it. When the text reads as a shell expansion, the error says to
+  write `$${`;
 - a `filter` or `when` that is not valid JMESPath;
 - `secrets` outside an action, or used as a whole;
 - an `each` that is not a single `${…}`;

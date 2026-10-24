@@ -38,6 +38,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | `secret "x": CREDENTIALS_DIRECTORY is not set (not started by systemd?)` | the `systemd-credentials` backend outside systemd | run under the unit, or use the `env` or `file` backend for a local daemon |
 | `secret "x" is not available: …` | no `LoadCredential=x:…` line in the unit's drop-in | add it with `systemctl edit 247-agent`, then restart |
 | templates appear literally as `${…}` | an unquoted template inside a YAML flow mapping, or `${…}` used in `filter` or `when` | quote inside `{ … }`; `filter` and `when` take bare JMESPath |
+| `invalid JMESPath "1:-0": … a literal ${ is written $${` | a shell expansion such as `${1:-0}` in an inline script or prompt | write `$${1:-0}` |
 | `each must be a single ${…} template that renders to an array` | `each` has text around the template | `each: ${result.items}` only |
 | `secrets cannot be used here: they would be written to the store or an event` | `secrets` inside `emit` or `state_updates` | move the secret into the action |
 | `reference secrets by name (secrets.<name>), not as a whole` | `${secrets}` used whole | name the secret |

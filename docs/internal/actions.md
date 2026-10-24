@@ -53,6 +53,13 @@ secrets, env, run, item, steps}`:
 - A string that is exactly one `${…}` renders to the expression's raw value
   (`renderValue`); text around or between templates makes a string, with non-strings
   JSON-encoded and `null` rendered empty (`stringifyValue`).
+- `$${` is the escape for a literal `${` (`parseTemplate`): it becomes text and the
+  scanner continues after it, so an escaped string has no expressions and is never
+  `whole`. Only a `$` directly before `${` is consumed; `$$` and `$1` stay as written.
+  A parse error whose text reads as a shell expansion (`1:-0`, `#TOKEN`, `VAR:-x`) ends
+  with the escape hint, and the lint adds it to an unknown root that is the whole
+  expression (`${HOME}`). Static fields (`system`, `system_file`, `decide` questions)
+  are not rendered, so the escape does not apply there.
 - `secrets` may appear only inside `action`, and only as `secrets.<name>`:
   `config/schema.ts` runs `checkTemplates(action, {secrets: true})` and the same with
   `{secrets: false}` on `emit` and `state_updates` ("secrets cannot be used here: they

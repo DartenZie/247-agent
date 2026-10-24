@@ -74,7 +74,7 @@ export function lintTasks(
           `${base}.${formatPath(sub)}`,
           templateExprs(text).flatMap((e) => [
             ...lintJmespath(e),
-            ...(at === undefined ? [] : lintRoots(e, at)),
+            ...(at === undefined ? [] : lintRoots(e, at, true)),
           ]),
         );
       });
@@ -260,15 +260,20 @@ const SCOPE_ROOTS = [...ACTION_ROOTS, 'result', 'item', 'steps'];
  * A root of `expr` that is not in `roots` reads as null at run time, which is never what
  * was meant: a typo (`evnt`, `results`), a name of another position (`steps` in `emit`,
  * `result` in an action) or a scope name in a filter that sees the event (`event.payload`).
- * Each is named once per expression with what to write instead.
+ * Each is named once per expression with what to write instead. In a `template`, an
+ * unknown name alone (`${HOME}`) is probably a shell variable, so the hint adds the escape.
  */
-function lintRoots(expr: string, roots: readonly string[]): string[] {
+function lintRoots(expr: string, roots: readonly string[], template = false): string[] {
   const available = new Set(roots);
   return [...expressionRoots(expr)]
     .filter((r) => !available.has(r) && !LITERAL_LIKE.test(r) && !r.startsWith(PLACEHOLDER))
-    .map(
-      (r) => `${expr}: "${r}" is not available here, so it reads as null; ${rootHint(r, roots)}`,
-    );
+    .map((r) => {
+      const escape =
+        template && r === expr && ![...SCOPE_ROOTS, ...EVENT_FIELDS].includes(r)
+          ? `; a literal \${${r}} is written $\${${r}}`
+          : '';
+      return `${expr}: "${r}" is not available here, so it reads as null; ${rootHint(r, roots)}${escape}`;
+    });
 }
 
 /**

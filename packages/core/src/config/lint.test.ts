@@ -110,7 +110,7 @@ describe('lintTasks', () => {
         action: {
           kind: 'sequence',
           steps: [
-            { kind: 'shell', cmd: ['echo', '${evnt.payload.x}', '${steps[0]}'] },
+            { kind: 'shell', cmd: ['echo', '${evnt.payload.x}', '${steps[0]}', 'h=${HOME}'] },
             {
               kind: 'wait',
               for: { type: 'c.d', filter: "correlation_id == '${steps[0].id}' && evnt.x" },
@@ -172,6 +172,10 @@ describe('lintTasks', () => {
       [
         'tasks[0].action.steps[0].cmd[1]',
         'evnt.payload.x: "evnt" is not available here, so it reads as null; did you mean "event"?',
+      ],
+      [
+        'tasks[0].action.steps[0].cmd[3]',
+        'HOME: "HOME" is not available here, so it reads as null; the names available here are event, state, secrets, env, run, steps; a literal ${HOME} is written $${HOME}',
       ],
       [
         'tasks[0].action.steps[2].cmd[1]',
