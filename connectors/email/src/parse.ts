@@ -17,7 +17,9 @@ export async function parseMessage(source: Buffer, opts: ParseOptions): Promise<
 
 export function toEmailMessage(mail: ParsedMail, source: Buffer, opts: ParseOptions): EmailMessage {
   const from = firstAddress(mail.from);
-  const text = (mail.text ?? (mail.html === false ? '' : htmlToText(mail.html))).trimEnd();
+  const text = (
+    mail.text ?? (typeof mail.html === 'string' ? htmlToText(mail.html) : '')
+  ).trimEnd();
   const body = text.length > opts.maxBodyChars ? text.slice(0, opts.maxBodyChars) : text;
   const replyTo = firstAddress(mail.replyTo);
   return {
