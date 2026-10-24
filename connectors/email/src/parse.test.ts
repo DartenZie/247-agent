@@ -1,6 +1,7 @@
+import type { ParsedMail } from 'mailparser';
 import { describe, expect, it } from 'vitest';
 
-import { htmlToText, parseMessage } from './parse.js';
+import { htmlToText, parseMessage, toEmailMessage } from './parse.js';
 
 const raw = (lines: string[]): Buffer => Buffer.from(lines.join('\r\n') + '\r\n');
 
@@ -79,6 +80,28 @@ describe('parseMessage', () => {
     expect(m.message_id).toMatch(/^<sha256-[0-9a-f]{32}@missing-message-id>$/);
     const again = await parseMessage(source, { uid: 2, maxBodyChars: 10 });
     expect(again.message_id).toBe(m.message_id);
+  });
+
+  it('converts HTML itself when mailparser cannot', async () => {
+    const nested = '<div>'.repeat(1200) + 'hello' + '</div>'.repeat(1200);
+    const m = await parseMessage(
+      raw(['From: a@example.com', 'Content-Type: text/html; charset=utf-8', '', nested]),
+      { uid: 1, maxBodyChars: 1000 },
+    );
+    expect(m.body).toBe('hello');
+  });
+});
+
+describe('toEmailMessage', () => {
+  it('yields an empty body when the parsed mail has neither text nor html', () => {
+    // mailparser leaves `html` unset, not `false`, when it keeps cid: links.
+    const mail: ParsedMail = { attachments: [], headers: new Map(), headerLines: [] };
+    const m = toEmailMessage(mail, Buffer.from('From: a@example.com\r\n\r\n'), {
+      uid: 1,
+      maxBodyChars: 100,
+    });
+    expect(m.body).toBe('');
+    expect(m.truncated).toBe(false);
   });
 });
 
