@@ -33,10 +33,18 @@ jobs:
           OA_REQUIRE_BWRAP: '1' # the bwrap tests fail instead of skipping
       - run: node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
       - run: node scripts/check-docs.mjs
+      # Built as on a host with umask 077 that also checked out and installed under it
+      # (issue #211): the tarball and the .deb must still carry 755 and 644.
       - name: Release tarball builds and passes its smoke test
-        run: scripts/build-release.sh --skip-build
+        run: chmod -R go-rwx . && umask 077 && scripts/build-release.sh --skip-build
       - name: Packages build
-        run: scripts/build-package.sh
+        run: umask 077 && scripts/build-package.sh
+      - name: The tarball and the .deb are open to other users
+        run: |
+          modes='^(drwxr-xr-x|-rw-r--r--|-rwxr-xr-x|l[rwx-]{9})$'
+          closed=$(tar -tvzf dist-release/247-agent-*-linux-x64.tar.gz | awk -v m="$modes" '$1 !~ m')
+          closed=$closed$(dpkg-deb -c dist-release/247-agent_*_amd64.deb | awk -v m="$modes" '$6 !~ /^\.\/etc\// && $1 !~ m')
+          [ -z "$closed" ] || { echo "entries closed to other users:"; echo "$closed" | head -n 20; exit 1; }
       - name: The .deb installs, starts the service and runs the starter task
         run: |
           sudo apt-get install -y ./dist-release/247-agent_*_amd64.deb

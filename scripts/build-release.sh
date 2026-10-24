@@ -16,6 +16,10 @@
 # Defaults: the host's platform-arch, the Node version in .node-version, ./dist-release.
 # Node downloads are verified against nodejs.org's SHASUMS256.txt and cached in .cache/.
 set -euo pipefail
+# The tarball records the stage's modes and the packages copy them, so a build host's
+# umask 027 or 077 would close the tree to the service user (issue #211). Step 5 also
+# opens what a checkout made under such a umask brings in.
+umask 022
 
 sha256() {
   if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
@@ -111,14 +115,17 @@ cp -R packaging/etc "$stage/share/etc"
 cp LICENSE "$stage/LICENSE"
 printf 'version=%s\ntarget=%s\nnode=%s\n' "$version" "$target" "$node_version" > "$stage/VERSION"
 
-# 5. Smoke test when the tarball is for this machine.
+# 5. Readable by all, writable by the owner only, whatever the checkout held.
+chmod -R u+rwX,go+rX,go-w "$stage"
+
+# 6. Smoke test when the tarball is for this machine.
 if [ "$target" = "$(node -p 'process.platform + "-" + process.arch')" ]; then
   [ "$("$stage/bin/oa" --version)" = "$version" ]
   [ "$("$stage/bin/247-agent-core" --version)" = "$version" ]
   "$stage/bin/oa" validate "$stage/share/examples/agent.yaml" > /dev/null
 fi
 
-# 6. Pack.
+# 7. Pack.
 # bsdtar (macOS) would otherwise record Apple xattrs that GNU tar warns about on Linux.
 tar_flags=
 if tar --version 2> /dev/null | grep -q bsdtar; then tar_flags="--no-xattrs --no-mac-metadata"; fi

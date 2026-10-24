@@ -72,6 +72,10 @@ if [ -z "$nfpm" ]; then
 fi
 
 echo "packaging 247-agent $version for $arch (nfpm: $nfpm)"
+# nfpm copies the modes it finds, so open a stage that an older build-release.sh left
+# closed under a restrictive umask (issue #211); the units get theirs in nfpm.yaml.
+umask 022
+chmod -R u+rwX,go+rX,go-w "$stage"
 # nfpm expands environment variables only in some fields, so fill the template ourselves.
 config=$out/nfpm-$target.yaml
 sed -e "s|\${VERSION}|$version|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$stage|g" packaging/nfpm.yaml > "$config"

@@ -185,10 +185,18 @@ node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/conne
 
 if [ $systemd = always ]; then
   in_container ci '
+# As on a host with umask 077 that also checked out and installed under it (issue #211).
+chmod -R go-rwx .
+umask 077
 step "release tarball"
 scripts/build-release.sh --skip-build
 step "packages"
 scripts/build-package.sh
+step "the tarball and the .deb are open to other users"
+modes="^(drwxr-xr-x|-rw-r--r--|-rwxr-xr-x|l[rwx-]{9})\$"
+closed=$(tar -tvzf dist-release/247-agent-*-linux-*.tar.gz | awk -v m="$modes" "\$1 !~ m")
+closed=$closed$(dpkg-deb -c dist-release/247-agent_*.deb | awk -v m="$modes" "\$6 !~ /^\\.\\/etc\\// && \$1 !~ m")
+[ -z "$closed" ] || { echo "entries closed to other users:"; echo "$closed" | head -n 20; exit 1; }
 '
   in_container root '
 step "the .deb installs, starts the service and runs the starter task"
