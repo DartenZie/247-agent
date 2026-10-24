@@ -138,8 +138,19 @@ export const MIGRATIONS: readonly string[] = [
   `,
 ];
 
+/**
+ * Applies the pending migrations. A database a newer build has migrated is refused before
+ * anything is written: this build cannot know what those migrations changed.
+ */
 export function migrate(db: Database): void {
   const current = db.pragma('user_version', { simple: true }) as number;
+  if (current > MIGRATIONS.length) {
+    throw new Error(
+      `database schema version ${String(current)} is newer than this build's ` +
+        `${String(MIGRATIONS.length)}: run the release that migrated it, or restore a ` +
+        'backup taken before that upgrade',
+    );
+  }
   MIGRATIONS.forEach((sql, v) => {
     if (v < current) {
       return;

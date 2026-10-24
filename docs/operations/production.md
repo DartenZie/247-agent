@@ -197,6 +197,11 @@ ln -sfn /opt/247-agent-<previous version> /opt/247-agent
 systemctl restart 247-agent
 ```
 
+An upgrade can migrate `state.db` to a newer schema. An older release refuses to start
+on that file and logs `database schema version <n> is newer than this build's <m>`. To
+roll back past such an upgrade, restore a [backup](#backups) of `state.db` taken before
+it, or keep the newer release. Take that backup before you upgrade.
+
 Do not mix the package and the installer on one machine: both own `/opt/247-agent`.
 
 ## Backups

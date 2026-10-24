@@ -9,7 +9,11 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order and set `PRAGMA user_version` to the number applied;
-nine ship, so a current database reads `user_version = 9`. `store.transaction(fn)` is
+nine ship, so a current database reads `user_version = 9`. A `user_version` above the
+number this build ships means a newer release migrated the file: `migrate` throws before
+it writes, `openDatabase` closes the handle, and the daemon exits 1 with both numbers in
+the message. Nothing copies the file before a migration; the operator's backup is the way
+back. `store.transaction(fn)` is
 `BEGIN IMMEDIATE`, which takes the write lock up front so a batch never deadlocks against
 a reader that wants to write.
 

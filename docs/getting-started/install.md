@@ -73,6 +73,10 @@ sudo ln -sfn /opt/247-agent-<old version> /opt/247-agent
 sudo systemctl restart 247-agent
 ```
 
+If the new version migrated the database, the old one refuses to start on it. Restore a
+copy of `state.db` from before the upgrade
+([backups](../operations/production.md#backups)).
+
 Options, passed after `sh -s --`:
 
 | Option | Effect |
