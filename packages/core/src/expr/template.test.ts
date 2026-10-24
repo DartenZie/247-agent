@@ -136,6 +136,18 @@ describe('collectTemplateRefs', () => {
     expect(refs.wholeSecrets).toEqual(['${secrets}', '${secrets.*}']);
   });
 
+  it('reads through a leading @, which is the scope, and flags other uses of the scope', () => {
+    const refs = collectTemplateRefs(['${@.secrets.token}', '${@.event.id}']);
+    expect([...refs.roots].sort()).toEqual(['event', 'secrets']);
+    expect(refs.secrets).toEqual(['token']);
+    expect(refs.wholeScope).toEqual([]);
+    const opaque = collectTemplateRefs(['${[@][0].secrets.token}', '${@}', '${length(@)}']);
+    expect(opaque.wholeScope).toEqual(['${[@][0].secrets.token}', '${@}', '${length(@)}']);
+    // `@` inside a filter or `&expr` is the element, not the scope.
+    expect(collectTemplateRefs('${event.payload.xs[?@ > `1`]}').wholeScope).toEqual([]);
+    expect(collectTemplateRefs('${sort_by(event.payload.xs, &@)}').wholeScope).toEqual([]);
+  });
+
   it('reports templates that do not compile', () => {
     const refs = collectTemplateRefs({ a: '${ event[ }', b: 'ok' });
     expect(refs.errors).toEqual([

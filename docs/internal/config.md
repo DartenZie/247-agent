@@ -141,7 +141,8 @@ steps (their `when` too) and `result` in an `agent`'s `post` gates; `emit` and
 `payload` of a rule with `each`. In an action only the fields its runner renders are
 checked (`RENDERED`: an `llm`'s `output_schema` is sent as written). `expressionRoots`
 skips `&expr`, which reads each element; `collectRefs` still collects `secrets` there,
-since `map(&secrets.x, [@])` reads the scope. These are the scopes the executor, `sequence.ts` and
+since `map(&secrets.x, [@])` reads the scope. A leading `@.` is dropped (`@.event.id` has the root `event`); any other
+`@` outside `&expr` and filters lands in `wholeScope`, which `wait` refuses. These are the scopes the executor, `sequence.ts` and
 `agent.ts` build (`withScope`); a new scope key or position changes the tables at the
 top of `lint.ts`. The hint names the nearest known name (exact, or within an edit distance
 of a third of the root's length, at most 2) and where that name exists: `steps` in `emit`
