@@ -70,7 +70,10 @@ clean up on purge. The connector template unit is installed, never enabled.
 installs or upgrades from the GitHub release: it picks the tarball for the machine's
 architecture, verifies the checksum, unpacks to `/opt/247-agent-<version>` with
 `/opt/247-agent` as a symlink, links `oa` into `/usr/local/bin`, creates the user, writes
-a starter `/etc/247-agent` once, installs the units and starts the service. On an
+a starter `/etc/247-agent` once, installs the units and starts the service. It sets
+umask 022 and makes the tree `u+rwX,go+rX,go-w` after the copy, so neither a caller's
+umask nor sudo's (`Defaults umask=0077`) nor a tarball built under 077 can close the
+tree to the service user. `/etc/247-agent` gets its 750 and 640 from explicit modes. On an
 upgrade the new version's `oa validate` must accept the existing config before the
 symlink moves; the unit file is replaced, the config never touched, and the service
 restarted unless `--no-restart`. Options: `--version`, `--from <tarball>`, `--prefix`,
