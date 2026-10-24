@@ -167,6 +167,28 @@ describe('openStore', () => {
   });
 });
 
+describe('Store.probeWrite', () => {
+  it('commits the health cursor and gives up on a held lock within 250 ms', () => {
+    store.probeWrite(1234);
+    expect(store.cursors.get('health')).toBe(1234);
+    const other = new Database(join(dir, 'state.db'));
+    try {
+      other.exec('BEGIN IMMEDIATE');
+      const started = Date.now();
+      expect(() => {
+        store.probeWrite(5678);
+      }).toThrow(/locked/);
+      expect(Date.now() - started).toBeLessThan(2000);
+      other.exec('ROLLBACK');
+    } finally {
+      other.close();
+    }
+    expect(store.db.pragma('busy_timeout', { simple: true })).toBe(5000);
+    store.probeWrite(5678);
+    expect(store.cursors.get('health')).toBe(5678);
+  });
+});
+
 describe('EventStore', () => {
   it('inserts, reads back with parsed payload and lists in seq order', () => {
     const a = store.events.insert(event({ id: 'evt_a' }));

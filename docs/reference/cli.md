@@ -17,7 +17,7 @@ works, `oa --json run hello` is an unknown command.
 | Code | When |
 |---|---|
 | 0 | the command did what it was asked |
-| 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `connector restart` left the connector not `up`, `validate` found a problem |
+| 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `health` is not `ok`, `connector restart` left the connector not `up`, `validate` found a problem |
 | 2 | usage: an unknown command or flag, a missing argument, an unreadable or invalid JSON file, no arguments at all, or the daemon answered 400 (a bad event type, pattern or `--since`) |
 
 An unreachable socket prints `cannot connect to the daemon at <path> (<code>). Is
@@ -206,6 +206,21 @@ the issues on stderr followed by `reload refused: the previous config stays acti
 respawned …` when connectors changed, and `restart required for: db, socket, secrets`
 on stderr when one of those three changed (still exit 0). Flags: `--json`, `--socket`.
 
+### `oa health [options]`
+
+Prints `GET /v1/health`: a status line, then one tab-separated line per check.
+
+```
+<ok|degraded|failing>  pid=<pid>  uptime=<s>s  tasks=<n>  runs=<n> pending, <n> in flight
+dispatcher  <ok|failing>[ since=<timestamp>][ error="..."]
+database    <ok|failing>[ error="..."]
+connectors  <ok|degraded|failing>  up=<n>/<total>[ down=<name>,<name>]
+```
+
+Exit 0 when the status is `ok`; 1 when it is `degraded` or `failing`, or the daemon cannot
+be reached. [Monitoring](../operations/monitoring.md#health) says what each status means.
+Flags: `--json`, `--socket`.
+
 ### `oa metrics [options]`
 
 Prints `GET /metrics`, the Prometheus text exposition, to stdout. Only `--socket`. Exit 0.
@@ -246,6 +261,13 @@ removed with a `api.stale_socket_removed` warning. The socket is created with mo
 |---|---|
 | `SIGHUP` | reload: the same as `oa reload`, outcome in the log (`daemon.reloaded`, `daemon.reload_invalid`, `core.config_invalid`, `daemon.reload_needs_restart`) |
 | `SIGTERM`, `SIGINT` | stop: no new runs start, runs in flight get `shutdown.grace` to finish, the rest are aborted and run again on the next start; exit 0, or 1 if the stop is not done 10 s after the grace window |
+
+Under a systemd unit with `Type=notify` (`NOTIFY_SOCKET` set), the daemon reports
+`READY=1` once it has loaded its configuration, opened the database and bound the
+socket (log line `systemd.ready`), `WATCHDOG=1` every third of `WatchdogSec=` while its
+event loop runs, and `STOPPING=1` on SIGTERM or SIGINT. It sends each one with
+`systemd-notify`, so the unit needs `NotifyAccess=all`. The daemon passes
+`NOTIFY_SOCKET` to none of the programs it starts.
 
 The daemon sets `OA_HOME` to its install root and puts `<root>/bin` and its own Node
 first on `PATH` for everything it spawns. Exit codes: 0 after a clean stop, 1 on a

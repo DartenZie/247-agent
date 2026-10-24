@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createLogger, startDaemon, type Daemon } from '@247-agent/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { main } from './cli.js';
 import type { Io } from './io.js';
@@ -453,6 +453,31 @@ describe('oa reload', () => {
       tasks: 3,
     });
     expect(await oa('reload', 'extra')).toBe(2);
+  });
+});
+
+describe('oa health', () => {
+  it('prints each check and exits 0 when ok, 1 when failing', async () => {
+    expect(await oa('health')).toBe(0);
+    expect(out[0]).toMatch(/^ok\tpid=\d+\tuptime=\d+s\ttasks=3\truns=0 pending, 0 in flight$/);
+    expect(out.slice(1)).toEqual(['dispatcher\tok', 'database\tok', 'connectors\tok\tup=0/0']);
+    out = [];
+    vi.spyOn(daemon.core.store, 'probeWrite').mockImplementation(() => {
+      throw new Error('database or disk is full');
+    });
+    expect(await oa('health')).toBe(1);
+    expect(out[0]).toMatch(/^failing\t/);
+    expect(out[2]).toBe('database\tfailing error="database or disk is full"');
+    out = [];
+    expect(await oa('health', '--json')).toBe(1);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ ok: false, status: 'failing' });
+    vi.restoreAllMocks();
+    expect(await oa('health', 'extra')).toBe(2);
+  });
+
+  it('exits 1 when the daemon cannot be reached', async () => {
+    expect(await main(['health', '--socket', join(dir, 'nope.sock')], io)).toBe(1);
+    expect(err[0]).toMatch(/cannot connect to the daemon/);
   });
 });
 

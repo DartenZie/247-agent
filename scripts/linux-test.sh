@@ -201,11 +201,24 @@ closed=$closed$(dpkg-deb -c dist-release/247-agent_*.deb | awk -v m="$modes" "\$
   in_container root '
 step "the .deb installs, starts the service and runs the starter task"
 apt-get install -y ./dist-release/247-agent_*_"$(dpkg --print-architecture)".deb
-for _ in $(seq 30); do systemctl is-active --quiet 247-agent && break; sleep 1; done
+# Type=notify: the start in postinst returned only once the daemon was ready.
 systemctl is-active 247-agent || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
-# active means the process started; the socket appears once the daemon has loaded its config.
-for _ in $(seq 30); do [ -S /run/247-agent/core.sock ] && break; sleep 1; done
 [ -S /run/247-agent/core.sock ] || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
+oa health
+step "the watchdog restarts a daemon whose event loop stops"
+mkdir -p /etc/systemd/system/247-agent.service.d
+printf "[Service]\nWatchdogSec=3\nTimeoutAbortSec=5\n" > /etc/systemd/system/247-agent.service.d/watchdog-test.conf
+systemctl daemon-reload
+systemctl restart 247-agent
+pid=$(systemctl show -p MainPID --value 247-agent)
+kill -STOP "$pid"
+for _ in $(seq 30); do new=$(systemctl show -p MainPID --value 247-agent); [ "$new" != 0 ] && [ "$new" != "$pid" ] && systemctl is-active --quiet 247-agent && break; sleep 1; done
+[ "$new" != 0 ] && [ "$new" != "$pid" ] || { journalctl -u 247-agent --no-pager -n 50; exit 1; }
+journalctl -u 247-agent --no-pager | grep "Watchdog timeout" > /dev/null
+rm -r /etc/systemd/system/247-agent.service.d
+systemctl daemon-reload
+systemctl restart 247-agent
+oa health
 oa --version
 oa run hello --wait
 # The state directory and the database are closed to other local users (issue #42).

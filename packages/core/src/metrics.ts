@@ -257,6 +257,10 @@ export class Metrics {
     'Events the dispatcher dropped: deeper than limits.max_event_depth (depth), or their chain past limits.max_runs_per_chain (chain_runs)',
     ['reason'],
   );
+  readonly dispatchFailures = this.registry.counter(
+    'oa_dispatch_failures_total',
+    'Dispatcher drains that threw; events wait past the cursor until one succeeds',
+  );
   readonly runsQueued = this.registry.counter('oa_runs_queued_total', 'Runs queued, by task', [
     'task',
   ]);

@@ -40,6 +40,7 @@ oa cost [--by task|model|provider|day] [--since 7d] [--json]
 oa connector list [--json]                     # state, pid, restarts per connector
 oa connector restart <name> [--json]           # kill, re-resolve secrets, respawn; exit 1 if not up after
 oa reload [--json]                             # re-read agent.yaml + manifests + tasks, all or nothing; exit 1 when refused
+oa health [--json]                             # ok | degraded | failing per check (dispatcher, database, connectors); exit 0 only when ok
 oa metrics                                     # GET /metrics (Prometheus text)
 ```
 

@@ -40,13 +40,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Type=notify
+NotifyAccess=all
 User=247-agent
 Group=247-agent
 ExecStart=/opt/247-agent/bin/247-agent-core --config /etc/247-agent/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
+TimeoutStartSec=300
 TimeoutStopSec=90
+WatchdogSec=60
 RuntimeDirectory=247-agent
 StateDirectory=247-agent
 StateDirectoryMode=0750
@@ -61,10 +65,14 @@ WantedBy=multi-user.target
 
 | Line | What it does for you |
 |---|---|
+| `Type=notify` | `systemctl start 247-agent` returns only once the daemon has loaded its configuration, opened the database and bound its socket; a start that fails returns an error, and units ordered `After=247-agent.service` start after that point |
+| `NotifyAccess=all` | the daemon sends its notifications through `systemd-notify`, a child process |
 | `User=` / `Group=` | the daemon and every connector it starts run as the unprivileged `247-agent` user |
 | `ExecReload=` | `systemctl reload 247-agent` sends SIGHUP, which re-reads all configuration (below) |
 | `Restart=always`, `RestartSec=5` | a crash restarts the daemon after five seconds; runs that were in flight are recovered (below) |
+| `TimeoutStartSec=300` | a start may take five minutes, which leaves time for a database migration after an upgrade |
 | `TimeoutStopSec=90` | systemd kills the daemon if a stop takes longer than 90 seconds; keep it above `shutdown.grace` plus 10 seconds (below) |
+| `WatchdogSec=60` | the daemon reports that it is alive every 20 seconds; if it stops for a minute, systemd kills it and `Restart=always` starts it again |
 | `RuntimeDirectory=` | creates `/run/247-agent` for the socket at start |
 | `StateDirectory=` | creates `/var/lib/247-agent`, owned by the service user |
 | `StateDirectoryMode=` | other local users cannot open `/var/lib/247-agent`, so they cannot read the database or the agent workspaces |

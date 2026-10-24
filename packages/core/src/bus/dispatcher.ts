@@ -35,6 +35,15 @@ export interface DispatchResult {
 
 export type QueuedListener = (runs: readonly RunRecord[]) => void;
 
+/** The last drain, for `GET /v1/health`: `ok` until a drain throws, again after one succeeds. */
+export interface DispatcherHealth {
+  ok: boolean;
+  /** The error of the last drain when it failed. */
+  error: string | null;
+  /** When drains started failing; `null` while they succeed. */
+  failing_since: string | null;
+}
+
 const EMPTY_CONFIG: CompiledConfig = { tasks: [], byName: new Map() };
 
 interface CompiledWait {
@@ -79,6 +88,7 @@ export class Dispatcher {
   private wakePending = false;
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
+  private lastHealth: DispatcherHealth = { ok: true, error: null, failing_since: null };
 
   constructor(opts: DispatcherOptions) {
     this.store = opts.store;
@@ -435,13 +445,26 @@ export class Dispatcher {
     }
   }
 
+  health(): DispatcherHealth {
+    return { ...this.lastHealth };
+  }
+
   private safeDrain(): void {
     try {
       this.drain();
+      if (!this.lastHealth.ok) {
+        this.log.info('dispatch.recovered', { failing_since: this.lastHealth.failing_since });
+      }
+      this.lastHealth = { ok: true, error: null, failing_since: null };
     } catch (err) {
-      this.log.error('dispatch.failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const error = err instanceof Error ? err.message : String(err);
+      this.metrics.dispatchFailures.inc();
+      this.log.error('dispatch.failed', { error });
+      this.lastHealth = {
+        ok: false,
+        error,
+        failing_since: this.lastHealth.failing_since ?? this.clock.now().toISOString(),
+      };
     }
   }
 }

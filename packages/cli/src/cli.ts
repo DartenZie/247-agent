@@ -4,6 +4,7 @@ import { connector, CONNECTOR_USAGE } from './commands/connector.js';
 import { cost, COST_USAGE } from './commands/cost.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
 import { events, EVENTS_USAGE } from './commands/events.js';
+import { health, HEALTH_USAGE } from './commands/health.js';
 import { metrics, METRICS_USAGE } from './commands/metrics.js';
 import { reload, RELOAD_USAGE } from './commands/reload.js';
 import { run, RUN_USAGE } from './commands/run.js';
@@ -25,6 +26,7 @@ commands:
   connector list|restart <name>      show connectors / respawn one (re-reads its secrets)
   cost [--by task|model|provider|day] [--since 7d]   sum the model-call ledger
   reload                             re-read agent.yaml, manifests and tasks files (like SIGHUP)
+  health                             ok, degraded or failing, per check; exit 0 only when ok
   metrics                            print the daemon's Prometheus metrics
   help [command]
   version                            print the version
@@ -42,6 +44,7 @@ const COMMAND_USAGE: Record<string, string> = {
   connector: CONNECTOR_USAGE,
   cost: COST_USAGE,
   reload: RELOAD_USAGE,
+  health: HEALTH_USAGE,
   metrics: METRICS_USAGE,
 };
 
@@ -67,6 +70,8 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return await cost(rest, io);
       case 'reload':
         return await reload(rest, io);
+      case 'health':
+        return await health(rest, io);
       case 'metrics':
         return await metrics(rest, io);
       case 'version':
