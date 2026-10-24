@@ -35,7 +35,7 @@ export interface Template {
   readonly secrets: readonly string[];
   /** True when an expression uses `secrets` other than as `secrets.<name>`. */
   readonly wholeSecrets: boolean;
-  /** True when an expression reads the scope itself through `@` (`${@}`, `${[@][0]}`). */
+  /** True when an expression reads the scope itself (`${@}`, `${[@][0]}`, `${*}`). */
   readonly wholeScope: boolean;
   render(scope: TemplateScope): unknown;
   renderText(scope: TemplateScope): string;
@@ -96,7 +96,8 @@ function stripCurrent(node: AstNode | null | undefined): AstNode | null | undefi
  * Collects the root identifiers of an expression: identifiers that resolve against the
  * scope itself, not against an intermediate value (`a` in `a.b`, `x` and `y` in
  * `x == y`, `z` in `length(z)`). Also records `secrets.<name>` references, and any other
- * `@` that is the scope rather than an element (`inElement`, set inside `&expr`).
+ * `@` or projection that reads the scope rather than an element (`inElement`, set inside
+ * `&expr`).
  */
 function collectRefs(
   node: AstNode | null | undefined,
@@ -111,6 +112,8 @@ function collectRefs(
   const kids = node.children ?? [];
   switch (node.type) {
     case 'Current':
+    case 'Identity':
+      // `@`, or the implicit left side of a top-level `*`, `[*]` or `[0]`: the scope itself.
       if (!inElement) {
         refs.wholeScope = true;
       }
@@ -167,7 +170,7 @@ function collectRefs(
       }
       return;
     default:
-      // Literal, Identity, Index, Slice: no references.
+      // Literal, Index, Slice: no references.
       return;
   }
 }
@@ -366,7 +369,7 @@ export interface TemplateRefs {
   secrets: string[];
   /** Templates that use `secrets` other than as `secrets.<name>`. */
   wholeSecrets: string[];
-  /** Templates that read the scope itself through `@`, which holds `secrets` in an action. */
+  /** Templates that read the scope itself (`@`, `*`), which holds `secrets` in an action. */
   wholeScope: string[];
   /** Template strings that failed to compile, with the error. */
   errors: { template: string; message: string }[];

@@ -143,6 +143,9 @@ describe('collectTemplateRefs', () => {
     expect(refs.wholeScope).toEqual([]);
     const opaque = collectTemplateRefs(['${[@][0].secrets.token}', '${@}', '${length(@)}']);
     expect(opaque.wholeScope).toEqual(['${[@][0].secrets.token}', '${@}', '${length(@)}']);
+    const projected = collectTemplateRefs(['${*.token | [0]}', '${[*]}', '${map(&@, *)}']);
+    expect(projected.wholeScope).toEqual(['${*.token | [0]}', '${[*]}', '${map(&@, *)}']);
+    expect(collectTemplateRefs('${event.payload.xs[*].id}').wholeScope).toEqual([]);
     // `@` inside a filter or `&expr` is the element, not the scope.
     expect(collectTemplateRefs('${event.payload.xs[?@ > `1`]}').wholeScope).toEqual([]);
     expect(collectTemplateRefs('${sort_by(event.payload.xs, &@)}').wholeScope).toEqual([]);

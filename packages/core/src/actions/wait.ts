@@ -12,7 +12,7 @@ import { NonRetryableError, type ActionContext, type ResumeInfo } from './types.
  * passes `for.filter` (a JMESPath over the event, templated first: `${event.correlation_id}`
  * is the *current* run's event, and every value lands as data, `expr/filter-template.ts`)
  * or `timeout` elapses. The wait survives restarts. The rendered filter is written to the
- * wait record, so `secrets` are refused in it, and so is `@` as the whole scope.
+ * wait record, so `secrets` are refused in it, and so is any read of the whole scope (`@`, `*`).
  */
 export const WaitAction = z.strictObject({
   kind: z.literal('wait'),
@@ -38,7 +38,7 @@ export const WaitAction = z.strictObject({
               path: ['filter'],
               message:
                 refs.wholeScope.length > 0
-                  ? 'secrets cannot be used here: @ is the whole scope, secrets included, and the rendered filter is written to the store'
+                  ? 'secrets cannot be used here: this reads the whole scope, secrets included, and the rendered filter is written to the store'
                   : 'secrets cannot be used here: the rendered filter is written to the store',
             });
           }

@@ -151,8 +151,8 @@ the first `\'`. A value inside backticks is JSON. A value inside `"…"` is a fi
 A bare value is a backtick JSON literal. A backtick in a value becomes `\u0060`. The
 schema refuses `secrets` in the filter, because the rendered text is written to the
 store. At the top of a template `@` is the scope, secrets included: `${@.secrets.x}`
-counts as `secrets.x`, and any other `@` there (`${@}`, `${[@][0].secrets.x}`) is
-refused too. Arming happens inside the suspend transaction, which also checks events
+counts as `secrets.x`. Any other read of the whole scope there is refused too: an `@`
+(`${@}`, `${[@][0].secrets.x}`) or a top-level projection (`${*.x | [0]}`). Arming happens inside the suspend transaction, which also checks events
 published after the run's trigger up to the dispatch cursor, so a reply that raced the
 asking step re-queues the run on the spot. That check skips the wait's `consumed`
 events, the ones that ended the run's earlier waits. One event therefore never ends two

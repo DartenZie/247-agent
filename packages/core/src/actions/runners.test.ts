@@ -163,8 +163,15 @@ describe('runWait', () => {
     });
     expect(withSecret.success).toBe(false);
     expect(JSON.stringify(withSecret.error?.issues)).toContain('secrets cannot be used here');
-    // `@` at the top of a template is the whole scope, secrets included.
-    for (const expr of ['@.secrets.token', '[@][0].secrets.token', '@']) {
+    // `@` and a projection at the top of a template read the whole scope, secrets included.
+    for (const expr of [
+      '@.secrets.token',
+      '[@][0].secrets.token',
+      '@',
+      '*.token | [0]',
+      '*',
+      'map(&@, *)',
+    ]) {
       const viaCurrent = WaitAction.safeParse({
         kind: 'wait',
         for: { type: 'a.b', filter: `payload.token == '\${${expr}}'` },
