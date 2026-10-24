@@ -21,7 +21,8 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| a cron task never runs | a previous run is still queued, running or waiting and `overlap` is `skip`; the log says `cron.skipped_overlap` | `oa runs ls --task <name>`: finish or fix the stuck run, or set `overlap: allow` |
+| a cron task never runs | a previous run is still queued, running or waiting and `overlap` is `skip`; the log says `cron.skipped_overlap` | `oa runs ls --task <name>`: end the stuck run with `oa runs cancel <id>`, or set `overlap: allow` |
+| a task starts no runs at all | it is paused; the log says `task.skipped_paused` and `oa tasks ls` says `paused since …` | `oa tasks resume <name>` |
 | a cron task ran nothing while the daemon was down | missed ticks are not replayed | `oa run <task>` once |
 | an event task never runs | the filter is false or throws (`trigger.filter_error` in the log); the type does not match (`*` is exactly one segment); the event came from the task's own runs; or the event is too deep in a chain (`event.depth_exceeded`) | `oa emit <type> payload.json` and `oa runs ls`; compare numbers and booleans with backticks in the filter; a task never triggers on events its own runs produced |
 | `oa validate` says `a task never triggers on its own "task.x.succeeded" event` | the trigger names the task's own lifecycle event | trigger on a domain event the task emits, or on another task's event |

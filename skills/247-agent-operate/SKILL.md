@@ -31,6 +31,9 @@ oa emit <type> [payload.json|-] [--source s] [--dedup-key k] [--parent evt] [--c
 oa runs ls [--status s] [--task t] [-n N] [--json]   # newest runs: id, task, status, created, duration, error
 oa runs show <id> [--json]                     # trigger event, timings, ledger rows, result or error; exit 1 if failed
 oa runs logs <id> [--follow] [--json]          # the agent transcript (prompt, messages, tool calls, permissions, result)
+oa runs cancel <id> [--json]                   # end a queued, running or waiting run as cancelled; publishes task.<name>.cancelled
+oa tasks ls [--json]                           # configured tasks: name, trigger, active or paused since <time>
+oa tasks pause|resume <name> [--json]          # stop or restart new runs of a task; in-flight runs carry on; survives restarts
 oa events tail [--type t] [-n N] [--follow] [--json]   # newest events in order; --type takes a trigger pattern
 oa events show <id> [--json]
 oa cost [--by task|model|provider|day] [--since 7d] [--json]

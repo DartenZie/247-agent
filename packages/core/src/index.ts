@@ -105,7 +105,13 @@ export {
   type CompiledTask,
 } from './bus/matcher.js';
 export { Dispatcher, type DispatchResult, type QueuedListener } from './bus/dispatcher.js';
-export { runTaskManually, UnknownTaskError, type ManualInput } from './bus/manual.js';
+export {
+  runTaskManually,
+  TaskPausedError,
+  UnknownTaskError,
+  type ManualInput,
+} from './bus/manual.js';
+export { listTasks, pauseTask, resumeTask, type TaskEntry } from './bus/pause.js';
 export { CronScheduler, makeTickEvent, type ScheduledJob } from './scheduler/cron.js';
 export {
   isRetryable,
@@ -299,6 +305,8 @@ export {
 } from './actions/sequence.js';
 export {
   Executor,
+  RunCancelledError,
+  RunNotActiveError,
   RunStoppedError,
   RunSuspendedError,
   RunTimeoutError,

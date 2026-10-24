@@ -120,7 +120,7 @@ export function compileConfig(file: TasksFileConfig): CompiledConfig {
 /**
  * Event types that get their own `type` label on `oa_events_published_total`: the core's
  * own (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
- * `retention.workspace_kept`, `task.<name>.succeeded|failed`) and
+ * `retention.workspace_kept`, `task.<name>.succeeded|failed|cancelled`) and
  * every type a task names exactly in a trigger, a `wait` or an `emit` rule. Connectors and
  * `POST /v1/events` can publish any type, so everything else (including types only a
  * wildcard matches) is counted as `other` and the label stays bounded by the config.
@@ -141,6 +141,7 @@ export function labelledEventTypes(config: CompiledConfig): ReadonlySet<string> 
   for (const { name, config: task } of config.tasks) {
     types.add(`task.${name}.succeeded`);
     types.add(`task.${name}.failed`);
+    types.add(`task.${name}.cancelled`);
     if (task.trigger.kind === 'event') {
       add(task.trigger.type);
       task.trigger.type_any?.forEach(add);

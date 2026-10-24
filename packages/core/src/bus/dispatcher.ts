@@ -46,6 +46,9 @@ function filterView(event: EventRecord): Omit<EventRecord, 'seq'> {
  * transaction per batch: read, match, insert runs, advance cursor. A crash before commit
  * replays the batch; `UNIQUE(task, event_id)` makes the replay a no-op.
  *
+ * A paused task (`store.pauses`) matches nothing: its events start no run, and they are
+ * not replayed when it is resumed.
+ *
  * Also ends waits (docs/internal/actions.md): an event matching a `waiting` run's wait, or a wait
  * past its `expires_at`, marks the wait resolved and re-queues the run, which is handed to
  * the executor like any other queued run.
@@ -223,6 +226,7 @@ export class Dispatcher {
         return { scanned: 0, queued };
       }
       let waits = this.compileWaits();
+      const paused = new Set(this.store.pauses.list().map((p) => p.task));
       for (const event of events) {
         // Ending a wait continues a run already in the chain; only starting new runs is a
         // hop the depth guard limits. So a too-deep event still resumes its waiter (an
@@ -254,6 +258,10 @@ export class Dispatcher {
         }
         for (const task of this.config.tasks) {
           if (!task.matches(event, this.log)) {
+            continue;
+          }
+          if (paused.has(task.name)) {
+            this.log.info('task.skipped_paused', { task: task.name, event_id: event.id });
             continue;
           }
           if (

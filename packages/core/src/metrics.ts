@@ -237,6 +237,10 @@ export class Metrics {
   ]);
   readonly uptime = this.registry.gauge('oa_uptime_seconds', 'Seconds since the daemon started');
   readonly configTasks = this.registry.gauge('oa_config_tasks', 'Tasks in the active config');
+  readonly tasksPaused = this.registry.gauge(
+    'oa_tasks_paused',
+    'Tasks in the active config that are paused',
+  );
   readonly configReloads = this.registry.counter(
     'oa_config_reloads_total',
     'Config reloads (SIGHUP, POST /v1/reload) by result',
@@ -263,7 +267,7 @@ export class Metrics {
   );
   readonly runsFinished = this.registry.counter(
     'oa_runs_finished_total',
-    'Runs that reached succeeded or failed, by task and status',
+    'Runs that reached succeeded, failed or cancelled, by task and status',
     ['task', 'status'],
   );
   readonly runDuration = this.registry.histogram(

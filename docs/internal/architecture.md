@@ -62,9 +62,9 @@ reads its settings through a `configure()` seam so a reload applies them live
 | Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file on reload changes nothing; `db`, `socket`, `secrets` are fixed for the process |
 | Scheduler | `scheduler/cron.ts` | One croner job per cron task and poller; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Missed ticks are never replayed; a duplicate boundary is dropped by the key |
 | Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
-| Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events, matches tasks, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
+| Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events, matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
 | Matcher | `bus/matcher.ts` | Trigger matching and the labelled event-type set for metrics | A throwing filter is a non-match (`trigger.filter_error`) |
-| Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing |
+| Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, cancel, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing |
 | Action runners | `actions/*.ts` | One file per kind; `core.ts` `defaultRunners` maps `kind` to runner | A runner reaches the world only through `ActionContext` ([`actions.md`](actions.md)) |
 | State KV | `store/state.ts` | `state(namespace, key, value)` for tasks (`${state.<ns>.<key>}`, `state_updates`) and connectors (`/v1/state`) | Tasks see a snapshot taken at run start |
 | LLM port and ledger | `llm/service.ts`, `store/ledger.ts` | Prices, budgets and ledgers every model call; the daily breaker | No model call outside the port ([`model-actions.md`](model-actions.md)) |
@@ -85,8 +85,10 @@ events after the `dispatch` cursor:
    is truthy (`endWait('matched', event)`); if `depth > limits.max_event_depth`
    (default 32) count it dropped, log `event.depth_exceeded` and start no run; else
    match tasks; for a `cron.tick` with `overlap: skip`, skip while the task has a run
-   in `queued`, `running` or `waiting` (`cron.skipped_overlap`); insert a `queued` run
-   with `INSERT OR IGNORE` on `UNIQUE(task, event_id)`.
+   in `queued`, `running` or `waiting` (`cron.skipped_overlap`); skip a task listed in
+   `task_pauses` (`task.skipped_paused`), read once per batch; insert a `queued` run
+   with `INSERT OR IGNORE` on `UNIQUE(task, event_id)`. A paused task still has its
+   waits ended in the step before: a pause stops new runs, not runs in the chain.
 4. Advance the cursor to the last `seq`, commit, hand the new runs to the executor.
 
 `drain()` repeats until a batch is short. Every inserted event calls `wake()`, which
@@ -120,10 +122,10 @@ so a reload changes only runs not yet started and a saved step index always matc
 steps it was saved for. A run whose task a reload removed fails: as no longer
 configured when it next runs, or as interrupted when a restart comes first. The pin is cleared when the run finishes.
 
-Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* → `succeeded` or
-`failed`. `cancelled` is in the schema and accepted as a filter, but no code path sets
-it. `attempt` is 0 while queued; the first attempt is 1; a resume after a wait keeps the
-attempt; a retry increments it.
+Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* → `succeeded`,
+`failed` or `cancelled`; any of the three active statuses can go straight to
+`cancelled`. `attempt` is 0 while queued; the first attempt is 1; a resume after a wait
+keeps the attempt; a retry increments it.
 
 Retry policy is `task.retry ?? defaults.retry` (`attempts` 1, `exponential`, `base`
 30s, `max` 1h). A failed attempt retries when the error is retryable, `attempt <
@@ -138,6 +140,33 @@ runner is in [`actions.md`](actions.md).
 The per-attempt timeout (`task.timeout ?? defaults.timeout`, 15m) aborts the attempt's
 signal; a `waiting` run holds no timer. The pool is `workers` (4) globally and
 `concurrency` (1) per task; the dispatcher always queues, the executor enforces both.
+
+## Cancel and pause
+
+`Executor.cancel(id)` (`POST /v1/runs/{id}/cancel`) ends an active run as `cancelled`
+through `finishCancelled`: in one transaction the `waits` row, progress and pinned config
+go, the status is `cancelled` with `finished_at` and `error: cancelled on request`, and
+`task.<name>.cancelled` is published with `{run_id, task, previous_status, attempt}`. No
+`emit` rule and no `state_updates` apply. What it does first depends on where the run is:
+
+- Not in `inFlight` (queued in the pool or not yet handed over, `waiting`, or left
+  `running` by a stop): removed from `pending` and `known`, then finished at once.
+- In `inFlight`: the slot's `stop` controller is aborted with `RunCancelledError`, the
+  reason that tells it from `RunStoppedError`. `perform` returns `cancelled` for a runner
+  that throws after it; a retry backoff's `sleep` or `workerFor` rejects and the run is
+  finished there; a runner that parks in a wait after the abort has the wait it armed
+  removed. A runner that returns a result despite the abort finishes as it finished.
+  `cancel` awaits the slot's `settled` promise for up to 5 s; the API answers 202 with
+  the run still `running` when the runner has not settled by then.
+
+A cancelled run is terminal, so `hasActive` no longer counts it and the next cron tick of
+an `overlap: skip` task starts a run. Recovery never sees it.
+
+A pause (`bus/pause.ts`) is a `task_pauses` row. The dispatcher starts no run of a paused
+task from any event, and `runTaskManually` throws `TaskPausedError` (409) before it
+publishes `manual.run`, so a refused `oa run` leaves no event behind. Events skipped while
+paused are not replayed on resume: the cursor has moved past them. Runs already queued,
+running or waiting are untouched; `oa runs cancel` ends them.
 
 ## Durability and recovery
 

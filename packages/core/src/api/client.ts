@@ -1,6 +1,7 @@
 import { request as httpRequest } from 'node:http';
 
 import type { ManualInput } from '../bus/manual.js';
+import type { TaskEntry } from '../bus/pause.js';
 import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
@@ -98,6 +99,29 @@ export class ApiClient {
 
   getRun(id: string): Promise<RunRecord> {
     return this.request<RunRecord>('GET', `/v1/runs/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Ends a queued, running or waiting run as `cancelled`. The run comes back still `running`
+   * when its action has not stopped yet; it ends `cancelled` once it does.
+   */
+  cancelRun(id: string): Promise<RunRecord> {
+    return this.request<RunRecord>('POST', `/v1/runs/${encodeURIComponent(id)}/cancel`);
+  }
+
+  /** The configured tasks, with `paused_at` set on the paused ones. */
+  async listTasks(): Promise<TaskEntry[]> {
+    const { tasks } = await this.request<{ tasks: TaskEntry[] }>('GET', '/v1/tasks');
+    return tasks;
+  }
+
+  /** No new runs of the task until it is resumed. */
+  pauseTask(name: string): Promise<TaskEntry> {
+    return this.request<TaskEntry>('POST', `/v1/tasks/${encodeURIComponent(name)}/pause`);
+  }
+
+  resumeTask(name: string): Promise<TaskEntry> {
+    return this.request<TaskEntry>('POST', `/v1/tasks/${encodeURIComponent(name)}/resume`);
   }
 
   async listRuns(filter: RunFilter = {}): Promise<RunRecord[]> {

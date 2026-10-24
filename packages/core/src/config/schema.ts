@@ -20,7 +20,7 @@ import {
 } from './validators.js';
 
 const NAME = /^[a-z][a-z0-9_]*$/;
-const OWN_LIFECYCLE = /^task\.([a-z][a-z0-9_]*)\.(succeeded|failed)$/;
+const OWN_LIFECYCLE = /^task\.([a-z][a-z0-9_]*)\.(succeeded|failed|cancelled)$/;
 const STATE_KEY = /^[a-z0-9_-]+\.[a-z0-9_-]+$/;
 
 export const CronTrigger = z

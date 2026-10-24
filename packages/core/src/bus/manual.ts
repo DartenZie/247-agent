@@ -17,10 +17,18 @@ export class UnknownTaskError extends Error {
   }
 }
 
+export class TaskPausedError extends Error {
+  constructor(readonly task: string) {
+    super(`task "${task}" is paused: resume it with oa tasks resume ${task}`);
+    this.name = 'TaskPausedError';
+  }
+}
+
 /**
  * `oa run <task>`: publishes a `manual.run` event for the task and dispatches it
  * synchronously. Works for any task regardless of its trigger kind; filters and cron
- * overlap-skip do not apply. Never deduplicated: every call is a new run.
+ * overlap-skip do not apply; a paused task is refused (`TaskPausedError`). Never
+ * deduplicated: every call is a new run.
  *
  * Executor rule: for a `manual.run` trigger event the action context's `event` is
  * `payload.event` when present, otherwise the `manual.run` event itself.
@@ -34,6 +42,9 @@ export function runTaskManually(
 ): { event_id: string; run: RunRecord } {
   if (!config.byName.has(taskName)) {
     throw new UnknownTaskError(taskName);
+  }
+  if (store.pauses.pausedAt(taskName) !== undefined) {
+    throw new TaskPausedError(taskName);
   }
   const published = bus.publish({
     type: MANUAL_RUN,

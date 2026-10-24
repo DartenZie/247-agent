@@ -35,12 +35,13 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_build_info` | gauge, at scrape | `version` | always 1, labelled with the version |
 | `oa_uptime_seconds` | gauge, at scrape | | seconds since the daemon started |
 | `oa_config_tasks` | gauge, at scrape | | tasks in the active configuration |
+| `oa_tasks_paused` | gauge, at scrape | | tasks in the active configuration that `oa tasks pause` paused |
 | `oa_config_reloads_total` | counter | `result` (`ok`, `invalid`) | reloads by outcome |
 | `oa_events_published_total` | counter | `type`, `result` (`inserted`, `duplicate`) | events published, and whether they were stored or dropped as duplicates |
 | `oa_events_dropped_total` | counter | `reason` (`depth`) | events past `limits.max_event_depth` |
 | `oa_runs_queued_total` | counter | `task` | runs created |
 | `oa_run_attempts_total` | counter | `task` | attempts started, retries included |
-| `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`) | runs that reached a terminal status |
+| `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`, `cancelled`) | runs that reached a terminal status |
 | `oa_run_duration_seconds` | histogram | `task` | seconds from a run being queued to its terminal status |
 | `oa_waits_ended_total` | counter | `task`, `outcome` (`matched`, `timeout`) | waits that ended |
 | `oa_runs_pending` | gauge, at scrape | | runs queued for a worker |
@@ -74,7 +75,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 Labels are bounded by the configuration, never by ids. The `type` label of
 `oa_events_published_total` is the exact type only when the daemon or a task names it:
 the daemon's own types (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
-`retention.workspace_kept`, every `task.<name>.succeeded` and `.failed`), every exact type in a trigger's `type` or
+`retention.workspace_kept`, every `task.<name>.succeeded`, `.failed` and `.cancelled`), every exact type in a trigger's `type` or
 `type_any`, in a `wait`'s `for.type` and in an `emit` rule. Anything else, including
 types matched only through a wildcard, is counted as `other`. The set is rebuilt on every
 reload. `oa_connector_up` and `oa_cron_next_run_timestamp_seconds` are reset on every

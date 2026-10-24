@@ -9,8 +9,8 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order, all pending ones in one transaction, and set
-`PRAGMA user_version` to the number applied; nine ship, so a current database reads
-`user_version = 9`. A failed migration leaves the file at the version it had. A
+`PRAGMA user_version` to the number applied; ten ship, so a current database reads
+`user_version = 10`. A failed migration leaves the file at the version it had. A
 `user_version` above the number this build ships means a newer release migrated the file:
 `migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
 daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
@@ -78,6 +78,12 @@ null), `event_id`, `consumed` (JSON ids of the events that ended the run's earli
 waits). Indexes `waits_type`, `waits_expires`, `waits_event`. One row per run;
 a second insert replaces the first; written by the executor's `suspend`, resolved by the
 dispatcher, deleted when the run finishes.
+
+**`task_pauses`**: `task TEXT PRIMARY KEY`, `paused_at`. Written by `bus/pause.ts`
+(`oa tasks pause` inserts with `INSERT OR IGNORE`, so a second pause keeps the first
+time; `oa tasks resume` deletes). Read by the dispatcher once per batch and by
+`runTaskManually`. Keyed by name with no foreign key: a pause outlives a reload that
+drops the task, and applies again if the task comes back. Retention never touches it.
 
 **`ledger`**: `id INTEGER PRIMARY KEY AUTOINCREMENT`, `run_id REFERENCES runs(id)`,
 `task`, `provider`, `model`, `in_tok`, `out_tok`, `cache_read DEFAULT 0`, `cache_write

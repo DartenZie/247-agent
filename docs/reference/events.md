@@ -51,6 +51,7 @@ a task that reports failures from looping on its own failure.
 | `manual.run` | `manual` | none | none; the request's correlation id if given | `{ task, event: { type, payload } }` |
 | `task.<name>.succeeded` | `task:<name>` | none | the run's trigger event | `{ run_id, task, result }` |
 | `task.<name>.failed` | `task:<name>` | none | the run's trigger event | `{ run_id, task, error, attempt }` |
+| `task.<name>.cancelled` | `task:<name>` | none | the run's trigger event | `{ run_id, task, previous_status, attempt }` |
 | your `emit` rules | `task:<name>` | the rule's `dedup_key`, rendered | the run's trigger event | the rule's `payload`, rendered |
 | `budget.exceeded` | `core` | `budget:daily:<YYYY-MM-DD>` | none | `{ scope: "daily", day, limit_usd, spent_usd, task, run_id }` |
 | `llm.batch.ended` | `core` | `llm.batch:<batch_id>` | the run's trigger event | see below |
@@ -182,11 +183,14 @@ The names worth searching for:
 | `run.failed` | error | terminal failure (`error`, `attempt`) |
 | `run.retry` | warn | an attempt failed and a retry is scheduled (`attempt`, `attempts`, `delay_ms`, `error`) |
 | `run.waiting` | info | the run parked on a wait (`wait_type`, `expires_at`) |
+| `run.cancelled` | warn | `oa runs cancel` ended the run (`previous_status`: `queued`, `running` or `waiting`; `attempt`) |
 | `run.recovered`, `run.abandoned` | warn | a run re-queued after a restart; a run left `running` by a stop, to run again on the next start |
 | `wait.matched`, `wait.timeout` | info | a wait ended (`run_id`, `wait_type`, `event_id`) |
 | `wait.filter_error` | warn | a wait's filter threw on an event; no match |
 | `cron.armed` | info | a cron job armed (`task`, `schedule`, `next_run`) |
 | `cron.skipped_overlap` | info | a tick skipped because a run of the task is active |
+| `task.paused`, `task.resumed` | info | `oa tasks pause` or `oa tasks resume` changed the task (`task`) |
+| `task.skipped_paused` | info | an event matched a paused task and started no run (`task`, `event_id`) |
 | `trigger.filter_error` | warn | a trigger filter threw on an event; no match |
 | `event.depth_exceeded` | warn | an event past `limits.max_event_depth` started no run |
 | `connector.up` | info | a connector is up (`pid`, `restarts`, `sandbox`, `network`) |

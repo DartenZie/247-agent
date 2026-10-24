@@ -10,6 +10,7 @@ import type { ActionRunners, AgentClients, ConnectorClients } from './actions/ty
 import { runWait } from './actions/wait.js';
 import { createBus, type EventBus } from './bus/bus.js';
 import { runTaskManually, type ManualInput } from './bus/manual.js';
+import { listTasks, pauseTask, resumeTask, type TaskEntry } from './bus/pause.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
@@ -182,6 +183,17 @@ export interface Core {
   reload(next?: CoreReloadOptions): Promise<ReloadResult>;
   /** `oa run <task>`: queue a run for any task, with an optional input event. */
   runTask(name: string, input?: ManualInput): { event_id: string; run: RunRecord };
+  /**
+   * `oa runs cancel <id>`: ends a queued, running or waiting run as `cancelled`
+   * (`Executor.cancel`). `undefined` for an unknown run.
+   */
+  cancelRun(id: string): Promise<RunRecord | undefined>;
+  /** `oa tasks ls`: the configured tasks and which are paused. */
+  listTasks(): TaskEntry[];
+  /** `oa tasks pause <task>`: no new runs until resumed; throws `UnknownTaskError`. */
+  pauseTask(name: string): TaskEntry;
+  /** `oa tasks resume <task>`; throws `UnknownTaskError`. */
+  resumeTask(name: string): TaskEntry;
   /**
    * Lets runs in flight finish within the stop grace window, aborts the rest (they are run
    * again on the next start), stops connectors, closes the store. `grace: false` skips the
@@ -395,6 +407,10 @@ export function createCore(opts: CoreOptions): Core {
       metrics.uptime.set(undefined, Math.max(0, (now.getTime() - startedAt.getTime()) / 1000));
     }
     metrics.configTasks.set(undefined, compiled.tasks.length);
+    metrics.tasksPaused.set(
+      undefined,
+      store.pauses.list().filter((p) => compiled.byName.has(p.task)).length,
+    );
     const stats = executor.stats();
     metrics.runsPending.set(undefined, stats.pending);
     metrics.runsInFlight.set(undefined, stats.in_flight);
@@ -647,6 +663,10 @@ export function createCore(opts: CoreOptions): Core {
       return run;
     },
     runTask: (name, input) => runTaskManually(bus, store, compiled, name, input),
+    cancelRun: (id) => executor.cancel(id),
+    listTasks: () => listTasks(store, compiled),
+    pauseTask: (name) => pauseTask(store, compiled, clock, log, name),
+    resumeTask: (name) => resumeTask(store, compiled, log, name),
     stop: async (stopOpts = {}) => {
       scheduler.stop();
       bus.dispatcher.stop();

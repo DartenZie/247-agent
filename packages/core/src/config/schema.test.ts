@@ -118,6 +118,15 @@ describe('TasksFile schema', () => {
     expect(
       issues({
         tasks: [
+          { name: 'notify', trigger: { kind: 'event', type: 'task.notify.cancelled' }, action },
+        ],
+      }),
+    ).toEqual([
+      { path: 'tasks.0.trigger.type', message: expect.stringMatching(/its own/) as string },
+    ]);
+    expect(
+      issues({
+        tasks: [
           { name: 'notify', trigger: { kind: 'event', type_any: ['task.*.failed'] }, action },
         ],
       }),

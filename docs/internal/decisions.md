@@ -39,7 +39,7 @@ only seam to replace.
 
 ## Everything is an event; tasks never name tasks
 
-A task triggers on event types, including the automatic `task.<name>.succeeded|failed`
+A task triggers on event types, including the automatic `task.<name>.succeeded|failed|cancelled`
 events, never on another task. That decoupling is what lets a workflow grow by adding
 a listener. Two guards make it safe: a task never matches events from its own runs,
 and `limits.max_event_depth` drops runaway chains. "Just let A call B" proposals are
