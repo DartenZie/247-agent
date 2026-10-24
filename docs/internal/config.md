@@ -86,7 +86,9 @@ task or connector names across files, a poller's target connector and op.
 - `checkAgentTools`: every `mcp_servers` entry names a process `stdio` connector and
   only ops its manifest lists.
 - `checkConnectorActions`: every `connector` action and sequence step names a process
-  `stdio` connector and, when its manifest has `ops`, an op in them. The core's
+  `stdio` connector and, when its manifest has `ops`, an op in them. `oa validate` skips
+  it and `checkAgentTools` when a manifest failed to load, which is reported under its
+  own file. The core's
   `core.unknown_connector` warning in `activate()` remains for a core built without
   agent settings, where no cross-check runs.
 - `checkSandboxes`: no `defaults.sandbox` bind, sandboxed `shell` `cwd` or bind, acp

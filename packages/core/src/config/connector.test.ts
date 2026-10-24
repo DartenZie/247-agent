@@ -277,6 +277,23 @@ describe('oa validate with connector actions', () => {
       ],
     });
   });
+
+  it('blames only the bad manifest when one fails to load', () => {
+    writeFileSync(
+      join(dir, 'email.yaml'),
+      'name: email\nexec: [247-agent-connector-email]\nops: [send]\n',
+    );
+    writeFileSync(join(dir, 'other.yaml'), 'name: other\nexec: [x]\nbogus_field: 1\n');
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      'tasks:\n  - { name: ok, trigger: { kind: manual }, action: { kind: connector, connector: email, op: send } }\n',
+    );
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(agent, 'tasks: tasks.yaml\nconnectors: [email.yaml, other.yaml]\n');
+    const checks = checkConfigFile(agent);
+    expect(checks.find((c) => c.file === join(dir, 'tasks.yaml'))?.ok).toBe(true);
+    expect(checks.find((c) => c.file === join(dir, 'other.yaml'))?.ok).toBe(false);
+  });
 });
 
 describe('health checks in a manifest', () => {

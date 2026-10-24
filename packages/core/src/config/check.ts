@@ -130,8 +130,12 @@ export function checkConfigFile(path: string): FileCheck[] {
       configDir: dirname(r.config.file),
     });
     issues.push(...checkSandboxes(f.config.tasks, sandboxes).tasks);
-    issues.push(...checkAgentTools(f.config.tasks, sandboxes.manifests));
-    issues.push(...checkConnectorActions(f.config.tasks, sandboxes.manifests));
+    // A manifest that failed to load is reported under its own file; without the full list
+    // every connector reference would read as unknown.
+    if (connectors.ok) {
+      issues.push(...checkAgentTools(f.config.tasks, sandboxes.manifests));
+      issues.push(...checkConnectorActions(f.config.tasks, sandboxes.manifests));
+    }
     out.push({
       ...(issues.length === 0
         ? {
