@@ -29,6 +29,10 @@
 #                                                       with `managed_by: systemd`, enabled by hand
 #   /var/lib/247-agent, /run/247-agent                 by systemd (StateDirectory, RuntimeDirectory)
 set -eu
+# The tree is unpacked and copied under this umask, and the service user must be able to
+# read and run it; a caller's 027 or 077 would close it to that user. What must stay
+# closed (/etc/247-agent, the config) is created with an explicit mode.
+umask 022
 
 version=${OA_VERSION:-}
 from=${OA_FROM:-}
