@@ -102,6 +102,96 @@ describe('lintTasks', () => {
     );
   });
 
+  it('flags a root that is not available where it stands, with what to write', () => {
+    const tasks = parse([
+      {
+        name: 'digest',
+        trigger: { kind: 'event', type: 'a.b', filter: "event.payload.x == 'y' && paylod.z" },
+        action: {
+          kind: 'sequence',
+          steps: [
+            { kind: 'shell', cmd: ['echo', '${evnt.payload.x}', '${steps[0]}'] },
+            {
+              kind: 'wait',
+              for: { type: 'c.d', filter: "correlation_id == '${steps[0].id}' && evnt.x" },
+            },
+            { kind: 'shell', cmd: ['echo', '${result.x}'], when: 'results.ok' },
+          ],
+        },
+        emit: [
+          {
+            type: 'e.f',
+            when: 'length(steps[0].emails) > `0`',
+            payload: { kind: '${reslt.kind}', item: '${item}' },
+          },
+          { type: 'e.g', each: '${result.list}', payload: { id: '${item.id}', p: '${payload}' } },
+        ],
+        state_updates: { 'digest.last_uid': '${steps[0].last_uid}' },
+      },
+      {
+        name: 'fix',
+        trigger: { kind: 'manual' },
+        action: {
+          kind: 'agent',
+          workspace: { kind: 'temp' },
+          tools: ['read'],
+          prompt: 'fix ${result.x} in ${sort_by(event.payload.files, &name)[0].name}',
+          post: [{ shell: ['test', '${result.status}'], when: "result.status == 'done'" }],
+        },
+      },
+    ]);
+    expect(lintTasks(tasks).map((w) => [w.path, w.message])).toEqual([
+      [
+        'tasks[0].trigger.filter',
+        'event.payload.x == \'y\' && paylod.z: "event" is not available here, so it reads as null; this filter sees the event itself: write payload.x, not event.payload.x',
+      ],
+      [
+        'tasks[0].trigger.filter',
+        'event.payload.x == \'y\' && paylod.z: "paylod" is not available here, so it reads as null; did you mean "payload"?',
+      ],
+      [
+        'tasks[0].action.steps[1].for.filter',
+        'correlation_id == \'${steps[0].id}\' && evnt.x: "evnt" is not available here, so it reads as null; did you mean "event"? this filter sees the event itself: write payload.x, not event.payload.x',
+      ],
+      [
+        'tasks[0].action.steps[2].when',
+        'results.ok: "results" is not available here, so it reads as null; did you mean "result"? result exists only in emit, state_updates and an agent\'s post gates',
+      ],
+      [
+        'tasks[0].action.steps[0].cmd[1]',
+        'evnt.payload.x: "evnt" is not available here, so it reads as null; did you mean "event"?',
+      ],
+      [
+        'tasks[0].action.steps[2].cmd[1]',
+        'result.x: "result" is not available here, so it reads as null; result exists only in emit, state_updates and an agent\'s post gates',
+      ],
+      [
+        'tasks[0].emit[0].when',
+        'length(steps[0].emails) > `0`: "steps" is not available here, so it reads as null; steps exists only inside a sequence; after it, the step results are result.steps, as in result.steps[0]',
+      ],
+      [
+        'tasks[0].emit[0].payload.kind',
+        'reslt.kind: "reslt" is not available here, so it reads as null; did you mean "result"?',
+      ],
+      [
+        'tasks[0].emit[0].payload.item',
+        'item: "item" is not available here, so it reads as null; item exists only in the payload and dedup_key of an emit rule with each',
+      ],
+      [
+        'tasks[0].emit[1].payload.p',
+        'payload: "payload" is not available here, so it reads as null; the trigger event is under event: write event.payload',
+      ],
+      [
+        'tasks[0].state_updates.digest.last_uid',
+        'steps[0].last_uid: "steps" is not available here, so it reads as null; steps exists only inside a sequence; after it, the step results are result.steps, as in result.steps[0]',
+      ],
+      [
+        'tasks[1].action.prompt',
+        'result.x: "result" is not available here, so it reads as null; result exists only in emit, state_updates and an agent\'s post gates',
+      ],
+    ]);
+  });
+
   it('lints a wait filter around its templates, each standing for a value', () => {
     const wait = (filter: string) =>
       parse([
@@ -123,9 +213,11 @@ describe('lintTasks', () => {
     // The expression inside the template and the filter around it are both linted.
     expect(
       lintTasks(
-        wait("correlation_id == '${event.correlation_id}' && payload.ok == true && ${a == null}"),
+        wait(
+          "correlation_id == '${event.correlation_id}' && payload.ok == true && ${event.a == null}",
+        ),
       ).map((w) => w.message.split(':')[0]),
-    ).toEqual(['payload.ok == true', 'a == null']);
+    ).toEqual(['payload.ok == true', 'event.a == null']);
     // Quoted the way the docs show: nothing to say.
     expect(lintTasks(wait("correlation_id == '${event.correlation_id}'"))).toEqual([]);
     expect(lintTasks(wait('payload.n > `${event.payload.min}`'))).toEqual([]);

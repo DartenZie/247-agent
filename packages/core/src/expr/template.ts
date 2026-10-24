@@ -118,6 +118,8 @@ function collectRefs(node: AstNode | null | undefined, refs: Refs): void {
       collectRefs(node.value as AstNode, refs);
       return;
     case 'ExpressionReference':
+      // `&expr` is evaluated against each element (`sort_by(xs, &date)`), never the scope.
+      return;
     case 'NotExpression':
     case 'OrExpression':
     case 'AndExpression':
@@ -219,6 +221,16 @@ function evaluate(expr: string, scope: TemplateScope): unknown {
   } catch (err) {
     throw new TemplateRenderError(expr, err);
   }
+}
+
+/** The root names a bare expression reads from its scope (`collectRefs`); none when it does not parse. */
+export function expressionRoots(expr: string): ReadonlySet<string> {
+  const p = parseJmespath(expr);
+  const refs: Refs = { roots: new Set(), secrets: [], wholeSecrets: false };
+  if (p.ok) {
+    collectRefs(p.ast as AstNode, refs);
+  }
+  return refs.roots;
 }
 
 /** Compiles a string into a template; throws `TemplateSyntaxError` on bad `${…}` or JMESPath. */

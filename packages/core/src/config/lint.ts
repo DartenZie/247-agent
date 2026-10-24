@@ -1,6 +1,6 @@
 import { compileTypePattern } from '../expr/glob.js';
 import { lintJmespath, parseJmespath, unplace } from '../expr/jmespath.js';
-import { forEachTemplate, parseTemplate } from '../expr/template.js';
+import { expressionRoots, forEachTemplate, parseTemplate } from '../expr/template.js';
 import { formatPath, type ConfigIssue } from './load.js';
 import type { TaskConfig } from './schema.js';
 import { taskActions } from './walk.js';
@@ -54,44 +54,55 @@ export function lintTasks(
         out.push({ task: task.name, path, message });
       }
     };
-    const bare = (expr: string | undefined, path: string): void => {
+    const bare = (expr: string | undefined, path: string, roots: readonly string[]): void => {
       if (expr !== undefined) {
-        add(path, lintJmespath(expr));
+        add(path, [...lintJmespath(expr), ...lintRoots(expr, roots)]);
       }
     };
-    /** Each `${…}` expression of every template inside `value`. */
-    const templates = (value: unknown, base: string): void => {
+    /** Each `${…}` expression of every template inside `value`, with the roots at its path. */
+    const templates = (
+      value: unknown,
+      base: string,
+      roots: (sub: readonly (string | number)[]) => readonly string[],
+    ): void => {
       forEachTemplate(value, (text, sub) => {
         add(
           `${base}.${formatPath(sub)}`,
-          templateExprs(text).flatMap((e) => lintJmespath(e)),
+          templateExprs(text).flatMap((e) => [...lintJmespath(e), ...lintRoots(e, roots(sub))]),
         );
       });
     };
 
     if (task.trigger.kind === 'event') {
-      bare(task.trigger.filter, `${at}.trigger.filter`);
+      bare(task.trigger.filter, `${at}.trigger.filter`, EVENT_FIELDS);
     }
+    const inAction = task.action.kind === 'sequence' ? SEQUENCE_ROOTS : ACTION_ROOTS;
     for (const { action, at: actionAt } of taskActions(task, `${at}.action`)) {
       if ('when' in action) {
-        bare(action.when, `${actionAt}.when`);
+        bare(action.when, `${actionAt}.when`, inAction);
       }
       if (action.kind === 'wait' && action.for.filter !== undefined) {
         add(`${actionAt}.for.filter`, lintWaitFilter(action.for.filter));
       } else if (action.kind === 'agent') {
         action.post.forEach((gate, g) => {
-          bare(gate.when, `${actionAt}.post[${String(g)}].when`);
+          bare(gate.when, `${actionAt}.post[${String(g)}].when`, POST_ROOTS);
         });
       }
     }
-    templates(task.action, `${at}.action`);
+    templates(task.action, `${at}.action`, (sub) =>
+      task.action.kind === 'agent' && sub[0] === 'post' ? POST_ROOTS : inAction,
+    );
     task.emit?.forEach((rule, j) => {
       const ruleAt = `${at}.emit[${String(j)}]`;
-      bare(rule.when, `${ruleAt}.when`);
-      templates({ each: rule.each, dedup_key: rule.dedup_key, payload: rule.payload }, ruleAt);
+      bare(rule.when, `${ruleAt}.when`, ROUTING_ROOTS);
+      templates(
+        { each: rule.each, dedup_key: rule.dedup_key, payload: rule.payload },
+        ruleAt,
+        (sub) => (rule.each !== undefined && sub[0] !== 'each' ? EACH_ROOTS : ROUTING_ROOTS),
+      );
     });
     if (task.state_updates !== undefined) {
-      templates(task.state_updates, `${at}.state_updates`);
+      templates(task.state_updates, `${at}.state_updates`, () => ROUTING_ROOTS);
     }
   });
   return out;
@@ -194,6 +205,109 @@ export function eventCycles(tasks: readonly TaskConfig[]): CycleHop[][] {
   return cycles;
 }
 
+/**
+ * What an expression can read, by where it stands (docs/internal/actions.md). A trigger
+ * filter and the bare part of a `wait` filter see the event itself; templates and `when`s
+ * see the scope the executor and the runners build for that position.
+ */
+const EVENT_FIELDS = [
+  'id',
+  'type',
+  'source',
+  'ts',
+  'correlation_id',
+  'parent_id',
+  'dedup_key',
+  'depth',
+  'payload',
+];
+const ACTION_ROOTS = ['event', 'state', 'secrets', 'env', 'run'];
+const SEQUENCE_ROOTS = [...ACTION_ROOTS, 'steps'];
+/** An `agent` post gate runs with the agent's result added to the action's scope. */
+const POST_ROOTS = [...ACTION_ROOTS, 'result'];
+/** `emit` and `state_updates`. */
+const ROUTING_ROOTS = ['event', 'result', 'state', 'env', 'run'];
+const EACH_ROOTS = [...ROUTING_ROOTS, 'item'];
+const SCOPE_ROOTS = [...ACTION_ROOTS, 'result', 'item', 'steps'];
+
+/**
+ * A root of `expr` that is not in `roots` reads as null at run time, which is never what
+ * was meant: a typo (`evnt`, `results`), a name of another position (`steps` in `emit`,
+ * `result` in an action) or a scope name in a filter that sees the event (`event.payload`).
+ * Each is named once per expression with what to write instead.
+ */
+function lintRoots(expr: string, roots: readonly string[]): string[] {
+  const available = new Set(roots);
+  return [...expressionRoots(expr)]
+    .filter((r) => !available.has(r) && !LITERAL_LIKE.test(r) && !r.startsWith(PLACEHOLDER))
+    .map(
+      (r) => `${expr}: "${r}" is not available here, so it reads as null; ${rootHint(r, roots)}`,
+    );
+}
+
+/**
+ * What `root` was probably meant as: itself when it is a name of some other position, else
+ * the nearest name (available here first, then the scope's, then the event's fields) within
+ * an edit distance of a third of its length, at most 2. Then what to write for that name.
+ */
+function rootHint(root: string, roots: readonly string[]): string {
+  const event = roots === EVENT_FIELDS;
+  const known = [...roots, ...SCOPE_ROOTS, ...(event ? [] : EVENT_FIELDS)];
+  const near = known.includes(root)
+    ? root
+    : known.find((n) => editDistance(root, n) <= Math.min(2, Math.floor(root.length / 3)));
+  if (near === undefined) {
+    return `the names available here are ${roots.join(', ')}`;
+  }
+  const meant = `did you mean "${near}"?`;
+  if (roots.includes(near)) {
+    return meant;
+  }
+  const hint = elsewhere(near, event, roots.includes('result'));
+  return near === root ? hint : `${meant} ${hint}`;
+}
+
+/** Where `name`, which is not available here, can be used instead. */
+function elsewhere(name: string, event: boolean, result: boolean): string {
+  if (event) {
+    return name === 'event'
+      ? 'this filter sees the event itself: write payload.x, not event.payload.x'
+      : `this filter sees only the event's fields: ${EVENT_FIELDS.join(', ')}`;
+  }
+  switch (name) {
+    case 'steps':
+      return result
+        ? 'steps exists only inside a sequence; after it, the step results are result.steps, as in result.steps[0]'
+        : 'steps exists only inside a sequence';
+    case 'result':
+      return "result exists only in emit, state_updates and an agent's post gates";
+    case 'item':
+      return 'item exists only in the payload and dedup_key of an emit rule with each';
+    case 'secrets':
+      return 'secrets can be used only inside action';
+    default:
+      return `the trigger event is under event: write event.${name}`;
+  }
+}
+
+/** Levenshtein distance, for the "did you mean" of a mistyped root. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row.push(Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost));
+    }
+    prev = row;
+  }
+  return prev[b.length] ?? 0;
+}
+
+const PLACEHOLDER = '__oa_tpl_';
+/** Fields named like a literal (`true`, `"1"`): `lintJmespath` says what to write instead. */
+const LITERAL_LIKE = /^(?:true|false|null|-?\d+(?:\.\d+)?)$/;
+
 /** The expressions of a template; none when it does not parse (the schema reports that). */
 function templateExprs(text: string): string[] {
   try {
@@ -223,7 +337,7 @@ function lintWaitFilter(filter: string): string[] {
       if ('text' in p) {
         return p.text;
       }
-      const placeholder = `__oa_tpl_${String(placeholders.size)}__`;
+      const placeholder = `${PLACEHOLDER}${String(placeholders.size)}__`;
       placeholders.set(placeholder, `\${${p.expr}}`);
       return placeholder;
     })
@@ -237,5 +351,8 @@ function lintWaitFilter(filter: string): string[] {
         : `${filter}: not valid JMESPath even with each \${…} standing for a value; the wait matches only if what it renders to parses: ${error}`,
     ];
   }
-  return lintJmespath(text, { placeholders });
+  return [
+    ...lintJmespath(text, { placeholders }),
+    ...lintRoots(text, EVENT_FIELDS).map((m) => unplace(m, placeholders)),
+  ];
 }

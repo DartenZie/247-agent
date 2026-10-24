@@ -4,6 +4,7 @@ import {
   collectTemplateRefs,
   compileTemplate,
   evaluateExpr,
+  expressionRoots,
   forEachTemplate,
   parseTemplate,
   renderTemplate,
@@ -116,6 +117,16 @@ describe('collectTemplateRefs', () => {
     expect(refs.secrets).toEqual(['ftp_user', 'ftp_pass']);
     expect(refs.wholeSecrets).toEqual([]);
     expect(refs.errors).toEqual([]);
+  });
+
+  it('reads no root inside an expression reference, which sees each element', () => {
+    const refs = collectTemplateRefs('${ sort_by(event.payload.files, &name)[0] }');
+    expect([...refs.roots]).toEqual(['event']);
+    expect([...expressionRoots('max_by(result.list, &secrets.n) && item')].sort()).toEqual([
+      'item',
+      'result',
+    ]);
+    expect([...expressionRoots('a ==')]).toEqual([]);
   });
 
   it('does not mistake a payload field named secrets for the scope, but flags whole-object use', () => {

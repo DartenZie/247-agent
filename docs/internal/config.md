@@ -108,7 +108,8 @@ parsed tasks file and prints them with `formatWarnings` as
 core runs the same lint in `activate()` (`core.ts`), so at start and on every reload,
 and logs each as `core.config_warning` (`task`, `file`, `path`, `warning`).
 
-What is linted: every trigger `filter`, `emit` `when`, sequence step `when` and post gate
+What is linted, both for suspect comparisons and for roots the position does not
+provide: every trigger `filter`, `emit` `when`, sequence step `when` and post gate
 `when`; the expression inside every `${…}` template of `action`, `emit` and
 `state_updates` (the strings the schema checks as templates, found with
 `forEachTemplate`, path down to the string); and each `wait` `for.filter` as a whole,
@@ -128,6 +129,22 @@ one ends the cycle. Each strongly connected group is reported once, at
 that task; other cycles of the group are not named. Cycles span files, so
 `lintTasks(tasks, all)` takes the whole config: `oa validate agent.yaml` and the core's
 `activate()` pass every loaded task, while `oa validate tasks.yaml` sees one file.
+
+Roots (`lintRoots`): each linted expression's roots (`expressionRoots` in
+`expr/template.ts`: the identifiers read from the scope itself, not those after a `.`, a
+`|`, a projection, a filter's condition or inside `&expr`) are compared with what its
+position provides, and one outside it is reported, since it reads as null at run time.
+A trigger filter and the bare part of a `wait` filter see the event's fields; an
+action's templates `{event, state, secrets, env, run}`, plus `steps` in a sequence's
+steps (their `when` too) and `result` in an `agent`'s `post` gates; `emit` and
+`state_updates` `{event, result, state, env, run}`, plus `item` in `dedup_key` and
+`payload` of a rule with `each`. These are the scopes the executor, `sequence.ts` and
+`agent.ts` build (`withScope`); a new scope key or position changes the tables at the
+top of `lint.ts`. The hint names the nearest known name (exact, or within an edit distance
+of a third of the root's length, at most 2) and where that name exists: `steps` in `emit`
+points at `result.steps[0]`, `event` in a filter at `payload`, `payload` in a template
+at `event.payload`. Fields named like a literal (`true`, `"1"`) are left to
+`lintJmespath`.
 
 `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST (every node that holds a
 sub-expression, `KeyValuePair.value` included) for a comparison with a bare
