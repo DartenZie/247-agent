@@ -80,7 +80,8 @@ sh /opt/247-agent/share/uninstall.sh [--purge]      # keeps config, state, drop-
 ```
 
 It verifies the tarball's checksum, installs `/opt/247-agent-<version>` with
-`/opt/247-agent` as a symlink (rollback: `ln -sfn` the old tree, restart), links
+`/opt/247-agent` as a symlink (rollback: `ln -sfn` the old tree, restart; an old tree
+refuses a `state.db` a newer one migrated, so back it up before upgrading), links
 `/usr/local/bin/oa`, creates the user and a starter `/etc/247-agent` once, replaces the
 unit file (keep local changes in `systemctl edit 247-agent`), validates the existing
 config with the new version before switching, and restarts a running service unless

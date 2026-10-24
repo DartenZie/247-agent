@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { openStore, type Store } from './store.js';
@@ -46,6 +47,19 @@ describe('openStore', () => {
     store.close();
     store = openStore(path);
     expect(store.db.pragma('user_version', { simple: true })).toBe(9);
+  });
+
+  it('refuses a database whose schema is newer than this build', () => {
+    const path = join(dir, 'state.db');
+    store.db.pragma('user_version = 10');
+    store.close();
+    expect(() => (store = openStore(path))).toThrow(
+      /schema version 10 is newer than this build's 9/,
+    );
+    store = openStore(join(dir, 'other.db'));
+    const db = new Database(path);
+    expect(db.pragma('user_version', { simple: true })).toBe(10);
+    db.close();
   });
 
   it('creates the database and its WAL files closed to other users under a permissive umask', () => {

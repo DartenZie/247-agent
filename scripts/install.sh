@@ -267,6 +267,7 @@ say ""
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
   say "upgraded 247-agent $current -> $version ($prefix -> $tree)"
   say "rollback: ln -sfn $previous $prefix && systemctl restart 247-agent"
+  say "  (if $version migrated state.db, $current refuses it: restore a backup from before the upgrade)"
   say "remove old versions with: rm -rf $prefix-<version>"
 else
   say "installed 247-agent $version ($prefix -> $tree)"
