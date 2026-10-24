@@ -51,9 +51,9 @@ LICENSE VERSION (version=, target=, node=)
 When the target is the build machine it smoke-tests the stage: `oa --version` and
 `247-agent-core --version` print the version, and `oa validate` accepts
 `share/examples/agent.yaml`. The script sets umask 022 and makes the stage
-`u+rwX,go+rX,go-w` before it packs, so a build host's umask or a checkout made under 077
-cannot record a tree closed to the service user. The tarball and its `.sha256` land in
-`dist-release/`.
+`u+rwX,go+rX,go-w` before it packs, so a build host's umask or a checkout made under
+077 cannot record a tree closed to the service user. The tarball and its `.sha256` land
+in `dist-release/`.
 `npm run release` is the same script for this machine; `--target` cross-builds, which
 only needs the Node download for the target.
 
@@ -65,11 +65,14 @@ installs the identical tree under `/opt/247-agent`, links `/usr/bin/oa`, ships t
 units under `/usr/lib/systemd/system` and the starter `/etc/247-agent` as conffiles.
 The maintainer scripts in `packaging/scripts/` create the user on install, enable and
 start the service on a fresh install, restart it on upgrade, stop it on removal and
-clean up on purge. The connector template unit is installed, never enabled. nfpm copies the modes of the
-stage, which the script opens again in case an older build left it closed; the units
-get 644 and the starter config 640 from `nfpm.yaml`. CI and `npm run test:linux --
---systemd=always` build both under umask 077 from a checkout closed to other users and
-check that the tarball and the `.deb` carry only 755 and 644.
+clean up on purge. The connector template unit is installed, never enabled.
+
+nfpm copies the modes of the stage. The script opens the stage again in case an older
+build left it closed, and `nfpm.yaml` gives the units 644 and the starter config 640.
+CI and `npm run test:linux -- --systemd=always` build both under umask 077 from a
+checkout closed to other users. They check that the tarball and the `.deb` carry only
+755, 644 and symlinks outside `/etc/247-agent`. The `.rpm` is not checked: it has the
+same contents as the `.deb`.
 
 ## The installer
 

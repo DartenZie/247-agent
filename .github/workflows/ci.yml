@@ -40,6 +40,7 @@ jobs:
       - name: Packages build
         run: umask 077 && scripts/build-package.sh
       - name: The tarball and the .deb are open to other users
+        shell: bash # -eo pipefail, so a tar or dpkg-deb that fails fails the step
         run: |
           modes='^(drwxr-xr-x|-rw-r--r--|-rwxr-xr-x|l[rwx-]{9})$'
           closed=$(tar -tvzf dist-release/247-agent-*-linux-x64.tar.gz | awk -v m="$modes" '$1 !~ m')

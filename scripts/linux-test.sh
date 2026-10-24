@@ -185,10 +185,10 @@ node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/conne
 
 if [ $systemd = always ]; then
   in_container ci '
+step "release tarball"
 # As on a host with umask 077 that also checked out and installed under it (issue #211).
 chmod -R go-rwx .
 umask 077
-step "release tarball"
 scripts/build-release.sh --skip-build
 step "packages"
 scripts/build-package.sh
