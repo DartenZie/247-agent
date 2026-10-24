@@ -42,6 +42,13 @@ function atSchema(path: string, version: number): void {
   db.close();
 }
 
+/** The `.bak` files in the test directory, sorted. */
+function copies(): string[] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.bak'))
+    .sort();
+}
+
 let n = 0;
 function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 'seq'> {
   n += 1;
@@ -89,9 +96,10 @@ describe('openStore', () => {
       const path = join(dir, 'old.db');
       atSchema(path, 8);
       writeFileSync(`${path}.schema-7.bak`, 'an older copy');
+      writeFileSync(`${path}.schema-7-mine.bak`, "the operator's own copy");
       const migrated = openStore(path);
       migrated.close();
-      expect(readdirSync(dir).filter((f) => f.endsWith('.bak'))).toEqual(['old.db.schema-8.bak']);
+      expect(copies()).toEqual(['old.db.schema-7-mine.bak', 'old.db.schema-8.bak']);
       const copy = new Database(`${path}.schema-8.bak`, { readonly: true });
       expect(copy.pragma('user_version', { simple: true })).toBe(8);
       expect(copy.prepare("SELECT seq FROM cursors WHERE name = 'kept'").pluck().get()).toBe(1);
@@ -106,7 +114,22 @@ describe('openStore', () => {
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(readdirSync(dir).filter((f) => f.endsWith('.bak'))).toEqual([]);
+    expect(copies()).toEqual([]);
+  });
+
+  it('keeps the copy the release before needs when a migration fails, across restarts', () => {
+    const path = join(dir, 'old.db');
+    atSchema(path, 7);
+    const db = new Database(path);
+    db.exec('ALTER TABLE runs ADD COLUMN config TEXT');
+    db.close();
+    for (let i = 0; i < 2; i += 1) {
+      expect(() => openStore(path)).toThrow(/duplicate column name: config/);
+    }
+    const after = new Database(path, { readonly: true });
+    expect(after.pragma('user_version', { simple: true })).toBe(7);
+    after.close();
+    expect(copies()).toEqual(['old.db.schema-7.bak']);
   });
 
   it('refuses to migrate a database it cannot copy', () => {

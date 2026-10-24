@@ -8,20 +8,20 @@ place; this page is for operating it afterwards.
 ## Layout
 
 ```
-/opt/247-agent/          the release tree: bin/, lib/, node/, node_modules/, share/ (a symlink with the installer)
+/opt/247-agent/            the release tree: bin/, lib/, node/, node_modules/, share/ (a symlink with the installer)
 /etc/247-agent/
-  agent.yaml             the daemon's configuration
-  tasks.d/*.yaml         one file per workflow
-  connectors.d/*.yaml    connector manifests
-  prompts/*.md           system prompts for llm and agent tasks
-  schemas/*.json         result schemas for agent tasks
+  agent.yaml               the daemon's configuration
+  tasks.d/*.yaml           one file per workflow
+  connectors.d/*.yaml      connector manifests
+  prompts/*.md             system prompts for llm and agent tasks
+  schemas/*.json           result schemas for agent tasks
 /var/lib/247-agent/
-  state.db               SQLite: events, runs, state, the cost ledger, transcripts
-  state.db.schema-<n>.bak the database as it was before the last upgrade that migrated it
-  repos/                 base checkouts for agent worktrees
-  work/<run_id>/         per-run agent workspaces, swept by retention
-/run/247-agent/core.sock the API socket, created by the daemon with mode 0660
-/etc/credstore/<name>    one file per secret, root-owned, mode 0600
+  state.db                 SQLite: events, runs, state, the cost ledger, transcripts
+  state.db.schema-<n>.bak  state.db as it was before the last upgrade that migrated it
+  repos/                   base checkouts for agent worktrees
+  work/<run_id>/           per-run agent workspaces, swept by retention
+/run/247-agent/core.sock   the API socket, created by the daemon with mode 0660
+/etc/credstore/<name>      one file per secret, root-owned, mode 0600
 ```
 
 Keep `/etc/247-agent` in git. Run `oa validate /etc/247-agent/agent.yaml` in CI and before
@@ -190,6 +190,9 @@ version, and keeps only the newest such copy. An older release refuses to start 
 migrated file and logs `database schema version <n> is newer than this build's <m>`. This
 applies to both rollback paths below. To roll back past such an upgrade,
 [restore](#backups) that copy. It holds nothing the daemon recorded after the upgrade.
+Retention does not prune the copy, so it keeps payloads and transcripts from before the
+upgrade until the next upgrade that migrates. Delete it once you no longer need a way
+back.
 
 **Package.** Install the newer `.deb` or `.rpm`; the maintainer scripts restart a running
 service. Roll back by installing the previous file.

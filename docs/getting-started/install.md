@@ -42,8 +42,8 @@ The package:
 To upgrade, install the newer file the same way. If the new version migrates the
 database, an older package refuses to start on it. The daemon keeps a copy from before
 the migration for that case
-([upgrading and rolling back](../operations/production.md#upgrading-and-rolling-back)). `apt remove` keeps your configuration,
-the state database, any unit drop-ins and the user; `apt purge` removes those too.
+([upgrading and rolling back](../operations/production.md#upgrading-and-rolling-back)).
+`apt remove` keeps your configuration, the state database, any unit drop-ins and the user; `apt purge` removes those too.
 Secrets under `/etc/credstore` are never touched. Packages exist for `arm64` and
 `aarch64` as well.
 

@@ -2,6 +2,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fsyncSync,
   openSync,
   readdirSync,
   rmSync,
@@ -49,9 +50,10 @@ export function openDatabase(path: string): Database.Database {
 /**
  * Copies a database with pending migrations to `<path>.schema-<n>.bak`, `n` being its
  * schema version, so a failed migration or a rollback to the release that wrote it has a
- * way back (issue #45). A new or current database is not copied. The copy is 0640 like
- * the database, and older copies go once it is written: they no longer match the data.
- * A database that cannot be copied is not migrated.
+ * way back. A new or current database is not copied. The copy is 0640 like the database
+ * and is on disk before anything else changes: `VACUUM INTO` does not sync it. Older
+ * copies go once it is, since they no longer match the data; only names this function
+ * writes are removed. A database that cannot be copied is not migrated.
  */
 function copyBeforeMigration(db: Database.Database, path: string): void {
   const current = db.pragma('user_version', { simple: true }) as number;
@@ -59,16 +61,17 @@ function copyBeforeMigration(db: Database.Database, path: string): void {
     return;
   }
   const copy = `${path}.schema-${String(current)}.bak`;
+  let created = false;
   try {
     rmSync(copy, { force: true });
     closeSync(openSync(copy, 'wx', 0o600));
+    created = true;
     chmodSync(copy, 0o640);
     db.prepare('VACUUM INTO ?').run(copy);
+    syncFile(copy, 'r+');
   } catch (err) {
-    try {
-      unlinkSync(copy);
-    } catch {
-      // Nothing was written, or the path is not ours to remove.
+    if (created) {
+      rmSync(copy, { force: true });
     }
     throw new Error(
       `cannot copy ${path} to ${copy} before migrating it: ${
@@ -77,9 +80,14 @@ function copyBeforeMigration(db: Database.Database, path: string): void {
       { cause: err },
     );
   }
-  const prefix = `${basename(path)}.schema-`;
+  try {
+    syncFile(dirname(path), 'r');
+  } catch {
+    // Not every platform syncs a directory; the copy's own data is already on disk.
+  }
+  const ours = new RegExp(`^${escapeRegExp(basename(path))}\\.schema-\\d+\\.bak$`);
   for (const name of readdirSync(dirname(path))) {
-    if (name.startsWith(prefix) && name.endsWith('.bak') && name !== basename(copy)) {
+    if (ours.test(name) && name !== basename(copy)) {
       try {
         unlinkSync(join(dirname(path), name));
       } catch {
@@ -87,4 +95,17 @@ function copyBeforeMigration(db: Database.Database, path: string): void {
       }
     }
   }
+}
+
+function syncFile(path: string, flags: 'r' | 'r+'): void {
+  const fd = openSync(path, flags);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
