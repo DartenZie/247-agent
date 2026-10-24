@@ -193,7 +193,7 @@ describe('eventCycles', () => {
     ]);
   });
 
-  it('reports the shortest cycle of a group and ignores a task triggering on its own events', () => {
+  it('reports the shortest cycle through the first task of a group and ignores a task triggering on its own events', () => {
     const tasks = parse([
       on('a', 'e.a', ['e.b', 'e.a']),
       on('b', 'e.b', ['e.c']),

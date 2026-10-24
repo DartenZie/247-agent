@@ -57,7 +57,8 @@ export class EventStore {
     this.afterStmt = db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?');
     this.rootStmt = db.prepare('SELECT COALESCE(root_id, id) AS root FROM events WHERE id = ?');
     this.chainRunsStmt = db.prepare(
-      'SELECT COUNT(*) AS n FROM runs r JOIN events e ON e.id = r.event_id WHERE e.root_id = ?',
+      `SELECT COUNT(*) AS n FROM runs r JOIN events e ON e.id = r.event_id
+       WHERE e.root_id = @root OR (e.id = @root AND e.root_id IS NULL)`,
     );
     // Only events the dispatcher has passed, and none a run or an unresumed wait still points at.
     this.purgeStmt = db.prepare(
@@ -97,9 +98,9 @@ export class EventStore {
     return row?.root;
   }
 
-  /** Runs started by events of the chain rooted at `rootId`. */
+  /** Runs started by events of the chain rooted at `rootId`, a root older than `root_id` included. */
   countChainRuns(rootId: string): number {
-    return (this.chainRunsStmt.get(rootId) as { n: number }).n;
+    return (this.chainRunsStmt.get({ root: rootId }) as { n: number }).n;
   }
 
   listAfter(seq: number, limit: number): EventRecord[] {

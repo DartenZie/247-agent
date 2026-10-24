@@ -182,6 +182,41 @@ describe('Dispatcher', () => {
     });
   });
 
+  it('publishes loop.detected again when the batch that first reported it rolls back', () => {
+    const capped = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxChainRuns: 1,
+    });
+    capped.setConfig(tasks);
+    const root = publish('x.happened'); // a only: the cap is reached
+    publish('x.happened', null, { parent_id: root.id });
+    const spy = vi.spyOn(env.store.cursors, 'set').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    expect(() => capped.drain()).toThrow('disk full');
+    spy.mockRestore();
+    expect(env.store.events.list({ type: 'loop.detected' })).toEqual([]);
+    capped.drain();
+    expect(env.store.events.list({ type: 'loop.detected' })).toHaveLength(1);
+  });
+
+  it("counts a root's own runs toward the cap when it predates root_id", () => {
+    const capped = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxChainRuns: 2,
+    });
+    capped.setConfig(tasks);
+    const root = publish('x.happened', { ok: true });
+    expect(capped.drain()).toHaveLength(2);
+    env.store.db.prepare('UPDATE events SET root_id = NULL WHERE id = ?').run(root.id);
+    publish('x.happened', { ok: true }, { parent_id: root.id });
+    expect(capped.drain()).toEqual([]);
+  });
+
   it('counts the chain runs already in the store and takes a new cap on configure', () => {
     const capped = new Dispatcher({
       store: env.store,

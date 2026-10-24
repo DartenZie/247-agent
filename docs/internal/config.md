@@ -116,17 +116,18 @@ with every template replaced by an identifier placeholder (`lintWaitFilter`). Th
 runner renders each template as a value in place (`expr/filter-template.ts`), so a
 placeholder is never itself suspect. A filter that does not parse even with
 placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
-the wait would never match.
+the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
+task's action and its sequence steps; the lint, `checkSandboxes`,
+`checkConnectorActions` and the core's connector-reference warning use it.
 
 Event cycles (`eventCycles`): edges go from a task to every other task whose event
 trigger's `type` or `type_any` matches a type it produces (its `emit` types and its
 three lifecycle events); filters are ignored, since only the author can tell whether
-one ends the cycle. One shortest cycle per strongly connected group is reported at
-`tasks[<i>].trigger` of its first task in config order. Cycles span files, so
+one ends the cycle. Each strongly connected group is reported once, at
+`tasks[<i>].trigger` of its first task in config order, with the shortest cycle through
+that task; other cycles of the group are not named. Cycles span files, so
 `lintTasks(tasks, all)` takes the whole config: `oa validate agent.yaml` and the core's
-`activate()` pass every loaded task, while `oa validate tasks.yaml` sees one file. `taskActions` (`config/walk.ts`) is the one walker over a
-task's action and its sequence steps; the lint, `checkSandboxes`,
-`checkConnectorActions` and the core's connector-reference warning use it.
+`activate()` pass every loaded task, while `oa validate tasks.yaml` sees one file.
 
 `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST (every node that holds a
 sub-expression, `KeyValuePair.value` included) for a comparison with a bare

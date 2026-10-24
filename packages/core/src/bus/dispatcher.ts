@@ -70,8 +70,10 @@ export class Dispatcher {
   private maxDepth: number;
   private maxChainRuns: number;
   private readonly publish: (input: NewEvent) => PublishResult;
-  /** Chains `loop.detected` was published for lately; the dedup key is the real guard. */
+  /** Chains `loop.detected` was committed for lately; the dedup key is the real guard. */
   private readonly reported = new Set<string>();
+  /** Chains reported in the batch in flight, merged into `reported` once it commits. */
+  private batchReported = new Set<string>();
   private config: CompiledConfig = EMPTY_CONFIG;
   private readonly listeners = new Set<QueuedListener>();
   private wakePending = false;
@@ -246,13 +248,10 @@ export class Dispatcher {
       limit,
       correlation_id: event.correlation_id,
     });
-    if (this.reported.has(rootId)) {
+    if (this.reported.has(rootId) || this.batchReported.has(rootId)) {
       return;
     }
-    if (this.reported.size >= 1000) {
-      this.reported.clear();
-    }
-    this.reported.add(rootId);
+    this.batchReported.add(rootId);
     const r = this.publish({
       type: LOOP_DETECTED,
       source: 'core',
@@ -287,6 +286,8 @@ export class Dispatcher {
   }
 
   dispatchOnce(): DispatchResult {
+    // A batch that rolls back takes its `loop.detected` with it; its replay publishes again.
+    this.batchReported = new Set();
     const result = this.store.transaction((): DispatchResult => {
       const queued: RunRecord[] = this.expireWaits();
       const cursor = this.store.cursors.get('dispatch');
@@ -382,6 +383,10 @@ export class Dispatcher {
       this.store.cursors.set('dispatch', last.seq);
       return { scanned: events.length, queued };
     });
+    if (this.reported.size + this.batchReported.size > 1000) {
+      this.reported.clear();
+    }
+    this.batchReported.forEach((root) => this.reported.add(root));
     this.handOff(result.queued);
     return result;
   }

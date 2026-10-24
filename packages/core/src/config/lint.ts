@@ -119,8 +119,8 @@ export interface CycleHop {
  * `task.<name>.succeeded|failed|cancelled`) to the event triggers whose `type` or
  * `type_any` match it. Filters are ignored: they may end a cycle at run time, which only
  * the author can tell. A task never triggers on its own events, so a cycle has at least
- * two tasks. One shortest cycle per strongly connected group, starting at its task
- * that comes first in `tasks`.
+ * two tasks. One cycle per strongly connected group: the shortest through the group's
+ * task that comes first in `tasks`, starting there. Other cycles of the group go unnamed.
  */
 export function eventCycles(tasks: readonly TaskConfig[]): CycleHop[][] {
   const triggers = tasks.map((t) => {

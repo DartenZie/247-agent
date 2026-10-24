@@ -112,14 +112,15 @@ correlations and would reach `2^32` runs before the depth guard. The count is
 `EventStore.countChainRuns` (runs joined to their trigger events on `events_root`), read
 once per chain per batch and counted up in memory as runs are inserted; it ends waits
 like the depth guard does. Events stored before `root_id` existed count as their own
-roots.
+roots, and the count includes a legacy root's own runs.
 
 `drop(event, reason, root)` counts `oa_events_dropped_total{reason}`, logs
 `event.depth_exceeded` or `event.chain_runs_exceeded`, and publishes `loop.detected`
 through the bus's own `publish` (so it is counted and wakes the dispatcher) inside the
 batch transaction, with `dedup_key: loop:<root>`: one per chain whatever the reason or
-the number of drops. A bounded in-memory set of reported roots skips the publish for the
-later drops of a storm, so `oa_events_published_total` gets one attempt per chain; after
+the number of drops. A bounded in-memory set of roots reported in committed batches skips
+the publish for the later drops of a storm (a rolled-back batch adds none, so its replay
+publishes again), so `oa_events_published_total` gets one attempt per chain; after
 a restart the dedup key still holds. It is a root with a new correlation, so a notifier on it is never
 inside the chain it reports.
 
