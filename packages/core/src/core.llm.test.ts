@@ -81,7 +81,7 @@ describe('createCore with providers', () => {
     core2.bus.publish({
       type: 'email.received',
       source: 'email',
-      payload: { from: 'editor@example.com', subject: 'Event', body: '…' },
+      payload: { from: 'editor@example.com', auth: { dmarc: 'pass' }, subject: 'Event', body: '…' },
     });
     core2.bus.dispatcher.drain();
     await core2.executor.idle();

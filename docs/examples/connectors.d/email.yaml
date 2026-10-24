@@ -13,6 +13,7 @@ config:
     host: imap.example.com                # port 993 + TLS by default
     folder: INBOX
     initial: none                        # first run: skip what is already there (or `all`)
+    authserv_id: mx.example.com          # the server's id in Authentication-Results; fills payload.auth
   outgoing:
     host: smtp.example.com                # port 465 + TLS by default
     from: "Example Team <info@example.com>"

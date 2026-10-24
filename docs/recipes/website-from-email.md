@@ -18,6 +18,9 @@ together.
   `npm run build` that renders it.
 - Secrets: the mailbox credentials, the chat token, the SFTP password and the agent's
   model key, each by name in your secrets backend.
+- The email manifest's `incoming.authserv_id` set to your mail server's name, so the
+  filter in task 2 can check that the mail really comes from the editor. See
+  [Trust the sender](../connectors/email.md#trust-the-sender).
 - `providers:` with an `anthropic` entry in `agent.yaml`.
 
 ## The tasks
@@ -41,12 +44,12 @@ tasks:
         dedup_key: "email:${item.message_id}"
         payload: ${item}
 
-  # 2. Only the trusted sender's mail reaches a model. Cheapest tier, one call, JSON out.
+  # 2. Only the authenticated sender's mail reaches a model. Cheapest tier, one call, JSON out.
   - name: classify_email
     trigger:
       kind: event
       type: email.received
-      filter: "payload.from == 'editor@example.com'"
+      filter: "payload.from == 'editor@example.com' && payload.auth.dmarc == 'pass'"
     action:
       kind: llm
       provider: anthropic
@@ -103,6 +106,7 @@ tasks:
         </email>
       result: { path: RESULT.json, schema: schemas/site_change.json }
       post:
+        - shell: ["git", "diff", "--quiet", "--", ".", ":(exclude)data/events.yaml"]
         - shell: ["npm", "run", "build"]
         - shell: ["git", "commit", "-am", "events: ${result.summary}"]
     emit:
@@ -295,8 +299,8 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | Task | Shape | Why |
 |---|---|---|
 | `fetch_email` | cron, connector op, cursor in state, fan out with a dedup key | polling, dedup and routing are code; a message becomes exactly one event |
-| `classify_email` | a filter on the sender, then one Haiku call with a schema and a fallback label | only trusted mail reaches a model; `ignore` is dropped by `when` without another call |
-| `update_event_list` | Sonnet at low effort, 20 tool calls, $0.50, one file in scope, `npm run build` the only command | a routine edit needs little intelligence and a tight surface; the build gate proves it did not break anything |
+| `classify_email` | a filter on the sender and its DMARC result, then one Haiku call with a schema and a fallback label | only mail the editor really sent reaches a model; a forged `From:` fails DMARC; `ignore` is dropped by `when` without another call |
+| `update_event_list` | Sonnet at low effort, 20 tool calls, $0.50, one file in scope, `npm run build` the only command, a gate that refuses any other changed file | a routine edit needs little intelligence and a tight surface; the gates prove it touched only the event list and did not break the build |
 | `push_event_list` | shell `git pull --rebase` and `git push` on `site.change_committed`, three attempts | the rebase puts the change on top of `main`, so a push that a restart interrupted or that another push beat succeeds on a retry |
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
@@ -309,6 +313,14 @@ Both agent tasks are the same action kind with different `model`, `effort`,
 in their gates and stop. The small one's change is pushed at once by `push_event_list`
 because its scope is a single data file; the big one's change is pushed only after you
 approve.
+
+The small change is published without your approval for three reasons. The mail passed
+DMARC, so it comes from the domain of the editor's address. The first gate fails the run if any
+tracked file other than `data/events.yaml` changed, whatever the mail asked for. The
+build gate proves the site still renders. The worst a mail can do on this path is a
+wrong entry in the event list. If that is too much for your site, make
+`update_event_list` emit `site.change_ready` with the payload of task 4 instead of
+`site.change_committed`, so its change waits for your approval too.
 
 The push is a task of its own, so a daemon restart repeats only the push. A restart
 during the agent task loses nothing: the change is not on `main` yet, and the retry

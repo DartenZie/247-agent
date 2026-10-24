@@ -73,12 +73,12 @@ describe('createCore with the reference workflow', () => {
     expect(lines.find((l) => l.msg === 'core.started')).toMatchObject({ backlog_runs: 0 });
   });
 
-  it("queues exactly one classification run for the trusted sender's mail and none for others", () => {
+  it("queues exactly one classification run for the trusted sender's authenticated mail", () => {
     core.bus.publish({
       type: 'email.received',
       source: 'email',
       dedup_key: 'email:1',
-      payload: { from: 'editor@example.com', subject: 'Event', body: '…' },
+      payload: { from: 'editor@example.com', auth: { dmarc: 'pass' }, subject: 'Event', body: '…' },
     });
     core.bus.publish({
       type: 'email.received',
@@ -89,8 +89,19 @@ describe('createCore with the reference workflow', () => {
     core.bus.publish({
       type: 'email.received',
       source: 'email',
+      dedup_key: 'email:3',
+      payload: {
+        from: 'editor@example.com',
+        auth: { dmarc: 'fail' },
+        subject: 'Forged',
+        body: '…',
+      },
+    });
+    core.bus.publish({
+      type: 'email.received',
+      source: 'email',
       dedup_key: 'email:1',
-      payload: { from: 'editor@example.com', subject: 'dup', body: '…' },
+      payload: { from: 'editor@example.com', auth: { dmarc: 'pass' }, subject: 'dup', body: '…' },
     });
     core.bus.dispatcher.drain();
     expect(started()).toEqual(['classify_email']);

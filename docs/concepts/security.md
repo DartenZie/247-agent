@@ -44,6 +44,10 @@ prompt as data inside a delimited block, and the system prompt says so. But the 
 protection is not the prompt. It is the capability surface: what the agent is allowed
 to do at all.
 
+Also check who sent it. Anyone can forge the `From:` address of an email. A trigger
+filter that lets mail reach a model or an agent should also require the receiving
+server's DMARC result, as described in [Trust the sender](../connectors/email.md#trust-the-sender).
+
 ## How an agent is confined
 
 An `agent` action is confined on four levels. Use all of them.

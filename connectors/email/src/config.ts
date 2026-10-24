@@ -36,6 +36,14 @@ const incomingSchema = z.object({
   limit: z.number().int().min(1).max(1000).default(50),
   /** The `body` field is cut to this many characters. */
   max_body_chars: z.number().int().min(1).default(100_000),
+  /**
+   * The authserv-id(s) the receiving server writes into `Authentication-Results`. Only
+   * those headers fill a message's `auth`; unset, every result is `none`.
+   */
+  authserv_id: z
+    .union([z.string().min(1), z.array(z.string().min(1))])
+    .transform((v) => (Array.isArray(v) ? v : [v]))
+    .default([]),
   /** POP3 only: delete a message on the server once it was fetched. */
   delete_after_fetch: z.boolean().default(false),
 });
