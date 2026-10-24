@@ -8,13 +8,27 @@ migration, or retention.
 
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
-(`store/migrations.ts`) run in order and set `PRAGMA user_version` to the number applied;
-nine ship, so a current database reads `user_version = 9`. A `user_version` above the
-number this build ships means a newer release migrated the file: `migrate` throws before
-it runs a migration, `openDatabase` closes the handle, and the daemon exits 1 with both
-numbers in the message. Nothing copies the file before a migration; the operator's backup
-is the way back. `store.transaction(fn)` is `BEGIN IMMEDIATE`, which takes the write lock
-up front so a batch never deadlocks against a reader that wants to write.
+(`store/migrations.ts`) run in order, all pending ones in one transaction, and set
+`PRAGMA user_version` to the number applied; nine ship, so a current database reads
+`user_version = 9`. A failed migration leaves the file at the version it had. A
+`user_version` above the number this build ships means a newer release migrated the file:
+`migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
+daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
+`BEGIN IMMEDIATE`, which takes the write lock up front so a batch never deadlocks against
+a reader that wants to write.
+
+Before it runs pending migrations on a file that already has a schema, `openDatabase`
+writes a consistent copy with `VACUUM INTO` to `<path>.schema-<n>.bak`, `n` being the old
+`user_version`, and fsyncs it and its directory. That copy is what a failed migration or a
+rollback restores. A new or current file gets none. The copy is 0640 like the database.
+Once it is on disk, older copies go, because they predate data the daemon has since
+recorded; only names matching `<path>.schema-<digits>.bak` are removed. Because the
+migrations share one transaction, a failure and the restart after it copy the same version
+again and never remove the copy the release before needs. Retention never touches the
+copy, so it keeps payloads and transcripts past `retention` until the next upgrade that
+migrates. A file that cannot be copied, for example on a full disk, is not migrated: the
+open throws and the daemon exits 1. The copy needs as much free disk as the database,
+once per upgrade that adds a migration.
 
 The file holds every payload, result and transcript, so `openDatabase` creates it 0640
 whatever the umask. It also clears the other-user bits of an existing file, `-wal` or

@@ -1,10 +1,20 @@
-import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MIGRATIONS } from './migrations.js';
 import { openStore, type Store } from './store.js';
 import type { EventRecord, RunStatus } from './types.js';
 
@@ -20,6 +30,24 @@ afterEach(() => {
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** Writes a database at schema `version`, as an older build would leave it, with one row. */
+function atSchema(path: string, version: number): void {
+  const db = new Database(path);
+  for (const sql of MIGRATIONS.slice(0, version)) {
+    db.exec(sql);
+  }
+  db.pragma(`user_version = ${String(version)}`);
+  db.prepare("INSERT INTO cursors (name, seq) VALUES ('kept', 1)").run();
+  db.close();
+}
+
+/** The `.bak` files in the test directory, sorted. */
+function copies(): string[] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.bak'))
+    .sort();
+}
 
 let n = 0;
 function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 'seq'> {
@@ -60,6 +88,59 @@ describe('openStore', () => {
     const db = new Database(path);
     expect(db.pragma('user_version', { simple: true })).toBe(10);
     db.close();
+  });
+
+  it('copies a database to <path>.schema-<n>.bak before it migrates it', () => {
+    const prev = process.umask(0o022);
+    try {
+      const path = join(dir, 'old.db');
+      atSchema(path, 8);
+      writeFileSync(`${path}.schema-7.bak`, 'an older copy');
+      writeFileSync(`${path}.schema-7-mine.bak`, "the operator's own copy");
+      const migrated = openStore(path);
+      migrated.close();
+      expect(copies()).toEqual(['old.db.schema-7-mine.bak', 'old.db.schema-8.bak']);
+      const copy = new Database(`${path}.schema-8.bak`, { readonly: true });
+      expect(copy.pragma('user_version', { simple: true })).toBe(8);
+      expect(copy.prepare("SELECT seq FROM cursors WHERE name = 'kept'").pluck().get()).toBe(1);
+      copy.close();
+      expect(statSync(`${path}.schema-8.bak`).mode & 0o777).toBe(0o640);
+    } finally {
+      process.umask(prev);
+    }
+  });
+
+  it('makes no copy of a new or a current database', () => {
+    const path = join(dir, 'state.db');
+    store.close();
+    store = openStore(path);
+    expect(copies()).toEqual([]);
+  });
+
+  it('keeps the copy the release before needs when a migration fails, across restarts', () => {
+    const path = join(dir, 'old.db');
+    atSchema(path, 7);
+    const db = new Database(path);
+    db.exec('ALTER TABLE runs ADD COLUMN config TEXT');
+    db.close();
+    for (let i = 0; i < 2; i += 1) {
+      expect(() => openStore(path)).toThrow(/duplicate column name: config/);
+    }
+    const after = new Database(path, { readonly: true });
+    expect(after.pragma('user_version', { simple: true })).toBe(7);
+    after.close();
+    expect(copies()).toEqual(['old.db.schema-7.bak']);
+  });
+
+  it('refuses to migrate a database it cannot copy', () => {
+    const path = join(dir, 'old.db');
+    atSchema(path, 8);
+    mkdirSync(`${path}.schema-8.bak`);
+    expect(() => openStore(path)).toThrow(/copy .*old\.db\.schema-8\.bak/);
+    const db = new Database(path, { readonly: true });
+    expect(db.pragma('user_version', { simple: true })).toBe(8);
+    db.close();
+    expect(existsSync(`${path}.schema-8.bak`)).toBe(true);
   });
 
   it('creates the database and its WAL files closed to other users under a permissive umask', () => {
