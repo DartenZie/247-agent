@@ -126,8 +126,10 @@ describe('labelledEventTypes', () => {
       'mail.triaged',
       'manual.run',
       'retention.workspace_kept',
+      'task.poll.cancelled',
       'task.poll.failed',
       'task.poll.succeeded',
+      'task.triage.cancelled',
       'task.triage.failed',
       'task.triage.succeeded',
     ]);

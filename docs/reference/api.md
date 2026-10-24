@@ -110,7 +110,8 @@ Ends a `queued`, `running` or `waiting` run as `cancelled` and publishes
 `task.<name>.cancelled` ([Events](events.md)). A queued run never starts, a waiting run
 stops waiting, and a running run's action is aborted the way a timeout aborts it: a
 process is killed, an agent session is cancelled. A run waiting out a retry backoff
-makes no further attempt. No `emit` rule and no `state_updates` apply.
+makes no further attempt. No `emit` rule and no `state_updates` apply. A Message
+Batches request the run already submitted still completes and is billed.
 
 - 200 `<RunRecord>` with `status: "cancelled"` and `finished_at` set.
 - 202 `<RunRecord>` still `running`: the action has not stopped within 5 seconds. The

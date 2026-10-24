@@ -75,7 +75,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 Labels are bounded by the configuration, never by ids. The `type` label of
 `oa_events_published_total` is the exact type only when the daemon or a task names it:
 the daemon's own types (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
-`retention.workspace_kept`, every `task.<name>.succeeded` and `.failed`), every exact type in a trigger's `type` or
+`retention.workspace_kept`, every `task.<name>.succeeded`, `.failed` and `.cancelled`), every exact type in a trigger's `type` or
 `type_any`, in a `wait`'s `for.type` and in an `emit` rule. Anything else, including
 types matched only through a wildcard, is counted as `other`. The set is rebuilt on every
 reload. `oa_connector_up` and `oa_cron_next_run_timestamp_seconds` are reset on every

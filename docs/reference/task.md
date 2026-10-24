@@ -77,7 +77,8 @@ wildcard. Templates are `${ <JMESPath> }`; see [Templates](../tasks/templates.md
 - A cron schedule parses, its time zone is known, and it fires at least once.
 - An event trigger has exactly one of `type` or `type_any`, every pattern is
   well-formed, and `filter` is valid JMESPath.
-- A task does not trigger on its own `task.<name>.succeeded` or `task.<name>.failed`.
+- A task does not trigger on its own `task.<name>.succeeded`, `task.<name>.failed` or
+  `task.<name>.cancelled`.
 - Every `${…}` template compiles. `secrets` appears only inside `action`, never in a
   `wait`'s `for.filter`, and only as `secrets.<name>`, never as a whole.
 - Every `emit` type is concrete, `when` is valid JMESPath, and `each` is a single
