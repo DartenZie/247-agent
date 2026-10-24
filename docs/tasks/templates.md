@@ -50,8 +50,9 @@ reduced set.
 ### Writing a literal `${`
 
 Write `$${` where the text needs a literal `${`, such as a shell parameter expansion in
-an inline script or a code sample in a prompt. `$${` renders to `${` and nothing after
-it is read as an expression.
+an inline script or a code sample in an `input` or a `prompt`. `$${` renders to `${`.
+The text after it is not an expression, but a later `${…}` in the same string still
+renders: `$${name:-${run.id}}` gives `${name:-run_…}`.
 
 ```yaml
 cmd: ["bash", "-c", 'since="$${1:-0}"; echo "since $since, token has $${#TOKEN} chars"', "--", "${state.feed.since}"]
@@ -59,7 +60,15 @@ cmd: ["bash", "-c", 'since="$${1:-0}"; echo "since $since, token has $${#TOKEN} 
 
 Other `$` signs need no escape: `$1`, `$$` and `$HOME` render as written. Without the
 escape, `${1:-0}` is not valid JMESPath and `oa validate` reports it. `${HOME}` is valid
-JMESPath, so it renders as an empty string; `oa validate` warns about it.
+JMESPath, so it renders as an empty string. `oa validate` warns about it.
+
+A `$` directly before a template is read as the escape. To put a `$` before a value,
+write it as a string literal in its own template: `${'$'}${event.payload.amount}`
+renders `$42`. `oa validate` warns about `$${event.payload.amount}`, which renders the
+text `${event.payload.amount}`.
+
+The escape works only where templates render. A static field, such as `system` or a
+`decide` question, cannot contain `${` in any form. Put such text in a `system_file`.
 
 > [!WARNING]
 > Inside a YAML flow mapping, the one written with braces, quote the template:

@@ -1,6 +1,6 @@
 import { compileTypePattern } from '../expr/glob.js';
 import { lintJmespath, parseJmespath, unplace } from '../expr/jmespath.js';
-import { expressionRoots, forEachTemplate, parseTemplate } from '../expr/template.js';
+import { escapedExprs, expressionRoots, forEachTemplate, parseTemplate } from '../expr/template.js';
 import { formatPath, type ConfigIssue } from './load.js';
 import type { TaskConfig } from './schema.js';
 import { taskActions } from './walk.js';
@@ -70,13 +70,13 @@ export function lintTasks(
     ): void => {
       forEachTemplate(value, (text, sub) => {
         const at = roots(sub);
-        add(
-          `${base}.${formatPath(sub)}`,
-          templateExprs(text).flatMap((e) => [
+        add(`${base}.${formatPath(sub)}`, [
+          ...templateExprs(text).flatMap((e) => [
             ...lintJmespath(e),
             ...(at === undefined ? [] : lintRoots(e, at, true)),
           ]),
-        );
+          ...(at === undefined ? [] : lintEscapes(text, at)),
+        ]);
       });
     };
 
@@ -319,6 +319,19 @@ function elsewhere(name: string, event: boolean, result: boolean): string {
     default:
       return `the trigger event is under event: write event.${name}`;
   }
+}
+
+/**
+ * A `$${` followed by an expression over the scope (`$${event.payload.amount}`) renders as
+ * that text, not as a `$` before the value. Both read the same, so the lint names it.
+ */
+function lintEscapes(text: string, roots: readonly string[]): string[] {
+  return escapedExprs(text)
+    .filter((e) => [...expressionRoots(e)].some((r) => roots.includes(r)))
+    .map(
+      (e) =>
+        `$\${${e}} renders as the text \${${e}}; for a $ before the value, write \${'$'}\${${e}}`,
+    );
 }
 
 /** Levenshtein distance, for the "did you mean" of a mistyped root. */

@@ -211,10 +211,12 @@ function findClose(text: string, open: number): number {
 const ESCAPE_HINT = 'a literal ${ is written $${';
 
 /**
- * Shell parameter expansions that are not JMESPath: `1:-0`, `1`, `#TOKEN`, `VAR:-x`,
- * `VAR%%.*`, `VAR//a/b`, `arr[@]`. Only matched against text that does not parse.
+ * Shell parameter expansions that are not JMESPath: `1:-0`, `1-0`, `1`, `#TOKEN`,
+ * `VAR:-x`, `VAR=x`, `VAR:2`, `VAR%%.*`, `VAR//a/b`, `VAR^^`, `VAR,,`, `VAR@Q`, `arr[@]`.
+ * Only matched against text that does not parse.
  */
-const SHELL_EXPANSION = /^(?:#|\d+(?:$|[:#%/^,@])|[A-Za-z_]\w*(?:[:#%/^,@]|\[@\]))/;
+const SHELL_EXPANSION =
+  /^(?:#|\d+(?:$|[-=+?:#%/^@])|[A-Za-z_]\w*(?::?[-=+?]|:\s*-?\d|[#%/^@]|,(?:,|$)|\[@\]))/;
 /** The parser's hint for a bare number (`expr/jmespath.ts`), wrong for `${1:-0}`. */
 const NUMBER_HINT = /; a number literal needs backticks.*$/;
 
@@ -257,6 +259,23 @@ export function parseTemplate(text: string): TemplatePart[] {
     parts.push({ text: literal });
   }
   return parts;
+}
+
+/**
+ * The text after each `$${` in `text` up to its closing `}`, when that text parses as
+ * JMESPath: `event.x` in `$${event.x}`. The lint warns about those that read the scope,
+ * since `$${event.x}` once meant a `$` before the value.
+ */
+export function escapedExprs(text: string): string[] {
+  const out: string[] = [];
+  for (let at = text.indexOf('$${'); at >= 0; at = text.indexOf('$${', at + 3)) {
+    const close = findClose(text, at + 2);
+    const expr = close < 0 ? '' : text.slice(at + 3, close).trim();
+    if (expr !== '' && parseJmespath(expr).ok) {
+      out.push(expr);
+    }
+  }
+  return out;
 }
 
 export function isTemplate(value: unknown): value is string {

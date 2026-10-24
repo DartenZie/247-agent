@@ -35,7 +35,9 @@ scope above. `emit.when` sees `{event, result, state, env, run}`.
 - `emit[].each` must be a single whole `${…}` rendering to an array.
 - `$${` is a literal `${`: write `$${1:-0}` or `$${#TOKEN}` in an inline bash script or
   a prompt. `$1`, `$$` and `$HOME` need no escape. An unescaped `${HOME}` is valid
-  JMESPath and renders empty; `oa validate` warns.
+  JMESPath and renders empty; `oa validate` warns. A `$` before a value is
+  `${'$'}${event.payload.amount}`, not `$${…}`. Static fields (`system`, `decide`
+  questions) refuse `${` in any form; use `system_file`.
 
 ## JMESPath reminders
 

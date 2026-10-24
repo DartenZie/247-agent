@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectTemplateRefs,
   compileTemplate,
+  escapedExprs,
   evaluateExpr,
   expressionRoots,
   forEachTemplate,
@@ -63,6 +64,13 @@ describe('the $${ escape', () => {
     expect(validateTemplate('echo "$${1:-0}" $$ $1')).toBeNull();
   });
 
+  it("leaves later templates live, and ${'$'} writes a $ before a value", () => {
+    expect(renderTemplate('$${a:-${event.payload.n}}', scope)).toBe('${a:-3}');
+    expect(renderTemplate("cost ${'$'}${event.payload.n}", scope)).toBe('cost $3');
+    expect(renderTemplate("pid ${'$$'}${event.payload.n}", scope)).toBe('pid $$3');
+    expect(escapedExprs('$${event.x} $${1:-0} $${y')).toEqual(['event.x']);
+  });
+
   it('renders to text, so an escaped whole string is not a template', () => {
     const t = compileTemplate('$${event.type}');
     expect(t.whole).toBe(false);
@@ -83,6 +91,13 @@ describe('the $${ escape', () => {
     expect(validateTemplate('${f%%.*}')).toMatch(hint);
     expect(validateTemplate('${arr[@]}')).toMatch(hint);
     expect(validateTemplate('echo ${x')).toMatch(hint);
+    expect(validateTemplate('${1-0}')).toMatch(hint);
+    expect(validateTemplate('${1-0}')).not.toMatch(/number literal/);
+    expect(validateTemplate('${VAR=x}')).toMatch(hint);
+    expect(validateTemplate('${VAR:2}')).toMatch(hint);
+    expect(validateTemplate('${VAR,,}')).toMatch(hint);
+    expect(validateTemplate('${a, b}')).not.toMatch(hint);
+    expect(validateTemplate('${foo:bar}')).not.toMatch(hint);
     expect(validateTemplate('${ event[ }')).not.toMatch(hint);
     expect(validateTemplate('n=${ event.payload.n > 2.5 }')).not.toMatch(hint);
   });
