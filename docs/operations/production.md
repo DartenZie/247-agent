@@ -155,8 +155,8 @@ When a file is invalid, nothing changes: the issues are printed as `<file>: <pat
 `systemctl reload` the same outcome is in the journal as `daemon.reloaded` or
 `daemon.reload_needs_restart`. `systemctl reload` exits 0 even when the reload is refused;
 the journal then has one error line per issue, with `file`, `path` and `issue`:
-`daemon.reload_invalid` for `agent.yaml` or a manifest, `core.config_invalid` for a
-tasks file.
+`daemon.reload_invalid` for `agent.yaml` or a manifest that is invalid on its own,
+`core.config_invalid` for a tasks file or a failed cross-check between the files.
 
 A connector in its own unit whose manifest changed and which serves no ops is the one
 thing a reload cannot reach: the journal says `connector.unit_restart_needed`, and
