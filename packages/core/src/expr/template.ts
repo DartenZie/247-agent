@@ -8,7 +8,8 @@ import { parseJmespath } from './jmespath.js';
  * depends on where the template appears. A string that is exactly one `${…}` renders to the
  * expression's raw value (so `stdin: ${event.payload}` stays JSON); a string with text
  * around or between templates renders to a string, non-string values JSON-encoded and
- * `null` as the empty string.
+ * `null` as the empty string. `$${` is a literal `${`, never parsed, so inline shell can
+ * write `$${1:-0}`.
  */
 
 export interface TemplateScope {
@@ -206,6 +207,19 @@ function findClose(text: string, open: number): number {
   return -1;
 }
 
+/** Appended to a parse error whose `${` was probably meant as text. */
+const ESCAPE_HINT = 'a literal ${ is written $${';
+
+/**
+ * Shell parameter expansions that are not JMESPath: `1:-0`, `1-0`, `1`, `#TOKEN`,
+ * `VAR:-x`, `VAR=x`, `VAR:2`, `VAR%%.*`, `VAR//a/b`, `VAR^^`, `VAR,,`, `VAR@Q`, `arr[@]`.
+ * Only matched against text that does not parse.
+ */
+const SHELL_EXPANSION =
+  /^(?:#|\d+(?:$|[-=+?:#%/^@])|[A-Za-z_]\w*(?::?[-=+?]|:\s*-?\d|[#%/^@]|,(?:,|$)|\[@\]))/;
+/** The parser's hint for a bare number (`expr/jmespath.ts`), wrong for `${1:-0}`. */
+const NUMBER_HINT = /; a number literal needs backticks.*$/;
+
 export function parseTemplate(text: string): TemplatePart[] {
   const parts: TemplatePart[] = [];
   let i = 0;
@@ -216,9 +230,18 @@ export function parseTemplate(text: string): TemplatePart[] {
       literal += text.slice(i);
       break;
     }
+    if (open > i && text.charAt(open - 1) === '$') {
+      // `$${` is the escape: the `${` is text, the extra `$` dropped.
+      literal += text.slice(i, open - 1) + '${';
+      i = open + 2;
+      continue;
+    }
     const close = findClose(text, open + 1);
     if (close < 0) {
-      throw new TemplateSyntaxError(text, `unterminated \${ at offset ${String(open)}`);
+      throw new TemplateSyntaxError(
+        text,
+        `unterminated \${ at offset ${String(open)}; ${ESCAPE_HINT}`,
+      );
     }
     literal += text.slice(i, open);
     const expr = text.slice(open + 2, close).trim();
@@ -236,6 +259,23 @@ export function parseTemplate(text: string): TemplatePart[] {
     parts.push({ text: literal });
   }
   return parts;
+}
+
+/**
+ * The text after each `$${` in `text` up to its closing `}`, when that text parses as
+ * JMESPath: `event.x` in `$${event.x}`. The lint warns about those that read the scope,
+ * since `$${event.x}` once meant a `$` before the value.
+ */
+export function escapedExprs(text: string): string[] {
+  const out: string[] = [];
+  for (let at = text.indexOf('$${'); at >= 0; at = text.indexOf('$${', at + 3)) {
+    const close = findClose(text, at + 2);
+    const expr = close < 0 ? '' : text.slice(at + 3, close).trim();
+    if (expr !== '' && parseJmespath(expr).ok) {
+      out.push(expr);
+    }
+  }
+  return out;
 }
 
 export function isTemplate(value: unknown): value is string {
@@ -284,7 +324,10 @@ export function compileTemplate(text: string): Template {
     }
     const p = parseJmespath(part.expr);
     if (!p.ok) {
-      throw new TemplateSyntaxError(text, `invalid JMESPath "${part.expr}": ${p.message}`);
+      const message = SHELL_EXPANSION.test(part.expr)
+        ? `${p.message.replace(NUMBER_HINT, '')}; ${ESCAPE_HINT}`
+        : p.message;
+      throw new TemplateSyntaxError(text, `invalid JMESPath "${part.expr}": ${message}`);
     }
     collectRefs(p.ast as AstNode, refs);
   }

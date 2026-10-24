@@ -70,6 +70,7 @@ never invent a way for one task to reference another by name.
 - `secrets.<name>` is allowed in `action` only, never in `emit` or `state_updates`, and
   never as a whole (`${secrets}`). Secret values never reach the DB, logs or events.
 - `emit[].each` must be a single `${…}` that renders to an array; `null` emits nothing.
+- A literal `${` (bash `${1:-0}`, `${#VAR}`, a code sample in a prompt) is written `$${`.
 - Inside a YAML flow mapping (`{ … }`) quote templates: `{ since_uid: "${state.email.last_uid}" }`.
 - `filter` and `when` are bare JMESPath (no `${…}`); compare numbers and booleans with
   backticks: `` payload.approved == `true` ``. `oa validate` (and the daemon's log, as

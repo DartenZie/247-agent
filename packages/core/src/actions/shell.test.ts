@@ -78,6 +78,13 @@ describe('runShell', () => {
     await expect(run({ cmd: ['printf', 'a\\nb'] })).resolves.toBe('a\nb');
   });
 
+  it('hands the shell a literal ${ written as $${', async () => {
+    const script = 'echo "$${1:-0}|$${2:-none}|$${#3}"';
+    const c = testContext({ scope: { run: { id: 'run_1' } } });
+    const cmd = ['sh', '-c', script, 'sh', '${run.id}', '${run.none}', 'abc'];
+    await expect(run({ cmd }, c)).resolves.toBe('run_1|none|3');
+  });
+
   it('parses stdout as JSON for json_stdout', async () => {
     await expect(run({ cmd: ['echo', '{"a":[1,2]}'], result: 'json_stdout' })).resolves.toEqual({
       a: [1, 2],

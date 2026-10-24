@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectTemplateRefs,
   compileTemplate,
+  escapedExprs,
   evaluateExpr,
   expressionRoots,
   forEachTemplate,
@@ -46,6 +47,59 @@ describe('parseTemplate', () => {
     expect(validateTemplate('${ event[ }')).toMatch(/invalid JMESPath/);
     expect(validateTemplate('n=${ event.payload.n > 2.5 }')).toMatch(/as in `2\.5`$/);
     expect(validateTemplate('${event.type}')).toBeNull();
+  });
+});
+
+describe('the $${ escape', () => {
+  it('yields a literal ${ that is never parsed', () => {
+    expect(parseTemplate('since=$${1:-0}; n=$${#TOKEN}')).toEqual([
+      { text: 'since=${1:-0}; n=${#TOKEN}' },
+    ]);
+    expect(parseTemplate('$${HOME} ${run.id} $${x')).toEqual([
+      { text: '${HOME} ' },
+      { expr: 'run.id' },
+      { text: ' ${x' },
+    ]);
+    expect(parseTemplate('${run.id}$${x}')).toEqual([{ expr: 'run.id' }, { text: '${x}' }]);
+    expect(validateTemplate('echo "$${1:-0}" $$ $1')).toBeNull();
+  });
+
+  it("leaves later templates live, and ${'$'} writes a $ before a value", () => {
+    expect(renderTemplate('$${a:-${event.payload.n}}', scope)).toBe('${a:-3}');
+    expect(renderTemplate("cost ${'$'}${event.payload.n}", scope)).toBe('cost $3');
+    expect(renderTemplate("pid ${'$$'}${event.payload.n}", scope)).toBe('pid $$3');
+    expect(escapedExprs('$${event.x} $${1:-0} $${y')).toEqual(['event.x']);
+  });
+
+  it('renders to text, so an escaped whole string is not a template', () => {
+    const t = compileTemplate('$${event.type}');
+    expect(t.whole).toBe(false);
+    expect(t.roots.size).toBe(0);
+    expect(renderTemplate('$${event.type}', scope)).toBe('${event.type}');
+    expect(renderTemplate('[$${n}] ${event.payload.n}', scope)).toBe('[${n}] 3');
+    expect(renderValue({ cmd: ['bash', '-c', 'echo $${1:-0}'] }, scope)).toEqual({
+      cmd: ['bash', '-c', 'echo ${1:-0}'],
+    });
+  });
+
+  it('is named in the error when the ${…} reads as shell', () => {
+    const hint = /; a literal \$\{ is written \$\$\{$/;
+    expect(validateTemplate('since=${1:-0}')).toMatch(hint);
+    expect(validateTemplate('since=${1:-0}')).not.toMatch(/number literal/);
+    expect(validateTemplate('${#TOKEN}')).toMatch(hint);
+    expect(validateTemplate('${VAR:-x}')).toMatch(hint);
+    expect(validateTemplate('${f%%.*}')).toMatch(hint);
+    expect(validateTemplate('${arr[@]}')).toMatch(hint);
+    expect(validateTemplate('echo ${x')).toMatch(hint);
+    expect(validateTemplate('${1-0}')).toMatch(hint);
+    expect(validateTemplate('${1-0}')).not.toMatch(/number literal/);
+    expect(validateTemplate('${VAR=x}')).toMatch(hint);
+    expect(validateTemplate('${VAR:2}')).toMatch(hint);
+    expect(validateTemplate('${VAR,,}')).toMatch(hint);
+    expect(validateTemplate('${a, b}')).not.toMatch(hint);
+    expect(validateTemplate('${foo:bar}')).not.toMatch(hint);
+    expect(validateTemplate('${ event[ }')).not.toMatch(hint);
+    expect(validateTemplate('n=${ event.payload.n > 2.5 }')).not.toMatch(hint);
   });
 });
 
