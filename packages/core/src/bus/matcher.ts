@@ -13,6 +13,8 @@ export const BUDGET_EXCEEDED = 'budget.exceeded';
 export const LLM_BATCH_ENDED = 'llm.batch.ended';
 /** Published by the retention pass when it keeps a worktree with commits not pushed yet. */
 export const RETENTION_WORKSPACE_KEPT = 'retention.workspace_kept';
+/** Published by the dispatcher, once per causal chain, when it first drops one of its events. */
+export const LOOP_DETECTED = 'loop.detected';
 
 /** The `type` label of events no task names exactly (see `labelledEventTypes`). */
 export const OTHER_EVENT_TYPE = 'other';
@@ -120,7 +122,7 @@ export function compileConfig(file: TasksFileConfig): CompiledConfig {
 /**
  * Event types that get their own `type` label on `oa_events_published_total`: the core's
  * own (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
- * `retention.workspace_kept`, `task.<name>.succeeded|failed|cancelled`) and
+ * `retention.workspace_kept`, `loop.detected`, `task.<name>.succeeded|failed|cancelled`) and
  * every type a task names exactly in a trigger, a `wait` or an `emit` rule. Connectors and
  * `POST /v1/events` can publish any type, so everything else (including types only a
  * wildcard matches) is counted as `other` and the label stays bounded by the config.
@@ -132,6 +134,7 @@ export function labelledEventTypes(config: CompiledConfig): ReadonlySet<string> 
     BUDGET_EXCEEDED,
     LLM_BATCH_ENDED,
     RETENTION_WORKSPACE_KEPT,
+    LOOP_DETECTED,
   ]);
   const add = (type: string | undefined): void => {
     if (type !== undefined && !isTypePattern(type)) {

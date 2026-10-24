@@ -318,3 +318,80 @@ describe('createCore with the reference workflow', () => {
     await broken.stop();
   });
 });
+
+describe('createCore with an event loop', () => {
+  it('stops a two-way fan-out loop at the chain cap and tells a notifier once', async () => {
+    const loopDir = mkdtempSync(join(tmpdir(), 'oa-loop-'));
+    const file = join(loopDir, 'tasks.yaml');
+    const fanOut = (type: string) => [
+      '    action: { kind: shell, cmd: ["true"] }',
+      '    emit:',
+      `      - { type: ${type}, each: "\${\`[1, 2]\`}" }`,
+    ];
+    writeFileSync(
+      file,
+      [
+        'tasks:',
+        '  - name: ping',
+        '    trigger: { kind: event, type: x.ping }',
+        ...fanOut('x.pong'),
+        '  - name: pong',
+        '    trigger: { kind: event, type: x.pong }',
+        ...fanOut('x.ping'),
+        '  - name: alert',
+        '    trigger: { kind: event, type: loop.detected }',
+        '    action: { kind: shell, cmd: ["true"] }',
+      ].join('\n'),
+    );
+    const loopLines: Record<string, unknown>[] = [];
+    const succeed: ActionRunner = () => Promise.resolve({ ok: true });
+    const looping = createCore({
+      tasksFiles: [file],
+      dbPath: join(loopDir, 'state.db'),
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => loopLines.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      runners: { ...hangAll, shell: succeed },
+      maxChainRuns: 20,
+    });
+    await looping.start();
+    try {
+      expect(loopLines.filter((l) => l.msg === 'core.config_warning')).toEqual([
+        expect.objectContaining({
+          task: 'ping',
+          path: 'tasks[0].trigger',
+          warning: expect.stringContaining(
+            'event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping;',
+          ) as unknown,
+        }),
+      ]);
+      looping.bus.publish({ type: 'x.ping', source: 'test' });
+      const runs = (task: string) =>
+        (['queued', 'running', 'succeeded'] as const).flatMap((s) =>
+          looping.store.runs.listByStatus(s).filter((r) => r.task === task),
+        );
+      await expect
+        .poll(() => runs('alert').filter((r) => r.status === 'succeeded'), { timeout: 5000 })
+        .toHaveLength(1);
+      await expect
+        .poll(
+          () =>
+            looping.store.runs.listByStatus('queued').length +
+            looping.store.runs.listByStatus('running').length,
+        )
+        .toBe(0);
+      expect(runs('ping').length + runs('pong').length).toBe(20);
+      expect(looping.store.events.list({ type: 'loop.detected' })).toHaveLength(1);
+      expect(looping.metrics.render()).toMatch(
+        /oa_events_published_total\{type="loop.detected",result="inserted"\} 1/,
+      );
+      expect(looping.metrics.render()).not.toMatch(
+        /oa_events_published_total\{type="loop.detected",result="duplicate"\}/,
+      );
+    } finally {
+      await looping.stop();
+      rmSync(loopDir, { recursive: true, force: true });
+    }
+  });
+});

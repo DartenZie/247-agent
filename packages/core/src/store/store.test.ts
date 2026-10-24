@@ -69,24 +69,24 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(10);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(11);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(10);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(11);
   });
 
   it('refuses a database whose schema is newer than this build', () => {
     const path = join(dir, 'state.db');
-    store.db.pragma('user_version = 11');
+    store.db.pragma('user_version = 12');
     store.close();
     expect(() => (store = openStore(path))).toThrow(
-      /schema version 11 is newer than this build's 10/,
+      /schema version 12 is newer than this build's 11/,
     );
     store = openStore(join(dir, 'other.db'));
     const db = new Database(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(11);
+    expect(db.pragma('user_version', { simple: true })).toBe(12);
     db.close();
   });
 

@@ -17,7 +17,8 @@ export class InvalidEventError extends Error {
 
 /**
  * Appends an event. Assigns `id` and `ts`; inherits `correlation_id` and `depth + 1` from
- * `parent_id` when given, otherwise starts a new correlation. A `dedup_key` collision drops
+ * `parent_id` when given, otherwise starts a new correlation. The parent's chain root is
+ * recorded too, also across an `each` item's new correlation. A `dedup_key` collision drops
  * the event and reports `duplicate`.
  */
 export function publishEvent(
@@ -33,6 +34,7 @@ export function publishEvent(
   return store.transaction((): PublishResult => {
     let correlationId = input.correlation_id;
     let depth = 0;
+    let rootId: string | undefined;
     if (input.parent_id !== undefined) {
       const parent = store.events.getById(input.parent_id);
       if (parent === undefined) {
@@ -40,6 +42,7 @@ export function publishEvent(
       }
       correlationId ??= parent.correlation_id;
       depth = parent.depth + 1;
+      rootId = store.events.rootOf(parent.id);
     }
     const now = clock.now();
     const event: Omit<EventRecord, 'seq'> = {
@@ -53,7 +56,7 @@ export function publishEvent(
       depth,
       payload: input.payload ?? null,
     };
-    const res = store.events.insert(event);
+    const res = store.events.insert(event, rootId);
     if (!res.inserted) {
       const dedupKey = event.dedup_key ?? '';
       log.debug('event.duplicate', { event_type: event.type, dedup_key: dedupKey });

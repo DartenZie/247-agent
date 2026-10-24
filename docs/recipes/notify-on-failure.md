@@ -56,7 +56,8 @@ task's own lifecycle event outright.
 
 Two more guards back this up. A `dedup_key` on `budget.exceeded` makes it one event per
 day however many calls hit the cap. And every event records its depth in the chain that
-caused it; past `limits.max_event_depth` an event starts no run at all.
+caused it; past `limits.max_event_depth`, or once its chain has started
+`limits.max_runs_per_chain` runs, an event starts no run at all.
 
 ## Make it yours
 

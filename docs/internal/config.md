@@ -120,6 +120,15 @@ the wait would never match. `taskActions` (`config/walk.ts`) is the one walker o
 task's action and its sequence steps; the lint, `checkSandboxes`,
 `checkConnectorActions` and the core's connector-reference warning use it.
 
+Event cycles (`eventCycles`): edges go from a task to every other task whose event
+trigger's `type` or `type_any` matches a type it produces (its `emit` types and its
+three lifecycle events); filters are ignored, since only the author can tell whether
+one ends the cycle. Each strongly connected group is reported once, at
+`tasks[<i>].trigger` of its first task in config order, with the shortest cycle through
+that task; other cycles of the group are not named. Cycles span files, so
+`lintTasks(tasks, all)` takes the whole config: `oa validate agent.yaml` and the core's
+`activate()` pass every loaded task, while `oa validate tasks.yaml` sees one file.
+
 `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST (every node that holds a
 sub-expression, `KeyValuePair.value` included) for a comparison with a bare
 `true`/`false`/`null` (a `Field`, which reads as null), a double-quoted `"true"`/
@@ -167,7 +176,7 @@ The `configure()` seams, and what each one takes:
 | `LlmService` (`llm/service.ts`) | `configure` | `providers`, `pricing`, `defaults.llm`, `defaults.decide`, `defaults.agent.budget`, `budgets.daily_usd` |
 | `BatchPoller` (`llm/batches.ts`) | `configure` | `batches.poll` (rearms the timer) |
 | `Executor` (`executor/executor.ts`) | `configure` | `workers`, `defaults.timeout`, `defaults.retry`, `defaults.sandbox`, `shutdown.grace` |
-| `Dispatcher` (`bus/dispatcher.ts`) | `configure` | `limits.max_event_depth` |
+| `Dispatcher` (`bus/dispatcher.ts`) | `configure` | `limits.max_event_depth`, `limits.max_runs_per_chain` |
 | `ConnectorSupervisor` (`connectors/supervisor.ts`) | `configure`, `apply` | `defaults.agent` (`work_dir` changed restarts every sandboxed acp connector); `apply` adds, removes and respawns connectors by manifest key, and logs `connector.unit_restart_needed` for a changed `managed_by: systemd` manifest without ops |
 | pollers (`core.ts`) | swapped | every `builtin: poller` manifest is rebuilt |
 | `Retention` (`retention.ts`) | `configure` | the five durations and `work_dir`; the timer is rearmed only when the interval changed |

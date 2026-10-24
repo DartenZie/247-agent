@@ -141,6 +141,7 @@ interface CoreSettings {
   tasksFiles: string[];
   workers: number;
   maxEventDepth: number;
+  maxChainRuns: number;
   defaultTimeout: string;
   defaultRetry: RetryConfig;
   defaultSandbox: SandboxConfig;
@@ -159,6 +160,7 @@ function coreSettings(
     tasksFiles: config.tasks,
     workers: config.workers,
     maxEventDepth: config.limits.max_event_depth,
+    maxChainRuns: config.limits.max_runs_per_chain,
     defaultTimeout: config.defaults.timeout,
     defaultRetry: config.defaults.retry,
     defaultSandbox: config.defaults.sandbox,

@@ -14,10 +14,11 @@ interface EventRow {
   dedup_key: string | null;
   depth: number;
   payload: string;
+  root_id: string | null;
 }
 
 function rowToEvent(row: unknown): EventRecord {
-  const r = row as EventRow;
+  const { root_id: _root, ...r } = row as EventRow;
   return { ...r, payload: JSON.parse(r.payload) as JsonValue };
 }
 
@@ -37,6 +38,8 @@ export class EventStore {
   private readonly byIdStmt: Statement;
   private readonly afterStmt: Statement;
   private readonly purgeStmt: Statement;
+  private readonly rootStmt: Statement;
+  private readonly chainRunsStmt: Statement;
   private readonly db: Database;
 
   constructor(db: Database) {
@@ -46,12 +49,17 @@ export class EventStore {
       compileTypePattern(String(pattern))(String(type)) ? 1 : 0,
     );
     this.insertStmt = db.prepare(
-      `INSERT INTO events (id, type, source, ts, correlation_id, parent_id, dedup_key, depth, payload)
-       VALUES (@id, @type, @source, @ts, @correlation_id, @parent_id, @dedup_key, @depth, @payload)
+      `INSERT INTO events (id, type, source, ts, correlation_id, parent_id, dedup_key, depth, payload, root_id)
+       VALUES (@id, @type, @source, @ts, @correlation_id, @parent_id, @dedup_key, @depth, @payload, @root_id)
        ON CONFLICT(dedup_key) DO NOTHING`,
     );
     this.byIdStmt = db.prepare('SELECT * FROM events WHERE id = ?');
     this.afterStmt = db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?');
+    this.rootStmt = db.prepare('SELECT COALESCE(root_id, id) AS root FROM events WHERE id = ?');
+    this.chainRunsStmt = db.prepare(
+      `SELECT COUNT(*) AS n FROM runs r JOIN events e ON e.id = r.event_id
+       WHERE e.root_id = @root OR (e.id = @root AND e.root_id IS NULL)`,
+    );
     // Only events the dispatcher has passed, and none a run or an unresumed wait still points at.
     this.purgeStmt = db.prepare(
       `DELETE FROM events WHERE seq IN (
@@ -63,9 +71,16 @@ export class EventStore {
     );
   }
 
-  /** Appends an event. A `dedup_key` collision is not an error: the event is dropped. */
-  insert(event: Omit<EventRecord, 'seq'>): InsertEventResult {
-    const info = this.insertStmt.run({ ...event, payload: JSON.stringify(event.payload) });
+  /**
+   * Appends an event. A `dedup_key` collision is not an error: the event is dropped.
+   * `rootId` is the root of its causal chain (`rootOf(parent)`); a root passes none.
+   */
+  insert(event: Omit<EventRecord, 'seq'>, rootId?: string): InsertEventResult {
+    const info = this.insertStmt.run({
+      ...event,
+      payload: JSON.stringify(event.payload),
+      root_id: rootId ?? event.id,
+    });
     if (info.changes === 0) {
       return { inserted: false };
     }
@@ -75,6 +90,17 @@ export class EventStore {
   getById(id: string): EventRecord | undefined {
     const row: unknown = this.byIdStmt.get(id);
     return row === undefined ? undefined : rowToEvent(row);
+  }
+
+  /** The root event of `id`'s causal chain: itself for a root or a row older than `root_id`. */
+  rootOf(id: string): string | undefined {
+    const row = this.rootStmt.get(id) as { root: string } | undefined;
+    return row?.root;
+  }
+
+  /** Runs started by events of the chain rooted at `rootId`, a root older than `root_id` included. */
+  countChainRuns(rootId: string): number {
+    return (this.chainRunsStmt.get({ root: rootId }) as { n: number }).n;
   }
 
   listAfter(seq: number, limit: number): EventRecord[] {

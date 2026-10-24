@@ -158,8 +158,9 @@ an earlier wait was armed can still end a later one. The result is the matched e
 `seq`); on timeout `on_timeout: succeed` returns `{timed_out: true}`, else
 `WaitTimeoutError` (non-retryable). A wait without `timeout` waits forever. The
 attempt timer is cleared on suspend and set again on resume, so waiting time never
-counts against the task `timeout`. An event past `limits.max_event_depth` starts no run
-but still ends a wait.
+counts against the task `timeout`. An event the dispatcher drops (past
+`limits.max_event_depth` or `limits.max_runs_per_chain`) starts no run but still ends a
+wait.
 
 ## `sequence`
 
@@ -202,8 +203,9 @@ transaction: the run's status, the `state_updates`, `task.<name>.succeeded` (pay
   `{run_id, task, error, attempt}`.
 - `bus/matcher.ts` never matches a task to an event whose `source` is its own
   `task:<name>`; the lifecycle events and every emitted event carry that source, which
-  is the whole loop guard at the task level. The chain-level guard is
-  `limits.max_event_depth` in the dispatcher.
+  is the whole loop guard at the task level. The chain-level guards are
+  `limits.max_event_depth` and `limits.max_runs_per_chain` in the dispatcher
+  ([`architecture.md`](architecture.md)), and `oa validate` warns about cycles.
 
 ## Attempts, retries, timeouts
 

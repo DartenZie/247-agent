@@ -37,7 +37,7 @@ Run ids look the same with `run_`. Ids are unique; `seq` is the order.
 | `scheduler` | cron ticks |
 | `manual` | `oa run` and `POST /v1/runs` |
 | `api` | `POST /v1/events` without a `source` |
-| `core` | `budget.exceeded`, `llm.batch.ended` and `retention.workspace_kept` |
+| `core` | `budget.exceeded`, `llm.batch.ended`, `retention.workspace_kept` and `loop.detected` |
 | `task:<name>` | the lifecycle and `emit` events of that task's runs |
 
 A task never matches an event whose source is its own `task:<name>`, which is what keeps
@@ -56,6 +56,7 @@ a task that reports failures from looping on its own failure.
 | `budget.exceeded` | `core` | `budget:daily:<YYYY-MM-DD>` | none | `{ scope: "daily", day, limit_usd, spent_usd, task, run_id }` |
 | `llm.batch.ended` | `core` | `llm.batch:<batch_id>` | the run's trigger event | see below |
 | `retention.workspace_kept` | `core` | `retention.workspace_kept:<run_id>` | none | `{ run_id, task, path, reason, commits }` |
+| `loop.detected` | `core` | `loop:<root_event_id>` | none | `{ reason, limit, root_event_id, correlation_id, event_id, event_type, depth }` |
 | a poller's `event` | the poller's name | `<poller>:<item key>` | none | the item |
 
 Examples:
@@ -149,8 +150,25 @@ For every stored event, in order, the dispatcher:
    unless a run of the task is queued, running or waiting and `overlap` is `skip`;
    matches an event trigger when a pattern matches and the filter is true (a filter
    that throws is logged as `trigger.filter_error` and does not match);
-4. creates one run per matched task. A run per task and event is unique, so a replay
-   after a crash creates nothing twice.
+4. creates one run per matched task, unless the event's causal chain has already
+   started `limits.max_runs_per_chain` runs (default 1000): then the event starts no
+   more runs and is dropped with an `event.chain_runs_exceeded` warning. A run per task
+   and event is unique, so a replay after a crash creates nothing twice.
+
+A causal chain is the root event and every event descended from it through `parent_id`,
+including each item of an `emit … each` rule, which gets a new correlation id but keeps
+its parent. The first time the dispatcher drops an event of a chain, for depth or for
+the run cap, it publishes `loop.detected`, once per chain:
+
+```json
+{ "type": "loop.detected", "source": "core", "dedup_key": "loop:evt_01J8Z2…",
+  "payload": { "reason": "chain_runs", "limit": 1000, "root_event_id": "evt_01J8Z2…",
+    "correlation_id": "cor_01J8Z3…", "event_id": "evt_01J8Z4…", "event_type": "x.ping", "depth": 7 } }
+```
+
+`reason` is `depth` or `chain_runs`, and `limit` is the setting that was reached.
+`loop.detected` has no parent and a new correlation id, so a task that triggers on it
+starts a chain of its own and is never dropped with the loop it reports.
 
 A truthy filter result is anything but `null`, `false`, an empty string, an empty list
 and an empty object; `0` counts as true.
@@ -192,7 +210,9 @@ The names worth searching for:
 | `task.paused`, `task.resumed` | info | `oa tasks pause` or `oa tasks resume` changed the task (`task`) |
 | `task.skipped_paused` | info | an event matched a paused task and started no run (`task`, `event_id`) |
 | `trigger.filter_error` | warn | a trigger filter threw on an event; no match |
-| `event.depth_exceeded` | warn | an event past `limits.max_event_depth` started no run |
+| `event.depth_exceeded` | warn | an event past `limits.max_event_depth` started no run (`event_id`, `depth`, `root_event_id`, `limit`) |
+| `event.chain_runs_exceeded` | warn | an event whose chain reached `limits.max_runs_per_chain` started no run (`event_id`, `root_event_id`, `limit`) |
+| `loop.detected` | warn | the first event of a chain was dropped and `loop.detected` was published (`reason`, `root_event_id`, `event_id`) |
 | `connector.up` | info | a connector is up (`pid`, `restarts`, `sandbox`, `network`) |
 | `connector.exited`, `connector.failed` | warn, error | a connector stopped or could not start; a restart is scheduled |
 | `connector.restart_scheduled` | info | the backoff before the next spawn (`delay_ms`, `restarts`) |

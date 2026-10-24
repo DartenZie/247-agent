@@ -5,9 +5,10 @@ import { newId } from '../ids.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import type { Store } from '../store/store.js';
-import type { EventRecord, RunRecord } from '../store/types.js';
+import type { EventRecord, NewEvent, RunRecord } from '../store/types.js';
 import type { WaitRecord } from '../store/waits.js';
-import { CRON_TICK, type CompiledConfig } from './matcher.js';
+import { CRON_TICK, LOOP_DETECTED, type CompiledConfig } from './matcher.js';
+import { publishEvent, type PublishResult } from './publish.js';
 
 export interface DispatcherOptions {
   store: Store;
@@ -17,8 +18,15 @@ export interface DispatcherOptions {
   batchSize?: number;
   /** Events deeper than this in a causal chain are dropped (runaway loop guard). */
   maxDepth?: number;
+  /** Runs one causal chain may start; its later events start none (fan-out storm guard). */
+  maxChainRuns?: number;
   metrics?: Metrics | undefined;
+  /** Publishes `loop.detected`; the bus passes its own so the event is counted and wakes. */
+  publish?: ((input: NewEvent) => PublishResult) | undefined;
 }
+
+/** Why the dispatcher dropped an event: the `reason` label and `loop.detected` payload. */
+export type DropReason = 'depth' | 'chain_runs';
 
 export interface DispatchResult {
   scanned: number;
@@ -60,6 +68,12 @@ export class Dispatcher {
   private readonly batchSize: number;
   private readonly metrics: Metrics;
   private maxDepth: number;
+  private maxChainRuns: number;
+  private readonly publish: (input: NewEvent) => PublishResult;
+  /** Chains `loop.detected` was committed for lately; the dedup key is the real guard. */
+  private readonly reported = new Set<string>();
+  /** Chains reported in the batch in flight, merged into `reported` once it commits. */
+  private batchReported = new Set<string>();
   private config: CompiledConfig = EMPTY_CONFIG;
   private readonly listeners = new Set<QueuedListener>();
   private wakePending = false;
@@ -72,16 +86,27 @@ export class Dispatcher {
     this.log = opts.log;
     this.batchSize = opts.batchSize ?? 100;
     this.maxDepth = opts.maxDepth ?? 32;
+    this.maxChainRuns = opts.maxChainRuns ?? 1000;
     this.metrics = opts.metrics ?? new Metrics();
+    this.publish =
+      opts.publish ??
+      ((input) => {
+        const r = publishEvent(this.store, this.clock, this.log, input);
+        if (r.status === 'inserted') {
+          this.wake();
+        }
+        return r;
+      });
   }
 
   setConfig(config: CompiledConfig): void {
     this.config = config;
   }
 
-  /** Reload seam: `limits.max_event_depth`. */
-  configure(opts: { maxDepth: number }): void {
-    this.maxDepth = opts.maxDepth;
+  /** Reload seam: `limits.max_event_depth` and `limits.max_runs_per_chain`. */
+  configure(opts: { maxDepth?: number | undefined; maxChainRuns?: number | undefined }): void {
+    this.maxDepth = opts.maxDepth ?? this.maxDepth;
+    this.maxChainRuns = opts.maxChainRuns ?? this.maxChainRuns;
   }
 
   /** Executor hand-off: called once per batch with the runs it created. */
@@ -207,6 +232,50 @@ export class Dispatcher {
     return out;
   }
 
+  /**
+   * Counts and logs a dropped event, and publishes `loop.detected` for its chain. The
+   * `loop:<root>` dedup key makes that once per chain; the event is a root of its own, so
+   * a task that alerts on it is neither too deep nor over the chain's cap.
+   */
+  private drop(event: EventRecord, reason: DropReason, rootId: string): void {
+    const limit = reason === 'depth' ? this.maxDepth : this.maxChainRuns;
+    this.metrics.eventsDropped.inc({ reason });
+    this.log.warn(reason === 'depth' ? 'event.depth_exceeded' : 'event.chain_runs_exceeded', {
+      event_id: event.id,
+      event_type: event.type,
+      depth: event.depth,
+      root_event_id: rootId,
+      limit,
+      correlation_id: event.correlation_id,
+    });
+    if (this.reported.has(rootId) || this.batchReported.has(rootId)) {
+      return;
+    }
+    this.batchReported.add(rootId);
+    const r = this.publish({
+      type: LOOP_DETECTED,
+      source: 'core',
+      dedup_key: `loop:${rootId}`,
+      payload: {
+        reason,
+        limit,
+        root_event_id: rootId,
+        correlation_id: event.correlation_id,
+        event_id: event.id,
+        event_type: event.type,
+        depth: event.depth,
+      },
+    });
+    if (r.status === 'inserted') {
+      this.log.warn(LOOP_DETECTED, {
+        reason,
+        root_event_id: rootId,
+        event_id: event.id,
+        correlation_id: event.correlation_id,
+      });
+    }
+  }
+
   private handOff(runs: readonly RunRecord[]): void {
     if (runs.length === 0) {
       return;
@@ -217,6 +286,8 @@ export class Dispatcher {
   }
 
   dispatchOnce(): DispatchResult {
+    // A batch that rolls back takes its `loop.detected` with it; its replay publishes again.
+    this.batchReported = new Set();
     const result = this.store.transaction((): DispatchResult => {
       const queued: RunRecord[] = this.expireWaits();
       const cursor = this.store.cursors.get('dispatch');
@@ -227,6 +298,8 @@ export class Dispatcher {
       }
       let waits = this.compileWaits();
       const paused = new Set(this.store.pauses.list().map((p) => p.task));
+      // Runs per chain root, read once per batch and counted up as runs are inserted.
+      const chainRuns = new Map<string, number>();
       for (const event of events) {
         // Ending a wait continues a run already in the chain; only starting new runs is a
         // hop the depth guard limits. So a too-deep event still resumes its waiter (an
@@ -246,16 +319,13 @@ export class Dispatcher {
           }
           waits = still;
         }
+        const rootId = event.parent_id === null ? event.id : this.store.events.rootOf(event.id);
+        const root = rootId ?? event.id;
         if (event.depth > this.maxDepth) {
-          this.metrics.eventsDropped.inc({ reason: 'depth' });
-          this.log.warn('event.depth_exceeded', {
-            event_id: event.id,
-            event_type: event.type,
-            depth: event.depth,
-            correlation_id: event.correlation_id,
-          });
+          this.drop(event, 'depth', root);
           continue;
         }
+        let capped = false;
         for (const task of this.config.tasks) {
           if (!task.matches(event, this.log)) {
             continue;
@@ -270,6 +340,12 @@ export class Dispatcher {
             this.store.runs.hasActive(task.name)
           ) {
             this.log.info('cron.skipped_overlap', { task: task.name, event_id: event.id });
+            continue;
+          }
+          const started = chainRuns.get(root) ?? this.store.events.countChainRuns(root);
+          chainRuns.set(root, started);
+          if (started >= this.maxChainRuns) {
+            capped = true;
             continue;
           }
           const now = this.clock.now();
@@ -289,6 +365,7 @@ export class Dispatcher {
           if (!this.store.runs.insertQueued(run)) {
             continue; // replay of an already dispatched event
           }
+          chainRuns.set(root, started + 1);
           queued.push(run);
           this.metrics.runsQueued.inc({ task: task.name });
           this.log.info('run.queued', {
@@ -299,10 +376,17 @@ export class Dispatcher {
             correlation_id: run.correlation_id,
           });
         }
+        if (capped) {
+          this.drop(event, 'chain_runs', root);
+        }
       }
       this.store.cursors.set('dispatch', last.seq);
       return { scanned: events.length, queued };
     });
+    if (this.reported.size + this.batchReported.size > 1000) {
+      this.reported.clear();
+    }
+    this.batchReported.forEach((root) => this.reported.add(root));
     this.handOff(result.queued);
     return result;
   }

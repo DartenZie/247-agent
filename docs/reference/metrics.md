@@ -38,7 +38,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_tasks_paused` | gauge, at scrape | | tasks in the active configuration that `oa tasks pause` paused |
 | `oa_config_reloads_total` | counter | `result` (`ok`, `invalid`) | reloads by outcome |
 | `oa_events_published_total` | counter | `type`, `result` (`inserted`, `duplicate`) | events published, and whether they were stored or dropped as duplicates |
-| `oa_events_dropped_total` | counter | `reason` (`depth`) | events past `limits.max_event_depth` |
+| `oa_events_dropped_total` | counter | `reason` (`depth`, `chain_runs`) | events that started no run: past `limits.max_event_depth`, or in a chain that reached `limits.max_runs_per_chain` |
 | `oa_runs_queued_total` | counter | `task` | runs created |
 | `oa_run_attempts_total` | counter | `task` | attempts started, retries included |
 | `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`, `cancelled`) | runs that reached a terminal status |

@@ -144,7 +144,7 @@ describe('startDaemon', () => {
   });
 
   it('reloads agent.yaml and manifests atomically, reports fixed keys and serves POST /v1/reload', async () => {
-    // Add a connector, change workers and the log level, all in one reload.
+    // Add a connector, change workers, the log level and a limit, all in one reload.
     writeFileSync(
       join(dir, 'agent.yaml'),
       [
@@ -152,6 +152,7 @@ describe('startDaemon', () => {
         'socket: core.sock',
         'log: { level: warn }',
         'workers: 9',
+        'limits: { max_runs_per_chain: 1 }',
         'connectors:',
         `  - { name: fake, exec: [node, "${FIXTURES}fake-mcp.ts"] }`,
         '',
@@ -186,6 +187,21 @@ describe('startDaemon', () => {
     expect(lines.slice(before).filter((l) => l.level === 'debug' || l.level === 'info')).toEqual(
       [],
     );
+    // The chain cap took: the chain's second event starts no run.
+    const root = daemon.core.bus.publish({ type: 'ping', source: 'test', payload: { n: 3 } });
+    if (root.status !== 'inserted') {
+      throw new Error('duplicate');
+    }
+    daemon.core.bus.publish({
+      type: 'ping',
+      source: 'test',
+      parent_id: root.event.id,
+      payload: { n: 3 },
+    });
+    daemon.core.bus.dispatcher.drain();
+    expect(lines.filter((l) => l.msg === 'event.chain_runs_exceeded')).toEqual([
+      expect.objectContaining({ level: 'warn', root_event_id: root.event.id, limit: 1 }),
+    ]);
 
     // An invalid manifest refuses the whole reload: the connector set and workers stay.
     mkdirSync(join(dir, 'connectors.d'));

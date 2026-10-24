@@ -9,8 +9,8 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order, all pending ones in one transaction, and set
-`PRAGMA user_version` to the number applied; ten ship, so a current database reads
-`user_version = 10`. A failed migration leaves the file at the version it had. A
+`PRAGMA user_version` to the number applied; eleven ship, so a current database reads
+`user_version = 11`. A failed migration leaves the file at the version it had. A
 `user_version` above the number this build ships means a newer release migrated the file:
 `migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
 daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
@@ -45,8 +45,10 @@ what removes a class of races ([`decisions.md`](decisions.md)).
 
 **`events`**: `seq INTEGER PRIMARY KEY AUTOINCREMENT`, `id TEXT UNIQUE`, `type`,
 `source`, `ts`, `correlation_id`, `parent_id`, `dedup_key TEXT UNIQUE`, `depth INTEGER
-DEFAULT 0`, `payload TEXT` (JSON). Indexes `events_type_seq(type, seq)`,
-`events_correlation(correlation_id, seq)`. Written by `bus/publish.ts` only
+DEFAULT 0`, `payload TEXT` (JSON), `root_id` (the chain's root event, its own id for a
+root, `NULL` on rows from before migration 11; internal, not in `EventRecord`). Indexes
+`events_type_seq(type, seq)`, `events_correlation(correlation_id, seq)`,
+`events_root(root_id)` for the dispatcher's chain cap. Written by `bus/publish.ts` only
 (`INSERT … ON CONFLICT(dedup_key) DO NOTHING`). `seq` is the dispatch order and the
 only reliable ordering; a SQL function `type_matches(pattern, type)` serves pattern
 queries.
