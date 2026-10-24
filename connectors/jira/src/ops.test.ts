@@ -322,16 +322,22 @@ describe('ops on Cloud', () => {
     expect((err as JiraError).transient).toBe(false);
   });
 
-  it('marks rate limits, 5xx and transport failures transient (#32)', async () => {
+  it('marks rate limits, failures of reads and refused connections transient (#32)', async () => {
     const jira = new FakeJira()
       .on('POST /rest/api/3/issue', () => ({ status: 429, body: { message: 'slow down' } }))
-      .on('GET /rest/api/3/issue/SITE-1', () => ({ status: 503, body: 'unavailable' }));
+      .on('GET /rest/api/3/issue/SITE-1', () => ({ status: 502, body: 'bad gateway' }));
     const ops = jira.ops();
     const limited = await ops.createIssue({ summary: 'x' }).catch((e: unknown) => e);
     expect((limited as JiraError).transient).toBe(true);
     const down = await ops.getIssue({ key: 'SITE-1' }).catch((e: unknown) => e);
     expect((down as JiraError).transient).toBe(true);
-    expect(new JiraError('GET', '/x', 0, 'fetch failed').transient).toBe(true);
+    // A created issue behind a 502 would be created twice; a search only reads.
+    expect(new JiraError('POST', '/issue', 502, 'bad gateway').transient).toBe(false);
+    expect(new JiraError('POST', '/search/jql', 502, 'bad gateway').transient).toBe(true);
+    const refused = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
+    });
+    expect(new JiraError('POST', '/issue', 0, 'fetch failed', refused).transient).toBe(true);
   });
 });
 

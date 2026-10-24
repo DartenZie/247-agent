@@ -4,7 +4,7 @@
  * `retry_after` so the poll loop can back off.
  */
 
-import { isTransientStatus } from '@247-agent/connector-sdk';
+import { isTransientHttpError } from '@247-agent/connector-sdk';
 
 export interface TelegramApi {
   call<T>(method: string, params?: Record<string, unknown>, opts?: CallOptions): Promise<T>;
@@ -20,14 +20,27 @@ export class TelegramError extends Error {
   readonly code: number;
   /** Seconds to wait, from a 429's `parameters.retry_after`. */
   readonly retryAfter: number | undefined;
-  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  /**
+   * Worth retrying (`isTransientHttpError`). Every method is a POST; only the `get…` ones
+   * are idempotent, so a `sendMessage` that timed out or got a 502 is not retried.
+   */
   readonly transient: boolean;
-  constructor(method: string, code: number, description: string, retryAfter?: number) {
+  constructor(
+    method: string,
+    code: number,
+    description: string,
+    retryAfter?: number,
+    cause?: unknown,
+  ) {
     super(`${method}: ${description}${code > 0 ? ` (${String(code)})` : ''}`);
     this.name = 'TelegramError';
     this.code = code;
     this.retryAfter = retryAfter;
-    this.transient = isTransientStatus(code);
+    this.transient = isTransientHttpError({
+      status: code,
+      idempotent: method.startsWith('get'),
+      cause,
+    });
   }
 }
 
@@ -67,7 +80,7 @@ export function createTelegramApi(opts: TelegramClientOptions): TelegramApi {
       } catch (err) {
         const cause = err instanceof Error ? (err.cause ?? err) : err;
         const message = cause instanceof Error ? cause.message : String(cause);
-        throw new TelegramError(method, 0, hideToken(message));
+        throw new TelegramError(method, 0, hideToken(message), undefined, err);
       }
       let body: ApiEnvelope;
       try {

@@ -103,7 +103,8 @@ function entryType(type: string): RawEntry['type'] {
 
 function describe(op: string, path: string, err: unknown): Error {
   const message = `sftp ${op} ${path}: ${err instanceof Error ? err.message : String(err)}`;
-  return isTransientFileError(err)
+  const repeatable = ['connect', 'list', 'stat', 'get', 'download'].includes(op);
+  return isTransientFileError(err, { repeatable })
     ? new TransientError(message, { cause: err })
     : new Error(message, { cause: err });
 }

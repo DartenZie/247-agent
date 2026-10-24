@@ -6,8 +6,11 @@ function libError(message: string, props: Record<string, unknown> = {}): Error {
   return Object.assign(new Error(message), props);
 }
 
+const read = { repeatable: true };
+const write = { repeatable: false };
+
 describe('isTransientFileError', () => {
-  it('takes connection failures, timeouts and FTP 4xx as transient', () => {
+  it('takes connection failures, timeouts and FTP 4xx of a repeatable step as transient', () => {
     for (const err of [
       libError('sftp: Remote host refused connection', { code: 'ECONNREFUSED' }),
       libError('sftp: Remote host has reset the connection', { code: 'ECONNRESET' }),
@@ -18,8 +21,19 @@ describe('isTransientFileError', () => {
       libError('sftp: Timed out while waiting for handshake', { code: 'ERR_GENERIC_CLIENT' }),
       libError('Timed out while waiting for handshake', { level: 'client-timeout' }),
     ]) {
-      expect(isTransientFileError(err), err.message).toBe(true);
+      expect(isTransientFileError(err, read), err.message).toBe(true);
     }
+  });
+
+  it('takes only a 4xx that was not carried out as transient for a write', () => {
+    expect(isTransientFileError(libError('450 File busy', { code: 450 }), write)).toBe(true);
+    expect(isTransientFileError(libError('426 Transfer aborted', { code: 426 }), write)).toBe(
+      false,
+    );
+    expect(isTransientFileError(libError('read ECONNRESET', { code: 'ECONNRESET' }), write)).toBe(
+      false,
+    );
+    expect(isTransientFileError(libError('Timeout (data socket)'), write)).toBe(false);
   });
 
   it('keeps refused logins, missing files and FTP 5xx permanent', () => {
@@ -30,7 +44,7 @@ describe('isTransientFileError', () => {
       libError('sftp: All configured authentication methods failed', { code: 'ERR_BAD_AUTH' }),
       libError('permission denied', { code: 'EACCES' }),
     ]) {
-      expect(isTransientFileError(err), err.message).toBe(false);
+      expect(isTransientFileError(err, read), err.message).toBe(false);
     }
   });
 });

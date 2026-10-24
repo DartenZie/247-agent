@@ -185,7 +185,10 @@ describe('init', () => {
     expect((err as MatrixError).transient).toBe(false);
   });
 
-  it('marks a rate limit, a server error or no response transient (#32)', async () => {
+  it('marks a rate limit, a failed read and a refused connection transient (#32)', async () => {
+    const refused = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
+    });
     const answers = [
       Response.json({ errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 10 }, { status: 429 }),
       new Response('<html>bad gateway</html>', { status: 502 }),
@@ -196,9 +199,7 @@ describe('init', () => {
       timeoutMs: 1000,
       fetch: () => {
         const next = answers.shift();
-        return next === undefined
-          ? Promise.reject(new TypeError('fetch failed'))
-          : Promise.resolve(next);
+        return next === undefined ? Promise.reject(refused) : Promise.resolve(next);
       },
     });
     for (let i = 0; i < 3; i++) {
@@ -206,6 +207,8 @@ describe('init', () => {
       expect(err).toBeInstanceOf(MatrixError);
       expect((err as MatrixError).transient).toBe(true);
     }
+    // A send behind a 502 may have reached the room; its transaction id is new each call.
+    expect(new MatrixError('PUT', '/rooms/x/send', 502, 'bad gateway').transient).toBe(false);
   });
 });
 

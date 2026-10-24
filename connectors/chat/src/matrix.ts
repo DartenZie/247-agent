@@ -3,7 +3,7 @@
  * JSON in and out, the access token only in the `Authorization` header. Errors expose
  * the HTTP status, Matrix's `errcode` and a rate limit's wait so the sync loop can back off.
  */
-import { isTransientStatus } from '@247-agent/connector-sdk';
+import { isTransientHttpError } from '@247-agent/connector-sdk';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -26,7 +26,10 @@ export class MatrixError extends Error {
   readonly errcode: string | undefined;
   /** Milliseconds to wait, from a 429. */
   readonly retryAfterMs: number | undefined;
-  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  /**
+   * Worth retrying (`isTransientHttpError`). Only a GET is idempotent: a send carries a
+   * fresh transaction id per call, so the homeserver would not drop a repeat.
+   */
   readonly transient: boolean;
   constructor(
     method: string,
@@ -35,13 +38,14 @@ export class MatrixError extends Error {
     message: string,
     errcode?: string,
     retryAfterMs?: number,
+    cause?: unknown,
   ) {
     super(`${method} ${path}: ${message}${status > 0 ? ` (${String(status)})` : ''}`);
     this.name = 'MatrixError';
     this.status = status;
     this.errcode = errcode;
     this.retryAfterMs = retryAfterMs;
-    this.transient = isTransientStatus(status);
+    this.transient = isTransientHttpError({ status, idempotent: method === 'GET', cause });
   }
 }
 
@@ -85,6 +89,9 @@ export function createMatrixApi(opts: MatrixClientOptions): MatrixApi {
           shown,
           0,
           hide(cause instanceof Error ? cause.message : String(cause)),
+          undefined,
+          undefined,
+          err,
         );
       }
       const text = await res.text();

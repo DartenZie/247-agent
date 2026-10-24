@@ -118,8 +118,8 @@ export const TRANSIENT_META_KEY = 'oa/transient';
 
 /**
  * The connector reported the op failed (`isError`), or the op is unknown to it. Final,
- * unless the connector marked the failure transient: then the op did not take effect and
- * the run is retried by policy.
+ * unless the connector marked the failure transient: a later call may succeed and
+ * repeating the op is safe, so the run is retried by policy.
  */
 export class ConnectorOpError extends Error {
   readonly retryable: boolean;

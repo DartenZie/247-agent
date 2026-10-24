@@ -183,9 +183,9 @@ function statePath(namespace: string, key: string): string {
 
 /**
  * The `_meta` key of an `isError` tool result that tells the core the failure is transient:
- * the op did not take effect and may succeed later (a connection failure, a timeout, a
- * rate limit, a 5xx), so the core retries the run under the task's `retry` policy. Any
- * other op error fails the run for good.
+ * a later call may succeed and repeating the op is safe, because it did not take effect
+ * or because it can run twice. The core then retries the run under the task's `retry`
+ * policy. Any other op error fails the run for good.
  */
 export const TRANSIENT_META_KEY = 'oa/transient';
 
@@ -204,40 +204,78 @@ export function isTransient(err: unknown): boolean {
 }
 
 /**
- * Node's codes for a connection that could not be made or broke, and for a resolver that
- * did not answer. `ENOTFOUND` is not among them: a name that does not exist is a config error.
+ * Node's and undici's codes for a connection that could not be made, so nothing was sent,
+ * and for a resolver that did not answer. `ENOTFOUND` is not among them: a name that does
+ * not exist is a config error.
  */
-const NETWORK_CODES = new Set([
+const CONNECT_CODES = new Set([
   'ECONNREFUSED',
-  'ECONNRESET',
-  'ECONNABORTED',
-  'ETIMEDOUT',
   'EHOSTUNREACH',
   'EHOSTDOWN',
   'ENETUNREACH',
   'ENETDOWN',
-  'EPIPE',
   'EAI_AGAIN',
   'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/** Codes for a connection that broke or timed out once open: the request may have arrived. */
+const BROKEN_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EPIPE',
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT',
   'UND_ERR_SOCKET',
 ]);
 
-/** Whether `err`, or an error in its `cause` chain, is a network failure by its Node `code`. */
-export function isNetworkError(err: unknown): boolean {
+function hasCode(err: unknown, codes: Set<string>): boolean {
   return causes(err).some((e) => {
     const code = (e as { code?: unknown }).code;
-    return typeof code === 'string' && NETWORK_CODES.has(code);
+    return typeof code === 'string' && codes.has(code);
   });
 }
 
+/** Whether `err`, or its `cause` chain, is a connection that could not be made: nothing was sent. */
+export function isConnectError(err: unknown): boolean {
+  return hasCode(err, CONNECT_CODES);
+}
+
 /**
- * Whether an HTTP status is worth retrying: 0 (no response: a connection failure or a
- * timeout), 408, 429 and every 5xx but 501 (the server does not implement the request).
+ * Whether `err`, or its `cause` chain, is any network failure by its `code`: one that
+ * `isConnectError` matches, or a connection that broke or timed out once open.
  */
-export function isTransientStatus(status: number): boolean {
-  return status === 0 || status === 408 || status === 429 || (status >= 500 && status !== 501);
+export function isNetworkError(err: unknown): boolean {
+  return isConnectError(err) || hasCode(err, BROKEN_CODES);
+}
+
+/**
+ * Whether an HTTP request that failed is worth retrying. `status` 0 means no response,
+ * with `cause` the error `fetch` threw. `idempotent` says whether the request can run
+ * twice (a read, a PUT or a DELETE); a write that is not (a POST that creates something)
+ * is retried only when it surely did not take effect.
+ *
+ * - Always: a connection that could not be made, 429 and 503.
+ * - Idempotent only: a timeout (`AbortSignal.timeout`), a connection that broke, 408 and
+ *   every other 5xx but 501.
+ */
+export function isTransientHttpError(failure: {
+  status: number;
+  idempotent: boolean;
+  cause?: unknown;
+}): boolean {
+  const { status, idempotent, cause } = failure;
+  if (status === 0) {
+    if (isConnectError(cause)) {
+      return true;
+    }
+    const timedOut = causes(cause).some((e) => (e as { name?: unknown }).name === 'TimeoutError');
+    return idempotent && (timedOut || hasCode(cause, BROKEN_CODES));
+  }
+  if (status === 429 || status === 503) {
+    return true;
+  }
+  return idempotent && (status === 408 || (status >= 500 && status !== 501));
 }
 
 /** `err` and its `cause`s, at most eight deep, objects only. */

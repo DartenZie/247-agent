@@ -44,8 +44,9 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
      channel when `transport: stdio`. A stray `console.log` breaks the protocol.
    - Return JSON-serialisable results; throw to signal an op error (becomes `isError`,
      which fails the calling run without retry). Throw `TransientError`, or pass
-     `runConnector({ transient })`, for a failure a later call can fix (unreachable,
-     timeout, 429, 5xx); the core then retries the run by the task's `retry`.
+     `runConnector({ transient })`, for a failure a later call can fix when repeating
+     the op is safe (unreachable, 429, a failed read; not a timed-out create); the core
+     then retries the run by the task's `retry`.
    - Exit non-zero on unrecoverable errors; the supervisor restarts with backoff.
 4. **Test it without the network.** Write a fake next to the real one, or reuse
    `packages/core/test/fixtures/fake-*.ts` (email, chat, generic MCP, plain emitter).

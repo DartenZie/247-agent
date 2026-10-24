@@ -33,9 +33,8 @@ These hold in every language, and the daemon relies on them:
   `transport: stdio`, standard output is the protocol channel and a stray print breaks it.
 - **Return JSON-serialisable results** from ops. Throw, or return an MCP error, to signal
   an op failure; the calling run fails without retry, on purpose. Mark the failure
-  transient when the op did not get through and may succeed later (the service is
-  unreachable, timed out, rate limiting, or answered `5xx`): the run is then retried
-  under the task's `retry` policy. See [transient errors](#transient-errors).
+  transient when a later call can succeed and repeating the op is safe: the run is then
+  retried under the task's `retry` policy. See [transient errors](#transient-errors).
 - **Exit non-zero on an unrecoverable error** (a bad token, a port in use). The daemon
   restarts you with backoff and shows the error in `oa connector list`.
 - **Name events `<connector>.<what happened>`**, lower-case dotted segments:
@@ -90,18 +89,23 @@ zod shape.
 | `CoreApiError` | thrown by the client on a non-2xx answer, with `.status` |
 | `TransientError` | throw it from a handler to mark the op failure transient; any error with `transient: true`, itself or in its `cause` chain, counts too |
 | `isTransient(err)` | whether `err` or its `cause` chain carries `transient: true` |
-| `isNetworkError(err)` | whether `err` or its `cause` chain has a network error `code` (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, …) |
-| `isTransientStatus(status)` | `true` for HTTP `0` (no response), `408`, `429` and every `5xx` but `501` |
+| `isConnectError(err)` | whether `err` or its `cause` chain is a connection that could not be made, so nothing was sent (`ECONNREFUSED`, `EHOSTUNREACH`, `EAI_AGAIN`, and others) |
+| `isNetworkError(err)` | whether `err` or its `cause` chain is any network failure: one of those, or a connection that broke or timed out (`ECONNRESET`, `ETIMEDOUT`, and others) |
+| `isTransientHttpError({ status, idempotent, cause? })` | the bundled connectors' HTTP rule: `true` for a connection that could not be made, `429` and `503`; when `idempotent`, also for a timeout, a broken connection, `408` and every other `5xx` but `501`. `status` `0` means no response, with `cause` the error `fetch` threw |
 
 ### Transient errors
 
 An op error fails the calling run for good unless you mark it transient. Mark it only
-when the op did not get through and a later call can succeed. Throw a `TransientError`,
-or give `runConnector` a `transient` rule for your library's errors:
+when a later call can succeed and a retry cannot repeat a side effect: the op did not
+take effect, or it can run twice. A timeout on a request that creates something is not
+transient, since the service may have created it. Throw a `TransientError`, or give
+`runConnector` a `transient` rule for your library's errors:
 
 ```ts
 await runConnector({
-  transient: (err) => isNetworkError(err) || (err instanceof ApiError && isTransientStatus(err.status)),
+  transient: (err) =>
+    err instanceof ApiError &&
+    isTransientHttpError({ status: err.status, idempotent: err.method === 'GET', cause: err.cause }),
   tools: () => [
     // your tools
   ],

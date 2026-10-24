@@ -244,7 +244,8 @@ client.
 
 A mail server that cannot be reached, a connection that breaks or times out, a POP3
 mailbox locked by another session, and an SMTP `4xx` reply are [transient](../tasks/connector.md#failures): the calling run
-is retried under the task's `retry` policy. Every other op failure (a bad folder, no
+is retried under the task's `retry` policy. For `send`, a connection that broke after the
+message went out can, rarely, deliver it twice. Every other op failure (a bad folder, no
 `incoming` configured, a refused login, SMTP refusing a recipient with a `5xx`) fails the
 calling run without retry. A connector that is down fails it with retry.
 

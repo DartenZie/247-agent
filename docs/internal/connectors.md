@@ -23,7 +23,9 @@ A connector is any executable with a manifest. It may do one or both halves:
   string; several texts become an array; `isError` becomes `ConnectorOpError`
   (`<connector>.<op>: <text>`), non-retryable unless the result carries
   `_meta: {"oa/transient": true}` (`TRANSIENT_META_KEY`). The mark is the connector's
-  claim that the op did not get through and may succeed later; the core never infers it
+  claim that a later call may succeed and that repeating the op is safe (it did not take
+  effect, or it can run twice), the same line the core draws for an op that got no
+  answer (`ConnectorNoAnswerError`, never retried); the core never infers it
   from the text, so an off-the-shelf MCP server's errors stay final. The same tools reach
   an agent session through the bridge in [`agent-action.md`](agent-action.md), which
   passes the result on unchanged.
@@ -212,11 +214,14 @@ straight from TypeScript source; the test fixtures depend on that. The contract:
   `serveStdio(server)`.
 - Transient errors: `TransientError` (`transient = true`); `isTransient(err)` looks for
   `transient === true` along the `cause` chain (eight deep, cycle-safe), so a connector
-  that wraps a library error keeps the mark; `isNetworkError(err)` matches Node and undici
-  codes for a connection that failed, broke or timed out and `EAI_AGAIN` along the same
-  chain, never `ENOTFOUND` (a misspelt host is config); `isTransientStatus(status)` is
-  `0`, `408`, `429` and `5xx` but `501`. The SDK classifies nothing on its own: a
-  connector passes its rule or throws the class.
+  that wraps a library error keeps the mark. `isConnectError(err)` matches the Node and
+  undici codes for a connection that could not be made (nothing sent) and `EAI_AGAIN`,
+  never `ENOTFOUND` (a misspelt host is config); `isNetworkError(err)` adds a connection
+  that broke or timed out once open. `isTransientHttpError({status, idempotent, cause})`:
+  a connect error, `429` and `503` always; a `TimeoutError`, a broken connection, `408`
+  and `5xx` but `501` only when `idempotent`, since a write behind them may have been
+  done. The SDK classifies nothing on its own: a connector passes its rule or throws the
+  class.
 - `runConnector({version?, setup?, tools, transient?})`: `connectorEnv()`, build the runtime
   `{env, core, log}` (`log` writes to stderr), `await setup(rt)`, build the server from
   `tools(rt)`, serve stdio. Every bundled `main.ts` is `await runConnector(…)` at module
@@ -257,9 +262,9 @@ Transient errors per connector, each with tests on its failure paths:
 
 | Connector | Transient |
 |---|---|
-| `github`, `jira`, `chat` | the client's error (`GitHubError`, `JiraError`, `TelegramError`, `MatrixError`) sets `transient` from `isTransientStatus` (status `0` is no response); `github` adds a `403` with `x-ratelimit-remaining: 0` or `retry-after` |
+| `github`, `jira`, `chat` | the client's error (`GitHubError`, `JiraError`, `TelegramError`, `MatrixError`) sets `transient` from `isTransientHttpError`, with `fetch`'s error as `cause` for status `0`. Idempotent: GET, HEAD, PUT, DELETE on GitHub and Jira, plus Jira's `POST /search…`; Telegram's `get…` methods; Matrix's GET only (a send's transaction id is new per call). `github` adds a `403` with `x-ratelimit-remaining: 0` or `retry-after` |
 | `email` | `errors.ts`, `isTransientMailError`, passed as `runConnector({transient})`: network codes; nodemailer's `ECONNECTION`, `ETIMEDOUT`, `ESOCKET` with a network `originalCode`, an SMTP `4xx` `responseCode`; imapflow's connection, timeout and `ETHROTTLE` codes and `UNAVAILABLE`/`INUSE`; the POP3 client throws `TransientError` for a timeout, a closed connection and `-ERR [IN-USE]`/`[SYS/TEMP]` |
-| `ftp` | `errors.ts`, `isTransientFileError`, applied in `describe()` of `ftp.ts` and `sftp.ts`, which wraps the library error as `cause`: network codes, an FTP `4xx` reply, basic-ftp's and ssh2's timeout and broken-connection errors |
+| `ftp` | `errors.ts`, `isTransientFileError(err, {repeatable})`, applied in `describe()` of `ftp.ts` and `sftp.ts`, which wraps the library error as `cause`: an FTP `4xx` but `426` at any step; for `connect` and the read-only steps also `426`, network codes and basic-ftp's and ssh2's timeout and broken-connection errors |
 
 Each `connectors/<name>/` is an npm workspace package with its zod `config.ts`, a
 `main.ts` on `runConnector`, unit tests against fake transports, development notes in
@@ -279,10 +284,11 @@ so a tasks file tried against them runs unchanged against the real connectors.
 - Only `acp` connectors may be sandboxed; everything else needs the socket.
 - The manifest's `ops` is enforced before any call, for tasks and for agent bridges
   alike.
-- An op error is retried only when the connector marked it transient; a bundled
-  connector marks only failures where the op did not get through or a later call can
-  succeed (no response, timeout, rate limit, `5xx`, a temporary `4xx` of SMTP, FTP or
-  POP3), never a validation error.
+- An op error is retried only when the connector marked it transient. A bundled
+  connector marks a failure only when the op did not take effect (could not connect,
+  `429`, `503`, a temporary `4xx` of SMTP, FTP or POP3) or can run twice (a timeout, a
+  broken connection or a `5xx` of a read), never a validation error. SMTP `send` is the
+  documented exception: a broken connection is retried as mail servers do.
 - A bundled connector is named by its launcher in manifests, bundled by
   `scripts/bundle.mjs`, and has a fake for the core's integration tests
   ([`howto/add-connector.md`](howto/add-connector.md)).

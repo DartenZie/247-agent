@@ -53,9 +53,9 @@ for the daemon's lifetime and calls only the ops in the manifest allowlist.
 - Return the result as `structuredContent`, or as one text content block containing
   JSON (the core parses it). The calling task's `result` is that value.
 - Signal failure with `isError: true` and a message; the calling run fails without
-  retry. Add `"_meta": {"oa/transient": true}` to that result when the op did not get
-  through and may succeed later (unreachable, timed out, rate limited, `5xx`): the core
-  then retries the run under the task's `retry` policy.
+  retry. Add `"_meta": {"oa/transient": true}` to that result when a later call can
+  succeed and repeating the op is safe (it did not take effect, or it can run twice):
+  the core then retries the run under the task's `retry` policy.
 - Never write anything else to stdout. Logs go to stderr.
 - Any MCP SDK works (TypeScript, Python, Go, …); any off-the-shelf MCP server works
   unchanged.

@@ -297,7 +297,7 @@ describe('ops', () => {
     );
   });
 
-  it('marks rate limits, 5xx and transport failures transient, other errors not (#32)', async () => {
+  it('marks rate limits, failures of reads and refused connections transient (#32)', async () => {
     const answers: Record<string, { status: number; headers?: Record<string, string> }> = {
       '/repos/acme/site/issues/1': { status: 502 },
       '/repos/acme/site/issues/2': { status: 429 },
@@ -313,7 +313,12 @@ describe('ops', () => {
       fetch: (url) => {
         const path = new URL(url).pathname;
         if (path.endsWith('/7')) {
-          return Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }));
+          const reset = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+          return Promise.reject(new TypeError('fetch failed', { cause: reset }));
+        }
+        if (path.endsWith('/8')) {
+          const refused = Object.assign(new Error('connect'), { code: 'ECONNREFUSED' });
+          return Promise.reject(new TypeError('fetch failed', { cause: refused }));
         }
         const a = answers[path] ?? { status: 200 };
         return Promise.resolve(
@@ -321,9 +326,9 @@ describe('ops', () => {
         );
       },
     });
-    const transient = async (n: number): Promise<boolean> => {
+    const transient = async (n: number, method = 'GET'): Promise<boolean> => {
       const err = await api
-        .request('GET', `/repos/acme/site/issues/${String(n)}`)
+        .request(method, `/repos/acme/site/issues/${String(n)}`)
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(GitHubError);
       return (err as GitHubError).transient;
@@ -335,5 +340,12 @@ describe('ops', () => {
     expect(await transient(5)).toBe(false);
     expect(await transient(6)).toBe(false);
     expect(await transient(7)).toBe(true);
+    expect(await transient(8)).toBe(true);
+    // A write that may have gone through is not retried; a refused or limited one is.
+    expect(await transient(1, 'POST')).toBe(false);
+    expect(await transient(7, 'POST')).toBe(false);
+    expect(await transient(8, 'POST')).toBe(true);
+    expect(await transient(2, 'POST')).toBe(true);
+    expect(await transient(3, 'POST')).toBe(true);
   });
 });

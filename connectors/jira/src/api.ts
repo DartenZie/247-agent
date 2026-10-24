@@ -2,7 +2,7 @@
  * A thin Jira REST client over `fetch`: JSON in and out, credentials only in the
  * `Authorization` header, errors that carry Jira's messages but never a credential.
  */
-import { isTransientStatus } from '@247-agent/connector-sdk';
+import { isTransientHttpError } from '@247-agent/connector-sdk';
 
 import { authorization, credentials, type JiraConfig } from './config.js';
 
@@ -20,13 +20,19 @@ export interface JiraApi {
 export class JiraError extends Error {
   /** HTTP status, or 0 for a transport failure. */
   readonly status: number;
-  /** Worth retrying: no response, a 408, 429 or 5xx. */
+  /**
+   * Worth retrying (`isTransientHttpError`). GET, PUT and DELETE are idempotent; a POST is
+   * not, except a search, which only reads.
+   */
   readonly transient: boolean;
-  constructor(method: string, path: string, status: number, message: string) {
+  constructor(method: string, path: string, status: number, message: string, cause?: unknown) {
     super(`${method} ${path}: ${message}${status > 0 ? ` (${String(status)})` : ''}`);
     this.name = 'JiraError';
     this.status = status;
-    this.transient = isTransientStatus(status);
+    const idempotent =
+      ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method.toUpperCase()) ||
+      /^\/search(\/|$)/.test(path);
+    this.transient = isTransientHttpError({ status, idempotent, cause });
   }
 }
 
@@ -71,6 +77,7 @@ export function createJiraApi(config: JiraConfig, fetchFn?: FetchLike): JiraApi 
           path,
           0,
           hide(cause instanceof Error ? cause.message : String(cause)),
+          err,
         );
       }
       const text = await res.text();

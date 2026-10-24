@@ -84,10 +84,13 @@ request.
 
 GitHub's errors come back as the op's error text, for example
 `POST /repos/acme/site/issues: Validation Failed: title is too long (422)`; a rate limit
-adds `(rate limited until <time>)`. A rate limit (`429`, or a `403` that GitHub marks
-as one), a server error (`5xx` but `501`), a timeout and a failed connection are
-[transient](../tasks/connector.md#failures): the run is retried under the task's `retry` policy. Every other error fails the
-calling run without retry.
+adds `(rate limited until <time>)`. GitHub that cannot be reached, a rate limit (`429`,
+or a `403` that GitHub marks as one) and `503` are [transient](../tasks/connector.md#failures): the run is retried under
+the task's `retry` policy. A timeout, a broken connection and any other `5xx` are
+transient only for the ops that read. For `create_issue`, `update_issue`,
+`add_comment`, `add_labels`, `remove_label` and `create_pull_request` they fail the
+run, since GitHub may have done the write. Every other error fails the calling run
+without retry.
 
 ## Events, through the poller
 

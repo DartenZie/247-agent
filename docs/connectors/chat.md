@@ -164,9 +164,10 @@ answered".
 
 ### Errors
 
-A rate limit (`429`), a server error (`5xx` but `501`), a timeout and a failed
-connection to Telegram or the homeserver are [transient](../tasks/connector.md#failures): the calling run is retried under the
-task's `retry` policy. Every other error, such as a `chat_id` that is not allowed or a
+Telegram or a homeserver that cannot be reached, a rate limit (`429`) and `503` are
+[transient](../tasks/connector.md#failures): the calling run is retried under the task's `retry` policy. A timeout, a broken
+connection or another `5xx` after `send` or `ask` went out fails the run instead, since
+the message may already be in the chat. Every other error, such as a `chat_id` that is not allowed or a
 chat the bot cannot post to, fails the calling run without retry.
 
 ## Events

@@ -16,7 +16,8 @@ import {
   defineTool,
   isNetworkError,
   isTransient,
-  isTransientStatus,
+  isConnectError,
+  isTransientHttpError,
   TransientError,
 } from './index.js';
 
@@ -132,9 +133,34 @@ describe('transient errors', () => {
     expect(isNetworkError(loop)).toBe(false);
   });
 
-  it('takes no response, 408, 429 and 5xx but 501 as transient statuses', () => {
-    expect([0, 408, 429, 500, 502, 503, 504].every(isTransientStatus)).toBe(true);
-    expect([200, 400, 401, 403, 404, 409, 422, 501].some(isTransientStatus)).toBe(false);
+  it('retries an HTTP failure that did not take effect, or any failure of a repeatable request', () => {
+    const http = (status: number, idempotent: boolean, cause?: unknown): boolean =>
+      isTransientHttpError({ status, idempotent, cause });
+    const refused = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
+    });
+    const reset = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+    const notFound = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('getaddrinfo'), { code: 'ENOTFOUND' }),
+    });
+    expect(isConnectError(refused)).toBe(true);
+    expect(isConnectError(reset)).toBe(false);
+    for (const idempotent of [true, false]) {
+      expect(http(0, idempotent, refused)).toBe(true);
+      expect(http(429, idempotent)).toBe(true);
+      expect(http(503, idempotent)).toBe(true);
+      expect(http(0, idempotent, notFound)).toBe(false);
+      expect([400, 401, 403, 404, 409, 422, 501].some((s) => http(s, idempotent))).toBe(false);
+    }
+    expect([408, 500, 502, 504].every((s) => http(s, true))).toBe(true);
+    expect([408, 500, 502, 504].some((s) => http(s, false))).toBe(false);
+    expect(http(0, true, reset)).toBe(true);
+    expect(http(0, true, timedOut)).toBe(true);
+    expect(http(0, false, reset)).toBe(false);
+    expect(http(0, false, timedOut)).toBe(false);
   });
 });
 
