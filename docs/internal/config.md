@@ -138,7 +138,10 @@ A trigger filter and the bare part of a `wait` filter see the event's fields; an
 action's templates `{event, state, secrets, env, run}`, plus `steps` in a sequence's
 steps (their `when` too) and `result` in an `agent`'s `post` gates; `emit` and
 `state_updates` `{event, result, state, env, run}`, plus `item` in `dedup_key` and
-`payload` of a rule with `each`. These are the scopes the executor, `sequence.ts` and
+`payload` of a rule with `each`. In an action only the fields its runner renders are
+checked (`RENDERED`: an `llm`'s `output_schema` is sent as written). `expressionRoots`
+skips `&expr`, which reads each element; `collectRefs` still collects `secrets` there,
+since `map(&secrets.x, [@])` reads the scope. These are the scopes the executor, `sequence.ts` and
 `agent.ts` build (`withScope`); a new scope key or position changes the tables at the
 top of `lint.ts`. The hint names the nearest known name (exact, or within an edit distance
 of a third of the root's length, at most 2) and where that name exists: `steps` in `emit`

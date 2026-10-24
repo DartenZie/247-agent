@@ -59,16 +59,23 @@ export function lintTasks(
         add(path, [...lintJmespath(expr), ...lintRoots(expr, roots)]);
       }
     };
-    /** Each `${…}` expression of every template inside `value`, with the roots at its path. */
+    /**
+     * Each `${…}` expression of every template inside `value`, with the roots at its path;
+     * `undefined` roots for a field that is never rendered.
+     */
     const templates = (
       value: unknown,
       base: string,
-      roots: (sub: readonly (string | number)[]) => readonly string[],
+      roots: (sub: readonly (string | number)[]) => readonly string[] | undefined,
     ): void => {
       forEachTemplate(value, (text, sub) => {
+        const at = roots(sub);
         add(
           `${base}.${formatPath(sub)}`,
-          templateExprs(text).flatMap((e) => [...lintJmespath(e), ...lintRoots(e, roots(sub))]),
+          templateExprs(text).flatMap((e) => [
+            ...lintJmespath(e),
+            ...(at === undefined ? [] : lintRoots(e, at)),
+          ]),
         );
       });
     };
@@ -89,9 +96,15 @@ export function lintTasks(
         });
       }
     }
-    templates(task.action, `${at}.action`, (sub) =>
-      task.action.kind === 'agent' && sub[0] === 'post' ? POST_ROOTS : inAction,
-    );
+    templates(task.action, `${at}.action`, (sub) => {
+      const a = task.action;
+      const step = a.kind === 'sequence' ? a.steps[Number(sub[1])] : undefined;
+      const [kind, field] = step === undefined ? [a.kind, sub[0]] : [step.kind, sub[2]];
+      if (!RENDERED[kind].includes(String(field))) {
+        return undefined;
+      }
+      return kind === 'agent' && field === 'post' ? POST_ROOTS : inAction;
+    });
     task.emit?.forEach((rule, j) => {
       const ruleAt = `${at}.emit[${String(j)}]`;
       bare(rule.when, `${ruleAt}.when`, ROUTING_ROOTS);
@@ -228,6 +241,19 @@ const POST_ROOTS = [...ACTION_ROOTS, 'result'];
 /** `emit` and `state_updates`. */
 const ROUTING_ROOTS = ['event', 'result', 'state', 'env', 'run'];
 const EACH_ROOTS = [...ROUTING_ROOTS, 'item'];
+/**
+ * The fields each runner renders. Others reach the runner as written (an `llm`'s
+ * `output_schema`), so a `${…}` in them is text and its roots are never read.
+ */
+const RENDERED: Record<TaskConfig['action']['kind'], readonly string[]> = {
+  shell: ['cmd', 'cwd', 'env', 'stdin'],
+  connector: ['args'],
+  wait: ['for'],
+  sequence: [],
+  llm: ['input'],
+  decide: ['state'],
+  agent: ['prompt', 'post'],
+};
 const SCOPE_ROOTS = [...ACTION_ROOTS, 'result', 'item', 'steps'];
 
 /**

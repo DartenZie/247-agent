@@ -139,6 +139,18 @@ describe('lintTasks', () => {
           post: [{ shell: ['test', '${result.status}'], when: "result.status == 'done'" }],
         },
       },
+      {
+        name: 'draft',
+        trigger: { kind: 'manual' },
+        action: {
+          kind: 'llm',
+          input: 'draft it',
+          output_schema: {
+            type: 'object',
+            properties: { body: { type: 'string', description: 'keep ${name} as written' } },
+          },
+        },
+      },
     ]);
     expect(lintTasks(tasks).map((w) => [w.path, w.message])).toEqual([
       [

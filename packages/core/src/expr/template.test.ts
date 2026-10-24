@@ -119,9 +119,10 @@ describe('collectTemplateRefs', () => {
     expect(refs.errors).toEqual([]);
   });
 
-  it('reads no root inside an expression reference, which sees each element', () => {
-    const refs = collectTemplateRefs('${ sort_by(event.payload.files, &name)[0] }');
-    expect([...refs.roots]).toEqual(['event']);
+  it('leaves expression references out of the scope roots, but not out of secrets', () => {
+    // Secrets stay collected inside `&expr`: `map(&secrets.k, [@])` reads the scope.
+    const refs = collectTemplateRefs('${ map(&secrets.k, [@]) }');
+    expect(refs.secrets).toEqual(['k']);
     expect([...expressionRoots('max_by(result.list, &secrets.n) && item')].sort()).toEqual([
       'item',
       'result',
