@@ -236,6 +236,66 @@ describe('loadConnectors with pollers', () => {
   });
 });
 
+describe('oa validate with connector actions', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'oa-connector-refs-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports an unknown connector and an op outside the manifest, in a sequence too', () => {
+    writeFileSync(
+      join(dir, 'email.yaml'),
+      'name: email\nexec: [247-agent-connector-email]\nops: [send]\n',
+    );
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      [
+        'tasks:',
+        '  - { name: ok, trigger: { kind: manual }, action: { kind: connector, connector: email, op: send } }',
+        '  - { name: bad_ops, trigger: { kind: manual }, action: { kind: connector, connector: nosuch, op: bogus } }',
+        '  - { name: bad_op2, trigger: { kind: manual }, action: { kind: connector, connector: email, op: delete_everything } }',
+        '  - name: typo',
+        '    trigger: { kind: manual }',
+        '    action: { kind: sequence, steps: [{ kind: connector, connector: emial, op: send }] }',
+        '',
+      ].join('\n'),
+    );
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(agent, 'tasks: tasks.yaml\nconnectors: [email.yaml]\n');
+    expect(checkConfigFile(agent).find((c) => c.file === join(dir, 'tasks.yaml'))).toMatchObject({
+      ok: false,
+      issues: [
+        { path: 'tasks[1].action.connector', message: 'unknown connector "nosuch"' },
+        {
+          path: 'tasks[2].action.op',
+          message: `op "delete_everything" is not in the ops of connector "email" (${join(dir, 'email.yaml')})`,
+        },
+        { path: 'tasks[3].action.steps[0].connector', message: 'unknown connector "emial"' },
+      ],
+    });
+  });
+
+  it('blames only the bad manifest when one fails to load', () => {
+    writeFileSync(
+      join(dir, 'email.yaml'),
+      'name: email\nexec: [247-agent-connector-email]\nops: [send]\n',
+    );
+    writeFileSync(join(dir, 'other.yaml'), 'name: other\nexec: [x]\nbogus_field: 1\n');
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      'tasks:\n  - { name: ok, trigger: { kind: manual }, action: { kind: connector, connector: email, op: send } }\n',
+    );
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(agent, 'tasks: tasks.yaml\nconnectors: [email.yaml, other.yaml]\n');
+    const checks = checkConfigFile(agent);
+    expect(checks.find((c) => c.file === join(dir, 'tasks.yaml'))?.ok).toBe(true);
+    expect(checks.find((c) => c.file === join(dir, 'other.yaml'))?.ok).toBe(false);
+  });
+});
+
 describe('health checks in a manifest', () => {
   const parse = (doc: Record<string, unknown>) =>
     parseManifest({ name: 'c', exec: ['x'], ...doc }, '/x/c.yaml');

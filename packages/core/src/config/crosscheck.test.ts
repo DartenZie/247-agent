@@ -8,6 +8,7 @@ import { resolvePricing } from '../llm/pricing.js';
 import { parseManifest } from './connector.js';
 import {
   checkAgentTools,
+  checkConnectorActions,
   checkLlmTasks,
   checkSandboxes,
   isInside,
@@ -175,31 +176,32 @@ describe('checkLlmTasks: decide', () => {
   });
 });
 
+const manifest = (doc: Record<string, unknown>) => {
+  const r = parseManifest(doc, `/etc/247-agent/connectors.d/${String(doc.name)}.yaml`);
+  if (!r.ok) {
+    throw new Error(JSON.stringify(r.issues));
+  }
+  return r.config;
+};
+const manifests = [
+  manifest({ name: 'claude', exec: ['claude-agent-acp'], transport: 'acp' }),
+  manifest({ name: 'email', exec: ['247-agent-connector-email'], ops: ['send', 'fetch_new'] }),
+  manifest({ name: 'github', exec: ['github-mcp'] }),
+  manifest({ name: 'hook', exec: ['hook'], transport: 'none' }),
+  manifest({
+    name: 'prs',
+    builtin: 'poller',
+    config: {
+      schedule: '* * * * *',
+      connector: 'github',
+      op: 'list',
+      event: 'pr.new',
+      item_key: 'n',
+    },
+  }),
+];
+
 describe('checkAgentTools', () => {
-  const manifest = (doc: Record<string, unknown>) => {
-    const r = parseManifest(doc, `/etc/247-agent/connectors.d/${String(doc.name)}.yaml`);
-    if (!r.ok) {
-      throw new Error(JSON.stringify(r.issues));
-    }
-    return r.config;
-  };
-  const manifests = [
-    manifest({ name: 'claude', exec: ['claude-agent-acp'], transport: 'acp' }),
-    manifest({ name: 'email', exec: ['247-agent-connector-email'], ops: ['send', 'fetch_new'] }),
-    manifest({ name: 'github', exec: ['github-mcp'] }),
-    manifest({ name: 'hook', exec: ['hook'], transport: 'none' }),
-    manifest({
-      name: 'prs',
-      builtin: 'poller',
-      config: {
-        schedule: '* * * * *',
-        connector: 'github',
-        op: 'list',
-        event: 'pr.new',
-        item_key: 'n',
-      },
-    }),
-  ];
   const agent = (mcp_servers: unknown[]) =>
     Task.parse({
       name: 'edit',
@@ -253,6 +255,65 @@ describe('checkAgentTools', () => {
         message:
           'not in the ops of connector "email" (/etc/247-agent/connectors.d/email.yaml): delete',
       },
+    ]);
+  });
+});
+
+describe('checkConnectorActions', () => {
+  const call = (connector: string, op: string) => ({ kind: 'connector', connector, op });
+  const tasks = (...actions: Record<string, unknown>[]) =>
+    actions.map((action, i) =>
+      Task.parse({ name: `t${String(i)}`, trigger: { kind: 'manual' }, action }),
+    );
+
+  it('accepts ops a manifest lists, and any op on a manifest without ops', () => {
+    expect(
+      checkConnectorActions(
+        [
+          ...tasks(call('email', 'send'), call('github', 'anything'), {
+            kind: 'sequence',
+            steps: [{ ...call('email', 'fetch_new') }],
+          }),
+          shell,
+        ],
+        manifests,
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses unknown connectors, ones that serve no ops and ops outside the manifest', () => {
+    expect(
+      checkConnectorActions(
+        tasks(
+          call('nosuch', 'bogus'),
+          call('email', 'delete_everything'),
+          call('claude', 'x'),
+          call('hook', 'x'),
+          call('prs', 'x'),
+          { kind: 'sequence', steps: [{ ...call('emial', 'send') }] },
+        ),
+        manifests,
+      ),
+    ).toEqual([
+      { path: 'tasks[0].action.connector', message: 'unknown connector "nosuch"' },
+      {
+        path: 'tasks[1].action.op',
+        message:
+          'op "delete_everything" is not in the ops of connector "email" (/etc/247-agent/connectors.d/email.yaml)',
+      },
+      {
+        path: 'tasks[2].action.connector',
+        message: 'connector "claude" serves no ops (transport acp)',
+      },
+      {
+        path: 'tasks[3].action.connector',
+        message: 'connector "hook" serves no ops (transport none)',
+      },
+      {
+        path: 'tasks[4].action.connector',
+        message: 'connector "prs" serves no ops (built-in poller)',
+      },
+      { path: 'tasks[5].action.steps[0].connector', message: 'unknown connector "emial"' },
     ]);
   });
 });

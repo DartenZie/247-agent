@@ -85,6 +85,12 @@ task or connector names across files, a poller's target connector and op.
   and exist; an `agent` task's `model`, when set, has a price.
 - `checkAgentTools`: every `mcp_servers` entry names a process `stdio` connector and
   only ops its manifest lists.
+- `checkConnectorActions`: every `connector` action and sequence step names a process
+  `stdio` connector and, when its manifest has `ops`, an op in them. `oa validate` skips
+  it and `checkAgentTools` when a manifest failed to load, which is reported under its
+  own file. The core's
+  `core.unknown_connector` warning in `activate()` remains for a core built without
+  agent settings, where no cross-check runs.
 - `checkSandboxes`: no `defaults.sandbox` bind, sandboxed `shell` `cwd` or bind, acp
   manifest bind, or `work_dir` exposes a protected path (the database, the socket, the
   `<socket>.net` proxy directory, `agent.yaml`, a `file` backend's secrets file); a
@@ -111,8 +117,8 @@ runner renders each template as a value in place (`expr/filter-template.ts`), so
 placeholder is never itself suspect. A filter that does not parse even with
 placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
 the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
-task's action and its sequence steps; the lint, `checkSandboxes` and the core's
-connector-reference check use it.
+task's action and its sequence steps; the lint, `checkSandboxes`,
+`checkConnectorActions` and the core's connector-reference warning use it.
 
 `lintJmespath` (`expr/jmespath.ts`) walks the jmespath.js AST (every node that holds a
 sub-expression, `KeyValuePair.value` included) for a comparison with a bare

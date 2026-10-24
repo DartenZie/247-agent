@@ -102,6 +102,9 @@ these checks are added:
 - Every model has a price: in the built-in table, in `pricing`, or by being on an
   `openrouter` provider. An `agent` action's `model`, when set, has a price.
 - `system_file` and `result.schema` exist under the directory of `agent.yaml`.
+- Every `connector` action and `connector` step of a `sequence` names a
+  running-process connector with `transport: stdio`, and an op its manifest lists when
+  the manifest has `ops`.
 - Every `mcp_servers` entry names a running-process connector with `transport: stdio`
   that lists the granted ops.
 - A sandboxed `shell` action's `cwd` and binds do not expose the database, the socket,
