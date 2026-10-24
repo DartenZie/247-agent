@@ -206,6 +206,15 @@ describe('startDaemon', () => {
         issues: [expect.objectContaining({ path: 'name' })],
       },
     ]);
+    // The log alone says why: one error line per issue (#44).
+    expect(lines.filter((l) => l.msg === 'daemon.reload_invalid')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        file: join(dir, 'connectors.d', 'bad.yaml'),
+        path: 'name',
+        issue: expect.any(String) as string,
+      }),
+    ]);
     rmSync(join(dir, 'connectors.d'), { recursive: true });
     expect(daemon.config.workers).toBe(9);
     expect(sup.names()).toEqual(['fake']);
@@ -221,6 +230,12 @@ describe('startDaemon', () => {
     const bad = await daemon.reload();
     expect(bad.ok).toBe(false);
     expect(bad.files[0]?.issues?.[0]?.path).toBe('workers');
+    expect(lines.filter((l) => l.msg === 'daemon.reload_invalid').at(-1)).toMatchObject({
+      level: 'error',
+      file: bad.files[0]?.file,
+      path: 'workers',
+      issue: bad.files[0]?.issues?.[0]?.message,
+    });
     expect(lines.filter((l) => l.msg === 'daemon.reload_needs_restart')).toHaveLength(1);
     await expect(raw('GET', '/v1/reload')).resolves.toMatchObject({ status: 405 });
   });

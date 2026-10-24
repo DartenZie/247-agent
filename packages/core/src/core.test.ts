@@ -150,7 +150,14 @@ describe('createCore with the reference workflow', () => {
     const bad = await core.reload();
     expect(bad.ok).toBe(false);
     expect(core.config().tasks).toHaveLength(9);
-    expect(lines.find((l) => l.msg === 'core.config_invalid')).toBeDefined();
+    expect(lines.filter((l) => l.msg === 'core.config_invalid')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        file: join(dir, 'tasks.yaml'),
+        path: '',
+        issue: expect.stringMatching(/^YAML syntax error/) as string,
+      }),
+    ]);
 
     writeFileSync(
       join(dir, 'tasks.yaml'),

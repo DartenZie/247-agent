@@ -152,8 +152,11 @@ When a file is invalid, nothing changes: the issues are printed as `<file>: <pat
 <message>`, then `reload refused: the previous config stays active`, and the exit code is
 1. When one of the three fixed keys changed, the reload still succeeds and prints
 `restart required for: db` on stderr; `systemctl restart 247-agent` applies it. With
-`systemctl reload` the same outcome is in the journal as `daemon.reloaded`,
-`daemon.reload_invalid` or `daemon.reload_needs_restart`.
+`systemctl reload` the same outcome is in the journal as `daemon.reloaded` or
+`daemon.reload_needs_restart`. `systemctl reload` exits 0 even when the reload is refused;
+the journal then has one error line per issue, with `file`, `path` and `issue`:
+`daemon.reload_invalid` for `agent.yaml` or a manifest, `core.config_invalid` for a
+tasks file.
 
 A connector in its own unit whose manifest changed and which serves no ops is the one
 thing a reload cannot reach: the journal says `connector.unit_restart_needed`, and
