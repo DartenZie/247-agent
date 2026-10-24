@@ -88,7 +88,7 @@ Starts a task by hand. Body:
 
 201 `{"event_id": "<the manual.run event>", "run": <RunRecord>}`; the run is already
 `queued`. Filters and cron overlap do not apply; `concurrency` and `workers` do. 404
-`unknown task "<task>"`.
+`unknown task "<task>"`. 409 `task "<task>" is paused: …` for a paused task.
 
 ### `GET /v1/runs`
 
@@ -104,6 +104,20 @@ Starts a task by hand. Body:
 
 200 `<RunRecord>`, or 404 `unknown run "<id>"`.
 
+### `POST /v1/runs/{id}/cancel`
+
+Ends a `queued`, `running` or `waiting` run as `cancelled` and publishes
+`task.<name>.cancelled` ([Events](events.md)). A queued run never starts, a waiting run
+stops waiting, and a running run's action is aborted the way a timeout aborts it: a
+process is killed, an agent session is cancelled. A run waiting out a retry backoff
+makes no further attempt. No `emit` rule and no `state_updates` apply.
+
+- 200 `<RunRecord>` with `status: "cancelled"` and `finished_at` set.
+- 202 `<RunRecord>` still `running`: the action has not stopped within 5 seconds. The
+  run ends `cancelled` once it does. An action that finishes before it notices the
+  cancel ends as it finished.
+- 404 `unknown run "<id>"`; 409 `run "<id>" is already <status>` for a finished run.
+
 ### `GET /v1/runs/{id}/transcript`
 
 | Query | Meaning | Default |
@@ -118,6 +132,22 @@ other than `agent`. 404 for an unknown run.
 
 200 `{"run_id": "...", "entries": [<LedgerEntry>…], "total_usd": 0.0123}`, the run's
 model calls in order. 404 for an unknown run.
+
+### `GET /v1/tasks`
+
+200 `{"tasks": [<TaskEntry>…]}`, the tasks of the active configuration in the order the
+tasks files define them.
+
+### `POST /v1/tasks/{name}/pause`, `POST /v1/tasks/{name}/resume`
+
+`pause` stops the task from starting new runs, whatever triggers it: its events, its
+cron ticks and `POST /v1/runs` (409). Events that arrive while it is paused start no
+run, then or later. Runs already queued, running or waiting carry on; a waiting run
+still resumes when its event arrives. A pause belongs to the task name and survives a
+reload and a restart. Pausing a paused task keeps its `paused_at`.
+
+`resume` starts runs again for events from then on. Both answer 200 `<TaskEntry>`, or
+404 `unknown task "<name>"` for a task not in the active configuration.
 
 ### `GET /v1/cost`
 
@@ -197,9 +227,18 @@ millisecond resolution. `parent_id`, `dedup_key` and `payload` may be `null`. Se
 
 Statuses: `queued` (created, `attempt` 0), `running` (an attempt is executing, or a
 retry is waiting out its backoff with `error` set), `waiting` (parked for an event or a
-timeout), `succeeded`, `failed`. `cancelled` is accepted as a filter but no code path
-sets it. A run re-queued because its wait ended continues the same attempt; a retry is a
-new attempt.
+timeout), `succeeded`, `failed`, `cancelled` (ended by `POST /v1/runs/{id}/cancel`, with
+`error: "cancelled on request"`). A run re-queued because its wait ended continues the
+same attempt; a retry is a new attempt.
+
+### TaskEntry
+
+```json
+{ "name": "fetch_email", "trigger": "cron", "paused_at": "2026-10-04T08:00:00.000Z" }
+```
+
+`trigger` is `cron`, `event` or `manual`. `paused_at` is when the task was paused, or
+`null` when it runs normally.
 
 ### LedgerEntry
 

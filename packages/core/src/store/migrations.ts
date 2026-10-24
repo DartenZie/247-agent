@@ -136,6 +136,14 @@ export const MIGRATIONS: readonly string[] = [
   -- run under it, so a reload never changes a run in flight. Cleared when the run finishes.
   ALTER TABLE runs ADD COLUMN config TEXT;
   `,
+  `
+  -- Tasks paused with \`oa tasks pause\`: the dispatcher starts no new run of a task listed
+  -- here. Keyed by name, so a pause outlives a reload and a restart.
+  CREATE TABLE task_pauses (
+    task      TEXT PRIMARY KEY,
+    paused_at TEXT NOT NULL
+  );
+  `,
 ];
 
 /**

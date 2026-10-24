@@ -5,7 +5,8 @@
 | `oa` cannot connect | Daemon not running, or a different socket path | `--socket`, or `OA_CORE_SOCKET` = `socket:` from `agent.yaml` resolved against its directory |
 | daemon refuses to start, socket in use | A live daemon owns the socket | Stop it first; a stale file from a dead one is replaced automatically |
 | socket path error on macOS | Path longer than 104 bytes | Use a short dir like `/tmp/247-agent` |
-| cron task never runs | A run is still queued/running/waiting and `overlap: skip` | `GET /v1/runs?task=<name>`; wait, fix the stuck run, or `overlap: allow` |
+| cron task never runs | A run is still queued/running/waiting and `overlap: skip` | `GET /v1/runs?task=<name>`; wait, `oa runs cancel <id>` the stuck run, or `overlap: allow` |
+| a task starts no runs at all | It is paused (`task.skipped_paused` in the log) | `oa tasks ls`; `oa tasks resume <name>` |
 | cron task ran nothing while the daemon was down | Missed ticks are not replayed | `oa run <task>` once |
 | event task never runs | Filter false or throws, type mismatch, or the event's `source` is the task's own runs | `oa emit <type> payload.json` and inspect; check the filter with backtick literals for numbers/booleans; remember `*` is one segment |
 | `secret "x" is not set` | Backend has no value | `env` backend: `<prefix><X>` upper-cased; `file`: key in the YAML/JSON map; systemd: `LoadCredential=x:…` |

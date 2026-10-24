@@ -65,8 +65,8 @@ succeeded <run id> for <task>                       # with --wait, then the resu
 ```
 
 `--json` prints `{"event_id": "...", "run": {...}}`, the final run record when waiting.
-Exit 1 with `--wait` when the final status is not `succeeded`; an unknown task is a
-daemon error, exit 1.
+Exit 1 with `--wait` when the final status is not `succeeded`; an unknown task or a task
+paused with `oa tasks pause` is a daemon error, exit 1.
 
 ### `oa emit <type> [payload.json|-] [options]`
 
@@ -92,7 +92,7 @@ duplicate dedup_key=<key>
 Both exit 0. An invalid type (wildcards, bad characters, more than 8 segments) or an
 unknown parent is a 400 from the daemon, exit 2.
 
-### `oa runs ls|show <id>|logs <id> [options]`
+### `oa runs ls|show <id>|logs <id>|cancel <id> [options]`
 
 | Flag | Applies to | Meaning | Default |
 |---|---|---|---|
@@ -101,7 +101,7 @@ unknown parent is a 400 from the daemon, exit 2.
 | `-n, --limit <n>` | `ls` | how many | 20 |
 | `-f, --follow` | `logs` | keep printing while the run is queued, running or waiting | off |
 | `--after <id>` | `logs` | transcript entries after this entry id | 0 |
-| `--json` | all | JSON output (`logs`: one entry per line) | off |
+| `--json` | all | JSON output (`logs`: one entry per line; `cancel`: the run) | off |
 | `--socket <path>` | all | the daemon socket | see above |
 
 `ls` prints the newest runs, one per line: id, task, status, created time, duration
@@ -121,6 +121,30 @@ prompt and the agent's text indented, tool calls with their kind, title, command
 paths, each permission decision as `allowed` or `refused` with the reason, usage,
 how the turn stopped and the result. For a run of another action kind it prints
 `no transcript for <run id> (<task>, <status>): only agent runs record one`. Always exit 0.
+
+`cancel` ends a queued, running or waiting run as `cancelled` and prints
+`<run id>  <task>  cancelled`. A queued run never starts, a waiting run stops waiting,
+and a running run's action is aborted: its process is killed or its agent session
+cancelled. When the action has not stopped within 5 seconds it prints
+`<run id>  <task>  cancelling: the action is still stopping`; the run ends `cancelled`
+once it stops. Other tasks can trigger on `task.<name>.cancelled`. Exit 0; exit 1 for an
+unknown run or one that has already finished (`run "<id>" is already <status>`).
+
+### `oa tasks ls|pause <name>|resume <name> [options]`
+
+`ls` prints the tasks of the active configuration, one per line: name, trigger (`cron`,
+`event` or `manual`), and `active` or `paused since <time>`. `no tasks` when there are
+none.
+
+`pause` stops the task from starting new runs, whatever triggers it, until you resume
+it: its events and cron ticks start no run, and `oa run` refuses it with
+`task "<name>" is paused`. Runs that are already queued, running or waiting carry on;
+end them with `oa runs cancel`. The pause survives a reload and a restart. `resume`
+starts runs again for events from then on; events that arrived while the task was paused
+stay skipped. Both print the task's line.
+
+Flags: `--json` (`ls`: `{"tasks": […]}`; `pause`, `resume`: the task), `--socket`.
+Exit 0; exit 1 for an unknown task.
 
 ### `oa events tail|show <id> [options]`
 

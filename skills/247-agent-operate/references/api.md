@@ -12,6 +12,9 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 | `POST /v1/runs` | Manual run `{task, type?, payload?, correlation_id?}` → 201 `{run_id, …}` |
 | `GET /v1/runs?status=&task=&limit=` | Runs, newest first. `status`: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled` |
 | `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
+| `POST /v1/runs/{id}/cancel` | End a queued, running or waiting run → 200 the run `cancelled`, or 202 still `running` while its action stops; 409 when already finished |
+| `GET /v1/tasks` | Configured tasks `{tasks: [{name, trigger, paused_at}]}` |
+| `POST /v1/tasks/{name}/pause`, `/resume` | Stop or restart new runs of a task → 200 `{name, trigger, paused_at}`; `POST /v1/runs` of a paused task is 409 |
 | `GET /v1/runs/{id}/transcript?after=&limit=` | The agent transcript `{run_id, entries: [{id, ts, turn, kind, text, data}]}`; empty for other action kinds |
 | `GET /v1/runs/{id}/ledger` | The run's model calls `{run_id, entries, total_usd}` |
 | `GET /v1/state/{ns}` | All keys in a namespace |

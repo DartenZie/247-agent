@@ -17,6 +17,9 @@ const TASKS = `tasks:
   - name: bad
     trigger: { kind: manual }
     action: { kind: shell, cmd: ["false"] }
+  - name: hold
+    trigger: { kind: manual }
+    action: { kind: wait, for: { type: chat.reply } }
 `;
 
 let dir: string;
@@ -303,6 +306,69 @@ describe('oa runs', () => {
   });
 });
 
+describe('oa runs cancel', () => {
+  it('cancels a waiting run, refuses a finished one and rejects bad input', async () => {
+    expect(await oa('run', 'hold')).toBe(0);
+    const id = /(run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    out = [];
+    expect(await oa('runs', 'cancel', id)).toBe(0);
+    expect(out).toEqual([`${id}  hold  cancelled`]);
+    out = [];
+    expect(await oa('runs', 'ls', '--status', 'cancelled', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      runs: [{ id, status: 'cancelled', error: 'cancelled on request' }],
+    });
+    const events = daemon.core.store.events.list({ type: 'task.hold.cancelled' });
+    expect(events).toMatchObject([{ payload: { run_id: id, previous_status: 'waiting' } }]);
+
+    expect(await oa('runs', 'cancel', id)).toBe(1);
+    expect(err[0]).toBe(`daemon: run "${id}" is already cancelled`);
+    expect(await oa('runs', 'cancel', 'run_nope')).toBe(1);
+    expect(err[1]).toMatch(/unknown run "run_nope"/);
+    expect(await oa('runs', 'cancel')).toBe(2);
+  });
+
+  it('prints the cancelled run as JSON', async () => {
+    expect(await oa('run', 'hold')).toBe(0);
+    const id = /(run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    out = [];
+    expect(await oa('runs', 'cancel', id, '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ id, task: 'hold', status: 'cancelled' });
+  });
+});
+
+describe('oa tasks', () => {
+  it('lists tasks, pauses one so oa run refuses it, and resumes it', async () => {
+    expect(await oa('tasks', 'ls')).toBe(0);
+    expect(out).toEqual(['ok    manual  active', 'bad   manual  active', 'hold  manual  active']);
+    out = [];
+    expect(await oa('tasks', 'pause', 'ok')).toBe(0);
+    expect(out[0]).toMatch(/^ok {2}manual {2}paused since \d{4}-\d\d-\d\dT/);
+    out = [];
+    expect(await oa('run', 'ok')).toBe(1);
+    expect(err[0]).toBe('daemon: task "ok" is paused: resume it with oa tasks resume ok');
+    expect(await oa('tasks', 'ls', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      tasks: [
+        { name: 'ok', trigger: 'manual', paused_at: expect.any(String) as string },
+        { name: 'bad', paused_at: null },
+        { name: 'hold', paused_at: null },
+      ],
+    });
+    out = [];
+    expect(daemon.core.metrics.render()).toMatch(/^oa_tasks_paused 1$/m);
+
+    expect(await oa('tasks', 'resume', 'ok', '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toEqual({ name: 'ok', trigger: 'manual', paused_at: null });
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+
+    expect(await oa('tasks', 'pause', 'nope')).toBe(1);
+    expect(err.at(-1)).toBe('daemon: unknown task "nope"');
+    expect(await oa('tasks', 'pause')).toBe(2);
+    expect(await oa('tasks', 'frob')).toBe(2);
+  });
+});
+
 describe('oa events', () => {
   it('tails the newest events in order with a type filter, shows one, and validates input', async () => {
     expect(await oa('events', 'tail')).toBe(0);
@@ -369,7 +435,7 @@ describe('oa reload', () => {
     expect(out).toEqual([
       `ok ${join(dir, 'agent.yaml')}`,
       `ok ${join(dir, 'tasks.yaml')}`,
-      'reloaded: 2 tasks',
+      'reloaded: 3 tasks',
     ]);
     out = [];
     writeFileSync(join(dir, 'tasks.yaml'), 'tasks: [');
@@ -384,7 +450,7 @@ describe('oa reload', () => {
     expect(JSON.parse(out[0] ?? '')).toMatchObject({
       ok: true,
       restart_required: ['db'],
-      tasks: 2,
+      tasks: 3,
     });
     expect(await oa('reload', 'extra')).toBe(2);
   });

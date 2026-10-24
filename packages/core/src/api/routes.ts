@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { UnknownTaskError } from '../bus/manual.js';
+import { TaskPausedError, UnknownTaskError } from '../bus/manual.js';
+import type { TaskEntry } from '../bus/pause.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
 import { DURATION, parseDuration } from '../config/duration.js';
@@ -9,6 +10,7 @@ import { issuesFromZod, type ConfigIssue } from '../config/load.js';
 import { NonRetryableError } from '../actions/types.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { Core } from '../core.js';
+import { RunNotActiveError } from '../executor/executor.js';
 import type { ReloadReport } from '../daemon.js';
 import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
@@ -223,6 +225,43 @@ function runTask(ctx: RouteContext, body: unknown): ApiResponse {
     if (err instanceof UnknownTaskError) {
       throw new ApiError(404, err.message);
     }
+    if (err instanceof TaskPausedError) {
+      throw new ApiError(409, err.message);
+    }
+    throw err;
+  }
+}
+
+/** 200 with the run once it is `cancelled`; 202 while an aborted attempt is still stopping. */
+async function cancelRun(ctx: RouteContext, id: string): Promise<ApiResponse> {
+  let run: RunRecord | undefined;
+  try {
+    run = await ctx.core.cancelRun(id);
+  } catch (err) {
+    if (err instanceof RunNotActiveError) {
+      throw new ApiError(409, err.message);
+    }
+    throw err;
+  }
+  if (run === undefined) {
+    throw new ApiError(404, `unknown run "${id}"`);
+  }
+  return { status: run.status === 'running' ? 202 : 200, body: run as unknown as JsonValue };
+}
+
+function listTasks(ctx: RouteContext): ApiResponse {
+  const tasks: TaskEntry[] = ctx.core.listTasks();
+  return { status: 200, body: { tasks: tasks as unknown as JsonValue } };
+}
+
+function setPaused(ctx: RouteContext, name: string, paused: boolean): ApiResponse {
+  try {
+    const task: TaskEntry = paused ? ctx.core.pauseTask(name) : ctx.core.resumeTask(name);
+    return { status: 200, body: task as unknown as JsonValue };
+  } catch (err) {
+    if (err instanceof UnknownTaskError) {
+      throw new ApiError(404, err.message);
+    }
     throw err;
   }
 }
@@ -399,6 +438,8 @@ async function reload(ctx: RouteContext): Promise<ApiResponse> {
 const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
+const RUN_CANCEL_PATH = /^\/v1\/runs\/([^/]+)\/cancel$/;
+const TASK_PAUSE_PATH = /^\/v1\/tasks\/([^/]+)\/(pause|resume)$/;
 const RUN_TRANSCRIPT_PATH = /^\/v1\/runs\/([^/]+)\/transcript$/;
 const RUN_LEDGER_PATH = /^\/v1\/runs\/([^/]+)\/ledger$/;
 const CONNECTOR_RESTART_PATH = /^\/v1\/connectors\/([^/]+)\/restart$/;
@@ -455,6 +496,23 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   if (run?.[1] !== undefined) {
     const id = run[1];
     return only(method, 'GET', () => getRun(ctx, id));
+  }
+  const cancel = RUN_CANCEL_PATH.exec(path);
+  if (cancel?.[1] !== undefined) {
+    const id = cancel[1];
+    if (method !== 'POST') {
+      throw new ApiError(405, `method ${method} not allowed; use POST`);
+    }
+    return cancelRun(ctx, id);
+  }
+  if (path === '/v1/tasks') {
+    return only(method, 'GET', () => listTasks(ctx));
+  }
+  const pause = TASK_PAUSE_PATH.exec(path);
+  if (pause?.[1] !== undefined) {
+    const name = decodeURIComponent(pause[1]);
+    const paused = pause[2] === 'pause';
+    return only(method, 'POST', () => setPaused(ctx, name, paused));
   }
   const transcript = RUN_TRANSCRIPT_PATH.exec(path);
   if (transcript?.[1] !== undefined) {

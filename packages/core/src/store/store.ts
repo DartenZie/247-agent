@@ -5,6 +5,7 @@ import { CursorStore } from './cursors.js';
 import { openDatabase } from './db.js';
 import { EventStore } from './events.js';
 import { LedgerStore } from './ledger.js';
+import { PauseStore } from './pauses.js';
 import { RunStore } from './runs.js';
 import { StateStore } from './state.js';
 import { TranscriptStore } from './transcripts.js';
@@ -21,6 +22,8 @@ export interface Store {
   readonly transcripts: TranscriptStore;
   /** `llm` requests submitted to a Message Batches API and not settled yet. */
   readonly batches: BatchStore;
+  /** Tasks paused with `oa tasks pause`. */
+  readonly pauses: PauseStore;
   /** Runs `fn` in a `BEGIN IMMEDIATE` transaction (nested calls become savepoints). */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -38,6 +41,7 @@ export function openStore(path: string): Store {
     ledger: new LedgerStore(db),
     transcripts: new TranscriptStore(db),
     batches: new BatchStore(db),
+    pauses: new PauseStore(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
     close: () => {
       db.close();

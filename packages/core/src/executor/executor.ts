@@ -40,7 +40,14 @@ import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
-import type { EventRecord, JsonValue, NewEvent, RunRecord } from '../store/types.js';
+import {
+  ACTIVE_STATUSES,
+  type EventRecord,
+  type JsonValue,
+  type NewEvent,
+  type RunRecord,
+  type RunStatus,
+} from '../store/types.js';
 
 export interface ExecutorOptions {
   store: Store;
@@ -113,6 +120,22 @@ export class RunStoppedError extends Error {
   }
 }
 
+/** Why `cancel()` aborted a run's signal: the run ends `cancelled`. */
+export class RunCancelledError extends Error {
+  constructor() {
+    super('run cancelled');
+    this.name = 'RunCancelledError';
+  }
+}
+
+/** `cancel()` of a run that has already finished. */
+export class RunNotActiveError extends Error {
+  constructor(readonly run: RunRecord) {
+    super(`run "${run.id}" is already ${run.status}`);
+    this.name = 'RunNotActiveError';
+  }
+}
+
 /** The signal `ctx.suspend()` rejects with; runners let it propagate. */
 export class RunSuspendedError extends Error {
   constructor() {
@@ -124,6 +147,9 @@ export class RunSuspendedError extends Error {
 type Outcome = { ok: true; result: JsonValue } | { ok: false; error: string; retryable: boolean };
 
 const INTERRUPTED = 'interrupted: the daemon restarted while the run was in progress';
+const CANCELLED = 'cancelled on request';
+/** How long `cancel()` waits for an aborted attempt to settle before it answers. */
+const CANCEL_SETTLE_MS = 5000;
 const NO_SECRETS = staticSecrets({});
 
 function errorMessage(err: unknown): string {
@@ -235,8 +261,30 @@ export function renderStateUpdates(
 }
 
 interface Slot {
-  /** Aborted by `stop()`; attempts combine it with their own timeout signal. */
+  /**
+   * Aborted by `stop()` (`RunStoppedError`) and `cancel()` (`RunCancelledError`); attempts
+   * combine it with their own timeout signal.
+   */
   readonly stop: AbortController;
+  /** Resolved when the run leaves the pool. */
+  readonly settled: Promise<void>;
+  readonly settle: () => void;
+}
+
+function isActive(status: RunStatus): boolean {
+  return (ACTIVE_STATUSES as readonly RunStatus[]).includes(status);
+}
+
+function cancelRequested(slot: Slot): boolean {
+  return slot.stop.signal.reason instanceof RunCancelledError;
+}
+
+function newSlot(): Slot {
+  let settle = (): void => undefined;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { stop: new AbortController(), settled, settle };
 }
 
 /**
@@ -253,6 +301,7 @@ interface Slot {
  * `task.<name>.failed` fires after the last attempt only. A `wait` parks the run in
  * `waiting` (freeing its worker slot); the dispatcher re-queues it when the awaited event
  * arrives or the wait expires, and the runner is started again with `ctx.resume`.
+ * `cancel()` ends a queued, running or waiting run as `cancelled`.
  */
 export class Executor {
   private readonly store: Store;
@@ -439,6 +488,45 @@ export class Executor {
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
+  /**
+   * `oa runs cancel`: ends a queued, running or waiting run as `cancelled` and publishes
+   * `task.<name>.cancelled`. A run in flight has its signal aborted and is awaited for up to
+   * `settleMs`; the run returned is then still `running` when its action has not stopped yet,
+   * and it ends `cancelled` once it does (or as it finished, if it finished first).
+   * `undefined` for an unknown run; throws `RunNotActiveError` for a finished one.
+   */
+  async cancel(id: string, settleMs = CANCEL_SETTLE_MS): Promise<RunRecord | undefined> {
+    const run = this.store.runs.getById(id);
+    if (run === undefined) {
+      return undefined;
+    }
+    if (!isActive(run.status)) {
+      throw new RunNotActiveError(run);
+    }
+    const slot = this.inFlight.get(id);
+    if (slot === undefined) {
+      // Queued (in the pool or not), waiting, or left `running` by a stop: nothing executes it.
+      const i = this.pending.findIndex((r) => r.id === id);
+      if (i >= 0) {
+        this.pending.splice(i, 1);
+      }
+      this.known.delete(id);
+      this.finishCancelled(run, this.log.child(runFields(run)));
+      this.notifyIdle();
+      return this.store.runs.getById(id);
+    }
+    slot.stop.abort(new RunCancelledError());
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      slot.settled,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, settleMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    return this.store.runs.getById(id);
+  }
+
   stats(): { pending: number; in_flight: number } {
     return { pending: this.pending.length, in_flight: this.busyWorkers() };
   }
@@ -523,7 +611,7 @@ export class Executor {
   private async execute(run: RunRecord, current: CompiledTask | undefined): Promise<void> {
     const log = this.log.child(runFields(run));
     const task = this.pinned(run, current);
-    const slot: Slot = { stop: new AbortController() };
+    const slot = newSlot();
     this.inFlight.set(run.id, slot);
     this.perTask.set(run.task, (this.perTask.get(run.task) ?? 0) + 1);
     let suspended = false;
@@ -562,6 +650,10 @@ export class Executor {
                   resume.event_id === null ? undefined : this.store.events.getById(resume.event_id),
               };
         const performed = await this.perform(current, task, slot, resumeInfo, log);
+        if (performed === 'cancelled') {
+          this.finishCancelled(current, log);
+          return;
+        }
         if (performed === 'stopped') {
           // Give the attempt back: the next start runs it again instead of failing the run
           // as interrupted (#39).
@@ -570,6 +662,14 @@ export class Executor {
           return;
         }
         if (performed === 'suspended') {
+          if (cancelRequested(slot)) {
+            // Parked after the cancel: end the wait it just armed.
+            const parked = this.store.runs.getById(run.id);
+            if (parked !== undefined && isActive(parked.status)) {
+              this.finishCancelled(parked, log);
+            }
+            return;
+          }
           suspended = true;
           return;
         }
@@ -600,6 +700,10 @@ export class Executor {
           await sleep(delay, undefined, { signal: slot.stop.signal });
           await this.workerFor(run.id, slot.stop.signal);
         } catch {
+          if (cancelRequested(slot)) {
+            this.finishCancelled({ ...current, error: lastError }, log);
+            return;
+          }
           log.warn('run.abandoned', { attempt });
           return; // stopping: stays `running`, recovered on the next start
         }
@@ -629,22 +733,30 @@ export class Executor {
         }
       }
       this.pump();
-      if (this.pending.length === 0 && this.inFlight.size === 0) {
-        for (const resolve of this.idleWaiters.splice(0)) {
-          resolve();
-        }
+      slot.settle();
+      this.notifyIdle();
+    }
+  }
+
+  private notifyIdle(): void {
+    if (this.pending.length === 0 && this.inFlight.size === 0) {
+      for (const resolve of this.idleWaiters.splice(0)) {
+        resolve();
       }
     }
   }
 
-  /** Never throws: any failure is an outcome. `stopped` = aborted by `stop()`. */
+  /**
+   * Never throws: any failure is an outcome. `stopped` = aborted by `stop()`, `cancelled` =
+   * aborted by `cancel()`.
+   */
   private async perform(
     run: RunRecord,
     task: CompiledTask | undefined,
     slot: Slot,
     resume: ResumeInfo | undefined,
     log: Logger,
-  ): Promise<Outcome | 'stopped' | 'suspended'> {
+  ): Promise<Outcome | 'stopped' | 'cancelled' | 'suspended'> {
     if (task === undefined) {
       return fatal(`task "${run.task}" is no longer configured`);
     }
@@ -707,6 +819,7 @@ export class Executor {
     };
     const ctx = withScope(base, {});
     try {
+      slot.stop.signal.throwIfAborted(); // cancelled before the attempt started
       const result = await runner(task.config.action, ctx);
       return { ok: true, result };
     } catch (err) {
@@ -714,7 +827,7 @@ export class Executor {
         return 'suspended';
       }
       if (slot.stop.signal.aborted) {
-        return 'stopped';
+        return cancelRequested(slot) ? 'cancelled' : 'stopped';
       }
       if (attemptController.signal.aborted && !(err instanceof OutcomeUnknownError)) {
         return {
@@ -847,6 +960,44 @@ export class Executor {
           payload: { run_id: run.id, task: run.task, error: final.error, attempt: run.attempt },
         });
       }
+    });
+  }
+
+  /**
+   * Ends an active run as `cancelled`: drops its wait, progress and pinned config, and
+   * publishes `task.<name>.cancelled` with the status it was cancelled from. No `emit` rule
+   * and no `state_updates` apply.
+   */
+  private finishCancelled(run: RunRecord, log: Logger): void {
+    const finishedAt = this.clock.now().toISOString();
+    this.metrics.runsFinished.inc({ task: run.task, status: 'cancelled' });
+    const queuedAt = Date.parse(run.created_at);
+    if (!Number.isNaN(queuedAt)) {
+      this.metrics.runDuration.observe(
+        { task: run.task },
+        Math.max(0, (Date.parse(finishedAt) - queuedAt) / 1000),
+      );
+    }
+    this.store.transaction(() => {
+      this.store.waits.delete(run.id);
+      this.store.runs.setProgress(run.id, null);
+      this.store.runs.setConfig(run.id, null);
+      this.store.runs.setStatus(run.id, 'cancelled', {
+        finished_at: finishedAt,
+        error: CANCELLED,
+      });
+      log.warn('run.cancelled', { previous_status: run.status, attempt: run.attempt });
+      this.publish({
+        type: `task.${run.task}.cancelled`,
+        source: taskSource(run.task),
+        parent_id: run.event_id,
+        payload: {
+          run_id: run.id,
+          task: run.task,
+          previous_status: run.status,
+          attempt: run.attempt,
+        },
+      });
     });
   }
 

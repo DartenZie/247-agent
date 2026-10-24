@@ -12,12 +12,15 @@ import {
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 import { eventLine, runLine, took, transcriptLines } from './format.js';
 
-export const RUNS_USAGE = `usage: oa runs <ls|show <id>|logs <id>> [options]
+export const RUNS_USAGE = `usage: oa runs <ls|show <id>|logs <id>|cancel <id>> [options]
 
 ls          the newest runs, one per line: id, task, status, created, duration, error
 show <id>   one run: its trigger event, timings, ledger rows and result or error
 logs <id>   the run's agent transcript: prompt, messages, tool calls, permissions,
             usage, stop and result (other action kinds record none)
+cancel <id> end a queued, running or waiting run as cancelled: a queued run never
+            starts, a waiting run stops waiting, a running run's action is aborted;
+            publishes task.<name>.cancelled
 
 options for ls:
   --status <s>          queued, running, waiting, succeeded, failed or cancelled
@@ -111,8 +114,24 @@ export async function runs(args: string[], io: Io): Promise<number> {
         const after = values.after === undefined ? 0 : positiveInt('--after', values.after);
         return await logs(api, id, { after, follow: values.follow, json: values.json }, io);
       }
+      case 'cancel': {
+        if (id === undefined) {
+          throw new UsageError('runs cancel takes exactly one run id');
+        }
+        const run = await api.cancelRun(id);
+        if (values.json) {
+          io.out(JSON.stringify(run));
+        } else if (run.status === 'running') {
+          io.out(
+            `${run.id}  ${run.task}  cancelling: the action is still stopping (oa runs show ${run.id})`,
+          );
+        } else {
+          io.out(`${run.id}  ${run.task}  ${run.status}`);
+        }
+        return EXIT.ok;
+      }
       default:
-        throw new UsageError('runs: usage is oa runs <ls|show <id>|logs <id>>');
+        throw new UsageError('runs: usage is oa runs <ls|show <id>|logs <id>|cancel <id>>');
     }
   } catch (err) {
     return reportApiError(err, io);
