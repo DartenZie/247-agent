@@ -101,6 +101,7 @@ export {
   MANUAL_RUN,
   LLM_BATCH_ENDED,
   RETENTION_WORKSPACE_KEPT,
+  LOOP_DETECTED,
   type CompiledConfig,
   type CompiledTask,
 } from './bus/matcher.js';

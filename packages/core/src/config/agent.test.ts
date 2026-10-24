@@ -33,7 +33,7 @@ describe('parseAgent', () => {
       connectors: [],
       workers: 4,
       log: { level: 'info' },
-      limits: { max_event_depth: 32 },
+      limits: { max_event_depth: 32, max_runs_per_chain: 1000 },
       shutdown: { grace: '30s' },
       defaults: {
         timeout: '15m',

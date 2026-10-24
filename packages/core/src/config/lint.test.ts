@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { lintIssues, lintTasks } from './lint.js';
+import { eventCycles, lintIssues, lintTasks } from './lint.js';
 import { TasksFile } from './schema.js';
 
 const parse = (tasks: unknown[]) => TasksFile.parse({ tasks }).tasks;
@@ -150,5 +150,68 @@ describe('lintTasks', () => {
         /^payload\.n > -\$\{event\.payload\.n\}: not valid JMESPath even with each \$\{…\} standing for a value/,
       ) as string,
     ]);
+  });
+});
+
+describe('eventCycles', () => {
+  const sh = { kind: 'shell', cmd: ['true'] };
+  const on = (name: string, type: string | string[], emits: string[] = []) => ({
+    name,
+    trigger: { kind: 'event', ...(Array.isArray(type) ? { type_any: type } : { type }) },
+    action: sh,
+    ...(emits.length === 0 ? {} : { emit: emits.map((t) => ({ type: t })) }),
+  });
+
+  it('finds a cycle through emit rules and one through lifecycle events, once each', () => {
+    const tasks = parse([
+      { name: 'start', trigger: { kind: 'manual' }, action: sh, emit: [{ type: 'x.ping' }] },
+      on('ping', 'x.ping', ['x.pong']),
+      on('pong', 'x.*', ['x.ping', 'y.done']),
+      on('tail', 'y.done'),
+      on('after_a', 'task.after_b.succeeded'),
+      on('after_b', ['task.after_a.*', 'z.never']),
+    ]);
+    expect(eventCycles(tasks)).toEqual([
+      [
+        { task: 'ping', type: 'x.pong' },
+        { task: 'pong', type: 'x.ping' },
+      ],
+      [
+        { task: 'after_a', type: 'task.after_a.succeeded' },
+        { task: 'after_b', type: 'task.after_b.succeeded' },
+      ],
+    ]);
+    expect(lintIssues(tasks).filter((i) => i.path.endsWith('.trigger'))).toEqual([
+      {
+        path: 'tasks[1].trigger',
+        message:
+          'task "ping": event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; ' +
+          'each run can start the next until limits.max_event_depth or ' +
+          'limits.max_runs_per_chain drops the chain, unless a trigger filter ends it',
+      },
+      expect.objectContaining({ path: 'tasks[4].trigger' }),
+    ]);
+  });
+
+  it('reports the shortest cycle of a group and ignores a task triggering on its own events', () => {
+    const tasks = parse([
+      on('a', 'e.a', ['e.b', 'e.a']),
+      on('b', 'e.b', ['e.c']),
+      on('c', 'e.c', ['e.a', 'e.b']),
+      on('self', 'task.*.failed'),
+    ]);
+    expect(eventCycles(tasks).map((c) => c.map((h) => h.task))).toEqual([['a', 'b', 'c']]);
+    expect(eventCycles(parse([on('self', 'task.*.failed')]))).toEqual([]);
+  });
+
+  it('sees a cycle across files and reports it in the file of its first task', () => {
+    const one = parse([on('ping', 'x.ping', ['x.pong'])]);
+    const two = parse([on('pong', 'x.pong', ['x.ping'])]);
+    const all = [...one, ...two];
+    expect(lintTasks(one)).toEqual([]);
+    expect(lintTasks(one, all).map((w) => [w.task, w.path])).toEqual([
+      ['ping', 'tasks[0].trigger'],
+    ]);
+    expect(lintTasks(two, all)).toEqual([]);
   });
 });

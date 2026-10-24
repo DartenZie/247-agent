@@ -254,7 +254,7 @@ export class Metrics {
   );
   readonly eventsDropped = this.registry.counter(
     'oa_events_dropped_total',
-    'Events the dispatcher dropped (causal chain deeper than limits.max_event_depth)',
+    'Events the dispatcher dropped: deeper than limits.max_event_depth (depth), or their chain past limits.max_runs_per_chain (chain_runs)',
     ['reason'],
   );
   readonly runsQueued = this.registry.counter('oa_runs_queued_total', 'Runs queued, by task', [

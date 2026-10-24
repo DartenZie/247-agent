@@ -116,7 +116,15 @@ with every template replaced by an identifier placeholder (`lintWaitFilter`). Th
 runner renders each template as a value in place (`expr/filter-template.ts`), so a
 placeholder is never itself suspect. A filter that does not parse even with
 placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
-the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
+the wait would never match.
+
+Event cycles (`eventCycles`): edges go from a task to every other task whose event
+trigger's `type` or `type_any` matches a type it produces (its `emit` types and its
+three lifecycle events); filters are ignored, since only the author can tell whether
+one ends the cycle. One shortest cycle per strongly connected group is reported at
+`tasks[<i>].trigger` of its first task in config order. Cycles span files, so
+`lintTasks(tasks, all)` takes the whole config: `oa validate agent.yaml` and the core's
+`activate()` pass every loaded task, while `oa validate tasks.yaml` sees one file. `taskActions` (`config/walk.ts`) is the one walker over a
 task's action and its sequence steps; the lint, `checkSandboxes`,
 `checkConnectorActions` and the core's connector-reference warning use it.
 
@@ -167,7 +175,7 @@ The `configure()` seams, and what each one takes:
 | `LlmService` (`llm/service.ts`) | `configure` | `providers`, `pricing`, `defaults.llm`, `defaults.decide`, `defaults.agent.budget`, `budgets.daily_usd` |
 | `BatchPoller` (`llm/batches.ts`) | `configure` | `batches.poll` (rearms the timer) |
 | `Executor` (`executor/executor.ts`) | `configure` | `workers`, `defaults.timeout`, `defaults.retry`, `defaults.sandbox`, `shutdown.grace` |
-| `Dispatcher` (`bus/dispatcher.ts`) | `configure` | `limits.max_event_depth` |
+| `Dispatcher` (`bus/dispatcher.ts`) | `configure` | `limits.max_event_depth`, `limits.max_runs_per_chain` |
 | `ConnectorSupervisor` (`connectors/supervisor.ts`) | `configure`, `apply` | `defaults.agent` (`work_dir` changed restarts every sandboxed acp connector); `apply` adds, removes and respawns connectors by manifest key, and logs `connector.unit_restart_needed` for a changed `managed_by: systemd` manifest without ops |
 | pollers (`core.ts`) | swapped | every `builtin: poller` manifest is rebuilt |
 | `Retention` (`retention.ts`) | `configure` | the five durations and `work_dir`; the timer is rearmed only when the interval changed |

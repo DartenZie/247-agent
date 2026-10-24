@@ -1,3 +1,4 @@
+import { compileTypePattern } from '../expr/glob.js';
 import { lintJmespath, parseJmespath, unplace } from '../expr/jmespath.js';
 import { forEachTemplate, parseTemplate } from '../expr/template.js';
 import { formatPath, type ConfigIssue } from './load.js';
@@ -18,10 +19,34 @@ export interface TaskWarning {
  * expression inside every `${…}` template of its `action`, `emit` rules and
  * `state_updates` (the strings the schema checks as templates), and each `wait`'s
  * `for.filter` as a whole, with every template in it standing in as a placeholder
- * (`lintWaitFilter`).
+ * (`lintWaitFilter`). Also every event cycle between the tasks of `all` (the whole config,
+ * `tasks` by default), reported at the trigger of its first task when that task is in
+ * `tasks` (`eventCycles`).
  */
-export function lintTasks(tasks: readonly TaskConfig[]): TaskWarning[] {
+export function lintTasks(
+  tasks: readonly TaskConfig[],
+  all: readonly TaskConfig[] = tasks,
+): TaskWarning[] {
   const out: TaskWarning[] = [];
+  const index = new Map(tasks.map((t, i) => [t.name, i]));
+  for (const cycle of eventCycles(all)) {
+    const [first] = cycle;
+    const i = first === undefined ? undefined : index.get(first.task);
+    if (first === undefined || i === undefined) {
+      continue;
+    }
+    const hops = cycle.map(
+      (h, k) => `${h.task} emits "${h.type}" to ${(cycle[k + 1] ?? first).task}`,
+    );
+    out.push({
+      task: first.task,
+      path: `tasks[${String(i)}].trigger`,
+      message:
+        `event cycle: ${hops.join(', ')}; each run can start the next until ` +
+        'limits.max_event_depth or limits.max_runs_per_chain drops the chain, unless a ' +
+        'trigger filter ends it',
+    });
+  }
   tasks.forEach((task, i) => {
     const at = `tasks[${String(i)}]`;
     const add = (path: string, messages: readonly string[]): void => {
@@ -73,8 +98,100 @@ export function lintTasks(tasks: readonly TaskConfig[]): TaskWarning[] {
 }
 
 /** `lintTasks` as issues for `oa validate`, each message naming its task. */
-export function lintIssues(tasks: readonly TaskConfig[]): ConfigIssue[] {
-  return lintTasks(tasks).map((w) => ({ path: w.path, message: `task "${w.task}": ${w.message}` }));
+export function lintIssues(
+  tasks: readonly TaskConfig[],
+  all: readonly TaskConfig[] = tasks,
+): ConfigIssue[] {
+  return lintTasks(tasks, all).map((w) => ({
+    path: w.path,
+    message: `task "${w.task}": ${w.message}`,
+  }));
+}
+
+/** One hop of an event cycle: `task` produces `type`, which triggers the next hop's task. */
+export interface CycleHop {
+  task: string;
+  type: string;
+}
+
+/**
+ * Cycles in the static graph from what a task's runs publish (its `emit` types and
+ * `task.<name>.succeeded|failed|cancelled`) to the event triggers whose `type` or
+ * `type_any` match it. Filters are ignored: they may end a cycle at run time, which only
+ * the author can tell. A task never triggers on its own events, so a cycle has at least
+ * two tasks. One shortest cycle per strongly connected group, starting at its task
+ * that comes first in `tasks`.
+ */
+export function eventCycles(tasks: readonly TaskConfig[]): CycleHop[][] {
+  const triggers = tasks.map((t) => {
+    if (t.trigger.kind !== 'event') {
+      return [];
+    }
+    const patterns = t.trigger.type !== undefined ? [t.trigger.type] : (t.trigger.type_any ?? []);
+    return patterns.map(compileTypePattern);
+  });
+  /** `edges[from]`: each task `to` it triggers, with the first type that does. */
+  const edges = tasks.map((from, f) => {
+    const produced = [
+      ...(from.emit ?? []).map((r) => r.type),
+      `task.${from.name}.succeeded`,
+      `task.${from.name}.failed`,
+      `task.${from.name}.cancelled`,
+    ];
+    const out: { to: number; type: string }[] = [];
+    triggers.forEach((matchers, to) => {
+      const type = to === f ? undefined : produced.find((p) => matchers.some((m) => m(p)));
+      if (type !== undefined) {
+        out.push({ to, type });
+      }
+    });
+    return out;
+  });
+  /** Shortest paths from `start` within `allowed`: each reached node's previous hop. */
+  const search = (start: number, allowed: (n: number) => boolean): Map<number, number> => {
+    const prev = new Map<number, number>();
+    const queue = [start];
+    // An array iterator also visits what is pushed during the loop: a breadth-first queue.
+    for (const n of queue) {
+      for (const e of edges[n] ?? []) {
+        if (!prev.has(e.to) && allowed(e.to)) {
+          prev.set(e.to, n);
+          queue.push(e.to);
+        }
+      }
+    }
+    return prev;
+  };
+  const reach = tasks.map((_, n) => search(n, () => true));
+  const grouped = new Set<number>();
+  const cycles: CycleHop[][] = [];
+  tasks.forEach((_, v) => {
+    if (grouped.has(v) || !(reach[v]?.has(v) ?? false)) {
+      return;
+    }
+    const group = new Set(
+      tasks.flatMap((__, u) =>
+        (reach[v]?.has(u) ?? false) && (reach[u]?.has(v) ?? false) ? [u] : [],
+      ),
+    );
+    group.forEach((u) => grouped.add(u));
+    const prev = search(v, (n) => group.has(n));
+    const path: number[] = [];
+    for (let n = prev.get(v) ?? v; n !== v; n = prev.get(n) ?? v) {
+      path.unshift(n);
+    }
+    path.unshift(v);
+    cycles.push(
+      path.map((n, k) => {
+        const to = path[k + 1] ?? v;
+        return {
+          task: tasks[n]?.name ?? '',
+          type: edges[n]?.find((e) => e.to === to)?.type ?? '',
+        };
+      }),
+    );
+  });
+  return cycles;
 }
 
 /** The expressions of a template; none when it does not parse (the schema reports that). */

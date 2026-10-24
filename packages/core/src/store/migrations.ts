@@ -144,6 +144,12 @@ export const MIGRATIONS: readonly string[] = [
     paused_at TEXT NOT NULL
   );
   `,
+  `
+  -- The causal chain's root event (its own id for a root; NULL on rows older than this
+  -- migration): the dispatcher caps the runs one chain starts, \`each\` fan-out included.
+  ALTER TABLE events ADD COLUMN root_id TEXT;
+  CREATE INDEX events_root ON events(root_id);
+  `,
 ];
 
 /**

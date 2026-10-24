@@ -123,6 +123,7 @@ describe('labelledEventTypes', () => {
       'cron.tick',
       'email.received',
       'llm.batch.ended',
+      'loop.detected',
       'mail.triaged',
       'manual.run',
       'retention.workspace_kept',

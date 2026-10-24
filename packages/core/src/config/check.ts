@@ -114,6 +114,8 @@ export function checkConfigFile(path: string): FileCheck[] {
     out[0] = fail(path, 'agent', hostIssues.agent);
   }
   const tasks = loadTasks(r.config.tasks);
+  // Event cycles may span files: each file's lint looks at the tasks of all of them.
+  const allTasks = tasks.files.flatMap((f) => (f.ok ? f.config.tasks : []));
   for (const f of tasks.files) {
     if (!f.ok) {
       out.push(fail(f.file, 'tasks', f.issues));
@@ -145,7 +147,7 @@ export function checkConfigFile(path: string): FileCheck[] {
             summary: `${String(f.config.tasks.length)} tasks`,
           }
         : fail(f.file, 'tasks', issues)),
-      warnings: lintIssues(f.config.tasks),
+      warnings: lintIssues(f.config.tasks, allTasks),
     });
   }
   for (const f of connectors.files) {

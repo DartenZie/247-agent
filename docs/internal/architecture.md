@@ -62,7 +62,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 | Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file on reload changes nothing; `db`, `socket`, `secrets` are fixed for the process |
 | Scheduler | `scheduler/cron.ts` | One croner job per cron task and poller; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Missed ticks are never replayed; a duplicate boundary is dropped by the key |
 | Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
-| Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events, matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
+| Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events and events of a chain past its run cap (publishing `loop.detected`), matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
 | Matcher | `bus/matcher.ts` | Trigger matching and the labelled event-type set for metrics | A throwing filter is a non-match (`trigger.filter_error`) |
 | Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, cancel, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing |
 | Action runners | `actions/*.ts` | One file per kind; `core.ts` `defaultRunners` maps `kind` to runner | A runner reaches the world only through `ActionContext` ([`actions.md`](actions.md)) |
@@ -83,11 +83,13 @@ events after the `dispatch` cursor:
 2. Read the next batch of events.
 3. For each event: end every pending wait whose type pattern matches and whose filter
    is truthy (`endWait('matched', event)`); if `depth > limits.max_event_depth`
-   (default 32) count it dropped, log `event.depth_exceeded` and start no run; else
+   (default 32) drop it (`drop('depth')`) and start no run; else
    match tasks; for a `cron.tick` with `overlap: skip`, skip while the task has a run
    in `queued`, `running` or `waiting` (`cron.skipped_overlap`); skip a task listed in
    `task_pauses` (`task.skipped_paused`), read once per batch; insert a `queued` run
-   with `INSERT OR IGNORE` on `UNIQUE(task, event_id)`. A paused task still has its
+   with `INSERT OR IGNORE` on `UNIQUE(task, event_id)`, unless the event's chain has
+   started `limits.max_runs_per_chain` runs (default 1000), which drops the event
+   (`drop('chain_runs')`) for every task left. A paused task still has its
    waits ended in the step before: a pause stops new runs, not runs in the chain.
 4. Advance the cursor to the last `seq`, commit, hand the new runs to the executor.
 
@@ -99,8 +101,27 @@ API call, so `POST /v1/runs` returns the queued run.
 Depth guard: too-deep events still end waits (a resume is not a new hop) but start no
 run. Depth grows only through `parent_id`: lifecycle and `emit` events are parented to
 their trigger, `llm.batch.ended` to the run's trigger; `cron.tick`, `manual.run`,
-`budget.exceeded`, `retention.workspace_kept`, poller and API events without a parent
-are roots.
+`budget.exceeded`, `retention.workspace_kept`, `loop.detected`, poller and API events
+without a parent are roots.
+
+Chain cap: a chain is a root event and everything descended from it through
+`parent_id`. `publishEvent` stores each event's `root_id` (the parent's root, or its own
+id for a root), so the chain survives an `each` item's new correlation id, which is why
+the cap counts chains and not correlations: a fan-out loop doubles per hop across new
+correlations and would reach `2^32` runs before the depth guard. The count is
+`EventStore.countChainRuns` (runs joined to their trigger events on `events_root`), read
+once per chain per batch and counted up in memory as runs are inserted; it ends waits
+like the depth guard does. Events stored before `root_id` existed count as their own
+roots.
+
+`drop(event, reason, root)` counts `oa_events_dropped_total{reason}`, logs
+`event.depth_exceeded` or `event.chain_runs_exceeded`, and publishes `loop.detected`
+through the bus's own `publish` (so it is counted and wakes the dispatcher) inside the
+batch transaction, with `dedup_key: loop:<root>`: one per chain whatever the reason or
+the number of drops. A bounded in-memory set of reported roots skips the publish for the
+later drops of a storm, so `oa_events_published_total` gets one attempt per chain; after
+a restart the dedup key still holds. It is a root with a new correlation, so a notifier on it is never
+inside the chain it reports.
 
 ## Waits
 

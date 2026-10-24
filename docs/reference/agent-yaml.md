@@ -48,6 +48,7 @@ Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`.
 | `log.level` | `debug`, `info`, `warn` or `error`. `247-agent-core --log-level` overrides it. | `info` |
 | `shutdown.grace` | How long a stop (SIGTERM, `systemctl restart`, an upgrade) lets runs in flight finish before aborting them. An aborted run runs the same attempt again on the next start. Keep the unit's `TimeoutStopSec=` above this plus 10 seconds. | `30s` |
 | `limits.max_event_depth` | An event deeper than this in a causal chain (hops from the root event) starts no run. It still ends a `wait` that matches it. | `32` |
+| `limits.max_runs_per_chain` | Runs one causal chain may start, counting every item of an `emit … each` fan-out. Past it, the chain's events start no run; they still end a `wait` that matches them. | `1000` |
 
 ## Defaults for tasks
 

@@ -41,7 +41,12 @@ export const AgentFile = z.strictObject({
     .default([]),
   workers: z.number().int().positive().default(4),
   log: z.strictObject({ level: z.enum(LOG_LEVELS).default('info') }).prefault({}),
-  limits: z.strictObject({ max_event_depth: z.number().int().positive().default(32) }).prefault({}),
+  limits: z
+    .strictObject({
+      max_event_depth: z.number().int().positive().default(32),
+      max_runs_per_chain: z.number().int().positive().default(1000),
+    })
+    .prefault({}),
   /** How long a stop lets runs in flight finish before aborting them (#39). */
   shutdown: z
     .strictObject({

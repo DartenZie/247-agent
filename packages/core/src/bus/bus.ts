@@ -22,7 +22,10 @@ export interface EventBus {
   onQueued(listener: QueuedListener): () => void;
 }
 
-export interface BusOptions extends Pick<DispatcherOptions, 'batchSize' | 'maxDepth'> {
+export interface BusOptions extends Pick<
+  DispatcherOptions,
+  'batchSize' | 'maxDepth' | 'maxChainRuns'
+> {
   store: Store;
   clock: Clock;
   log: Logger;
@@ -31,23 +34,25 @@ export interface BusOptions extends Pick<DispatcherOptions, 'batchSize' | 'maxDe
 
 export function createBus(opts: BusOptions): EventBus {
   const metrics = opts.metrics ?? new Metrics();
-  const dispatcher = new Dispatcher({ ...opts, metrics });
   let labelled = labelledEventTypes({ tasks: [], byName: new Map() });
+  const publish = (input: NewEvent): PublishResult => {
+    const result = publishEvent(opts.store, opts.clock, opts.log, input);
+    const type = labelled.has(input.type) ? input.type : OTHER_EVENT_TYPE;
+    metrics.eventsPublished.inc({ type, result: result.status });
+    if (result.status === 'inserted') {
+      dispatcher.wake();
+    }
+    return result;
+  };
+  // The dispatcher publishes `loop.detected` through the same path.
+  const dispatcher = new Dispatcher({ ...opts, metrics, publish });
   return {
     dispatcher,
     setConfig: (config) => {
       dispatcher.setConfig(config);
       labelled = labelledEventTypes(config);
     },
-    publish: (input) => {
-      const result = publishEvent(opts.store, opts.clock, opts.log, input);
-      const type = labelled.has(input.type) ? input.type : OTHER_EVENT_TYPE;
-      metrics.eventsPublished.inc({ type, result: result.status });
-      if (result.status === 'inserted') {
-        dispatcher.wake();
-      }
-      return result;
-    },
+    publish,
     onQueued: (listener) => dispatcher.onQueued(listener),
   };
 }

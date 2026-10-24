@@ -19,7 +19,7 @@ tasks: [tasks.yaml, tasks.d]        # files and/or directories of *.yaml, merged
 connectors: connectors.d            # manifest files, directories, or inline manifests
 workers: 4                          # runs executing at once, globally
 log: { level: info }                # debug | info | warn | error
-limits: { max_event_depth: 32 }     # loop guard on causal chains
+limits: { max_event_depth: 32, max_runs_per_chain: 1000 }   # loop guards on causal chains
 defaults:
   timeout: 15m                      # per attempt, for tasks without their own
   retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }

@@ -12,6 +12,7 @@ is strict; unknown keys are rejected.
 | `workers` | Global cap on runs executing at once | `4` |
 | `log.level` | `debug`, `info`, `warn`, `error` | `info` |
 | `limits.max_event_depth` | Events deeper than this in a causal chain start no run; they still end a matching `wait` | `32` |
+| `limits.max_runs_per_chain` | Runs one causal chain (root event plus descendants, `each` items included) may start; past it its events start no run | `1000` |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without `timeout` | `15m` |
 | `defaults.retry` | `{attempts, backoff, base, max}` for tasks without `retry` | 1 attempt, exponential, 30s, 1h |
 | `defaults.sandbox` | `none`, `bwrap`, or `{backend: bwrap, ro_binds, rw_binds, extra_args}` for `shell` actions without `sandbox` | `none` |

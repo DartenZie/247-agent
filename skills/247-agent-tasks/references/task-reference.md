@@ -43,8 +43,12 @@ The event a task sees:
 ```
 
 `source` is a connector name, `scheduler`, `manual`, or `task:<name>`. Events deeper
-than `limits.max_event_depth` (default 32) in a causal chain start no run (they still end a
-matching `wait`).
+than `limits.max_event_depth` (default 32) in a causal chain, or in a chain that already
+started `limits.max_runs_per_chain` runs (default 1000, `each` items included), start no
+run (they still end a matching `wait`); the first such drop publishes `loop.detected`
+(`source: core`, payload `{reason, limit, root_event_id, correlation_id, event_id,
+event_type, depth}`) once per chain. `oa validate` warns about trigger/emit cycles
+between tasks.
 
 ## Actions
 

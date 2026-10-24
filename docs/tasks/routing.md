@@ -112,10 +112,41 @@ secret belongs in the action that needs it.
 
 ## Runaway chains
 
-Each event records how many hops it is from the root of its causal chain. Past
-`limits.max_event_depth` in `agent.yaml`, 32 by default, an event is still stored and
-still ends a `wait` that matches it, but starts no run. If you see events dropped for
-depth, two tasks are feeding each other: break the loop with a filter or a `dedup_key`.
+Two tasks that each trigger on what the other emits form a loop. `oa validate` warns
+about such a cycle at the trigger of its first task:
+
+```
+tasks.yaml: tasks[0].trigger: warning: task "ping": event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; …
+```
+
+The check ignores filters, so a cycle that a trigger filter ends is reported too. If the
+filter really ends it, you can leave the warning.
+
+At run time, two limits in `agent.yaml` stop a loop. Both count the causal chain: the
+root event and every event that descends from it, including each item of an `each`
+rule.
+
+- `limits.max_event_depth`, 32 by default: an event more hops than this from the root
+  starts no run.
+- `limits.max_runs_per_chain`, 1000 by default: once a chain has started this many
+  runs, its events start no more. This stops a loop that fans out with `each`, which
+  would double at every hop long before it got deep.
+
+An event dropped by either limit is still stored and still ends a `wait` that matches
+it. The first drop in a chain publishes `loop.detected`, so a task can tell you:
+
+```yaml
+tasks:
+  - name: alert_loop
+    trigger: { kind: event, type: loop.detected }
+    action:
+      kind: shell
+      cmd: ["logger", "-t", "247-agent", "loop stopped: ${event.payload.event_type} (${event.payload.reason})"]
+```
+
+To fix the loop, break it with a trigger filter, a `dedup_key`, or a different event
+type. The payload of `loop.detected` is in
+[the events reference](../reference/events.md#how-an-event-starts-a-run).
 
 ## Where to look
 

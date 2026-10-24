@@ -64,6 +64,8 @@ export interface CoreOptions {
   dispatchIntervalMs?: number;
   /** Events deeper than this in a causal chain are dropped. */
   maxEventDepth?: number;
+  /** Runs one causal chain may start; past it, its events start no run. */
+  maxChainRuns?: number;
   /** Runs in flight across all tasks. */
   workers?: number;
   /** For tasks without `timeout`. */
@@ -146,6 +148,7 @@ export interface CoreReloadOptions {
   defaultSandbox?: SandboxConfig | undefined;
   stopGrace?: string | undefined;
   maxEventDepth?: number | undefined;
+  maxChainRuns?: number | undefined;
   retention?: RetentionPolicy | undefined;
 }
 
@@ -283,6 +286,7 @@ export function createCore(opts: CoreOptions): Core {
     log,
     metrics,
     ...(opts.maxEventDepth === undefined ? {} : { maxDepth: opts.maxEventDepth }),
+    ...(opts.maxChainRuns === undefined ? {} : { maxChainRuns: opts.maxChainRuns }),
   });
   const scheduler = new CronScheduler({ bus, clock, log, metrics });
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
@@ -486,7 +490,7 @@ export function createCore(opts: CoreOptions): Core {
       if (!f.ok) {
         continue;
       }
-      for (const w of lintTasks(f.config.tasks)) {
+      for (const w of lintTasks(f.config.tasks, result.config.tasks)) {
         log.warn('core.config_warning', {
           task: w.task,
           file: f.file,
@@ -576,8 +580,11 @@ export function createCore(opts: CoreOptions): Core {
       stopGrace: next.stopGrace,
       ...('defaultSandbox' in next ? { defaultSandbox: next.defaultSandbox } : {}),
     });
-    if (next.maxEventDepth !== undefined) {
-      bus.dispatcher.configure({ maxDepth: next.maxEventDepth });
+    if (next.maxEventDepth !== undefined || next.maxChainRuns !== undefined) {
+      bus.dispatcher.configure({
+        ...(next.maxEventDepth === undefined ? {} : { maxDepth: next.maxEventDepth }),
+        ...(next.maxChainRuns === undefined ? {} : { maxChainRuns: next.maxChainRuns }),
+      });
     }
     if (next.agents !== undefined) {
       await supervisor?.configure(next.agents);

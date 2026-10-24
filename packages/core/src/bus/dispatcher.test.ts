@@ -115,6 +115,90 @@ describe('Dispatcher', () => {
     expect(env.lines.filter((l) => l.msg === 'event.depth_exceeded')).toHaveLength(1);
   });
 
+  it('publishes loop.detected once per chain when it drops deep events', () => {
+    const shallow = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxDepth: 1,
+    });
+    shallow.setConfig(tasks);
+    const root = publish('x.happened');
+    const child = publish('x.happened', null, { parent_id: root.id });
+    const deep = publish('x.happened', null, { parent_id: child.id });
+    publish('x.happened', null, { parent_id: child.id });
+    shallow.drain();
+    const loops = env.store.events.list({ type: 'loop.detected' });
+    expect(loops).toHaveLength(1);
+    expect(loops[0]).toMatchObject({
+      source: 'core',
+      parent_id: null,
+      depth: 0,
+      dedup_key: `loop:${root.id}`,
+      payload: {
+        reason: 'depth',
+        limit: 1,
+        root_event_id: root.id,
+        correlation_id: root.correlation_id,
+        event_id: deep.id,
+        event_type: 'x.happened',
+        depth: 2,
+      },
+    });
+    expect(loops[0]?.correlation_id).not.toBe(root.correlation_id);
+    expect(env.lines.filter((l) => l.msg === 'event.depth_exceeded')).toHaveLength(2);
+    expect(env.lines.filter((l) => l.msg === 'loop.detected')).toHaveLength(1);
+  });
+
+  it('caps the runs one chain starts, across the new correlations of an each fan-out', () => {
+    const capped = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxChainRuns: 3,
+    });
+    capped.setConfig(tasks);
+    const root = publish('x.happened', { ok: true }); // a and b: 2 runs
+    const items = ['cor_1', 'cor_2', 'cor_3'].map((c) =>
+      publish('x.happened', { ok: true }, { parent_id: root.id, correlation_id: c }),
+    );
+    const other = publish('x.happened'); // another chain: a only
+    const queued = capped.drain();
+    expect(queued.map((r) => [r.task, r.event_id])).toEqual([
+      ['a', root.id],
+      ['b', root.id],
+      ['a', items[0]?.id],
+      ['a', other.id],
+    ]);
+    expect(env.lines.filter((l) => l.msg === 'event.chain_runs_exceeded')).toHaveLength(3);
+    const loops = env.store.events.list({ type: 'loop.detected' });
+    expect(loops).toHaveLength(1);
+    expect(loops[0]?.payload).toMatchObject({
+      reason: 'chain_runs',
+      limit: 3,
+      root_event_id: root.id,
+      correlation_id: 'cor_1',
+      event_id: items[0]?.id,
+    });
+  });
+
+  it('counts the chain runs already in the store and takes a new cap on configure', () => {
+    const capped = new Dispatcher({
+      store: env.store,
+      clock: env.clock,
+      log: env.log,
+      maxChainRuns: 2,
+    });
+    capped.setConfig(tasks);
+    const root = publish('x.happened', { ok: true });
+    expect(capped.drain()).toHaveLength(2);
+    const child = publish('x.happened', null, { parent_id: root.id });
+    expect(capped.drain()).toEqual([]);
+    capped.configure({ maxChainRuns: 3 });
+    publish('x.happened', null, { parent_id: child.id });
+    expect(capped.drain()).toHaveLength(1);
+  });
+
   it('lets an event beyond the depth limit end a wait but start no run', () => {
     const shallow = new Dispatcher({
       store: env.store,
