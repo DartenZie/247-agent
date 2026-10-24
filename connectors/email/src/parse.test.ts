@@ -81,6 +81,15 @@ describe('parseMessage', () => {
     const again = await parseMessage(source, { uid: 2, maxBodyChars: 10 });
     expect(again.message_id).toBe(m.message_id);
   });
+
+  it('converts HTML itself when mailparser cannot', async () => {
+    const nested = '<div>'.repeat(1200) + 'hello' + '</div>'.repeat(1200);
+    const m = await parseMessage(
+      raw(['From: a@example.com', 'Content-Type: text/html; charset=utf-8', '', nested]),
+      { uid: 1, maxBodyChars: 1000 },
+    );
+    expect(m.body).toBe('hello');
+  });
 });
 
 describe('toEmailMessage', () => {
