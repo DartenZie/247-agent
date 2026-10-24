@@ -130,8 +130,9 @@ have run or may still be running, so it is never retried. The MCP client sends
 `notifications/cancelled` on a timeout or abort; a handler that ignores it keeps
 running. A signal already aborted before the call throws its own reason, so the
 executor's attempt-timeout rule applies. The MCP result maps through
-`toolResultToJson()`: `isError` → `ConnectorOpError` (non-retryable, message = the
-text); else `structuredContent`; else one text block parsed as JSON when it parses, the
+`toolResultToJson()`: `isError` → `ConnectorOpError` (message = the text; retryable only
+with the result's `_meta["oa/transient"] === true`, [`connectors.md`](connectors.md));
+else `structuredContent`; else one text block parsed as JSON when it parses, the
 string otherwise; several texts → an array; none → `null`. Every call counts in
 `oa_connector_ops_total{connector,op,result}` and the duration histogram.
 
@@ -218,13 +219,14 @@ The executor is a worker pool bounded by `workers` globally and `concurrency` pe
 - Retryable is the default. An error is final when it carries `retryable === false`
   (`NonRetryableError` in `actions/types.ts`, `BudgetExceededError`,
   `UnpricedModelError`, `ProviderUnavailableError` in `llm/errors.ts`,
-  `ConnectorOpError`, `WaitTimeoutError`, `SecretError`). An `OutcomeUnknownError`
+  `ConnectorOpError` unless the connector marked it transient, `WaitTimeoutError`,
+  `SecretError`). An `OutcomeUnknownError`
   (`ConnectorNoAnswerError`) stays final even when the attempt timed out; any other
   error from an attempt that timed out is retried. So: an attempt timeout, a
-  connector that is down, a failed `post` gate and a missing or invalid RESULT.json are
-  retried; a wait timeout, a connector op that got no answer, a missing secret, an
+  connector that is down, an op error marked transient, a failed `post` gate and a
+  missing or invalid RESULT.json are retried; a wait timeout, a connector op that got no answer, a missing secret, an
   unknown connector, an `isError` op
-  result, an op outside `ops`, an unrenderable emit rule, a budget or price failure, a
+  result without the transient mark, an op outside `ops`, an unrenderable emit rule, a budget or price failure, a
   `max_tokens` or refusal stop, an agent policy violation or tool-call cap, and a
   missing task or runner are not.
 - `budget.max_usd` is checked against the ledger sum of the whole run, so retries

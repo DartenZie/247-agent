@@ -14,6 +14,11 @@ import {
   CoreClient,
   createConnectorServer,
   defineTool,
+  isNetworkError,
+  isTransient,
+  isConnectError,
+  isTransientHttpError,
+  TransientError,
 } from './index.js';
 
 describe('connectorEnv', () => {
@@ -69,6 +74,93 @@ describe('createConnectorServer', () => {
     expect(bad.content).toEqual([{ type: 'text', text: 'kaboom' }]);
     await client.close();
     await server.close();
+  });
+});
+
+describe('transient errors', () => {
+  it('marks a transient handler error in _meta, and only that one', async () => {
+    const server = createConnectorServer({
+      name: 't',
+      tools: [
+        { name: 'busy', handler: () => Promise.reject(new TransientError('try later')) },
+        {
+          name: 'reset',
+          handler: () => {
+            throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+          },
+        },
+        {
+          name: 'bad',
+          handler: () => {
+            throw new Error('bad args');
+          },
+        },
+      ],
+      transient: isNetworkError,
+    });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverSide);
+    const client = new Client({ name: 'test', version: '0' });
+    await client.connect(clientSide);
+
+    const busy = await client.callTool({ name: 'busy', arguments: {} });
+    expect(busy).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'try later' }],
+      _meta: { 'oa/transient': true },
+    });
+    const reset = await client.callTool({ name: 'reset', arguments: {} });
+    expect(reset._meta).toEqual({ 'oa/transient': true });
+    const bad = await client.callTool({ name: 'bad', arguments: {} });
+    expect(bad.isError).toBe(true);
+    expect(bad._meta).toBeUndefined();
+    await client.close();
+    await server.close();
+  });
+
+  it('finds the flag and network codes along the cause chain', () => {
+    expect(isTransient(new Error('x', { cause: new TransientError('y') }))).toBe(true);
+    expect(isTransient(Object.assign(new Error('x'), { transient: true }))).toBe(true);
+    expect(isTransient(new Error('x'))).toBe(false);
+    expect(isTransient('x')).toBe(false);
+    const fetchFailed = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect'), { code: 'UND_ERR_CONNECT_TIMEOUT' }),
+    });
+    expect(isNetworkError(fetchFailed)).toBe(true);
+    expect(isNetworkError(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))).toBe(false);
+    const loop: Error & { cause?: unknown } = new Error('loop');
+    loop.cause = loop;
+    expect(isNetworkError(loop)).toBe(false);
+  });
+
+  it('retries an HTTP failure that did not take effect, or any failure of a repeatable request', () => {
+    const http = (status: number, idempotent: boolean, cause?: unknown): boolean =>
+      isTransientHttpError({ status, idempotent, cause });
+    const refused = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
+    });
+    const reset = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+    const notFound = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('getaddrinfo'), { code: 'ENOTFOUND' }),
+    });
+    expect(isConnectError(refused)).toBe(true);
+    expect(isConnectError(reset)).toBe(false);
+    for (const idempotent of [true, false]) {
+      expect(http(0, idempotent, refused)).toBe(true);
+      expect(http(429, idempotent)).toBe(true);
+      expect(http(503, idempotent)).toBe(true);
+      expect(http(0, idempotent, notFound)).toBe(false);
+      expect([400, 401, 403, 404, 409, 422, 501].some((s) => http(s, idempotent))).toBe(false);
+    }
+    expect([408, 500, 502, 504].every((s) => http(s, true))).toBe(true);
+    expect([408, 500, 502, 504].some((s) => http(s, false))).toBe(false);
+    expect(http(0, true, reset)).toBe(true);
+    expect(http(0, true, timedOut)).toBe(true);
+    expect(http(0, false, reset)).toBe(false);
+    expect(http(0, false, timedOut)).toBe(false);
   });
 });
 

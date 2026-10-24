@@ -1,6 +1,6 @@
 /**
  * A generic fake connector for supervisor tests: `echo` returns its args, `fail` returns an
- * MCP error, `crash` exits the process after answering, `die` exits without answering,
+ * MCP error (marked transient with `transient: true`), `crash` exits the process after answering, `die` exits without answering,
  * `env` reports what the core passed in, `slow` takes a while, `freeze` blocks the event
  * loop (so pings go unanswered). Run with `node fake-mcp.ts` (Node strips the types).
  */
@@ -13,6 +13,7 @@ import {
   createConnectorServer,
   defineTool,
   serveStdio,
+  TransientError,
 } from '../../../connector-sdk/src/index.ts';
 
 const env = connectorEnv();
@@ -28,9 +29,9 @@ const server = createConnectorServer({
     }),
     defineTool({
       name: 'fail',
-      input: { message: z.string() },
+      input: { message: z.string(), transient: z.boolean().optional() },
       handler: (args) => {
-        throw new Error(args.message);
+        throw args.transient === true ? new TransientError(args.message) : new Error(args.message);
       },
     }),
     defineTool({

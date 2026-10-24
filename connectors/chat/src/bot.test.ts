@@ -83,6 +83,24 @@ describe('send', () => {
     expect((err as TelegramError).code).toBe(400);
     expect((err as Error).message).toBe('sendMessage: Bad Request: chat not found (400)');
     expect((err as Error).message).not.toContain(TOKEN);
+    expect((err as TelegramError).transient).toBe(false);
+  });
+
+  it('marks a rate limit transient, a send that may have gone out not (#32)', async () => {
+    const { tg, bot } = setup();
+    tg.failNext('sendMessage', 429, 'Too Many Requests: retry after 3');
+    const limited = await bot.send({ text: 'x' }).catch((e: unknown) => e);
+    expect((limited as TelegramError).transient).toBe(true);
+    tg.failNext('sendMessage', 502, 'Bad Gateway');
+    const down = await bot.send({ text: 'x' }).catch((e: unknown) => e);
+    expect((down as TelegramError).transient).toBe(false);
+    const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+    expect(new TelegramError('sendMessage', 0, 'timed out', undefined, timedOut).transient).toBe(
+      false,
+    );
+    expect(new TelegramError('getMe', 0, 'timed out', undefined, timedOut).transient).toBe(true);
+    const refused = Object.assign(new Error('connect'), { code: 'ECONNREFUSED' });
+    expect(new TelegramError('sendMessage', 0, 'refused', undefined, refused).transient).toBe(true);
   });
 });
 

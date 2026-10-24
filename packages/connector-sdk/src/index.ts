@@ -181,6 +181,114 @@ function statePath(namespace: string, key: string): string {
   return `/v1/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`;
 }
 
+/**
+ * The `_meta` key of an `isError` tool result that tells the core the failure is transient:
+ * a later call may succeed and repeating the op is safe, because it did not take effect
+ * or because it can run twice. The core then retries the run under the task's `retry`
+ * policy. Any other op error fails the run for good.
+ */
+export const TRANSIENT_META_KEY = 'oa/transient';
+
+/** An op failure worth retrying. Throw it, or any error with `transient: true`, from a handler. */
+export class TransientError extends Error {
+  readonly transient = true as const;
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TransientError';
+  }
+}
+
+/** Whether `err`, or an error in its `cause` chain, carries `transient: true`. */
+export function isTransient(err: unknown): boolean {
+  return causes(err).some((e) => (e as { transient?: unknown }).transient === true);
+}
+
+/**
+ * Node's and undici's codes for a connection that could not be made, so nothing was sent,
+ * and for a resolver that did not answer. `ENOTFOUND` is not among them: a name that does
+ * not exist is a config error.
+ */
+const CONNECT_CODES = new Set([
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'EHOSTDOWN',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/** Codes for a connection that broke or timed out once open: the request may have arrived. */
+const BROKEN_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+function hasCode(err: unknown, codes: Set<string>): boolean {
+  return causes(err).some((e) => {
+    const code = (e as { code?: unknown }).code;
+    return typeof code === 'string' && codes.has(code);
+  });
+}
+
+/** Whether `err`, or its `cause` chain, is a connection that could not be made: nothing was sent. */
+export function isConnectError(err: unknown): boolean {
+  return hasCode(err, CONNECT_CODES);
+}
+
+/**
+ * Whether `err`, or its `cause` chain, is any network failure by its `code`: one that
+ * `isConnectError` matches, or a connection that broke or timed out once open.
+ */
+export function isNetworkError(err: unknown): boolean {
+  return isConnectError(err) || hasCode(err, BROKEN_CODES);
+}
+
+/**
+ * Whether an HTTP request that failed is worth retrying. `status` 0 means no response,
+ * with `cause` the error `fetch` threw. `idempotent` says whether the request can run
+ * twice (a read, a PUT or a DELETE); a write that is not (a POST that creates something)
+ * is retried only when it surely did not take effect.
+ *
+ * - Always: a connection that could not be made, 429 and 503.
+ * - Idempotent only: a timeout (`AbortSignal.timeout`), a connection that broke, 408 and
+ *   every other 5xx but 501.
+ */
+export function isTransientHttpError(failure: {
+  status: number;
+  idempotent: boolean;
+  cause?: unknown;
+}): boolean {
+  const { status, idempotent, cause } = failure;
+  if (status === 0) {
+    if (isConnectError(cause)) {
+      return true;
+    }
+    const timedOut = causes(cause).some((e) => (e as { name?: unknown }).name === 'TimeoutError');
+    return idempotent && (timedOut || hasCode(cause, BROKEN_CODES));
+  }
+  if (status === 429 || status === 503) {
+    return true;
+  }
+  return idempotent && (status === 408 || (status >= 500 && status !== 501));
+}
+
+/** `err` and its `cause`s, at most eight deep, objects only. */
+function causes(err: unknown): object[] {
+  const out: object[] = [];
+  let e = err;
+  while (typeof e === 'object' && e !== null && out.length < 8 && !out.includes(e)) {
+    out.push(e);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return out;
+}
+
 /** One op. `input` is a zod raw shape (`{ folder: z.string() }`); the handler gets parsed args. */
 export interface ToolDef<Shape extends z.ZodRawShape = z.ZodRawShape> {
   name: string;
@@ -198,11 +306,17 @@ export interface ConnectorServerOptions {
   name: string;
   version?: string;
   tools: ToolDef[];
+  /**
+   * Which thrown errors are transient besides those `isTransient` already finds: the
+   * connector's own rule for its libraries' errors (an SMTP 4xx, an HTTP 503).
+   */
+  transient?: (err: unknown) => boolean;
 }
 
 /**
  * An MCP server exposing `tools` as ops. Each handler's JSON result is returned as one text
- * content block (the core parses it back); a thrown error becomes an `isError` result.
+ * content block (the core parses it back); a thrown error becomes an `isError` result,
+ * marked with `_meta["oa/transient"]: true` when it is transient (`TRANSIENT_META_KEY`).
  */
 export function createConnectorServer(opts: ConnectorServerOptions): McpServer {
   const server = new McpServer({ name: opts.name, version: opts.version ?? '0.0.0' });
@@ -218,11 +332,13 @@ export function createConnectorServer(opts: ConnectorServerOptions): McpServer {
           const result = await tool.handler(args as never);
           return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
         } catch (err) {
+          const transient = isTransient(err) || opts.transient?.(err) === true;
           return {
             isError: true,
             content: [
               { type: 'text' as const, text: err instanceof Error ? err.message : String(err) },
             ],
+            ...(transient ? { _meta: { [TRANSIENT_META_KEY]: true } } : {}),
           };
         }
       },
@@ -251,6 +367,8 @@ export async function runConnector(opts: {
   version?: string;
   tools: (rt: ConnectorRuntime) => ToolDef[];
   setup?: (rt: ConnectorRuntime) => void | Promise<void>;
+  /** As in `createConnectorServer`. */
+  transient?: (err: unknown) => boolean;
 }): Promise<ConnectorRuntime> {
   const env = connectorEnv();
   const rt: ConnectorRuntime = {
@@ -265,6 +383,7 @@ export async function runConnector(opts: {
     name: env.name,
     ...(opts.version === undefined ? {} : { version: opts.version }),
     tools: opts.tools(rt),
+    ...(opts.transient === undefined ? {} : { transient: opts.transient }),
   });
   await serveStdio(server);
   return rt;

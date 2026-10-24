@@ -9,7 +9,10 @@ import type { Readable } from 'node:stream';
 
 import SftpClient from 'ssh2-sftp-client';
 
+import { TransientError } from '@247-agent/connector-sdk';
+
 import type { FtpConfig } from './config.js';
+import { isTransientFileError } from './errors.js';
 import { isNotFound, type FileClient, type RawEntry } from './types.js';
 
 export interface SftpConnectOptions {
@@ -99,8 +102,11 @@ function entryType(type: string): RawEntry['type'] {
 }
 
 function describe(op: string, path: string, err: unknown): Error {
-  const message = err instanceof Error ? err.message : String(err);
-  return new Error(`sftp ${op} ${path}: ${message}`);
+  const message = `sftp ${op} ${path}: ${err instanceof Error ? err.message : String(err)}`;
+  const repeatable = ['connect', 'list', 'stat', 'get', 'download'].includes(op);
+  return isTransientFileError(err, { repeatable })
+    ? new TransientError(message, { cause: err })
+    : new Error(message, { cause: err });
 }
 
 export class SftpFileClient implements FileClient {

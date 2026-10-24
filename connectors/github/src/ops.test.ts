@@ -296,4 +296,56 @@ describe('ops', () => {
       'POST /repos/acme/site/issues: Validation Failed: title is too long (422)',
     );
   });
+
+  it('marks rate limits, failures of reads and refused connections transient (#32)', async () => {
+    const answers: Record<string, { status: number; headers?: Record<string, string> }> = {
+      '/repos/acme/site/issues/1': { status: 502 },
+      '/repos/acme/site/issues/2': { status: 429 },
+      '/repos/acme/site/issues/3': { status: 403, headers: { 'retry-after': '60' } },
+      '/repos/acme/site/issues/4': { status: 403 },
+      '/repos/acme/site/issues/5': { status: 404 },
+      '/repos/acme/site/issues/6': { status: 501 },
+    };
+    const api = createGitHubApi({
+      token: TOKEN,
+      apiBase: 'https://api.github.com',
+      timeoutMs: 1000,
+      fetch: (url) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith('/7')) {
+          const reset = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+          return Promise.reject(new TypeError('fetch failed', { cause: reset }));
+        }
+        if (path.endsWith('/8')) {
+          const refused = Object.assign(new Error('connect'), { code: 'ECONNREFUSED' });
+          return Promise.reject(new TypeError('fetch failed', { cause: refused }));
+        }
+        const a = answers[path] ?? { status: 200 };
+        return Promise.resolve(
+          Response.json({ message: 'x' }, { status: a.status, headers: a.headers ?? {} }),
+        );
+      },
+    });
+    const transient = async (n: number, method = 'GET'): Promise<boolean> => {
+      const err = await api
+        .request(method, `/repos/acme/site/issues/${String(n)}`)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(GitHubError);
+      return (err as GitHubError).transient;
+    };
+    expect(await transient(1)).toBe(true);
+    expect(await transient(2)).toBe(true);
+    expect(await transient(3)).toBe(true);
+    expect(await transient(4)).toBe(false);
+    expect(await transient(5)).toBe(false);
+    expect(await transient(6)).toBe(false);
+    expect(await transient(7)).toBe(true);
+    expect(await transient(8)).toBe(true);
+    // A write that may have gone through is not retried; a refused or limited one is.
+    expect(await transient(1, 'POST')).toBe(false);
+    expect(await transient(7, 'POST')).toBe(false);
+    expect(await transient(8, 'POST')).toBe(true);
+    expect(await transient(2, 'POST')).toBe(true);
+    expect(await transient(3, 'POST')).toBe(true);
+  });
 });

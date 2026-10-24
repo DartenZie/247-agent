@@ -3,6 +3,7 @@
  * `Authorization` header, errors that name the status and GitHub's message (and when a
  * rate limit resets) but never the token.
  */
+import { isTransientHttpError } from '@247-agent/connector-sdk';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -22,10 +23,25 @@ export interface GitHubApi {
 export class GitHubError extends Error {
   /** HTTP status, or 0 for a transport failure. */
   readonly status: number;
-  constructor(method: string, path: string, status: number, message: string) {
+  /**
+   * Worth retrying (`isTransientHttpError`, a POST or PATCH not being idempotent), or a
+   * rate limit GitHub answered with 403 (`x-ratelimit-remaining: 0` for the primary one,
+   * `retry-after` for a secondary one), which it did not carry out.
+   */
+  readonly transient: boolean;
+  constructor(
+    method: string,
+    path: string,
+    status: number,
+    message: string,
+    opts: { rateLimited?: boolean; cause?: unknown } = {},
+  ) {
     super(`${method} ${path}: ${message}${status > 0 ? ` (${String(status)})` : ''}`);
     this.name = 'GitHubError';
     this.status = status;
+    this.transient =
+      opts.rateLimited === true ||
+      isTransientHttpError({ status, idempotent: isIdempotent(method), cause: opts.cause });
   }
 }
 
@@ -68,10 +84,14 @@ export function createGitHubApi(opts: GitHubClientOptions): GitHubApi {
         path,
         0,
         hide(cause instanceof Error ? cause.message : String(cause)),
+        { cause: err },
       );
     }
     if (!res.ok) {
-      throw new GitHubError(method, path, res.status, hide(await errorMessage(res)));
+      throw new GitHubError(method, path, res.status, hide(await errorMessage(res)), {
+        rateLimited:
+          res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'),
+      });
     }
     return res;
   }
@@ -89,6 +109,11 @@ export function createGitHubApi(opts: GitHubClientOptions): GitHubApi {
       return (await send(method, path, ro)).text();
     },
   };
+}
+
+/** Whether the request can run twice with one effect: GET, HEAD, PUT and DELETE. */
+function isIdempotent(method: string): boolean {
+  return ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method.toUpperCase());
 }
 
 async function errorMessage(res: Response): Promise<string> {

@@ -43,7 +43,10 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
    - Log to **stderr** (the core records it as `connector.output`); stdout is the MCP
      channel when `transport: stdio`. A stray `console.log` breaks the protocol.
    - Return JSON-serialisable results; throw to signal an op error (becomes `isError`,
-     which fails the calling run without retry).
+     which fails the calling run without retry). Throw `TransientError`, or pass
+     `runConnector({ transient })`, for a failure a later call can fix when repeating
+     the op is safe (unreachable, 429, a failed read; not a timed-out create); the core
+     then retries the run by the task's `retry`.
    - Exit non-zero on unrecoverable errors; the supervisor restarts with backoff.
 4. **Test it without the network.** Write a fake next to the real one, or reuse
    `packages/core/test/fixtures/fake-*.ts` (email, chat, generic MCP, plain emitter).
@@ -66,7 +69,7 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
 | Symptom | Cause and fix |
 |---|---|
 | run fails "op … not allowed" | The op is not in the manifest's `ops`. Add it, or use `ops: []` for any. |
-| run fails with the tool's error text, no retry | The handler threw or returned `isError`. Fix the handler; the run is not retried on purpose. |
+| run fails with the tool's error text, no retry | The handler threw or returned `isError` without the transient mark. Fix the handler, or mark the error transient when a later call can succeed. |
 | run fails "connector … is down", retried | The process is not up. Check `connector.output` lines in the daemon log; look for a crash loop with growing backoff. |
 | connector restarts every few seconds | It exits or crashes at start. Run it by hand with `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and `OA_CONFIG_JSON` set and read stderr. |
 | MCP handshake errors | Something wrote to stdout. Route all logging to stderr. |
