@@ -9,7 +9,7 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 | `POST /v1/events` | Publish an event `{type, source?, payload?, dedup_key?, parent_id?, correlation_id?}` → 201 inserted, 200 duplicate |
 | `GET /v1/events?type=&after=&limit=` | The newest `limit` events in `seq` order, or those after a `seq`; `type` exact or a pattern (`*` = one segment) |
 | `GET /v1/events/{id}` | One event |
-| `POST /v1/runs` | Manual run `{task, type?, payload?, correlation_id?}` → 201 `{run_id, …}` |
+| `POST /v1/runs` | Manual run `{task, event?: {type?, payload?}, correlation_id?}` → 201 `{event_id, run}`; the run is already `queued`. 404 unknown task, 409 paused |
 | `GET /v1/runs?status=&task=&limit=` | Runs, newest first. `status`: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled` |
 | `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
 | `POST /v1/runs/{id}/cancel` | End a queued, running or waiting run → 200 the run `cancelled`, or 202 still `running` while its action stops; 409 when already finished |

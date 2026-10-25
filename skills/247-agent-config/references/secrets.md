@@ -8,7 +8,7 @@ rejects `secrets` there), and `${secrets}` as a whole is rejected.
 
 | `secrets:` | Where a name `ftp_pass` comes from | Reload |
 |---|---|---|
-| `{ backend: env, prefix: OA_SECRET_ }` | Environment variable `OA_SECRET_FTP_PASS` (name upper-cased, prefix optional, default none) | daemon restart |
+| `{ backend: env, prefix: OA_SECRET_ }` | Environment variable `OA_SECRET_FTP_PASS` (name upper-cased; `prefix` defaults to `OA_SECRET_`, and any other must be letters, digits and `_` ending in `_`, so a bare `FTP_PASS` cannot be read) | daemon restart |
 | `{ backend: file, path: secrets.yaml }` | Key `ftp_pass` in a YAML or JSON map, path relative to `agent.yaml`; mode 0600, owned by the service user (a wider mode fails the resolve) | re-read on every resolve |
 | `{ backend: systemd-credentials }` | File `$CREDENTIALS_DIRECTORY/ftp_pass`, provided by `LoadCredential=ftp_pass:/etc/credstore/ftp_pass` in the unit | service restart |
 
