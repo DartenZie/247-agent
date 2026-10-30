@@ -185,9 +185,10 @@ timeout?, items?, item_key, event, first_run, keep}` (strict; the user table is 
    value is ignored with `poller.seen_invalid`); every unseen key publishes `event` with
    `source: <name>`, `dedup_key: <name>:<key>` and the item as payload, except on the
    very first poll with `first_run: skip`, which only seeds the list (`poller.seeded`);
-   the list becomes the previous keys not returned this time, then the current keys in
-   result order, cut to the last `keep` (keys still returned move to the end, so older
-   ones age out first).
+   the list becomes the previous keys not returned this time, cut so the whole list
+   fits `keep`, then the current keys in result order. The current keys are never cut,
+   so a result longer than `keep` stores all its keys and none of the older ones; keys
+   still returned move to the end, so older ones age out first.
 6. `poller.polled {items, new, emitted, duplicates}` on success; any failure (connector
    down, op error, bad shape, bad key, missing secret) logs `poller.failed` and leaves
    the list untouched for the next tick.

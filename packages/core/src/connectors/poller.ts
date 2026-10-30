@@ -29,8 +29,9 @@ export const SEEN_KEY = 'seen';
  * `connector.op` with `args`, take `items` (a JMESPath over the result; the result itself
  * when omitted), key each item with `item_key`, and emit `event` once per key not seen
  * before. Seen keys live in the state KV as `<poller name>/seen`, newest last, at most
- * `keep` of them. `first_run: skip` marks everything seen on the very first poll instead
- * of emitting it (useful when the op lists what already exists, like open PRs).
+ * `keep` of them, or all the keys of the last result when it is longer. `first_run: skip`
+ * marks everything seen on the very first poll instead of emitting it (useful when the op
+ * lists what already exists, like open PRs).
  */
 export const PollerConfig = z
   .strictObject({
@@ -49,7 +50,7 @@ export const PollerConfig = z
     /** The event type emitted once per new item; the item is the payload. */
     event: z.string().min(1),
     first_run: z.enum(['emit', 'skip']).default('emit'),
-    /** How many seen keys to remember. */
+    /** How many seen keys to remember; the keys of the last result are always kept. */
     keep: z.number().int().positive().default(1000),
   })
   .superRefine((c, ctx) => {
@@ -352,10 +353,14 @@ export class Poller {
           });
         }
       });
-      // Keys still returned by the op count as freshly seen; older ones age out first.
+      // Keys still returned by the op count as freshly seen and are never cut, whatever
+      // the result order: a result longer than `keep` keeps all its keys. Keys no longer
+      // returned fill the rest of `keep`, the oldest aging out first.
       const current = [...new Set(keys)];
       const currentSet = new Set(current);
-      const next = [...(seen ?? []).filter((k) => !currentSet.has(k)), ...current].slice(-cfg.keep);
+      const previous = (seen ?? []).filter((k) => !currentSet.has(k));
+      const room = Math.max(cfg.keep - current.length, 0);
+      const next = [...(room === 0 ? [] : previous.slice(-room)), ...current];
       if (seen === undefined || !sameList(seen, next)) {
         this.store.state.put(this.name, SEEN_KEY, next, this.clock.now().toISOString());
       }

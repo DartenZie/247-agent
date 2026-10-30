@@ -50,7 +50,7 @@ and `cwd`, `env` and `health` do not apply. `emits` may be left out; it defaults
 | `item_key` | required | a JMESPath expression over one item that yields a string or a number: the item's identity |
 | `event` | required | the event type emitted for each new item; the item is the payload |
 | `first_run` | `emit` | `skip` marks everything the first poll returns as seen and emits nothing |
-| `keep` | `1000` | how many seen keys are remembered |
+| `keep` | `1000` | how many seen keys are remembered; the keys of the last result are always remembered, even when there are more of them than `keep` |
 
 ## How it behaves
 
@@ -58,8 +58,8 @@ and `cwd`, `env` and `health` do not apply. `emits` may be left out; it defaults
 - Each event carries `source: <poller name>` and `dedup_key: <poller name>:<key>`, so an
   item can never fire twice, even if you reset the poller.
 - Seen keys live in the state store under the poller's name: `GET /v1/state/github_prs/seen`.
-  Keys the op still returns are kept; keys that dropped out of the result stay until
-  `keep` newer keys have pushed them out. Delete the `seen` key to treat everything as
+  Keys the op still returns are always kept. Keys that dropped out of the result fill
+  the rest of `keep`, and the oldest of them go first. Delete the `seen` key to treat everything as
   new again; the dedup key still blocks items the daemon has already stored.
 - A tick while the previous poll is still running is skipped.
 - A failed poll (the target connector down, an op error, a result that is not an array,
