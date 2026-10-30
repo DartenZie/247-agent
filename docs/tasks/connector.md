@@ -116,4 +116,4 @@ new item. An operation that takes a cursor and returns only what is new, like
 | `connector` | yes | | the manifest's `name` |
 | `op` | yes | | the operation to call |
 | `args` | no | `{}` | the operation's input; values templated |
-| `timeout` | no | `60s` | the limit for this one call |
+| `timeout` | no | `60s` | the limit for this one call, from `1ms` to `24d` |

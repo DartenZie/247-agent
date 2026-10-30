@@ -56,7 +56,8 @@ Checks, by where they live. The message texts are literal in the code; the user 
 **Schema refinements** (`config/schema.ts`, `connector.ts`, `agent.ts`, `llm/config.ts`,
 `retention.ts`, each runner's action schema): strict keys, enums, name regexes
 (`[a-z][a-z0-9_]*` for tasks, providers and question ids; `[a-z][a-z0-9_-]*` for
-connectors; `<ns>.<key>` for state keys), durations (`\d+(ms|s|m|h|d)`), cron
+connectors; `<ns>.<key>` for state keys), durations (`\d+(ms|s|m|h|d)`; one that arms a timer goes through `timerDuration`, at most
+24d to stay under Node's 2^31 - 1 ms, and a timeout at least 1 ms), cron
 schedules through croner (5, 6 or 7 fields) and `tz` through `Intl`, event types and
 patterns (`expr/glob.ts`: at most 8 segments of `[a-z0-9_-]+`, `*` one whole segment,
 no wildcard where a concrete type is emitted), JMESPath compilation of `filter` and

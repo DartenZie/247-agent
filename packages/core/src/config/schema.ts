@@ -9,7 +9,7 @@ import { ShellAction } from '../actions/shell.js';
 import { WaitAction } from '../actions/wait.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { Budget } from '../llm/config.js';
-import { DURATION } from './duration.js';
+import { timerDuration } from './duration.js';
 import {
   validateCron,
   validateEventType,
@@ -135,8 +135,8 @@ export const EmitRule = z
 export const Retry = z.strictObject({
   attempts: z.number().int().min(1).max(100).default(1),
   backoff: z.enum(['fixed', 'exponential']).default('exponential'),
-  base: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('30s'),
-  max: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('1h'),
+  base: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: true }).default('30s'),
+  max: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: true }).default('1h'),
 });
 
 export type RetryConfig = z.infer<typeof Retry>;
@@ -175,7 +175,7 @@ export const Task = z
     action: Action,
     concurrency: z.number().int().positive().default(1),
     /** Wall-clock limit per attempt of active work; time spent `waiting` does not count. */
-    timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').optional(),
+    timeout: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: false }).optional(),
     /** Overrides `defaults.retry` from agent.yaml. */
     retry: Retry.optional(),
     /** Per run, for model-backed actions; the smaller of this and the action's own applies. */

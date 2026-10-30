@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AgentSandbox } from '../actions/sandbox.js';
 import { PollerConfig } from '../connectors/poller.js';
 import { collectTemplateRefs } from '../expr/template.js';
-import { DURATION } from './duration.js';
+import { timerDuration } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
 import { validateEventType } from './validators.js';
 
@@ -74,8 +74,8 @@ const ManifestFields = z.strictObject({
   restart: z
     .strictObject({
       /** First delay after a crash; doubles up to `max`. */
-      base: z.string().regex(DURATION, 'durations look like 1s, 30s').default('1s'),
-      max: z.string().regex(DURATION, 'durations look like 1s, 30s').default('60s'),
+      base: timerDuration({ hint: 'durations look like 1s, 30s', zero: false }).default('1s'),
+      max: timerDuration({ hint: 'durations look like 1s, 30s', zero: false }).default('60s'),
     })
     .prefault({}),
   /**
@@ -85,8 +85,8 @@ const ManifestFields = z.strictObject({
    */
   health: z
     .strictObject({
-      interval: z.string().regex(DURATION, 'durations look like 30s, 1m'),
-      timeout: z.string().regex(DURATION, 'durations look like 5s, 30s').default('10s'),
+      interval: timerDuration({ hint: 'durations look like 30s, 1m', zero: false }),
+      timeout: timerDuration({ hint: 'durations look like 5s, 30s', zero: false }).default('10s'),
       failures: z.number().int().positive().default(3),
     })
     .optional(),

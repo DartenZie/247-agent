@@ -34,7 +34,9 @@ batches: { poll: 1m }
 retention: { events: 90d, runs: 90d, ledger: 90d, workspaces: 7d, interval: 1h }
 ```
 
-Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`.
+Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`. `shutdown.grace`,
+`defaults.timeout` and `defaults.retry.base` and `.max` are at most `24d`, and
+`defaults.timeout` is at least `1ms`.
 
 ## Top level
 

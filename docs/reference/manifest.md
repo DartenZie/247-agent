@@ -46,6 +46,9 @@ health: { interval: 60s, timeout: 10s, failures: 3 }   # MCP ping; stdio only
 | `health.timeout` | How long a ping may take. | `10s` |
 | `health.failures` | Pings missed in a row before the process is treated as crashed, killed and respawned with the backoff. | `3` |
 
+`restart.base`, `restart.max`, `health.interval` and `health.timeout` are at least `1ms`
+and at most `24d`.
+
 ## An agent program
 
 ```yaml
@@ -113,7 +116,7 @@ config:
 | `connector` | The process connector that serves the op. It must exist, serve ops, and list the op (or list `[]`). | required |
 | `op` | The op to call. | required |
 | `args` | The op's arguments. Values may use `${secrets.<name>}` and `${env.<VAR>}`; they are rendered fresh on every poll. | `{}` |
-| `timeout` | The limit per call. | `60s` |
+| `timeout` | The limit per call, from `1ms` to `24d`. | `60s` |
 | `items` | A JMESPath over the result that yields the array of items. | the whole result |
 | `item_key` | A JMESPath over one item that yields its identity, a string or a number. | required |
 | `event` | The event type published once per new key, with the item as payload. The event's dedup key is `<name>:<key>` and its source the poller's name. | required |

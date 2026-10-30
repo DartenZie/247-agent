@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DURATION, parseDuration } from '../config/duration.js';
+import { parseDuration, timerDuration } from '../config/duration.js';
 import type { JsonValue } from '../store/types.js';
 import { NonRetryableError, type ActionContext } from './types.js';
 
@@ -13,7 +13,7 @@ export const ConnectorAction = z.strictObject({
   op: z.string().min(1),
   args: z.record(z.string(), z.unknown()).default({}),
   /** Per call; the task `timeout` still applies to the whole run. */
-  timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').optional(),
+  timeout: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: false }).optional(),
 });
 
 export type ConnectorActionConfig = z.infer<typeof ConnectorAction>;
