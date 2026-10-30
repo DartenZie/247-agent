@@ -183,7 +183,19 @@ bots and the bot's own messages are ignored. `dedup_key: chat:message:<chat_id>:
 ```json
 { "text": "Please also update the opening hours", "message_id": 812, "chat_id": "123456789",
   "from": { "id": 987, "name": "Miro P", "username": "miro" },
-  "date": "2026-06-01T08:00:00.000Z", "reply_to": null }
+  "date": "2026-06-01T08:00:00.000Z", "reply_to": null, "reply_to_question": null }
+```
+
+`reply_to_question` is the `correlation_id` of the open question that the message replies
+to without naming one of its options. It is `null` for any other message, and for a reply
+to a question asked without a `correlation_id`. The question stays open. A `wait` ends on
+its first match, so this filter ends with either the answer or the feedback, and the task
+arms another wait to get the answer after feedback:
+
+```yaml
+for:
+  type: "chat.*"
+  filter: "(type == 'chat.reply' && payload.correlation_id == '${event.correlation_id}') || payload.reply_to_question == '${event.correlation_id}'"
 ```
 
 `from.id` and `from.username` are `null` for anonymous senders such as channel posts. On

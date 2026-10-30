@@ -63,6 +63,12 @@ export interface ChatMessagePayload {
   date: string;
   /** The message this one replies to, when it does. */
   reply_to: number | string | null;
+  /**
+   * The `correlation_id` of the open question this message replies to without naming
+   * one of its options; `null` otherwise, and when the question has no `correlation_id`.
+   * The question stays open.
+   */
+  reply_to_question: string | null;
   [key: string]: unknown;
 }
 

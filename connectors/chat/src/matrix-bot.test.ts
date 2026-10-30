@@ -311,6 +311,22 @@ describe('ask → chat.reply', () => {
     expect(core.ofType('chat.message')).toHaveLength(0);
   });
 
+  it('relays a reply naming no option as a message, with the question still open', async () => {
+    const { bot, core } = await setup();
+    const { message_id } = await bot.ask({ text: 'Q', correlation_id: 'cor_f' });
+    await bot.handleEvent(
+      ROOM,
+      msg('not yet, change X', { 'm.relates_to': { 'm.in_reply_to': { event_id: message_id } } }),
+    );
+    expect(core.ofType('chat.message')[0]?.payload).toMatchObject({
+      text: 'not yet, change X',
+      reply_to: message_id,
+      reply_to_question: 'cor_f',
+    });
+    expect(core.ofType('chat.reply')).toHaveLength(0);
+    expect(Object.keys(core.state.get(STATE_PENDING) as object)).toEqual([message_id]);
+  });
+
   it('treats a thread reply to the question like a reply', async () => {
     const { bot, core } = await setup();
     await bot.ask({ text: 'Q', correlation_id: 'cor_t' });
@@ -381,6 +397,7 @@ describe('messages', () => {
           chat_id: ROOM,
           date: new Date(1_790_000_000_000).toISOString(),
           reply_to: '$old',
+          reply_to_question: null,
         },
       },
     ]);

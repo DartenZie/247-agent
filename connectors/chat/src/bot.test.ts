@@ -189,7 +189,11 @@ describe('ask and reply', () => {
     const asked = await bot.ask({ text: 'Deploy?', correlation_id: 'cor_3' });
     await bot.handleUpdate(messageUpdate('why?', { message_id: 200, reply_to: asked.message_id }));
     expect(core.ofType('chat.message')).toHaveLength(1);
-    expect(core.ofType('chat.message')[0]?.payload).toMatchObject({ text: 'why?', reply_to: 100 });
+    expect(core.ofType('chat.message')[0]?.payload).toMatchObject({
+      text: 'why?',
+      reply_to: 100,
+      reply_to_question: 'cor_3',
+    });
     expect(core.ofType('chat.reply')).toHaveLength(0);
 
     await bot.handleUpdate(
@@ -282,6 +286,7 @@ describe('messages', () => {
           chat_id: '42',
           date: '2023-11-14T22:13:20.000Z',
           reply_to: null,
+          reply_to_question: null,
         },
       },
     ]);
