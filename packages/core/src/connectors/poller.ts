@@ -6,7 +6,7 @@ import type { ConnectorClients } from '../actions/types.js';
 import type { EventBus } from '../bus/bus.js';
 import type { Clock } from '../clock.js';
 import type { ConnectorConfig } from '../config/connector.js';
-import { DURATION, parseDuration } from '../config/duration.js';
+import { parseDuration, timerDuration } from '../config/duration.js';
 import {
   validateCron,
   validateEventType,
@@ -42,7 +42,7 @@ export const PollerConfig = z
     /** Passed to the op as is; values take `${secrets.<name>}` and `${env.<VAR>}`. */
     args: z.record(z.string(), z.unknown()).default({}),
     /** Per op call. */
-    timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').optional(),
+    timeout: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: false }).optional(),
     /** JMESPath over the op result yielding the array of items; the result itself when omitted. */
     items: z.string().min(1).optional(),
     /** JMESPath over one item yielding its identity (a string or a number). */

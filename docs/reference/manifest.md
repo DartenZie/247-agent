@@ -46,6 +46,9 @@ health: { interval: 60s, timeout: 10s, failures: 3 }   # MCP ping; stdio only
 | `health.timeout` | How long a ping may take. | `10s` |
 | `health.failures` | Pings missed in a row before the process is treated as crashed, killed and respawned with the backoff. | `3` |
 
+`restart.base`, `restart.max`, `health.interval` and `health.timeout` are at most `24d`;
+`health.interval` and `health.timeout` are at least `1ms`.
+
 ## An agent program
 
 ```yaml

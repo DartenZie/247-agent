@@ -107,6 +107,33 @@ describe('TasksFile schema', () => {
     ).toBe('tasks.0.action.kind');
   });
 
+  it('rejects timer durations a Node timer cannot hold, and a zero timeout', () => {
+    const manual = { kind: 'manual' };
+    expect(issues(withTask({ trigger: manual, timeout: '24d' }))).toEqual([]);
+    for (const timeout of ['30d', '0s']) {
+      expect(issues(withTask({ trigger: manual, timeout }))).toEqual([
+        {
+          path: 'tasks.0.timeout',
+          message: expect.stringMatching(/between 1ms and 24d/) as string,
+        },
+      ]);
+    }
+    expect(issues(withTask({ trigger: manual, retry: { base: '25d', max: '30d' } }))).toEqual([
+      { path: 'tasks.0.retry.base', message: expect.stringMatching(/24d/) as string },
+      { path: 'tasks.0.retry.max', message: expect.stringMatching(/24d/) as string },
+    ]);
+    expect(
+      issues(
+        withTask({
+          trigger: manual,
+          action: { kind: 'connector', connector: 'c', op: 'o', timeout: '30d' },
+        }),
+      ),
+    ).toEqual([
+      { path: 'tasks.0.action.timeout', message: expect.stringMatching(/24d/) as string },
+    ]);
+  });
+
   it('rejects a task that listens to its own lifecycle events', () => {
     expect(
       issues({

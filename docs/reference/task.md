@@ -54,7 +54,7 @@ daily cap `budgets.daily_usd` applies on top of every per-run budget.
 
 | What | Grammar | Examples |
 |---|---|---|
-| Duration | an integer and a unit: `ms`, `s`, `m`, `h`, `d` | `500ms`, `30s`, `15m`, `24h`, `7d` |
+| Duration | an integer and a unit: `ms`, `s`, `m`, `h`, `d`. A duration that arms a timer (`timeout`, `retry.base`, `retry.max`, a `connector` action's `timeout`) is at most `24d`; a `timeout` is at least `1ms`. | `500ms`, `30s`, `15m`, `24h`, `7d` |
 | Task name, provider name, `decide` question id | `[a-z][a-z0-9_]*` | `fetch_email`, `anthropic`, `kind` |
 | Connector name | `[a-z][a-z0-9_-]*` | `email`, `github-prs` |
 | State key | `<namespace>.<key>`, each part `[a-z0-9_-]+` | `email.last_uid` |

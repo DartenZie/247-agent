@@ -17,7 +17,7 @@ import {
   Pricing,
   Providers,
 } from '../llm/config.js';
-import { DURATION } from './duration.js';
+import { timerDuration } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
 import { Retention } from './retention.js';
 import { Retry } from './schema.js';
@@ -50,12 +50,16 @@ export const AgentFile = z.strictObject({
   /** How long a stop lets runs in flight finish before aborting them (#39). */
   shutdown: z
     .strictObject({
-      grace: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('30s'),
+      grace: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: true }).default(
+        '30s',
+      ),
     })
     .prefault({}),
   defaults: z
     .strictObject({
-      timeout: z.string().regex(DURATION, 'durations look like 30s, 15m, 24h').default('15m'),
+      timeout: timerDuration({ hint: 'durations look like 30s, 15m, 24h', zero: false }).default(
+        '15m',
+      ),
       retry: Retry.prefault({}),
       /** For `shell` actions without `sandbox`: `none` (default) or `bwrap`. */
       sandbox: Sandbox.prefault('none'),
