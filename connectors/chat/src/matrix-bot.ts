@@ -312,12 +312,20 @@ export class MatrixBot {
     const candidates = [replyTo, thread].filter(
       (id): id is string => id !== null && id !== undefined,
     );
+    // A reply to an open question that names no option leaves the question open and is
+    // relayed with the question's correlation id, so a `wait` can take it as feedback.
+    let replyToQuestion: string | null = null;
     if (candidates.length > 0) {
       const answered = await this.withPending(async (pending) => {
         for (const questionId of candidates) {
           const question = pending[questionId];
-          const choice = question === undefined ? undefined : matchAnswer(text, question.options);
-          if (question !== undefined && choice !== undefined) {
+          if (question === undefined) {
+            continue;
+          }
+          const choice = matchAnswer(text, question.options);
+          if (choice === undefined) {
+            replyToQuestion ??= question.correlation_id;
+          } else {
             await this.answer(pending, questionId, question, choice, {
               text,
               from,
@@ -340,6 +348,7 @@ export class MatrixBot {
       chat_id: roomId,
       date: new Date(event.origin_server_ts).toISOString(),
       reply_to: replyTo,
+      reply_to_question: replyToQuestion,
     };
     await this.core.emitEvent({
       type: 'chat.message',

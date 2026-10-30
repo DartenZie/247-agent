@@ -228,13 +228,19 @@ export class ChatBot {
       await this.handleCallback(incoming);
       return;
     }
+    // A reply to an open question that names no option leaves the question open and is
+    // relayed with the question's correlation id, so a `wait` can take it as feedback.
+    let replyToQuestion: string | null = null;
     if (incoming.reply_to !== null) {
       const key = pendingKey(incoming.chat_id, incoming.reply_to);
       const answered = await this.withPending(async (pending) => {
         const question = pending[key];
-        const choice =
-          question === undefined ? undefined : matchOption(incoming.text, question.options);
-        if (question === undefined || choice === undefined) {
+        if (question === undefined) {
+          return false;
+        }
+        const choice = matchOption(incoming.text, question.options);
+        if (choice === undefined) {
+          replyToQuestion = question.correlation_id;
           return false;
         }
         await this.answer(pending, key, question, choice, {
@@ -255,6 +261,7 @@ export class ChatBot {
       chat_id: incoming.chat_id,
       date: incoming.date,
       reply_to: incoming.reply_to,
+      reply_to_question: replyToQuestion,
     };
     await this.core.emitEvent({
       type: 'chat.message',
