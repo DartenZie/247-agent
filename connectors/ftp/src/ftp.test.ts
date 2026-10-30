@@ -263,6 +263,30 @@ describe('FtpFileClient', () => {
   });
 });
 
+describe('replace', () => {
+  it('removes the target and renames again when the server refuses to overwrite', async () => {
+    const fake = fakeFtp();
+    const client = await connectFtp(ftpConfig({ protocol: 'ftp' }), () => fake.lib);
+    const rename = fake.lib.rename.bind(fake.lib);
+    let refused = false;
+    fake.lib.rename = (from, to) => {
+      if (!refused) {
+        refused = true;
+        fake.calls.push(`rename ${from} ${to}`);
+        return Promise.reject(Object.assign(new Error('550 File exists'), { code: 550 }));
+      }
+      return rename(from, to);
+    };
+    fake.calls.length = 0;
+    await client.replace('/srv/.c.tmp', '/srv/c');
+    expect(fake.calls).toEqual([
+      'rename /srv/.c.tmp /srv/c',
+      'remove /srv/c',
+      'rename /srv/.c.tmp /srv/c',
+    ]);
+  });
+});
+
 describe('upload', () => {
   it('streams a local file to the remote path', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ftp-up-'));

@@ -208,6 +208,15 @@ describe('SftpFileClient', () => {
     ]);
   });
 
+  it('replaces by delete and rename when the server lacks posix-rename', async () => {
+    const fake = fakeSftp();
+    fake.lib.posixRename = () =>
+      Promise.reject(new Error('Server does not support this extended request'));
+    const client = await connectSftp(ftpConfig(), () => fake.lib);
+    await client.replace('/srv/.c.tmp', '/srv/c');
+    expect(fake.calls.slice(-2)).toEqual(['delete /srv/c', 'rename /srv/.c.tmp /srv/c']);
+  });
+
   it('rejects a non-Buffer result from get', async () => {
     const fake = fakeSftp();
     fake.lib.get = () => Promise.resolve('/tmp/wrote-a-file');

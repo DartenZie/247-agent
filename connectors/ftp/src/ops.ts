@@ -322,26 +322,28 @@ export class FileOps {
       for (const dir of dirTargets) {
         await client.mkdir(dir);
       }
-      const staged: string[] = [];
+      // Staging names not yet renamed into place; removed if anything fails, since a
+      // web server may serve them (best effort: the connection may be gone).
+      const staged = new Set<string>();
+      const uploaded: string[] = [];
+      let bytes = 0;
       try {
         for (const [p, target] of targets) {
-          staged.push(stagingPath(target));
+          staged.add(stagingPath(target));
           await client.upload(join(local, p), stagingPath(target));
         }
+        for (const [p, size] of tree.files) {
+          const target = targets.get(p) ?? remoteOf(p);
+          await client.replace(stagingPath(target), target);
+          staged.delete(stagingPath(target));
+          uploaded.push(p);
+          bytes += size;
+        }
       } catch (err) {
-        // Best effort: the connection may be gone, and the next sync overwrites leftovers.
         for (const path of staged) {
           await client.remove(path).catch(() => undefined);
         }
         throw err;
-      }
-      const uploaded: string[] = [];
-      let bytes = 0;
-      for (const [p, size] of tree.files) {
-        const target = targets.get(p) ?? remoteOf(p);
-        await client.replace(stagingPath(target), target);
-        uploaded.push(p);
-        bytes += size;
       }
       const pruned: string[] = [];
       if (args.prune === true) {

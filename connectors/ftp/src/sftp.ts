@@ -201,12 +201,23 @@ export class SftpFileClient implements FileClient {
 
   async replace(from: string, to: string): Promise<void> {
     // SFTP v3 rename refuses an existing target; OpenSSH's posix-rename extension
-    // replaces it atomically.
+    // replaces it atomically. Without the extension, delete the target first.
     try {
       await this.lib.posixRename(from, to);
+      return;
     } catch (err) {
-      throw describe('rename', from, err);
+      if (!(err instanceof Error && /does not support/i.test(err.message))) {
+        throw describe('rename', from, err);
+      }
     }
+    try {
+      await this.lib.delete(to);
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw describe('delete', to, err);
+      }
+    }
+    await this.rename(from, to);
   }
 
   async mkdir(path: string): Promise<void> {

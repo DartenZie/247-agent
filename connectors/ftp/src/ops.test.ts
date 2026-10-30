@@ -354,6 +354,21 @@ describe('sync', () => {
     ]);
   });
 
+  it('removes the staging files left when a rename fails', async () => {
+    const local = localSite();
+    const { ops, client } = setup({ local_roots: [local] });
+    const replace = client.replace.bind(client);
+    client.replace = async (from, to) => {
+      if (to.endsWith('site.css')) {
+        throw new Error('550 rename refused');
+      }
+      await replace(from, to);
+    };
+    await expect(ops.sync({ local, remote: 'site', prune: true })).rejects.toThrow('550');
+    expect([...client.files.keys()].filter((p) => p.includes('247-agent-sync'))).toEqual([]);
+    expect(client.files.get('/srv/x/site/a.html')?.toString()).toBe('<a>');
+  });
+
   it('refuses to prune from a local tree without files, before connecting', async () => {
     const local = mkdtempSync(join(tmpdir(), 'ftp-empty-'));
     mkdirSync(join(local, 'assets'));

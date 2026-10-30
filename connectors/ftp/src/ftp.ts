@@ -179,7 +179,17 @@ export class FtpFileClient implements FileClient {
   }
 
   async replace(from: string, to: string): Promise<void> {
-    // RNFR/RNTO replaces an existing target on servers that map it to rename(2).
+    // RNFR/RNTO replaces an existing target on servers that map it to rename(2). Others
+    // (IIS, ProFTPD without AllowOverwrite) answer 550: remove the target and try again.
+    try {
+      await this.lib.rename(from, to);
+      return;
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== 550) {
+        throw describe('rename', from, err);
+      }
+    }
+    await this.lib.remove(to).catch(() => undefined);
     await this.rename(from, to);
   }
 

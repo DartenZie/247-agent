@@ -100,12 +100,15 @@ writes, deletes, renames or creates a directory, since the server may have done 
 directories as needed; symlinks and special files are skipped. Each file is uploaded to a
 hidden name next to its target, `.<name>.247-agent-sync`, and only when every file has
 arrived are they renamed into place. A sync that breaks during the upload leaves the old
-files as they were and never a truncated file under its real name; it removes its
-staging files if the server still answers, and the next sync overwrites any that remain.
-The renames run one by one, so a sync that breaks while it renames leaves some files new
-and some old; run the sync again to finish. An SFTP server must support OpenSSH's
-`posix-rename` extension, and an FTP server must let a rename replace an existing file.
-With `prune: true` it then
+files as they were and never a truncated file under its real name. The renames run one
+by one, so a sync that breaks while it renames leaves some files new and some old; run
+the sync again to finish. When a sync fails, it removes the staging files it has not
+renamed, as long as the server still answers. If the connection is gone, they stay: the
+next sync overwrites those for files still in `local`, and `prune: true` removes the
+rest. On SFTP the rename replaces the old file in one step through OpenSSH's
+`posix-rename` extension. A server without the extension, or an FTP server that refuses
+to rename over an existing file, gets a delete and then a rename, which leaves the file
+missing for a moment. With `prune: true` it then
 removes remote files and directories under `remote` that the local tree lacks, so the
 remote mirrors the local directory; nothing outside `remote` is touched. A `prune` from a
 local directory without regular files fails with `path` before connecting, so an empty
