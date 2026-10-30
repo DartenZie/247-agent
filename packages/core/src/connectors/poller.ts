@@ -29,8 +29,9 @@ export const SEEN_KEY = 'seen';
  * `connector.op` with `args`, take `items` (a JMESPath over the result; the result itself
  * when omitted), key each item with `item_key`, and emit `event` once per key not seen
  * before. Seen keys live in the state KV as `<poller name>/seen`, newest last, at most
- * `keep` of them or all the keys of the last result when it is longer. `first_run: skip` marks everything seen on the very first poll instead
- * of emitting it (useful when the op lists what already exists, like open PRs).
+ * `keep` of them, or all the keys of the last result when it is longer. `first_run: skip`
+ * marks everything seen on the very first poll instead of emitting it (useful when the op
+ * lists what already exists, like open PRs).
  */
 export const PollerConfig = z
   .strictObject({
