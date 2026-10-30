@@ -249,7 +249,11 @@ describe('Poller', () => {
     const p = poller({ keep: 3 });
     clients.next = prs(1, 2, 2, 3, 4);
     expect(await p.poll()).toMatchObject({ items: 5, new: 4, emitted: 4 });
-    expect(seen()).toEqual(['2', '3', '4']);
+    // Keys the op still returns are never cut, even past keep.
+    expect(seen()).toEqual(['1', '2', '3', '4']);
+    clients.next = prs(5);
+    expect(await p.poll()).toMatchObject({ items: 1, new: 1, emitted: 1 });
+    expect(seen()).toEqual(['3', '4', '5']);
     // Key 1 aged out; if it comes back it is new to the poller but the event dedup holds.
     clients.next = prs(1);
     expect(await p.poll()).toEqual({
@@ -259,7 +263,18 @@ describe('Poller', () => {
       emitted: 0,
       duplicates: 1,
     });
-    expect(seen()).toEqual(['3', '4', '1']);
+    expect(seen()).toEqual(['4', '5', '1']);
+  });
+
+  it('keeps every key of the last result seen when it holds more items than keep', async () => {
+    const p = poller({ keep: 2, first_run: 'skip' });
+    // Newest first, like list_pull_requests.
+    clients.next = prs(5, 4, 3, 2, 1);
+    expect(await p.poll()).toMatchObject({ items: 5, new: 5, emitted: 0 });
+    expect(await p.poll()).toMatchObject({ items: 5, new: 0, emitted: 0, duplicates: 0 });
+    clients.next = prs(6, 5, 4, 3, 2);
+    expect(await p.poll()).toMatchObject({ items: 5, new: 1, emitted: 1, duplicates: 0 });
+    expect(events().map((e) => e.dedup_key)).toEqual(['prs:6']);
   });
 
   it('takes the result itself as the items when items is omitted, and string or number keys', async () => {

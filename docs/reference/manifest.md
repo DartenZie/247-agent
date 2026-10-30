@@ -118,7 +118,7 @@ config:
 | `item_key` | A JMESPath over one item that yields its identity, a string or a number. | required |
 | `event` | The event type published once per new key, with the item as payload. The event's dedup key is `<name>:<key>` and its source the poller's name. | required |
 | `first_run` | `emit`: the first poll publishes every item. `skip`: it only remembers what exists. | `emit` |
-| `keep` | How many seen keys are remembered, newest last, under the state key `seen` of the poller's namespace. | `1000` |
+| `keep` | How many seen keys are remembered, newest last, under the state key `seen` of the poller's namespace. The keys of the last result are always remembered, even when there are more of them than `keep`. | `1000` |
 
 A tick while a poll is still running is skipped. A failed poll (connector down, op
 error, result not an array, item without a key) is logged and tried again at the next
