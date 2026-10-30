@@ -44,6 +44,8 @@ export interface FileClient {
   remove(path: string): Promise<void>;
   rmdir(path: string, recursive: boolean): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  /** Renames a file over `to` in one step, replacing it when it exists. */
+  replace(from: string, to: string): Promise<void>;
   /** `mkdir -p`: creates parents, succeeds when the directory exists. */
   mkdir(path: string): Promise<void>;
   close(): Promise<void>;

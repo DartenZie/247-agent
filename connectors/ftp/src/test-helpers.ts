@@ -160,6 +160,17 @@ export class MemoryFileClient implements FileClient {
     return Promise.reject(new Error(`no such file: ${from}`));
   }
 
+  replace(from: string, to: string): Promise<void> {
+    this.calls.push(`replace ${from} ${to}`);
+    const data = this.files.get(from);
+    if (data === undefined) {
+      return Promise.reject(new Error(`no such file: ${from}`));
+    }
+    this.files.delete(from);
+    this.files.set(to, data);
+    return Promise.resolve();
+  }
+
   mkdir(path: string): Promise<void> {
     this.calls.push(`mkdir ${path}`);
     let dir = path;

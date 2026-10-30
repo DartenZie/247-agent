@@ -178,6 +178,11 @@ export class FtpFileClient implements FileClient {
     }
   }
 
+  async replace(from: string, to: string): Promise<void> {
+    // RNFR/RNTO replaces an existing target on servers that map it to rename(2).
+    await this.rename(from, to);
+  }
+
   async mkdir(path: string): Promise<void> {
     // ensureDir walks into the directory it creates; go back so later relative paths
     // still resolve against the login directory.

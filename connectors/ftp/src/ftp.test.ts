@@ -252,11 +252,13 @@ describe('FtpFileClient', () => {
     await client.rmdir('/srv/sub', false);
     await client.rmdir('/srv/sub', true);
     await client.rename('/srv/a', '/srv/b');
+    await client.replace('/srv/.c.tmp', '/srv/c');
     expect(fake.calls).toEqual([
       'remove /srv/f.txt',
       'removeEmptyDir /srv/sub',
       'removeDir /srv/sub',
       'rename /srv/a /srv/b',
+      'rename /srv/.c.tmp /srv/c',
     ]);
   });
 });

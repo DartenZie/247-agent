@@ -51,6 +51,7 @@ export interface SftpLib {
   delete(path: string): Promise<unknown>;
   rmdir(path: string, recursive?: boolean): Promise<unknown>;
   rename(from: string, to: string): Promise<unknown>;
+  posixRename(from: string, to: string): Promise<unknown>;
   mkdir(path: string, recursive?: boolean): Promise<unknown>;
   end(): Promise<unknown>;
 }
@@ -193,6 +194,16 @@ export class SftpFileClient implements FileClient {
   async rename(from: string, to: string): Promise<void> {
     try {
       await this.lib.rename(from, to);
+    } catch (err) {
+      throw describe('rename', from, err);
+    }
+  }
+
+  async replace(from: string, to: string): Promise<void> {
+    // SFTP v3 rename refuses an existing target; OpenSSH's posix-rename extension
+    // replaces it atomically.
+    try {
+      await this.lib.posixRename(from, to);
     } catch (err) {
       throw describe('rename', from, err);
     }
