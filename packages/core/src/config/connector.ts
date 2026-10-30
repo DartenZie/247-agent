@@ -74,8 +74,8 @@ const ManifestFields = z.strictObject({
   restart: z
     .strictObject({
       /** First delay after a crash; doubles up to `max`. */
-      base: timerDuration({ hint: 'durations look like 1s, 30s', zero: true }).default('1s'),
-      max: timerDuration({ hint: 'durations look like 1s, 30s', zero: true }).default('60s'),
+      base: timerDuration({ hint: 'durations look like 1s, 30s', zero: false }).default('1s'),
+      max: timerDuration({ hint: 'durations look like 1s, 30s', zero: false }).default('60s'),
     })
     .prefault({}),
   /**

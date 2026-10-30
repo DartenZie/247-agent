@@ -20,12 +20,15 @@ export function parseDuration(text: string): number {
   return Number(m[1]) * (UNIT_MS[m[2] ?? ''] ?? NaN);
 }
 
-/** The longest delay `setTimeout`/`setInterval` accept (2^31 - 1 ms, about 24.8 days). */
-export const MAX_TIMER_MS = 2 ** 31 - 1;
+/**
+ * The longest duration that arms a timer. Node fires a delay above 2^31 - 1 ms (about 24.8
+ * days) after 1 ms; 24d stays under it with room for margins such as the stop deadline.
+ */
+export const MAX_TIMER_DURATION_MS = 24 * 86_400_000;
 
 /**
- * A config duration that arms a timer. Node fires a longer delay after 1 ms, so the schema
- * caps it; `zero: false` also rejects `0s` for a timeout, which would fire at once.
+ * A config duration that arms a timer, at most `MAX_TIMER_DURATION_MS`. `zero: false` also
+ * rejects `0s`: a timeout that fires at once, or a backoff that never grows.
  */
 export function timerDuration(opts: { hint: string; zero: boolean }): z.ZodString {
   const min = opts.zero ? 0 : 1;
@@ -33,7 +36,8 @@ export function timerDuration(opts: { hint: string; zero: boolean }): z.ZodStrin
     .string()
     .regex(DURATION, opts.hint)
     .refine(
-      (d) => !DURATION.test(d) || (parseDuration(d) >= min && parseDuration(d) <= MAX_TIMER_MS),
+      (d) =>
+        !DURATION.test(d) || (parseDuration(d) >= min && parseDuration(d) <= MAX_TIMER_DURATION_MS),
       opts.zero
         ? 'must be at most 24d (the longest a timer can wait)'
         : 'must be between 1ms and 24d (the longest a timer can wait)',

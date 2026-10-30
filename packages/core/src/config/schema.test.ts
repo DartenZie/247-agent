@@ -110,6 +110,7 @@ describe('TasksFile schema', () => {
   it('rejects timer durations a Node timer cannot hold, and a zero timeout', () => {
     const manual = { kind: 'manual' };
     expect(issues(withTask({ trigger: manual, timeout: '24d' }))).toEqual([]);
+    expect(issues(withTask({ trigger: manual, timeout: '577h' }))[0]?.path).toBe('tasks.0.timeout');
     for (const timeout of ['30d', '0s']) {
       expect(issues(withTask({ trigger: manual, timeout }))).toEqual([
         {
