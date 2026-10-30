@@ -187,13 +187,15 @@ bots and the bot's own messages are ignored. `dedup_key: chat:message:<chat_id>:
 ```
 
 `reply_to_question` is the `correlation_id` of the open question that the message replies
-to without naming one of its options, and `null` otherwise. The question stays open, so
-a `wait` can take such a reply as feedback and keep waiting for the answer:
+to without naming one of its options. It is `null` for any other message, and for a reply
+to a question asked without a `correlation_id`. The question stays open. A `wait` ends on
+its first match, so this filter ends with either the answer or the feedback, and the task
+arms another wait to get the answer after feedback:
 
 ```yaml
 for:
   type: "chat.*"
-  filter: "(type == 'chat.reply' && payload.correlation_id == '${event.id}') || payload.reply_to_question == '${event.id}'"
+  filter: "(type == 'chat.reply' && payload.correlation_id == '${event.correlation_id}') || payload.reply_to_question == '${event.correlation_id}'"
 ```
 
 `from.id` and `from.username` are `null` for anonymous senders such as channel posts. On
