@@ -303,9 +303,12 @@ describe('sync', () => {
       'mkdir /srv/x/site/css',
       'mkdir /srv/x/site/empty',
       'mkdir /srv/x/site/img',
-      'upload /srv/x/site/a.html',
-      'upload /srv/x/site/css/site.css',
-      'upload /srv/x/site/img/1.jpg',
+      'upload /srv/x/site/.a.html.247-agent-sync',
+      'upload /srv/x/site/css/.site.css.247-agent-sync',
+      'upload /srv/x/site/img/.1.jpg.247-agent-sync',
+      'replace /srv/x/site/.a.html.247-agent-sync /srv/x/site/a.html',
+      'replace /srv/x/site/css/.site.css.247-agent-sync /srv/x/site/css/site.css',
+      'replace /srv/x/site/img/.1.jpg.247-agent-sync /srv/x/site/img/1.jpg',
       'close',
     ]);
   });
@@ -324,6 +327,46 @@ describe('sync', () => {
     // Siblings of the target directory are not touched.
     expect(client.files.has('/srv/x/notes.txt')).toBe(true);
     expect(client.files.has('/srv/x/incoming/a.csv')).toBe(true);
+  });
+
+  it('leaves the old files in place when the transfer breaks partway', async () => {
+    const local = localSite();
+    const { ops, client } = setup({ local_roots: [local] });
+    client.seed('/srv/x/site/a.html', 'old a');
+    client.seed('/srv/x/site/css/site.css', 'old css');
+    const upload = client.upload.bind(client);
+    client.upload = async (from, to) => {
+      if (from.endsWith('site.css')) {
+        // The connection drops with half the file written under the name being uploaded.
+        client.files.set(to, Buffer.from('bo'));
+        throw new Error('connection lost');
+      }
+      await upload(from, to);
+    };
+    await expect(ops.sync({ local, remote: 'site' })).rejects.toThrow('connection lost');
+    expect(client.files.get('/srv/x/site/a.html')?.toString()).toBe('old a');
+    expect(client.files.get('/srv/x/site/css/site.css')?.toString()).toBe('old css');
+    expect(client.files.has('/srv/x/site/img/1.jpg')).toBe(false);
+    // The partial uploads are removed while the connection still answers.
+    expect([...client.files.keys()].filter((p) => p.startsWith('/srv/x/site/'))).toEqual([
+      '/srv/x/site/a.html',
+      '/srv/x/site/css/site.css',
+    ]);
+  });
+
+  it('removes the staging files left when a rename fails', async () => {
+    const local = localSite();
+    const { ops, client } = setup({ local_roots: [local] });
+    const replace = client.replace.bind(client);
+    client.replace = async (from, to) => {
+      if (to.endsWith('site.css')) {
+        throw new Error('550 rename refused');
+      }
+      await replace(from, to);
+    };
+    await expect(ops.sync({ local, remote: 'site', prune: true })).rejects.toThrow('550');
+    expect([...client.files.keys()].filter((p) => p.includes('247-agent-sync'))).toEqual([]);
+    expect(client.files.get('/srv/x/site/a.html')?.toString()).toBe('<a>');
   });
 
   it('refuses to prune from a local tree without files, before connecting', async () => {

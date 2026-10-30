@@ -12,7 +12,7 @@ and op: [`docs/connectors/ftp.md`](../../docs/connectors/ftp.md). Example manife
 connectors/ftp/src/
   config.ts   zod schema, port defaults per protocol, root normalisation, local_roots
   paths.ts    confinement: resolveRemote(root, input) is the only place a remote path is interpreted
-  ops.ts      the eight ops on the FileClient interface; one connection per call; sync walks the local tree
+  ops.ts      the eight ops on the FileClient interface; one connection per call; sync uploads to staging names, then renames
   sftp.ts     ssh2-sftp-client adapter behind a narrow SftpLib interface; host key pinning
   ftp.ts      basic-ftp adapter behind a narrow FtpLib interface (FTP and FTPS)
   types.ts    FileClient, FileEntry, FtpOpError and its codes (not_found, too_large, exists, path), op shapes

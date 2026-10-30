@@ -74,6 +74,14 @@ function walkLocal(root: string): LocalTree {
   return { files, dirs };
 }
 
+/**
+ * Where `sync` uploads a file before renaming it to `target`: a hidden name in the same
+ * directory, so the rename stays on one file system. Fixed, so a retry reuses it.
+ */
+function stagingPath(target: string): string {
+  return posix.join(posix.dirname(target), `.${posix.basename(target)}.247-agent-sync`);
+}
+
 /** Files and directories below a remote directory, relative to it; directories deepest first. */
 async function walkRemote(
   client: FileClient,
@@ -284,7 +292,10 @@ export class FileOps {
 
   /**
    * Uploads every regular file below `local` to `remote` (the root by default), creating
-   * directories as needed, over one connection. With `prune`, remote files and
+   * directories as needed, over one connection. Each file goes to a staging name next to
+   * its target first; only when every transfer has finished are they renamed into place,
+   * so a sync that breaks during the transfer leaves the old files untouched and never a
+   * truncated one under its real name. With `prune`, remote files and
    * directories under `remote` that the local tree lacks are removed afterwards, so the
    * remote directory mirrors the local one. Every remote path is resolved before the
    * connection opens: a local name that would escape the root fails the whole op. A
@@ -311,12 +322,28 @@ export class FileOps {
       for (const dir of dirTargets) {
         await client.mkdir(dir);
       }
+      // Staging names not yet renamed into place; removed if anything fails, since a
+      // web server may serve them (best effort: the connection may be gone).
+      const staged = new Set<string>();
       const uploaded: string[] = [];
       let bytes = 0;
-      for (const [p, size] of tree.files) {
-        await client.upload(join(local, p), targets.get(p) ?? remoteOf(p));
-        uploaded.push(p);
-        bytes += size;
+      try {
+        for (const [p, target] of targets) {
+          staged.add(stagingPath(target));
+          await client.upload(join(local, p), stagingPath(target));
+        }
+        for (const [p, size] of tree.files) {
+          const target = targets.get(p) ?? remoteOf(p);
+          await client.replace(stagingPath(target), target);
+          staged.delete(stagingPath(target));
+          uploaded.push(p);
+          bytes += size;
+        }
+      } catch (err) {
+        for (const path of staged) {
+          await client.remove(path).catch(() => undefined);
+        }
+        throw err;
       }
       const pruned: string[] = [];
       if (args.prune === true) {

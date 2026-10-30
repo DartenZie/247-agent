@@ -179,6 +179,7 @@ function scenario(rig, { name, label }) {
     /exceeds max_bytes/,
   );
   rmSync(join(local, 'assets'), { recursive: true });
+  writeFileSync(join(local, 'index.html'), `<h1>${name} v2</h1>\n`);
   const pruned = rig.succeeded(
     'sync with prune',
     call('sync', { local, remote: 'site', prune: true }),
@@ -193,6 +194,15 @@ function scenario(rig, { name, label }) {
     'remote mirrors local',
     names(after.entries) === '["big.bin","index.html"]',
     names(after.entries),
+  );
+  const replaced = rig.succeeded(
+    'read a replaced file',
+    call('read', { path: 'site/index.html', encoding: 'utf8' }),
+  );
+  rig.check(
+    'renamed over the old file',
+    replaced.content === `<h1>${name} v2</h1>\n`,
+    JSON.stringify(replaced.content),
   );
   rig.failed(
     'sync outside local_roots',

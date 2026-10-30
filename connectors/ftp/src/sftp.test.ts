@@ -90,6 +90,10 @@ function fakeSftp(files: Record<string, string> = {}, dirs: string[] = []): Fake
       fake.calls.push(`rename ${from} ${to}`);
       return Promise.resolve('ok');
     },
+    posixRename: (from, to) => {
+      fake.calls.push(`posixRename ${from} ${to}`);
+      return Promise.resolve('ok');
+    },
     mkdir: (path, recursive) => {
       fake.calls.push(`mkdir ${path} ${String(recursive ?? false)}`);
       return Promise.resolve('ok');
@@ -193,13 +197,24 @@ describe('SftpFileClient', () => {
     await client.remove('/srv/f.txt');
     await client.rmdir('/srv/d', true);
     await client.rename('/srv/a', '/srv/b');
+    await client.replace('/srv/.c.tmp', '/srv/c');
     await client.mkdir('/srv/x/y');
-    expect(fake.calls.slice(-4)).toEqual([
+    expect(fake.calls.slice(-5)).toEqual([
       'delete /srv/f.txt',
       'rmdir /srv/d true',
       'rename /srv/a /srv/b',
+      'posixRename /srv/.c.tmp /srv/c',
       'mkdir /srv/x/y true',
     ]);
+  });
+
+  it('replaces by delete and rename when the server lacks posix-rename', async () => {
+    const fake = fakeSftp();
+    fake.lib.posixRename = () =>
+      Promise.reject(new Error('Server does not support this extended request'));
+    const client = await connectSftp(ftpConfig(), () => fake.lib);
+    await client.replace('/srv/.c.tmp', '/srv/c');
+    expect(fake.calls.slice(-2)).toEqual(['delete /srv/c', 'rename /srv/.c.tmp /srv/c']);
   });
 
   it('rejects a non-Buffer result from get', async () => {

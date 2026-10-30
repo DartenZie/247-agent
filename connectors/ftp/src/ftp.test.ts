@@ -252,11 +252,37 @@ describe('FtpFileClient', () => {
     await client.rmdir('/srv/sub', false);
     await client.rmdir('/srv/sub', true);
     await client.rename('/srv/a', '/srv/b');
+    await client.replace('/srv/.c.tmp', '/srv/c');
     expect(fake.calls).toEqual([
       'remove /srv/f.txt',
       'removeEmptyDir /srv/sub',
       'removeDir /srv/sub',
       'rename /srv/a /srv/b',
+      'rename /srv/.c.tmp /srv/c',
+    ]);
+  });
+});
+
+describe('replace', () => {
+  it('removes the target and renames again when the server refuses to overwrite', async () => {
+    const fake = fakeFtp();
+    const client = await connectFtp(ftpConfig({ protocol: 'ftp' }), () => fake.lib);
+    const rename = fake.lib.rename.bind(fake.lib);
+    let refused = false;
+    fake.lib.rename = (from, to) => {
+      if (!refused) {
+        refused = true;
+        fake.calls.push(`rename ${from} ${to}`);
+        return Promise.reject(Object.assign(new Error('550 File exists'), { code: 550 }));
+      }
+      return rename(from, to);
+    };
+    fake.calls.length = 0;
+    await client.replace('/srv/.c.tmp', '/srv/c');
+    expect(fake.calls).toEqual([
+      'rename /srv/.c.tmp /srv/c',
+      'remove /srv/c',
+      'rename /srv/.c.tmp /srv/c',
     ]);
   });
 });
