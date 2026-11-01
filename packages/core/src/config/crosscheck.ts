@@ -308,7 +308,7 @@ export function checkSandboxes(
     if (proxyTooLong !== undefined) {
       issues.push({
         path: 'sandbox.network',
-        message: `the allowlist's proxy sockets can reach ${proxyTooLong}: use a shorter socket in agent.yaml`,
+        message: `the allowlist's proxy sockets would not fit: ${proxyTooLong}. Use a shorter socket in agent.yaml`,
       });
     }
     if (m.cwd !== undefined && !visible(m, m.cwd)) {

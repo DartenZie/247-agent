@@ -114,7 +114,7 @@ op is in the manifest. At session open the supervisor checks each grant with
 `opsClient`: unknown or non-`stdio` → `NonRetryableError`, not up →
 `ConnectorDownError`. Then `mcp-bridge.ts` listens on `<work_dir>/.mcp/<6 random bytes
 hex>.sock` (directory 0700, socket 0600, inside `work_dir` so a sandboxed agent sees it;
-a path over 107 bytes is refused) and `session/new` offers one stdio MCP server per
+a path over `MAX_SOCKET_PATH`, 107 bytes on Linux and 103 on macOS, is refused) and `session/new` offers one stdio MCP server per
 grant, named after the connector, whose command is the daemon's own Node running an
 inline proxy with exactly `OA_MCP_SOCKET`, `OA_MCP_TOKEN` (24 random bytes) and
 `OA_MCP_SERVER` in its environment. The proxy pipes stdio to the socket after a

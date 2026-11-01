@@ -383,7 +383,7 @@ describe('checkSandboxes', () => {
           {
             path: 'sandbox.network',
             message: expect.stringMatching(
-              /proxy sockets .*\/core\.sock\.net\/4194304-9999999999\.sock is \d+ bytes, .* use a shorter socket in agent\.yaml/,
+              /proxy sockets would not fit: .*\/core\.sock\.net\/4194304-9999999999\.sock is \d+ bytes, .* Use a shorter socket in agent\.yaml/,
             ) as string,
           },
         ],

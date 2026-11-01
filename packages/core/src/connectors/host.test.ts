@@ -28,7 +28,7 @@ let servers: Server[];
 const hostLogs: string[] = [];
 
 beforeEach(() => {
-  // Short: Unix socket paths are limited to ~104 bytes on macOS.
+  // Short: Unix socket paths are limited to 103 bytes on macOS (`MAX_SOCKET_PATH`).
   dir = mkdtempSync(join(tmpdir(), 'oa-host-'));
   configFile = join(dir, 'agent.yaml');
   hosts = [];
