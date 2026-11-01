@@ -4,6 +4,7 @@ import { connect } from 'node:net';
 
 import type { Logger } from '../log.js';
 import { ApiError, route, type ApiResponse, type RouteContext } from './routes.js';
+import { socketPathProblem } from './socket-path.js';
 
 export interface ApiServerOptions extends RouteContext {
   log: Logger;
@@ -121,6 +122,10 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
   return {
     socketPath,
     listen: async () => {
+      const tooLong = socketPathProblem(socketPath);
+      if (tooLong !== undefined) {
+        throw new Error(`cannot bind the socket: ${tooLong}`);
+      }
       try {
         await bind(server, socketPath);
       } catch (err) {
@@ -135,8 +140,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
         await bind(server, socketPath);
       }
       // Owner and group may connect: a connector in its own unit runs as another user in
-      // the daemon's group (docs/internal/connectors.md) and must still reach /v1/events. Best effort:
-      // a path over the platform's limit is bound truncated and cannot be chmod'ed by name.
+      // the daemon's group (docs/internal/connectors.md) and must still reach /v1/events.
       try {
         await chmod(socketPath, 0o660);
       } catch (err) {

@@ -19,7 +19,7 @@ mkdir ~/oa-tutorial && cd ~/oa-tutorial
 
 > [!NOTE]
 > On macOS, keep this path short. The daemon listens on a Unix socket, and macOS limits
-> socket paths to 104 bytes.
+> socket paths to 103 bytes.
 
 ## 2. Write `agent.yaml`
 

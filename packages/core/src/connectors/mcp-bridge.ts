@@ -22,6 +22,7 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import type { Logger } from '../log.js';
 import { VERSION } from '../version.js';
 import type { McpServerLaunch } from './acp-types.js';
@@ -85,8 +86,6 @@ sock.on('error', (err) => {
 sock.on('close', () => process.stdin.destroy());
 `;
 
-/** Longest Unix socket path the platform accepts (`sun_path` less the terminating NUL). */
-export const MAX_SOCKET_PATH = process.platform === 'linux' ? 107 : 103;
 /** A client that has not said hello by then is dropped. */
 const HELLO_TIMEOUT_MS = 10_000;
 const HELLO_MAX_BYTES = 4096;

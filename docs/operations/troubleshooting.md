@@ -15,7 +15,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | the daemon exits with `another daemon is listening on <path>` | a live daemon owns the socket | stop it first; a stale file from a dead daemon is replaced on its own |
 | the daemon exits with `invalid agent config <file>:` and `<path>: <message>` lines, or `invalid connector config:` | the configuration does not validate | `oa validate <agent.yaml>` prints the same issues without starting anything; fix and restart |
 | `no tasks files found` | the `tasks:` paths in `agent.yaml` name no `*.yaml` file | check the paths; they are relative to the directory of `agent.yaml` |
-| socket error on macOS | Unix socket paths are limited to 104 bytes | use a short directory such as `/tmp/247-agent` |
+| `oa validate` reports `socket: <path> is <n> bytes, <m> over the <limit>-byte limit` | Unix socket paths are limited to 107 bytes on Linux and 103 on macOS | use a short directory such as `/tmp/247-agent` |
 
 ## Tasks that do not run
 

@@ -7,7 +7,9 @@ import {
   type ProtectedPath,
   type SandboxConfig,
 } from '../actions/sandbox.js';
+import { netProxySocket } from '../actions/sandbox-net.js';
 import type { ShellActionConfig } from '../actions/shell.js';
+import { socketPathProblem } from '../api/socket-path.js';
 import {
   DecideDefaults,
   type DecideDefaultsConfig,
@@ -227,6 +229,8 @@ export interface SandboxCheckContext {
   protected: readonly ProtectedPath[];
   /** `defaults.sandbox`: what a `shell` action without its own `sandbox` runs in. */
   defaultSandbox?: SandboxConfig | undefined;
+  /** `netProxyDir(socket)`: where a network allowlist's proxy listens. Unset: not checked. */
+  netProxyDir?: string | undefined;
 }
 
 /** Issues for the protected paths a bind would show, one per file, all with the same `path`. */
@@ -293,6 +297,18 @@ export function checkSandboxes(
         issues.push(
           ...exposes(bind, `sandbox.${list}[${String(i)}]`, 'the sandboxed agent program'),
         );
+      });
+    }
+    // The supervisor opens a proxy only for a non-empty allowlist.
+    const allow = m.sandbox !== undefined && 'network' in m.sandbox ? m.sandbox.network?.allow : [];
+    const proxyTooLong =
+      (allow ?? []).length === 0 || ctx.netProxyDir === undefined
+        ? undefined
+        : socketPathProblem(netProxySocket(ctx.netProxyDir));
+    if (proxyTooLong !== undefined) {
+      issues.push({
+        path: 'sandbox.network',
+        message: `the allowlist's proxy sockets would not fit: ${proxyTooLong}. Use a shorter socket in agent.yaml`,
       });
     }
     if (m.cwd !== undefined && !visible(m, m.cwd)) {

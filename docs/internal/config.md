@@ -28,6 +28,15 @@ Relative paths resolve against the directory of `agent.yaml`: `db`, `socket`, ev
 database (`parseAgent`); set, it resolves against the `agent.yaml` directory, not the
 database's.
 
+Every Unix socket path is at most `MAX_SOCKET_PATH` bytes (`api/socket-path.ts`): 107 on
+Linux and 103 on macOS, `sun_path` less the NUL that curl and Python need. Node 22 binds
+and dials a longer path truncated to `sun_path`, so the socket lands under another name.
+`parseAgent` refuses a longer resolved `socket`, and `parseManifest` refuses a longer
+socket of a `managed_by: systemd` stdio connector (`unitSocket`, so a long `name` counts
+too). Each issue names the byte count and the excess. `ApiServer.listen()` and
+`247-agent-connector-host --socket` refuse such a path as well. The limit is that of the
+platform `oa validate` runs on: a Mac judges a Linux server's config by 103 bytes.
+
 Every schema is `z.strictObject`: an unknown key is an error, which is what keeps a typo
 from silently becoming a default. The exceptions are `config` and `env` of a manifest
 (free-form, the connector's own) and `output_schema` of an `llm` action.
@@ -97,7 +106,9 @@ task or connector names across files, a poller's target connector and op.
   `<socket>.net` proxy directory, `agent.yaml`, a `file` backend's secrets file); a
   sandboxed acp manifest's `cwd` is visible inside the sandbox; every `git-worktree`
   `repo` of an `agent` task on a sandboxed connector is inside that sandbox's binds.
-  Paths are compared with symlinks resolved on both sides.
+  Paths are compared with symlinks resolved on both sides. A non-empty
+  `sandbox.network.allow` also needs the longest proxy socket (`netProxySocket` in
+  `<socket>.net`) to fit `MAX_SOCKET_PATH`, or the issue asks for a shorter `socket`.
 
 **`check.ts`**: `pricing` is resolved and reported at `pricing.<model>`; the summary
 lines name the tasks files and manifests an `agent.yaml` pulls in.

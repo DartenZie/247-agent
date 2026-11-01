@@ -13,7 +13,7 @@ import {
 import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
-import { netProxyDir } from '../actions/sandbox-net.js';
+import { netProxyDir, netProxySocket } from '../actions/sandbox-net.js';
 import { buildSandboxArgv, type SandboxBackend, type SandboxHost } from '../actions/sandbox.js';
 import {
   NonRetryableError,
@@ -617,7 +617,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     const connector = m.manifest.name;
     const proxy = await openNetProxy({
       allow,
-      socket: join(this.netDir, `${String(process.pid)}-${String(++this.netSeq)}.sock`),
+      socket: netProxySocket(this.netDir, process.pid, ++this.netSeq),
       log,
       onRequest: (result) => {
         this.metrics.sandboxNetRequests.inc({ connector, result });

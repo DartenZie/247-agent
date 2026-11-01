@@ -11,7 +11,7 @@ let dir: string;
 let server: Server | undefined;
 
 beforeEach(() => {
-  // Short: Unix socket paths are limited to ~104 bytes on macOS.
+  // Short: Unix socket paths are limited to 103 bytes on macOS.
   dir = mkdtempSync(join(tmpdir(), 'oa-sock-'));
 });
 

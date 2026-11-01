@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import { checkConfigFile } from './check.js';
 import { looksLikeManifest, parseManifest, unitSocket } from './connector.js';
 import { loadConnectors } from './load.js';
@@ -541,6 +542,18 @@ describe('ConnectorManifest with managed_by: systemd', () => {
     ]);
     expect(issues({ ...UNIT, transport: 'none', socket: '/s.sock' })).toEqual([
       'socket: a "none" connector serves no ops: it has no socket',
+    ]);
+  });
+
+  it('refuses a unit socket the platform would bind truncated, set or derived from the name (#62)', () => {
+    const fits = `/srv/${'s'.repeat(MAX_SOCKET_PATH - '/srv/'.length)}`;
+    expect(issues({ ...UNIT, socket: fits })).toEqual([]);
+    expect(issues({ ...UNIT, socket: `${fits}s` })).toEqual([
+      expect.stringMatching(/^socket: \/srv\/s+ is \d+ bytes, 1 over the \d+-byte limit/),
+    ]);
+    const derived = issues({ ...UNIT, name: `w${'x'.repeat(MAX_SOCKET_PATH)}` });
+    expect(derived).toEqual([
+      expect.stringMatching(/^socket: \/run\/247-agent-connector\/wx+\/mcp\.sock is \d+ bytes/),
     ]);
   });
 });

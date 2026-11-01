@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 
+import { netProxyDir } from '../actions/sandbox-net.js';
 import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent, protectedPaths } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
@@ -108,6 +109,7 @@ export function checkConfigFile(path: string): FileCheck[] {
     workDir: r.config.workDir,
     protected: protectedPaths(r.config),
     defaultSandbox: r.config.defaults.sandbox,
+    netProxyDir: netProxyDir(r.config.socket),
   };
   const hostIssues = checkSandboxes([], sandboxes);
   if (hostIssues.agent.length > 0) {

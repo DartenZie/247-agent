@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { AgentDefaults } from '../actions/agent-config.js';
 import { netProxyDir } from '../actions/sandbox-net.js';
 import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
+import { socketPathProblem } from '../api/socket-path.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import {
@@ -158,6 +159,11 @@ export function parseAgent(text: string, file: string): AgentLoadResult {
     return { ok: false, file, issues };
   }
   const db = resolve(base, c.db);
+  const socket = resolve(base, c.socket);
+  const socketProblem = socketPathProblem(socket);
+  if (socketProblem !== undefined) {
+    return { ok: false, file, issues: [{ path: 'socket', message: socketProblem }] };
+  }
   return {
     ok: true,
     file,
@@ -165,7 +171,7 @@ export function parseAgent(text: string, file: string): AgentLoadResult {
       ...c,
       file: absolute,
       db,
-      socket: resolve(base, c.socket),
+      socket,
       tasks,
       connectorPaths,
       connectors,
