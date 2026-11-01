@@ -260,7 +260,7 @@ packages/core/src/
   llm/               service.ts (the ctx.llm port), config.ts, pricing.ts, models.ts, batches.ts, errors.ts, one adapter per provider type
   connectors/        supervisor.ts, acp.ts, acp-types.ts, mcp-bridge.ts, net-proxy.ts, poller.ts, host.ts, socket-transport.ts, stdio-transport.ts, child-env.ts
   secrets/           env, file, systemd-credentials
-  api/               routes.ts (transport-free handlers), server.ts, client.ts
+  api/               routes.ts (transport-free handlers), server.ts, client.ts, socket-path.ts
   expr/              glob.ts (type patterns), jmespath.ts, template.ts
   metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts, process-group.ts
 ```

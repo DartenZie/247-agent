@@ -28,6 +28,11 @@ Relative paths resolve against the directory of `agent.yaml`: `db`, `socket`, ev
 database (`parseAgent`); set, it resolves against the `agent.yaml` directory, not the
 database's.
 
+The resolved `socket` must fit the platform's `sun_path`, 108 bytes on Linux and 104 on
+macOS (`api/socket-path.ts`). Node 22 binds a longer path truncated to that length, so
+`parseAgent` refuses it with the byte count and the excess, and `ApiServer.listen()`
+refuses it too.
+
 Every schema is `z.strictObject`: an unknown key is an error, which is what keeps a typo
 from silently becoming a default. The exceptions are `config` and `env` of a manifest
 (free-form, the connector's own) and `output_schema` of an `llm` action.

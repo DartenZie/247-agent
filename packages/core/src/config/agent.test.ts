@@ -131,6 +131,26 @@ describe('parseAgent', () => {
     expect(r.ok && r.config.tasks).toEqual(['/srv/oa/tasks/main.yaml']);
   });
 
+  it('refuses a socket path the platform would bind truncated (#62)', () => {
+    // sun_path: 108 bytes on Linux, 104 on macOS and the BSDs. Measured after resolving.
+    const limit = process.platform === 'linux' ? 108 : 104;
+    const base = '/srv/oa/';
+    const fits = `socket: ${'s'.repeat(limit - base.length)}\n`;
+    expect(parseAgent(fits, `${base}agent.yaml`).ok).toBe(true);
+    const long = parseAgent(
+      `socket: ${'s'.repeat(limit - base.length + 30)}\n`,
+      `${base}agent.yaml`,
+    );
+    expect(!long.ok && long.issues).toEqual([
+      {
+        path: 'socket',
+        message: expect.stringMatching(
+          new RegExp(`is ${String(limit + 30)} bytes, 30 over the ${String(limit)}-byte limit`),
+        ) as string,
+      },
+    ]);
+  });
+
   it('accepts lists of tasks paths, connector paths and inline manifests', () => {
     const r = parseAgent(
       [
