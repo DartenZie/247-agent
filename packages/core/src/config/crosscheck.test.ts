@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import { resolvePricing } from '../llm/pricing.js';
 import { parseManifest } from './connector.js';
 import {
@@ -365,6 +366,34 @@ describe('checkSandboxes', () => {
       checkSandboxes([agentTask({ connector: 'codex' })], sctx({ manifests: [manifest({})] })),
     ).toEqual(empty);
     expect(checkSandboxes([agentTask()], sctx({ manifests: [manifest({})] }))).toEqual(empty);
+  });
+
+  it('refuses a network allowlist whose proxy sockets would not fit the platform limit (#62)', () => {
+    const allowlisted = manifest({
+      sandbox: { backend: 'bwrap', network: { allow: ['api.anthropic.com'] } },
+    });
+    const at = (dir: string) =>
+      checkSandboxes([], sctx({ manifests: [allowlisted], netProxyDir: dir }));
+    expect(at('/run/247-agent/core.sock.net').manifests).toEqual([]);
+    const deep = `/run/${'d'.repeat(MAX_SOCKET_PATH)}/core.sock.net`;
+    expect(at(deep).manifests).toEqual([
+      {
+        file: '/etc/247-agent/connectors.d/claude.yaml',
+        issues: [
+          {
+            path: 'sandbox.network',
+            message: expect.stringMatching(
+              /proxy sockets .*\/core\.sock\.net\/4194304-9999999999\.sock is \d+ bytes, .* use a shorter socket in agent\.yaml/,
+            ) as string,
+          },
+        ],
+      },
+    ]);
+    // Without an allowlist no proxy is opened, so the length does not matter.
+    expect(
+      checkSandboxes([], sctx({ manifests: [manifest({ sandbox: 'bwrap' })], netProxyDir: deep }))
+        .manifests,
+    ).toEqual([]);
   });
 
   it('reports a repo outside every bind, on the action or the default connector', () => {

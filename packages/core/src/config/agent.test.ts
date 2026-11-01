@@ -132,8 +132,8 @@ describe('parseAgent', () => {
   });
 
   it('refuses a socket path the platform would bind truncated (#62)', () => {
-    // sun_path: 108 bytes on Linux, 104 on macOS and the BSDs. Measured after resolving.
-    const limit = process.platform === 'linux' ? 108 : 104;
+    // sun_path less its NUL: 108 - 1 bytes on Linux, 104 - 1 on macOS. Measured after resolving.
+    const limit = process.platform === 'linux' ? 107 : 103;
     const base = '/srv/oa/';
     const fits = `socket: ${'s'.repeat(limit - base.length)}\n`;
     expect(parseAgent(fits, `${base}agent.yaml`).ok).toBe(true);

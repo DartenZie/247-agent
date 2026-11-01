@@ -3,6 +3,7 @@ import type { AgentDefaultsConfig } from './actions/agent-config.js';
 import { runConnector } from './actions/connector.js';
 import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
+import { netProxyDir } from './actions/sandbox-net.js';
 import { runSequence } from './actions/sequence.js';
 import type { SandboxConfig, SandboxHost } from './actions/sandbox.js';
 import { runShell } from './actions/shell.js';
@@ -461,6 +462,7 @@ export function createCore(opts: CoreOptions): Core {
           workDir: ag.workDir,
           protected: opts.sandboxHost?.protected ?? [],
           defaultSandbox: shellSandbox,
+          netProxyDir: opts.socketPath === undefined ? undefined : netProxyDir(opts.socketPath),
         };
 
   /** Loads and cross-checks the tasks files without applying anything. */

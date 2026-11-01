@@ -18,6 +18,7 @@ import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 
+import { socketPathProblem } from '../api/socket-path.js';
 import { loadAgentFile } from '../config/agent.js';
 import { unitSocket, type ConnectorConfig } from '../config/connector.js';
 import { loadConnectors, type ConfigIssue } from '../config/load.js';
@@ -196,6 +197,11 @@ function runOnce(launch: Launch, opts: ConnectorHostOptions): ConnectorHost {
 async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<ConnectorHost> {
   const grace = opts.killTimeoutMs ?? 5000;
   const path = opts.socket ?? unitSocket(first.manifest);
+  // A manifest's socket is checked by parseManifest; --socket only here.
+  const tooLong = socketPathProblem(path);
+  if (tooLong !== undefined) {
+    throw new ConnectorHostError(`cannot serve ${first.manifest.name}: ${tooLong}`);
+  }
   let current: { socket: Socket; child: ChildProcess } | undefined;
   /** Bumped by every connection and by stop(): only the newest connection gets a process. */
   let generation = 0;

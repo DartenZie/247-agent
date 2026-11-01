@@ -43,7 +43,7 @@ Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`. `shutdo
 | Key | Meaning | Default |
 |---|---|---|
 | `db` | The SQLite file holding events, runs, state, the cost ledger and agent transcripts. | `/var/lib/247-agent/state.db` |
-| `socket` | The Unix socket the API and `oa` use. Its absolute path can be at most 108 bytes on Linux and 104 on macOS. The directory `<socket>.net` beside it holds the sockets of sandboxed agents' network proxies. | `/run/247-agent/core.sock` |
+| `socket` | The Unix socket the API and `oa` use. Its absolute path can be at most 107 bytes on Linux and 103 on macOS, and 28 bytes less when a connector has a `sandbox.network` allowlist. The directory `<socket>.net` beside it holds the sockets of sandboxed agents' network proxies. | `/run/247-agent/core.sock` |
 | `tasks` | A tasks file, a directory (its `*.yaml` and `*.yml` files, in name order), or a list of both. All are merged; task names must be unique across them; at least one file must exist. | `tasks.yaml` |
 | `connectors` | Manifest files, directories of manifests, or inline manifests (objects in the list). Connector names must be unique across all of them. | none |
 | `workers` | Runs executing at the same time, across every task. | `4` |

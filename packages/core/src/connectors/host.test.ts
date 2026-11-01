@@ -1,13 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import { loadConnectors } from '../config/load.js';
 import { loadAgentFile } from '../config/agent.js';
-import { createLogger } from '../log.js';
+import { createLogger, nullLogger } from '../log.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import {
   ConnectorHostError,
@@ -190,6 +191,15 @@ describe('prepareLaunch', () => {
 });
 
 describe('a unit with ops', () => {
+  it('refuses a --socket the platform would bind truncated (#62)', async () => {
+    const long = join(dir, 'x'.repeat(MAX_SOCKET_PATH));
+    await expect(
+      startConnectorHost({ configFile, name: 'fake', env, socket: long, log: nullLogger }),
+    ).rejects.toThrow(/cannot serve fake: .* over the \d+-byte limit/);
+    // Where Node 22 would have bound it: the first sun_path bytes.
+    expect(existsSync(long.slice(0, MAX_SOCKET_PATH + 1))).toBe(false);
+  });
+
   it('serves the connector on its socket; the core connects instead of spawning', async () => {
     const h = await host('fake');
     expect(h.socket).toBe(join(dir, 'fake.sock'));

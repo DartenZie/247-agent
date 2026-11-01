@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { AgentSandbox } from '../actions/sandbox.js';
+import { socketPathProblem } from '../api/socket-path.js';
 import { PollerConfig } from '../connectors/poller.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { timerDuration } from './duration.js';
@@ -221,6 +222,11 @@ export const ConnectorManifest = ManifestFields.superRefine((m, ctx) => {
         'managed_by',
         'an acp agent runs as a child of the core (use sandbox: bwrap to confine it)',
       );
+    } else if (effectiveTransport(m) === 'stdio') {
+      const tooLong = socketPathProblem(unitSocket(m));
+      if (tooLong !== undefined) {
+        refuse('socket', tooLong);
+      }
     }
   } else if (m.socket !== undefined) {
     ctx.addIssue({

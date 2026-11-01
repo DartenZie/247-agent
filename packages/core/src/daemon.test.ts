@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient, ApiConnectionError, ApiError } from './api/client.js';
-import { SOCKET_PATH_MAX } from './api/socket-path.js';
+import { MAX_SOCKET_PATH } from './api/socket-path.js';
 import { AgentConfigError, startDaemon, type Daemon } from './daemon.js';
 import { createLogger } from './log.js';
 
@@ -133,9 +133,13 @@ describe('startDaemon', () => {
     expect(existsSync(join(dir, 'two.sock'))).toBe(false);
   });
 
-  it('binds a socket at the platform limit by its full name and refuses a longer one (#62)', async () => {
-    const at = join(dir, 'x'.repeat(SOCKET_PATH_MAX - dir.length - 1));
-    expect(Buffer.byteLength(at)).toBe(SOCKET_PATH_MAX);
+  it('binds a socket at the platform limit by its full name and refuses a longer one (#62)', async (t) => {
+    const room = MAX_SOCKET_PATH - Buffer.byteLength(dir) - 1;
+    if (room < 1) {
+      t.skip('TMPDIR leaves no room for a socket name under the limit');
+    }
+    const at = join(dir, 'x'.repeat(room));
+    expect(Buffer.byteLength(at)).toBe(MAX_SOCKET_PATH);
     writeFileSync(join(dir, 'at.yaml'), `db: at.db\nsocket: ${at}\n`);
     const second = await startDaemon({ configFile: join(dir, 'at.yaml'), log: log() });
     try {
@@ -154,8 +158,8 @@ describe('startDaemon', () => {
     expect((err as AgentConfigError).result.issues).toEqual([
       { path: 'socket', message: expect.stringMatching(/1 over the \d+-byte limit/) as string },
     ]);
-    // Truncated, the longer path would have been bound as `at` itself.
     expect(existsSync(at)).toBe(false);
+    expect(existsSync(`${at}y`)).toBe(false);
   });
 
   it('refuses to start while another daemon holds the socket, but replaces a stale one', async () => {

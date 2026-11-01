@@ -1,4 +1,5 @@
 import { isIP, isIPv4, isIPv6 } from 'node:net';
+import { join } from 'node:path';
 
 import { z } from 'zod';
 
@@ -158,6 +159,15 @@ export type SandboxNetworkConfig = z.infer<typeof SandboxNetwork>;
  */
 export function netProxyDir(coreSocket: string): string {
   return `${coreSocket}.net`;
+}
+
+/**
+ * The socket of one proxy in `netProxyDir`: the daemon's pid and a counter. With no
+ * arguments, the longest name it can take (Linux's highest pid, ten counter digits),
+ * which `checkSandboxes` measures against the socket path limit.
+ */
+export function netProxySocket(dir: string, pid = 4_194_304, seq = 9_999_999_999): string {
+  return join(dir, `${String(pid)}-${String(seq)}.sock`);
 }
 
 /** Where the proxy's socket is bound inside the sandbox: its private `/tmp`, which always exists. */

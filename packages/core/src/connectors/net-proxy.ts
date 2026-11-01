@@ -28,8 +28,8 @@ import { BlockList, connect, isIPv6, type LookupFunction, type Socket } from 'no
 import type { Duplex } from 'node:stream';
 
 import { matchNetRule, normaliseHost, parseNetRule } from '../actions/sandbox-net.js';
+import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import type { Logger } from '../log.js';
-import { MAX_SOCKET_PATH } from './mcp-bridge.js';
 
 /**
  * How one request ended, for the metric; `dropped` is a connection closed at the limit,

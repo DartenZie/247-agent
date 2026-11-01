@@ -5,9 +5,9 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { AgentDefaults } from '../actions/agent-config.js';
-import { socketPathProblem } from '../api/socket-path.js';
 import { netProxyDir } from '../actions/sandbox-net.js';
 import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
+import { socketPathProblem } from '../api/socket-path.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import {
