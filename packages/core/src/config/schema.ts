@@ -180,12 +180,20 @@ export const Task = z
     retry: Retry.optional(),
     /** Per run, for model-backed actions; the smaller of this and the action's own applies. */
     budget: Budget.optional(),
+    /** Not a policy: rejected below with a pointer to `task.<name>.failed`. */
     on_failure: z.unknown().optional(),
     emit: z.array(EmitRule).optional(),
     /** `<namespace>.<key>: <value or template>`, applied after a successful run. */
     state_updates: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((task, ctx) => {
+    if (task.on_failure !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['on_failure'],
+        message: `on_failure is not supported: trigger another task on the "task.${task.name}.failed" event instead`,
+      });
+    }
     checkTemplates(task.action, ['action'], ctx, { secrets: true });
     task.emit?.forEach((rule, i) => {
       checkTemplates(

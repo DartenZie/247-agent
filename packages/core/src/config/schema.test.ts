@@ -107,6 +107,18 @@ describe('TasksFile schema', () => {
     ).toBe('tasks.0.action.kind');
   });
 
+  it('rejects on_failure and points to the failed event', () => {
+    expect(
+      issues(withTask({ trigger: { kind: 'manual' }, on_failure: { notify: 'chat' } })),
+    ).toEqual([
+      {
+        path: 'tasks.0.on_failure',
+        message:
+          'on_failure is not supported: trigger another task on the "task.a.failed" event instead',
+      },
+    ]);
+  });
+
   it('rejects timer durations a Node timer cannot hold, and a zero timeout', () => {
     const manual = { kind: 'manual' };
     expect(issues(withTask({ trigger: manual, timeout: '24d' }))).toEqual([]);

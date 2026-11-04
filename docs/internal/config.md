@@ -48,7 +48,9 @@ each runner exports (`ShellAction` from `actions/shell.ts`, `LlmAction` from
 `actions/llm.ts`, and so on). The runner file owns its fields, their defaults and their
 refinements; the schema file owns the task envelope (`name`, `trigger`, `concurrency`,
 `timeout`, `retry`, `budget`, `emit`, `state_updates`) and the checks that span fields.
-`on_failure` is accepted as `z.unknown()` and read by nothing; it is not documented.
+`on_failure` is accepted as `z.unknown()` only so that the task refinement can reject it
+with a pointer to `task.<name>.failed`: failure handling is a task triggered on that
+event, not a policy on the failing task.
 
 ## What `oa validate` checks
 
@@ -72,7 +74,8 @@ patterns (`expr/glob.ts`: at most 8 segments of `[a-z0-9_-]+`, `*` one whole seg
 no wildcard where a concrete type is emitted), JMESPath compilation of `filter` and
 `when`, template compilation everywhere a template may appear, `secrets` only as
 `secrets.<name>` and only inside `action`, the self-trigger rule (`a task never triggers
-on its own "<pattern>" event`), `each` as a single whole template, exactly one of
+on its own "<pattern>" event`), `on_failure` rejected in favour of a task on
+`task.<name>.failed`, `each` as a single whole template, exactly one of
 `type`/`type_any`, exactly one of `exec`/`builtin`, the manifest refinements per
 transport (`health` only on an effective `stdio` process; `sandbox` other than `none`
 only on `acp`; `acp` with empty `ops`/`emits` and no `config`; `managed_by: systemd`
