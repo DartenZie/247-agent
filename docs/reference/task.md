@@ -71,6 +71,8 @@ wildcard. Templates are `${ <JMESPath> }`; see [Templates](../tasks/templates.md
 `oa validate <file>` needs no running daemon. On a tasks file alone it checks:
 
 - The file parses as YAML and `tasks` is a non-empty list. No unknown key anywhere.
+- A task has no `on_failure` key. To react to a failure, trigger another task on the
+  `task.<name>.failed` event.
 - Every name matches its grammar and is unique in the file. Validated from
   `agent.yaml`, names are also unique across all tasks files.
 - Every duration, number and enumerated value is in range.
