@@ -47,7 +47,7 @@ Copy the shape that fits; all of these validate and run today unless marked.
   action:
     kind: shell
     cwd: /var/lib/247-agent/repos/site
-    env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
+    env: { FTP_USER: "${secrets.ftp_user}", LFTP_PASSWORD: "${secrets.ftp_pass}" }
     cmd: ["bash", "-c", "git pull --ff-only origin main && npm run build && lftp -u \"$FTP_USER\",env:LFTP_PASSWORD -e 'mirror -R --delete dist/ /public_html; quit' sftp://ftp.example.com"]
 ```
 

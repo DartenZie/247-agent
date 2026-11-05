@@ -26,6 +26,9 @@ const hangAll: ActionRunners = {
   sequence: hang,
 };
 
+/** The secrets the reference workflow names. */
+const SECRETS = { ftp_user: 'deploy', ftp_pass: 'x' };
+
 const EXAMPLE = new URL('../../../docs/examples/website-updates.yaml', import.meta.url).pathname;
 
 let dir: string;
@@ -44,7 +47,7 @@ beforeEach(async () => {
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
     }),
     runners: hangAll,
-    secrets: staticSecrets({ ftp_pass: 'x' }),
+    secrets: staticSecrets(SECRETS),
   });
   await core.start();
 });
@@ -71,6 +74,17 @@ describe('createCore with the reference workflow', () => {
     ]);
     expect(core.scheduler.list().map((j) => j.task)).toEqual(['fetch_email']);
     expect(lines.find((l) => l.msg === 'core.started')).toMatchObject({ backlog_runs: 0 });
+  });
+
+  it('sets every variable the publish command reads, the SFTP user from a secret', () => {
+    const publish = core.config().tasks.find((t) => t.name === 'publish_site');
+    const action = publish?.config.action as { cmd: string[]; env?: Record<string, string> };
+    const read = [...action.cmd.join(' ').matchAll(/\$\{?([A-Z_][A-Z0-9_]*)/g)].map((m) => m[1]);
+    expect(read).toContain('FTP_USER');
+    for (const name of read) {
+      expect(action.env).toHaveProperty([String(name)]);
+    }
+    expect(action.env?.FTP_USER).toBe('${secrets.ftp_user}');
   });
 
   it("queues exactly one classification run for the trusted sender's authenticated mail", () => {
@@ -246,7 +260,7 @@ describe('createCore with the reference workflow', () => {
       dbPath: join(dir, 'state.db'),
       log: createLogger({ sink: () => undefined }),
       runners: hangAll,
-      secrets: staticSecrets({ ftp_pass: 'x' }),
+      secrets: staticSecrets(SECRETS),
     });
     await core.start();
     expect(started()).toEqual(['publish_site']);
@@ -287,7 +301,7 @@ describe('createCore with the reference workflow', () => {
         dbPath: join(dir, 'state.db'),
         log: createLogger({ sink: () => undefined }),
         runners,
-        secrets: staticSecrets({ ftp_pass: 'x' }),
+        secrets: staticSecrets(SECRETS),
       });
       await core.start();
     };

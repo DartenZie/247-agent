@@ -211,14 +211,14 @@ tasks:
         when: "result.steps[2] != `null`"
         payload: { summary: "${event.payload.summary}" }
 
-  # 5. Publish what was pushed. Deterministic, holds the FTP secret, nothing else does.
+  # 5. Publish what was pushed. Deterministic, holds the SFTP secrets, nothing else does.
   - name: publish_site
     trigger: { kind: event, type: site.change_pushed }
     concurrency: 1
     action:
       kind: shell
       cwd: /var/lib/247-agent/repos/website
-      env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
+      env: { FTP_USER: "${secrets.ftp_user}", LFTP_PASSWORD: "${secrets.ftp_pass}" }
       cmd:
         - bash
         - -c

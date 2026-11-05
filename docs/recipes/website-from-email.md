@@ -16,7 +16,7 @@ together.
   [agent program](../connectors/agents.md) named `claude`.
 - A bare or base checkout of the site at `/var/lib/247-agent/repos/website`, with an
   `npm run build` that renders it.
-- Secrets: the mailbox credentials, the chat token, the SFTP password and the agent's
+- Secrets: the mailbox credentials, the chat token, the SFTP user and password and the agent's
   model key, each by name in your secrets backend.
 - The email manifest's `incoming.authserv_id` set to your mail server's name, so the
   filter in task 2 can check that the mail really comes from the editor. See
@@ -223,14 +223,14 @@ tasks:
         when: "result.steps[2] != `null`"
         payload: { summary: "${event.payload.summary}" }
 
-  # 5. Publish what was pushed. Deterministic, holds the SFTP secret, nothing else does.
+  # 5. Publish what was pushed. Deterministic, holds the SFTP secrets, nothing else does.
   - name: publish_site
     trigger: { kind: event, type: site.change_pushed }
     concurrency: 1
     action:
       kind: shell
       cwd: /var/lib/247-agent/repos/website
-      env: { LFTP_PASSWORD: "${secrets.ftp_pass}" }
+      env: { FTP_USER: "${secrets.ftp_user}", LFTP_PASSWORD: "${secrets.ftp_pass}" }
       cmd:
         - bash
         - -c
@@ -305,7 +305,7 @@ same for the whole site and adds: never publish, push or deploy; a human reviews
 | `reply_blocked` | an email back, no model | the agent said what is missing; a template turns that into a reply |
 | `update_site_general` | Opus at high effort, 60 calls, $3, the whole repository, `done` routed to an approval | a wide change buys more intelligence and gets a human in front of publishing |
 | `approve_general_change` | ask, wait, rebase and push on approval or reset on rejection, `site.change_pushed` only on approval | the gate is configuration, so routine changes skip it and big ones cannot |
-| `publish_site` | shell on `site.change_pushed`, holds the SFTP password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
+| `publish_site` | shell on `site.change_pushed`, holds the SFTP user and password | the agent never publishes and never sees a deploy secret; a mirror is idempotent, so a retry is safe |
 | `notify` | one task on failures, the budget event, a kept unpushed change and the one success | you hear about everything without a loop |
 
 Both agent tasks are the same action kind with different `model`, `effort`,
