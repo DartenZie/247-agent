@@ -215,6 +215,11 @@ session: write it now and do nothing else. If it is still missing, unreadable, n
 or does not match the schema, the attempt fails, and `retry` starts a fresh workspace
 with the error in the prompt.
 
+The result must be a regular file of at most 1 MiB inside the workspace. The daemon
+fails the attempt without reading the file when `result.path` is a symlink or a hard
+link, when its real directory is outside the workspace, or when the file is larger than
+1 MiB.
+
 ## Gates
 
 `post` is an ordered list of commands that run in the workspace after a `done` result,

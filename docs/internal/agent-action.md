@@ -178,12 +178,19 @@ agent never holds the connector's secrets, only a per-run socket and token.
 `status: "done" | "blocked"` and `summary`, plus the task's `result.schema` (read
 relative to `agent.yaml` and kept under it) as JSON; and "do not publish, push or
 deploy anything". After turn 1 the runner reads it. Only a **missing** file
-(`ENOENT`/`ENOTDIR`) gets one nudge turn in the same session ("You have not written
-RESULT.json. Write it now and do nothing else." plus the contract); a file that exists
-but is not JSON, lacks `status` or `summary`, or fails the schema fails the attempt at
-once. Still missing or invalid after the nudge fails the attempt. Both failures are
-plain `Error`, so `retry` repeats the run in a fresh workspace with the error in the
-prompt.
+(`ENOENT`/`ENOTDIR`, including a missing parent directory) gets one nudge turn in the
+same session ("You have not written RESULT.json. Write it now and do nothing else."
+plus the contract); a file that exists but is not JSON, lacks `status` or `summary`, or
+fails the schema fails the attempt at once. The JSON parse error gives only the
+position, never the text. A path that is not a regular file with one link, or whose
+real directory is not inside the real workspace, also fails the attempt. The reader
+opens it with `O_NOFOLLOW | O_NONBLOCK`, checks `fstat`, then resolves the directory
+again and requires the same `dev`/`ino` there, so a planted symlink, hard link, FIFO or
+a directory swapped during the open is refused before any content is read. A file
+above `MAX_RESULT_BYTES` (1 MiB) fails the attempt too; the reader stops one byte past
+the limit. Still missing or invalid after the nudge fails the attempt. Both failures
+are plain `Error`, so `retry` repeats the run in a fresh workspace with the error in
+the prompt.
 
 `done`: the `post` gates run in order, each a `shell` argv in the workspace with the
 scope gaining `result`, skipped when its `when` is falsy (`agent.post_gate`); a

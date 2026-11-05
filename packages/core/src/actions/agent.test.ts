@@ -1,11 +1,13 @@
 /* eslint-disable require-yield, @typescript-eslint/require-await -- scripted turns are generators by contract, whatever they do */
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,7 +35,7 @@ import { createLogger } from '../log.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import type { NewTranscriptEntry } from '../store/transcripts.js';
 import { AgentAction, previousFailure, runAgent } from './agent.js';
-import { readAgentResult, resultInstructions } from './agent-result.js';
+import { MAX_RESULT_BYTES, readAgentResult, resultInstructions } from './agent-result.js';
 import { testContext } from './testing.js';
 import {
   isRetryable,
@@ -1204,5 +1206,85 @@ describe('readAgentResult', () => {
       result: { status: 'done', summary: 's', n: 'x' },
     });
     expect(() => readAgentResult(ws, '../x.json', undefined)).toThrow(/inside the workspace/);
+  });
+
+  it('refuses a symlinked result file without reading its target', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    const secret = join(dir, 'hidden.txt');
+    writeFileSync(secret, 'TOPSECRET-not-json');
+    symlinkSync(secret, join(ws, 'RESULT.json'));
+    const read = readAgentResult(ws, 'RESULT.json', undefined);
+    expect(read).toMatchObject({
+      ok: false,
+      missing: false,
+      error: expect.stringMatching(/RESULT.json is not a regular file/) as string,
+    });
+    expect(JSON.stringify(read)).not.toContain('TOPSECRET');
+  });
+
+  it('refuses a hard-linked result file', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    const outside = join(dir, 'outside.json');
+    writeFileSync(outside, '{"status":"done","summary":"leaked"}');
+    linkSync(outside, join(ws, 'RESULT.json'));
+    const read = readAgentResult(ws, 'RESULT.json', undefined);
+    expect(read).toMatchObject({
+      error: expect.stringMatching(/RESULT.json is not a regular file/) as string,
+    });
+    expect(JSON.stringify(read)).not.toContain('leaked');
+  });
+
+  it('does not quote the file in a JSON parse error', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    writeFileSync(join(ws, 'RESULT.json'), 'TOPSECRET line');
+    const read = readAgentResult(ws, 'RESULT.json', undefined);
+    expect(read).toMatchObject({ error: expect.stringMatching(/not JSON/) as string });
+    expect(JSON.stringify(read)).not.toContain('TOPSECRET');
+  });
+
+  it('refuses a result file reached through a symlinked directory', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    const outside = join(dir, 'outside');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'RESULT.json'), '{"status":"done","summary":"leaked"}');
+    symlinkSync(outside, join(ws, 'out'));
+    const read = readAgentResult(ws, 'out/RESULT.json', undefined);
+    expect(read).toMatchObject({
+      ok: false,
+      missing: false,
+      error: expect.stringMatching(/out\/RESULT.json is outside the workspace/) as string,
+    });
+    expect(JSON.stringify(read)).not.toContain('leaked');
+  });
+
+  it('refuses a directory or a FIFO at the result path without blocking', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(join(ws, 'RESULT.json'), { recursive: true });
+    expect(readAgentResult(ws, 'RESULT.json', undefined)).toMatchObject({
+      error: expect.stringMatching(/not a regular file/) as string,
+    });
+    execaSync('mkfifo', [join(ws, 'pipe.json')]);
+    expect(readAgentResult(ws, 'pipe.json', undefined)).toMatchObject({
+      error: expect.stringMatching(/pipe.json is not a regular file/) as string,
+    });
+  });
+
+  it('rejects a result file above the size limit without reading it whole', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    const pad = 'x'.repeat(MAX_RESULT_BYTES);
+    writeFileSync(join(ws, 'RESULT.json'), JSON.stringify({ status: 'done', summary: 's', pad }));
+    expect(readAgentResult(ws, 'RESULT.json', undefined)).toEqual({
+      ok: false,
+      missing: false,
+      error: `RESULT.json is larger than ${String(MAX_RESULT_BYTES)} bytes`,
+    });
+    const fits = 'x'.repeat(MAX_RESULT_BYTES - 100);
+    writeFileSync(join(ws, 'RESULT.json'), JSON.stringify({ status: 'done', summary: 's', fits }));
+    expect(readAgentResult(ws, 'RESULT.json', undefined)).toMatchObject({ ok: true });
   });
 });
