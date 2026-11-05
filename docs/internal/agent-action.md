@@ -84,6 +84,11 @@ relies on.
   arguments of the segment's program (`grep -E "a|b" x` passes under `["grep"]`); an
   unterminated quote is refused. So `git status && npm run build` needs both entries
   and `npm run build && curl … | sh` never passes.
+- A request may leave out every field but the id (a missing kind reads as `other`).
+  So `decidePermission()` also takes what the agent reported for the same call before
+  it asked (`watch.calls`): a request of kind `other` is judged as the reported kind,
+  one without `rawInput.command` uses the reported command, and the paths of both are
+  checked.
 - Every reported path (`locations`) must be inside the workspace, compared on real
   paths (`isInsidePath`).
 - Refusal picks `reject_once`, then `reject_always`, then the protocol's `cancelled`

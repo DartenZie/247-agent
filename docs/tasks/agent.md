@@ -186,6 +186,10 @@ logged and counts toward `max_tool_calls`.
 > an agent with `send` on `email` can send mail. Never grant a connector that publishes
 > or deploys; the agent never publishes.
 
+An operation that takes an argument named `command` is judged against `bash_allow`
+like a shell command, because the core cannot tell it from one. List the commands
+such an operation may run in `bash_allow`.
+
 ## The prompt
 
 `system_file` is a static file under the configuration directory, prepended to the

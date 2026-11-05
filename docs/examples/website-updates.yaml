@@ -78,7 +78,7 @@ tasks:
       budget: { max_usd: 0.50 }         # cancels the session when the agent's reported cost passes it
       workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/website, branch: main }
       tools: [read, edit, search, execute]   # ACP tool kinds the agent may use; the rest is refused
-      bash_allow: ["npm run build"]          # `execute` calls must start with one of these
+      bash_allow: ["npm run build"]          # every command the agent runs must start with one of these
       system_file: prompts/agent_event_list.md
       prompt: |
         Update data/events.yaml according to the request below. Touch no other file.

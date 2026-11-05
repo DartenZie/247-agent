@@ -95,7 +95,7 @@ export const AgentAction = z
     /** Commands a tool call may run, whatever kind the agent reports: each segment of a linear chain must be one of these or start with one followed by a space. */
     bash_allow: z.array(z.string().min(1)).default([]),
     /**
-     * An `execute` call the agent ran without asking: `judge` checks its command against
+     * A call the agent ran without asking: `judge` checks its command against
      * `bash_allow` after the fact (Claude Code asks for everything else); `sandboxed` trusts
      * the agent's own OS sandbox for it and judges only kind and paths (Codex runs sandboxed
      * commands without asking and asks for every escape). Calls that ask are always judged.
@@ -522,7 +522,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       log: ctx.log,
       onPermission: (req) => {
         watch.judged.add(req.toolCall.id);
-        const d = decidePermission(policy, req);
+        const d = decidePermission(policy, req, watch.calls.get(req.toolCall.id));
         transcript.permission(req, d);
         ctx.log.info('agent.permission', {
           id: req.toolCall.id,

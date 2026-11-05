@@ -15,8 +15,8 @@ a tool-call cap and a budget, ending in a RESULT.json that routing reads.
 | `budget` | `{ max_usd }`; the smaller of this and the task's applies. The session is cancelled when the agent's reported cost passes it |
 | `workspace` | `{ kind: git-worktree, repo, branch }` (a worktree on branch `agent/<run_id>`) or `{ kind: temp }`; at `<defaults.agent.work_dir>/<run_id>`, `${run.workspace}` |
 | `tools` | ACP tool kinds the agent may use: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Required |
-| `bash_allow` | what an `execute` call may run: the command must equal an entry, or be a linear chain (`&&`, `\|\|`, `\|`, `;`, `&`) whose every segment equals an entry or starts with one followed by a space, with no redirection, substitution or line break (`<`, `>`, backticks, `$(`, `${`) anywhere. A chain operator inside quotes or backslash-escaped is an argument, not a chain (`grep -E "a\|b" x` passes under `grep`); an unterminated quote is refused |
-| `unasked_execute` | `judge` (default): an `execute` call the agent ran without asking is held to `bash_allow` after the fact. `sandboxed`: only its kind and paths are judged, because the agent's own OS sandbox confined it (Codex). Calls that ask are always judged in full |
+| `bash_allow` | what a tool call may run, whatever kind the agent reports (`rawInput.command` of any kind; the title only for `execute`): the command must equal an entry, or be a linear chain (`&&`, `\|\|`, `\|`, `;`, `&`) whose every segment equals an entry or starts with one followed by a space, with no redirection, substitution or line break (`<`, `>`, backticks, `$(`, `${`) anywhere. A chain operator inside quotes or backslash-escaped is an argument, not a chain (`grep -E "a\|b" x` passes under `grep`); an unterminated quote is refused |
+| `unasked_execute` | `judge` (default): a call the agent ran without asking has its command held to `bash_allow` after the fact. `sandboxed`: only its kind and paths are judged, because the agent's own OS sandbox confined it (Codex). Calls that ask are always judged in full |
 | `mcp_servers` | connector ops as agent tools: a `stdio` connector's name (every op its manifest allows) or `{ connector, ops: [..] }`. Served through the core's tool bridge (a per-run socket and a stdio proxy), so the agent never gets the connector's secrets. The agent reports these calls as tool calls of its own kind (claude-agent-acp: `other`), so add that kind to `tools`; they count toward `max_tool_calls`. Default `[]` |
 | `system_file` | static text prepended to the prompt (ACP has no separate system channel); relative to agent.yaml |
 | `prompt` | templated; the task |
@@ -51,7 +51,7 @@ Scope is what limits damage, so make it explicit and small:
   site-wide change is 60 calls and a few dollars, and it gets an approval gate.
 
 Every permission request is judged per call (never `allow_always`): tool kind in
-`tools`, `execute` command in `bash_allow`, paths inside the workspace. Refusals are
+`tools`, any reported command in `bash_allow`, paths inside the workspace. Refusals are
 logged as `agent.permission` with a reason. A tool call the agent ran *without* asking
 (Claude Code does that for reads and `git status`-like commands; Codex for every command
 its own sandbox admits, asking only to escape it) is judged after the fact from what the
