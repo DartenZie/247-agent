@@ -157,7 +157,7 @@ function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): 
   }
   if (res.stopReason === 'context_window') {
     throw new NonRetryableError(
-      "output truncated: the input and max_tokens exceed the model's context window; shorten the input or lower max_tokens",
+      "output truncated: the input and the answer filled the model's context window; shorten the input or ask for less",
     );
   }
   if (res.stopReason === 'refusal') {

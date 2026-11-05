@@ -82,8 +82,9 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
 
 Back in the runner: a `max_tokens` stop fails non-retryably ("output truncated at
 max_tokens N; raise it or shorten the task"), so do a stop because the input and
-`max_tokens` exceed the model's context window (`context_window`, Anthropic's
-`model_context_window_exceeded`) and a refusal; the result is the
+the answer filled the model's context window (`context_window`, Anthropic's
+`model_context_window_exceeded`; "output truncated: the input and the answer filled
+the model's context window; shorten the input or ask for less") and a refusal; the result is the
 parsed object with `output_schema`, else `{text}`. A response the adapter returned
 with `error` (billed, but no usable structured output), or a structured call that
 stopped for another reason (`other`), fails retryably; its row is already in the
@@ -245,7 +246,7 @@ like a wait:
    post-hoc checks; the result, truncation and refusal handling are the synchronous
    call's, and `emit` routes as usual.
 
-Failures: `errored` (other than `invalid_request_error`), `expired`, `canceled`, or a
+Failures: `errored` (other than `invalid_request_error` or `request_too_large`), `expired`, `canceled`, or a
 billed structured output that is not JSON (published as `errored`, `retryable: true`)
 fail the attempt retryably, and the retry submits a new batch; an invalid request or
 the 25 h timeout fails the run for good. Retention keeps a run while it has a batch in
