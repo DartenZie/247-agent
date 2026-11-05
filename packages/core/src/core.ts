@@ -15,7 +15,7 @@ import type { ActionRunners, AgentClients, ConnectorClients } from './actions/ty
 import { runWait } from './actions/wait.js';
 import { createBus, type EventBus } from './bus/bus.js';
 import { runTaskManually, type ManualInput } from './bus/manual.js';
-import { listTasks, pauseTask, resumeTask, type TaskEntry } from './bus/pause.js';
+import { listTasks, pauseTask, resumeTask, type TaskEntry, type TaskInfo } from './bus/pause.js';
 import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
@@ -209,7 +209,7 @@ export interface Core {
    * (`Executor.cancel`). `undefined` for an unknown run.
    */
   cancelRun(id: string): Promise<RunRecord | undefined>;
-  /** `oa tasks ls`: the configured tasks and which are paused. */
+  /** `oa tasks ls`: the configured tasks, their triggers, pauses, next fire and last runs. */
   listTasks(): TaskEntry[];
   /** `oa tasks pause <task>`: no new runs until resumed; throws `UnknownTaskError`. */
   pauseTask(name: string): TaskEntry;
@@ -308,6 +308,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.maxChainRuns === undefined ? {} : { maxChainRuns: opts.maxChainRuns }),
   });
   const scheduler = new CronScheduler({ bus, clock, log, metrics });
+  const taskInfo: TaskInfo = { store, nextFire: (task) => scheduler.nextRun(task) };
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
   let tasksFiles = opts.tasksFiles;
   let llmOptions = opts.llm;
@@ -807,9 +808,9 @@ export function createCore(opts: CoreOptions): Core {
     },
     runTask: (name, input) => runTaskManually(bus, store, compiled, name, input),
     cancelRun: (id) => executor.cancel(id),
-    listTasks: () => listTasks(store, compiled),
-    pauseTask: (name) => pauseTask(store, compiled, clock, log, name),
-    resumeTask: (name) => resumeTask(store, compiled, log, name),
+    listTasks: () => listTasks(taskInfo, compiled),
+    pauseTask: (name) => pauseTask(taskInfo, compiled, clock, log, name),
+    resumeTask: (name) => resumeTask(taskInfo, compiled, log, name),
     stop: async (stopOpts = {}) => {
       scheduler.stop();
       bus.dispatcher.stop();

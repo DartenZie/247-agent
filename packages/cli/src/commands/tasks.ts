@@ -6,8 +6,9 @@ import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 
 export const TASKS_USAGE = `usage: oa tasks <ls|pause <name>|resume <name>> [options]
 
-ls              the configured tasks, one per line: name, trigger (cron, event, manual)
-                and paused since <time> for a paused one
+ls              the configured tasks, one per line: name, trigger (cron, event, manual),
+                active or paused since <time>, the cron schedule and next fire or the
+                event types and filter, the last run and how many runs the task has
 pause <name>    start no new run of the task, whatever triggers it, until it is resumed;
                 oa run refuses it; runs already queued, running or waiting carry on
                 (end them with oa runs cancel); survives a reload and a restart
@@ -20,7 +21,22 @@ options:
 
 function taskLine(t: TaskEntry, width: number): string {
   const state = t.paused_at === null ? 'active' : `paused since ${t.paused_at}`;
-  return `${t.name.padEnd(width)}  ${t.trigger.padEnd(6)}  ${state}`;
+  const fields: string[] = [];
+  if (t.schedule !== null) {
+    fields.push(`schedule=${JSON.stringify(t.schedule)} next=${t.next_fire ?? '-'}`);
+  }
+  if (t.types !== null) {
+    const filter = t.filter === null ? '' : ` filter=${JSON.stringify(t.filter)}`;
+    fields.push(`on=${t.types.join(',')}${filter}`);
+  }
+  const last = t.last_run;
+  fields.push(
+    last === null ? 'last=-' : `last=${last.status} ${last.finished_at ?? last.created_at}`,
+  );
+  fields.push(
+    `runs=${String(t.runs.total)}` + (t.runs.failed > 0 ? ` failed=${String(t.runs.failed)}` : ''),
+  );
+  return [`${t.name.padEnd(width)}  ${t.trigger.padEnd(6)}  ${state}`, ...fields].join('  ');
 }
 
 export async function tasks(args: string[], io: Io): Promise<number> {

@@ -84,6 +84,7 @@ export { purgeStore, type PurgeCounts } from './store/retention.js';
 export { openStore, type Store } from './store/store.js';
 export {
   ACTIVE_STATUSES,
+  RUN_STATUSES,
   type EventRecord,
   type JsonValue,
   type NewEvent,
@@ -112,7 +113,9 @@ export {
   UnknownTaskError,
   type ManualInput,
 } from './bus/manual.js';
-export { listTasks, pauseTask, resumeTask, type TaskEntry } from './bus/pause.js';
+export { listTasks, pauseTask, resumeTask, type TaskEntry, type TaskInfo } from './bus/pause.js';
+export type { EventExplanation, SkipReason, TaskMatch } from './bus/explain.js';
+export type { MatchVerdict, NoMatchReason } from './bus/matcher.js';
 export { CronScheduler, makeTickEvent, type ScheduledJob } from './scheduler/cron.js';
 export {
   isRetryable,
@@ -397,6 +400,9 @@ export {
   type RunAttemptsBody,
   type RunLedgerBody,
   type RunResponse,
+  type RunWaitBody,
+  type EmitResponse,
+  type EventTasksBody,
   type TranscriptBody,
 } from './api/routes.js';
 export { createApiServer, type ApiServer, type ApiServerOptions } from './api/server.js';

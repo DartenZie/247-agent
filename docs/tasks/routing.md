@@ -151,5 +151,10 @@ type. The payload of `loop.detected` is in
 ## Where to look
 
 - `oa events tail --type 'email.*' --follow` watches events as they are published.
-- `oa events show <id>` prints one with its payload.
-- `oa runs show <id>` prints a run with the event that started it and its result.
+- `oa events show <id>` prints one with its payload, the run it started per task, and
+  why each other task started none: the type, the filter, the own-source rule, a pause
+  or a limit.
+- `oa tasks ls` prints every task with its trigger, the next cron fire, the last run and
+  how many runs it has.
+- `oa runs show <id>` prints a run with the event that started it and its result; for a
+  waiting run, also the event type, the filter and the deadline it waits for.

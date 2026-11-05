@@ -34,7 +34,26 @@ export interface CompiledTask {
   readonly secretNames: readonly string[];
   /** Pure except for a warn log when a filter throws at evaluation time. */
   matches(event: EventRecord, log?: Logger): boolean;
+  /** Pure: whether the trigger matches the event and, when not, why (`oa events show`). */
+  explain(event: EventRecord): MatchVerdict;
 }
+
+/**
+ * Why a trigger does not match an event: the event came from one of the task's own runs,
+ * its type is not one the trigger names, the filter is false, or the filter threw.
+ */
+export type NoMatchReason = 'own_source' | 'type' | 'filter' | 'filter_error';
+
+export type MatchVerdict =
+  | { matched: true }
+  | {
+      matched: false;
+      reason: NoMatchReason;
+      /** The source, what the trigger wants, the filter, or the filter's error. */
+      detail: string;
+    };
+
+const MATCHED: MatchVerdict = { matched: true };
 
 export interface CompiledConfig {
   readonly tasks: readonly CompiledTask[];
@@ -59,31 +78,59 @@ export function compileTask(task: TaskConfig): CompiledTask {
   const { trigger } = task;
   const own = taskSource(task.name);
 
+  const wantsManual = `wants manual.run for ${task.name}`;
+  let wants = trigger.kind === 'cron' ? 'wants its own cron.tick' : wantsManual;
   let typeMatchers: TypeMatcher[] = [];
-  let filter: Filter | undefined;
+  let filter: { compiled: Filter; source: string } | undefined;
   if (trigger.kind === 'event') {
     const patterns = trigger.type !== undefined ? [trigger.type] : (trigger.type_any ?? []);
     typeMatchers = patterns.map(compileTypePattern);
-    filter = trigger.filter === undefined ? undefined : compileFilter(trigger.filter);
+    wants = `wants ${patterns.join(' or ')}`;
+    filter =
+      trigger.filter === undefined
+        ? undefined
+        : { compiled: compileFilter(trigger.filter), source: trigger.filter };
   }
+  const noType: MatchVerdict = { matched: false, reason: 'type', detail: wants };
 
-  const matchesEventTrigger = (event: EventRecord, log?: Logger): boolean => {
+  const explainEventTrigger = (event: EventRecord): MatchVerdict => {
     if (!typeMatchers.some((m) => m(event.type))) {
-      return false;
+      return noType;
     }
     if (filter === undefined) {
-      return true;
+      return MATCHED;
     }
     try {
-      return filter.evaluate(filterView(event));
+      return filter.compiled.evaluate(filterView(event))
+        ? MATCHED
+        : { matched: false, reason: 'filter', detail: filter.source };
     } catch (err) {
-      log?.warn('trigger.filter_error', {
-        task: task.name,
-        event_id: event.id,
-        event_type: event.type,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
+      return {
+        matched: false,
+        reason: 'filter_error',
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
+
+  const explain = (event: EventRecord): MatchVerdict => {
+    // A task never triggers on events its own runs produced.
+    if (event.source === own) {
+      return { matched: false, reason: 'own_source', detail: own };
+    }
+    // `oa run <task>` works for every task, whatever its trigger kind.
+    if (event.type === MANUAL_RUN) {
+      return payloadTask(event) === task.name
+        ? MATCHED
+        : { matched: false, reason: 'type', detail: wantsManual };
+    }
+    switch (trigger.kind) {
+      case 'cron':
+        return event.type === CRON_TICK && payloadTask(event) === task.name ? MATCHED : noType;
+      case 'event':
+        return explainEventTrigger(event);
+      case 'manual':
+        return noType;
     }
   };
 
@@ -93,23 +140,18 @@ export function compileTask(task: TaskConfig): CompiledTask {
     kind: trigger.kind,
     overlapSkip: trigger.kind === 'cron' && trigger.overlap === 'skip',
     secretNames: collectTemplateRefs(task.action).secrets,
+    explain,
     matches: (event, log) => {
-      // A task never triggers on events its own runs produced.
-      if (event.source === own) {
-        return false;
+      const verdict = explain(event);
+      if (!verdict.matched && verdict.reason === 'filter_error') {
+        log?.warn('trigger.filter_error', {
+          task: task.name,
+          event_id: event.id,
+          event_type: event.type,
+          error: verdict.detail,
+        });
       }
-      // `oa run <task>` works for every task, whatever its trigger kind.
-      if (event.type === MANUAL_RUN) {
-        return payloadTask(event) === task.name;
-      }
-      switch (trigger.kind) {
-        case 'cron':
-          return event.type === CRON_TICK && payloadTask(event) === task.name;
-        case 'event':
-          return matchesEventTrigger(event, log);
-        case 'manual':
-          return false;
-      }
+      return verdict.matched;
     },
   };
 }

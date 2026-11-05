@@ -7,7 +7,6 @@ import { pipeline } from 'node:stream/promises';
 
 import type { ManualInput } from '../bus/manual.js';
 import type { TaskEntry } from '../bus/pause.js';
-import type { PublishResult } from '../bus/publish.js';
 import type { ConfigIssue } from '../config/load.js';
 import type { ConnectorStatus } from '../connectors/supervisor.js';
 import type { ReloadReport } from '../daemon.js';
@@ -20,10 +19,13 @@ import type { CostGroup } from '../store/ledger.js';
 import type {
   ConnectorEntry,
   CostBody,
+  EmitResponse,
+  EventTasksBody,
   HealthBody,
   RunAttemptsBody,
   RunLedgerBody,
   RunResponse,
+  RunWaitBody,
   TranscriptBody,
 } from './routes.js';
 
@@ -90,8 +92,8 @@ export class ApiClient {
     return this.parse(status === 503 ? 200 : status, text) as HealthBody;
   }
 
-  emit(event: NewEvent): Promise<PublishResult> {
-    return this.request<PublishResult>('POST', '/v1/events', event);
+  emit(event: NewEvent): Promise<EmitResponse> {
+    return this.request<EmitResponse>('POST', '/v1/events', event);
   }
 
   run(task: string, input?: ManualInput): Promise<RunResponse> {
@@ -176,6 +178,16 @@ export class ApiClient {
 
   getEvent(id: string): Promise<EventRecord> {
     return this.request<EventRecord>('GET', `/v1/events/${encodeURIComponent(id)}`);
+  }
+
+  /** The runs the event started and, per configured task, whether it matched and why not. */
+  getEventTasks(id: string): Promise<EventTasksBody> {
+    return this.request<EventTasksBody>('GET', `/v1/events/${encodeURIComponent(id)}/tasks`);
+  }
+
+  /** What a waiting run waits for; `wait` is `null` for a run that is not waiting. */
+  getRunWait(id: string): Promise<RunWaitBody> {
+    return this.request<RunWaitBody>('GET', `/v1/runs/${encodeURIComponent(id)}/wait`);
   }
 
   /** Events in `seq` order: the newest `limit`, or those after a `seq` (`after`). */

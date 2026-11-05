@@ -101,6 +101,52 @@ describe('compileTask', () => {
   });
 });
 
+describe('CompiledTask.explain (#92)', () => {
+  it('says why an event does not match: own source, type, filter false or filter error', () => {
+    expect(
+      classify?.explain(ev({ type: 'email.received', payload: { from: 'editor@example.com' } })),
+    ).toEqual({ matched: true });
+    expect(classify?.explain(ev({ type: 'email.recieved' }))).toEqual({
+      matched: false,
+      reason: 'type',
+      detail: 'wants email.received',
+    });
+    expect(notify?.explain(ev({ type: 'chat.in' }))).toEqual({
+      matched: false,
+      reason: 'type',
+      detail: 'wants task.*.failed or budget.exceeded',
+    });
+    expect(
+      classify?.explain(ev({ type: 'email.received', payload: { from: 'spam@example.com' } })),
+    ).toEqual({
+      matched: false,
+      reason: 'filter',
+      detail: "payload.from == 'editor@example.com'",
+    });
+    expect(
+      notify?.explain(ev({ type: 'task.notify.failed', source: taskSource('notify') })),
+    ).toEqual({ matched: false, reason: 'own_source', detail: 'task:notify' });
+    expect(cronTask?.explain(ev({ type: 'cron.tick', payload: { task: 'other' } }))).toEqual({
+      matched: false,
+      reason: 'type',
+      detail: 'wants its own cron.tick',
+    });
+    expect(manualTask?.explain(ev({ type: 'x.y' }))).toEqual({
+      matched: false,
+      reason: 'type',
+      detail: 'wants manual.run for m',
+    });
+    const t = config([
+      { name: 't', trigger: { kind: 'event', type: 'a.b', filter: 'sum(payload)' }, action: shell },
+    ]).tasks[0];
+    expect(t?.explain(ev({ type: 'a.b', payload: 'oops' }))).toMatchObject({
+      matched: false,
+      reason: 'filter_error',
+      detail: expect.stringMatching(/.+/) as string,
+    });
+  });
+});
+
 describe('labelledEventTypes', () => {
   it('keeps the core types and every type a task names exactly, never a pattern', () => {
     const types = labelledEventTypes(

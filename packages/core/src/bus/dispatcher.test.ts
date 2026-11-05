@@ -324,6 +324,114 @@ describe('Dispatcher', () => {
     }
   });
 
+  it('explains per task whether an event matched, started a run, or why not (#92)', () => {
+    const e = publish('x.happened', { ok: false });
+    // Not dispatched yet: a match is pending.
+    expect(dispatcher.explain(e)).toEqual({
+      event_id: e.id,
+      dispatched: false,
+      runs: [],
+      tasks: [
+        {
+          task: 'poll',
+          outcome: 'no_match',
+          reason: 'type',
+          detail: 'wants its own cron.tick',
+          run_id: null,
+        },
+        {
+          task: 'poll_allow',
+          outcome: 'no_match',
+          reason: 'type',
+          detail: 'wants its own cron.tick',
+          run_id: null,
+        },
+        { task: 'a', outcome: 'pending', reason: null, detail: null, run_id: null },
+        { task: 'b', outcome: 'no_match', reason: 'filter', detail: 'payload.ok', run_id: null },
+        {
+          task: 'm',
+          outcome: 'no_match',
+          reason: 'type',
+          detail: 'wants manual.run for m',
+          run_id: null,
+        },
+      ],
+      waiting_runs: [],
+    });
+    const [run] = dispatcher.dispatchOnce().queued;
+    const after = dispatcher.explain(e);
+    expect(after.dispatched).toBe(true);
+    expect(after.runs.map((r) => r.id)).toEqual([run?.id]);
+    expect(after.tasks.find((t) => t.task === 'a')).toEqual({
+      task: 'a',
+      outcome: 'started',
+      reason: null,
+      detail: null,
+      run_id: run?.id,
+    });
+  });
+
+  it('explains a match that started no run: paused task or depth limit (#92)', () => {
+    env.store.pauses.pause('a', env.clock.now().toISOString());
+    const e = publish('x.happened');
+    dispatcher.drain();
+    expect(dispatcher.explain(e).tasks.find((t) => t.task === 'a')).toMatchObject({
+      outcome: 'skipped',
+      reason: 'paused',
+    });
+    env.store.pauses.resume('a');
+    dispatcher.configure({ maxDepth: 0 });
+    const deep = publish('x.happened', null, { parent_id: e.id });
+    dispatcher.drain();
+    expect(dispatcher.explain(deep).tasks.find((t) => t.task === 'a')).toMatchObject({
+      outcome: 'skipped',
+      reason: 'depth',
+      detail: 'depth 1 is over limits.max_event_depth 0',
+    });
+  });
+
+  it('lists the waiting runs an event would resume before it is dispatched (#92)', () => {
+    const trigger = publish('x.happened');
+    dispatcher.drain();
+    env.store.runs.insertQueued({
+      id: 'run_w',
+      task: 'm',
+      event_id: trigger.id,
+      correlation_id: trigger.correlation_id,
+      created_at: env.clock.now().toISOString(),
+    });
+    env.store.runs.setStatus('run_w', 'waiting');
+    env.store.waits.insert({
+      run_id: 'run_w',
+      task: 'm',
+      type: 'chat.reply',
+      filter: "payload.to == 'me'",
+      expires_at: null,
+      on_timeout: 'fail',
+      resume: null,
+      created_at: env.clock.now().toISOString(),
+      consumed: [],
+    });
+    expect(dispatcher.explain(publish('chat.reply', { to: 'me' })).waiting_runs).toEqual(['run_w']);
+    expect(dispatcher.explain(publish('chat.reply', { to: 'you' })).waiting_runs).toEqual([]);
+  });
+
+  it('logs event.unconsumed at info for an event no task and no wait matched (#92)', () => {
+    const lost = publish('order.recieved');
+    publish('x.happened');
+    dispatcher.drain();
+    const unconsumed = env.lines.filter((l) => l.msg === 'event.unconsumed');
+    expect(unconsumed).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        event_id: lost.id,
+        event_type: 'order.recieved',
+        source: 'test',
+        correlation_id: lost.correlation_id,
+      }),
+    ]);
+  });
+
   it('reports a failing drain in health() and the counter until one succeeds', () => {
     vi.useFakeTimers();
     const metrics = new Metrics();
