@@ -1,7 +1,8 @@
 # Webhook connector
 
 Generic HTTP in: a small server that answers the configured routes, verifies each request
-(GitHub signature, GitLab token, HMAC, bearer token, or nothing) and emits it as one event.
+(GitHub, Slack or Stripe signature, GitLab token, HMAC with an optional timestamp
+window, bearer token, or nothing) and emits it as one event.
 Emit-only (`transport: none`), no ops. How to deploy it behind a reverse proxy, configure
 routes and use the events: [`docs/connectors/webhook.md`](../../docs/connectors/webhook.md).
 Example manifest: [`docs/examples/connectors.d/webhook.yaml`](../../docs/examples/connectors.d/webhook.yaml).
@@ -11,8 +12,11 @@ Example manifest: [`docs/examples/connectors.d/webhook.yaml`](../../docs/example
 ```
 connectors/webhook/src/
   config.ts   zod schema: listener (TCP or Unix socket), routes, verify kinds and their defaults, route name slugs
-  verify.ts   HMAC and token checks over the raw body, constant-time
-  server.ts   routing, body limit and parsing, the event payload, status codes (202/200/400/401/404/405/413/422/503/500)
+  verify.ts   token and HMAC checks, constant-time: checkHeaders settles what the headers can
+              (token, signature format, timestamp window) before the body is read;
+              verifyRequest runs the HMAC over the raw body (with the timestamp layout)
+  server.ts   routing, the early header check (401 with Connection: close, body unread),
+              max_connections, body limit and parsing, the event payload, status codes (202/200/400/401/404/405/413/422/503/500)
   main.ts     connectorEnv + CoreClient; listens, logs the routes; on SIGTERM and SIGINT drains requests in flight for 4 s, then exits
 ```
 

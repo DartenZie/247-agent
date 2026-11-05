@@ -1,5 +1,5 @@
 /**
- * The HTTP side: route a request, read its body up to `max_body`, verify it, and emit one
+ * The HTTP side: route a request, check its headers, read its body up to `max_body`, verify it, and emit one
  * event. The response tells the sender whether to retry: 202 (emitted), 200 (a duplicate
  * delivery), 4xx (never retry this request), 503 (the core is unreachable; retry later).
  */
@@ -20,7 +20,7 @@ import {
 } from '@247-agent/connector-sdk';
 
 import { secretHeader, type RouteConfig, type WebhookConfig } from './config.js';
-import { verifyRequest } from './verify.js';
+import { checkHeaders, verifyRequest } from './verify.js';
 
 /** What the server needs from the core: the SDK's `CoreClient` or a fake in tests. */
 export interface CoreLike {
@@ -132,13 +132,23 @@ async function handle(
     req.resume();
     throw new HttpError(405, 'method not allowed', { allow: route.methods.join(', ') });
   }
-  const raw = await readBody(req, opts.config.max_body);
-  const verdict = verifyRequest(route.verify, req.headers, raw);
-  if (!verdict.ok) {
+  const received = now();
+  const reject = (reason: string, headers: Record<string, string> = {}): HttpError => {
     opts.log(
-      `webhook: rejected ${method} ${route.path} from ${remoteOf(req, opts.config.trust_proxy) ?? 'unix socket'}: ${verdict.reason}`,
+      `webhook: rejected ${method} ${route.path} from ${remoteOf(req, opts.config.trust_proxy) ?? 'unix socket'}: ${reason}`,
     );
-    throw new HttpError(401, 'unauthorized');
+    return new HttpError(401, 'unauthorized', headers);
+  };
+  // What the headers settle is rejected before a byte of the body is read; the connection
+  // is closed with the answer instead of draining an unauthenticated body.
+  const early = checkHeaders(route.verify, req.headers, received);
+  if (!early.ok) {
+    throw reject(early.reason, { connection: 'close' });
+  }
+  const raw = await readBody(req, opts.config.max_body);
+  const verdict = verifyRequest(route.verify, req.headers, raw, received);
+  if (!verdict.ok) {
+    throw reject(verdict.reason);
   }
   const type = eventType(route, req.headers);
   const contentType = headerValue(req.headers['content-type']) ?? null;
@@ -153,7 +163,7 @@ async function handle(
     body_format: format,
     body,
     remote: remoteOf(req, opts.config.trust_proxy),
-    received_at: now().toISOString(),
+    received_at: received.toISOString(),
   };
   const delivery =
     route.dedup_header === undefined ? undefined : headerValue(req.headers[route.dedup_header]);
@@ -346,6 +356,7 @@ export async function startServer(
   const drain: DrainState = { draining: false };
   const server = createServer(createHandler(opts, drain));
   drainStates.set(server, drain);
+  server.maxConnections = opts.config.max_connections;
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
   const listen = opts.config.listen;

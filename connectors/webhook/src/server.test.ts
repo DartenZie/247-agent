@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { request, type Server } from 'node:http';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -188,6 +189,70 @@ describe('webhook server', () => {
     expect(core.events).toHaveLength(0);
   });
 
+  it('rejects a request that fails on its headers before reading the body', async () => {
+    const core = new FakeCore();
+    const base = await start(core);
+    // The body never ends: a server that waits for it never answers.
+    const res = await openPost(base, '/hooks/deploy', { authorization: 'Bearer wrong' });
+    expect(res.status).toBe(401);
+    expect(res.connection).toBe('close');
+    expect(core.events).toHaveLength(0);
+    expect(logs.join('\n')).toMatch(/rejected POST \/hooks\/deploy .*token mismatch/);
+    const noSig = await openPost(base, '/hooks/github', { 'x-github-event': 'push' });
+    expect(noSig.status).toBe(401);
+  });
+
+  it('verifies a Slack signature over the timestamp and the body', async () => {
+    const core = new FakeCore();
+    const cfg = config({
+      routes: [{ path: '/hooks/slack', event: 'slack', verify: { kind: 'slack', secret: 'sl' } }],
+    });
+    const base = await start(core, cfg);
+    const body = 'token=x&command=%2Fdeploy';
+    const post = (ts: number) =>
+      fetch(`${base}/hooks/slack`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'x-slack-request-timestamp': String(ts),
+          'x-slack-signature': `v0=${createHmac('sha256', 'sl')
+            .update(`v0:${String(ts)}:${body}`)
+            .digest('hex')}`,
+        },
+        body,
+      });
+    const now = Date.parse('2026-09-30T12:00:00Z') / 1000;
+    expect((await post(now - 10)).status).toBe(202);
+    expect((await post(now - 600)).status).toBe(401);
+    expect(core.events).toHaveLength(1);
+    expect(core.events[0]?.payload).toMatchObject({ body: { command: '/deploy' } });
+  });
+
+  it('refuses connections over max_connections', async () => {
+    const core = new FakeCore();
+    const base = await start(core, config({ max_connections: 1 }));
+    const url = new URL(base);
+    const first = connect(Number(url.port), url.hostname);
+    await new Promise((r) => first.once('connect', r));
+    try {
+      const second = connect(Number(url.port), url.hostname);
+      const got = await new Promise<string>((resolve) => {
+        let data = '';
+        second.on('data', (d: Buffer) => (data += d.toString()));
+        second.on('error', () => {
+          resolve(data);
+        });
+        second.on('close', () => {
+          resolve(data);
+        });
+        second.write('GET /healthz HTTP/1.1\r\nhost: x\r\n\r\n');
+      });
+      expect(got).toBe('');
+    } finally {
+      first.destroy();
+    }
+  });
+
   it('answers 400 for invalid JSON', async () => {
     const core = new FakeCore();
     const base = await start(core);
@@ -332,6 +397,27 @@ describe('parseBody', () => {
     expect(parseBody(Buffer.alloc(0), 'application/json')).toEqual({ format: 'empty', body: null });
   });
 });
+
+/** A chunked POST that sends one chunk and never ends its body. */
+function openPost(
+  base: string,
+  path: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; connection: string | undefined }> {
+  const url = new URL(path, base);
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: url.hostname, port: url.port, method: 'POST', path: url.pathname, headers },
+      (res) => {
+        res.resume();
+        resolve({ status: res.statusCode ?? 0, connection: res.headers.connection });
+        req.destroy();
+      },
+    );
+    req.on('error', reject);
+    req.write('{"partial":');
+  });
+}
 
 /** A chunked POST (no content-length), to exercise the streaming limit. */
 function rawPost(base: string, path: string, body: string): Promise<number> {
