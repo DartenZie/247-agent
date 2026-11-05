@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import { NonRetryableError } from '../actions/types.js';
+import { errorMessage } from '../errors.js';
 import type { JsonValue } from '../store/types.js';
 import { supportsEffort } from './models.js';
 import type {
@@ -129,7 +130,7 @@ function responseOf(msg: Anthropic.Message, structured: boolean): LlmResponse {
   try {
     return { output: JSON.parse(text) as JsonValue, usage, stopReason };
   } catch (err) {
-    const why = err instanceof Error ? err.message : String(err);
+    const why = errorMessage(err);
     return {
       output: null,
       usage,

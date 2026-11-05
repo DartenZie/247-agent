@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
 import { netProxyDir } from '../actions/sandbox-net.js';
+import { errorMessage } from '../errors.js';
 import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent, protectedPaths } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
@@ -40,14 +41,14 @@ export function checkConfigFile(path: string): FileCheck[] {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return [fail(path, 'unknown', [{ path: '', message: `cannot read file: ${message}` }])];
   }
   let doc: unknown;
   try {
     doc = parseYaml(text);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return [fail(path, 'unknown', [{ path: '', message: `YAML syntax error: ${message}` }])];
   }
   if (

@@ -6,6 +6,7 @@ import type { EventBus } from '../bus/bus.js';
 import { BUDGET_EXCEEDED, LLM_BATCH_ENDED } from '../bus/matcher.js';
 import type { Clock } from '../clock.js';
 import { isInside } from '../config/crosscheck.js';
+import { errorMessage } from '../errors.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
@@ -155,9 +156,7 @@ export class LlmService implements LlmPort, BatchSource {
     try {
       return readFileSync(path, 'utf8');
     } catch (err) {
-      throw new NonRetryableError(
-        `cannot read system_file ${path}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new NonRetryableError(`cannot read system_file ${path}: ${errorMessage(err)}`);
     }
   }
 
@@ -371,7 +370,7 @@ export class LlmService implements LlmPort, BatchSource {
           {
             batch_id: row.batch_id,
             provider: row.provider,
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           },
         );
         outcome = undefined;

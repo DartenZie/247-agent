@@ -30,6 +30,7 @@ import {
 } from '../config/connector.js';
 import { systemTimer, type SetTimer } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import { mkdirPrivate } from '../private-fs.js';
@@ -179,10 +180,6 @@ export function agentHome(workDir: string, connector: string): string {
 function networkOf(m: ConnectorConfig): ConnectorNetwork {
   const network = sandboxOf(m)?.network;
   return network === undefined ? 'host' : network.allow.length === 0 ? 'none' : 'allowlist';
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** A `transport: none` child: no MCP, just a process to watch and stop. */

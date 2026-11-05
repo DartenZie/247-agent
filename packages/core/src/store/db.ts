@@ -12,6 +12,7 @@ import { basename, dirname, join } from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import { errorMessage } from '../errors.js';
 import { closeToOthers } from '../private-fs.js';
 import { MIGRATIONS, migrate } from './migrations.js';
 
@@ -73,12 +74,9 @@ function copyBeforeMigration(db: Database.Database, path: string): void {
     if (created) {
       rmSync(copy, { force: true });
     }
-    throw new Error(
-      `cannot copy ${path} to ${copy} before migrating it: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-      { cause: err },
-    );
+    throw new Error(`cannot copy ${path} to ${copy} before migrating it: ${errorMessage(err)}`, {
+      cause: err,
+    });
   }
   try {
     syncFile(dirname(path), 'r');

@@ -23,6 +23,7 @@ import { socketPathProblem } from '../api/socket-path.js';
 import { loadAgentFile } from '../config/agent.js';
 import { unitSocket, type ConnectorConfig } from '../config/connector.js';
 import { loadConnectors, type ConfigIssue } from '../config/load.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { releasePipes } from '../process-group.js';
 import { createSecretsBackend } from '../secrets/secrets.js';
@@ -117,7 +118,7 @@ export function prepareLaunch(
     });
   } catch (err) {
     throw new ConnectorHostError(
-      `cannot prepare the environment of "${opts.name}": ${err instanceof Error ? err.message : String(err)}`,
+      `cannot prepare the environment of "${opts.name}": ${errorMessage(err)}`,
     );
   }
   return { manifest, command, args, cwd: manifest.cwd, env };
@@ -253,7 +254,7 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
         launch = prepareLaunch(opts);
       } catch (err) {
         opts.log.error('connector_host.prepare_failed', {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
         socket.destroy();
         return;
@@ -307,7 +308,7 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
   } catch (err) {
     opts.log.warn('connector_host.socket_mode_failed', {
       socket: path,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
   }
   opts.log.info('connector_host.listening', { socket: path });

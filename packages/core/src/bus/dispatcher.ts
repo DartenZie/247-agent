@@ -1,4 +1,5 @@
 import type { Clock } from '../clock.js';
+import { errorMessage } from '../errors.js';
 import { compileTypePattern, isTypePattern, type TypeMatcher } from '../expr/glob.js';
 import { compileFilter, type Filter } from '../expr/jmespath.js';
 import { newId } from '../ids.js';
@@ -192,7 +193,7 @@ export class Dispatcher {
       try {
         w = this.compileWait(wait, types, filters);
       } catch (err) {
-        invalid.push({ wait, error: err instanceof Error ? err.message : String(err) });
+        invalid.push({ wait, error: errorMessage(err) });
         continue;
       }
       all.push(w);
@@ -248,7 +249,7 @@ export class Dispatcher {
         run_id: w.wait.run_id,
         task: w.wait.task,
         event_id: event.id,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return false;
     }
@@ -361,7 +362,7 @@ export class Dispatcher {
       this.log.error('wait.invalid', {
         run_id: wait.run_id,
         task: wait.task,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return undefined;
     }
@@ -663,7 +664,7 @@ export class Dispatcher {
       }
       this.lastHealth = { ok: true, error: null, failing_since: null };
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = errorMessage(err);
       this.metrics.dispatchFailures.inc();
       this.log.error('dispatch.failed', { error });
       this.lastHealth = {

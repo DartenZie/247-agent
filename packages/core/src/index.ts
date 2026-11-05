@@ -1,5 +1,6 @@
 export type { Clock } from './clock.js';
 export { systemClock } from './clock.js';
+export { errorMessage } from './errors.js';
 export { newId, type IdPrefix } from './ids.js';
 export { createLogger, nullLogger, type Logger, type LogFields, type LogLevel } from './log.js';
 

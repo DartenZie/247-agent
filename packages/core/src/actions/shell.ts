@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
+import { errorMessage } from '../errors.js';
 import { killGroup } from '../process-group.js';
 import type { JsonValue } from '../store/types.js';
 import { buildSandboxArgv, Sandbox } from './sandbox.js';
@@ -191,7 +192,7 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
     try {
       return JSON.parse(proc.stdout) as JsonValue;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       throw new ShellError(`stdout is not JSON: ${msg}`, proc.exitCode, proc.stderr);
     }
   }

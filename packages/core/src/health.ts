@@ -1,4 +1,5 @@
 import type { Core } from './core.js';
+import { errorMessage } from './errors.js';
 
 /**
  * What `GET /v1/health` and `oa health` report (docs/internal/architecture.md). `failing`
@@ -46,7 +47,7 @@ function checkDatabase(core: Core, now: Date): DatabaseCheck {
     core.store.probeWrite(now.getTime());
     return { status: 'ok', error: null };
   } catch (err) {
-    return { status: 'failing', error: err instanceof Error ? err.message : String(err) };
+    return { status: 'failing', error: errorMessage(err) };
   }
 }
 

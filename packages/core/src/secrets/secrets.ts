@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { errorMessage } from '../errors.js';
 
 const DEFAULT_PREFIX = 'OA_SECRET_';
 /**
@@ -109,7 +110,7 @@ function fileBackend(path: string): SecretsBackend {
       } catch (err) {
         throw new SecretError(
           names[0] ?? '',
-          `cannot read secrets file ${path}: ${err instanceof Error ? err.message : String(err)}`,
+          `cannot read secrets file ${path}: ${errorMessage(err)}`,
         );
       }
       if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
@@ -147,10 +148,7 @@ function systemdBackend(dir: string | undefined, env: NodeJS.ProcessEnv): Secret
         try {
           out[name] = readFileSync(join(base, name), 'utf8').replace(/\r?\n$/, '');
         } catch (err) {
-          throw new SecretError(
-            name,
-            `secret "${name}" is not available: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          throw new SecretError(name, `secret "${name}" is not available: ${errorMessage(err)}`);
         }
       }
       return out;

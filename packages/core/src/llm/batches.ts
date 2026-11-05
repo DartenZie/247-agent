@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 
 /** The longest delay `setTimeout`/`setInterval` accept (2^31 - 1 ms). */
@@ -151,7 +152,7 @@ export class BatchPoller {
       return report;
     } catch (err) {
       this.log.error('llm.batches_poll_failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return undefined;
     }

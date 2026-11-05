@@ -2,11 +2,17 @@
  * A thin Jira REST client over `fetch`: JSON in and out, credentials only in the
  * `Authorization` header, errors that carry Jira's messages but never a credential.
  */
-import { isTransientHttpError } from '@247-agent/connector-sdk';
+import {
+  createJsonClient,
+  HttpTransportError,
+  isTransientHttpError,
+  type FetchLike,
+  type JsonResponse,
+} from '@247-agent/connector-sdk';
 
 import { authorization, credentials, type JiraConfig } from './config.js';
 
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+export type { FetchLike };
 
 export interface JiraApi {
   /** `path` is relative to `/rest/api/<2|3>`. */
@@ -37,11 +43,18 @@ export class JiraError extends Error {
 }
 
 export function createJiraApi(config: JiraConfig, fetchFn?: FetchLike): JiraApi {
-  const doFetch: FetchLike = fetchFn ?? ((input, init) => fetch(input, init));
   const version = config.deployment === 'cloud' ? '3' : '2';
-  const secrets = credentials(config);
-  const hide = (text: string): string =>
-    secrets.reduce((t, s) => t.split(s).join('<credential>'), text);
+  const http = createJsonClient({
+    secrets: credentials(config),
+    placeholder: '<credential>',
+    headers: {
+      authorization: authorization(config),
+      'user-agent': '247-agent',
+      // Jira refuses cookie-less form posts without it; harmless for JSON.
+      'x-atlassian-token': 'no-check',
+    },
+    ...(fetchFn === undefined ? {} : { fetch: fetchFn }),
+  });
 
   return {
     async request<T>(
@@ -49,49 +62,34 @@ export function createJiraApi(config: JiraConfig, fetchFn?: FetchLike): JiraApi 
       path: string,
       opts: { query?: Record<string, string | number | undefined>; body?: unknown } = {},
     ): Promise<T> {
-      const url = new URL(`${config.base_url}/rest/api/${version}${path}`);
-      for (const [k, v] of Object.entries(opts.query ?? {})) {
-        if (v !== undefined) {
-          url.searchParams.set(k, String(v));
-        }
-      }
-      let res: Response;
+      let res: JsonResponse;
       try {
-        res = await doFetch(url.toString(), {
+        res = await http.request({
           method,
-          headers: {
-            accept: 'application/json',
-            authorization: authorization(config),
-            'user-agent': '247-agent',
-            // Jira refuses cookie-less form posts without it; harmless for JSON.
-            'x-atlassian-token': 'no-check',
-            ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }),
-          },
-          ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
-          signal: AbortSignal.timeout(config.timeout),
+          url: `${config.base_url}/rest/api/${version}${path}`,
+          query: opts.query,
+          body: opts.body,
+          timeoutMs: config.timeout,
         });
       } catch (err) {
-        const cause = err instanceof Error ? (err.cause ?? err) : err;
-        throw new JiraError(
-          method,
-          path,
-          0,
-          hide(cause instanceof Error ? cause.message : String(cause)),
-          err,
-        );
+        throw err instanceof HttpTransportError
+          ? new JiraError(method, path, 0, err.message, err)
+          : err;
       }
-      const text = await res.text();
       if (!res.ok) {
-        throw new JiraError(method, path, res.status, hide(errorMessage(res.status, text)));
+        throw new JiraError(method, path, res.status, http.redact(errorMessage(res)));
       }
-      return (text === '' ? null : JSON.parse(text)) as T;
+      if (!res.json) {
+        throw new JiraError(method, path, res.status, 'non-JSON response');
+      }
+      return res.body as T;
     },
   };
 }
 
-function errorMessage(status: number, text: string): string {
-  try {
-    const body = JSON.parse(text) as {
+function errorMessage(res: JsonResponse): string {
+  if (typeof res.body === 'object' && res.body !== null) {
+    const body = res.body as {
       errorMessages?: string[];
       errors?: Record<string, string>;
       message?: string;
@@ -104,8 +102,6 @@ function errorMessage(status: number, text: string): string {
     if (parts.length > 0) {
       return parts.join('; ');
     }
-  } catch {
-    // not JSON
   }
-  return `HTTP ${String(status)}`;
+  return `HTTP ${String(res.status)}`;
 }

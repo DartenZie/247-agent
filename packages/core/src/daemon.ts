@@ -18,6 +18,7 @@ import { sandboxHost, type SandboxConfig } from './actions/sandbox.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
 import { createCore, logConfigIssues, type Core, type CoreLlmOptions } from './core.js';
+import { errorMessage } from './errors.js';
 import { PricingError, resolvePricing, type PricingTable } from './llm/pricing.js';
 import type { ProviderFactories } from './llm/types.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
@@ -288,7 +289,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       await metricsServer.configure(listen).catch((err: unknown) => {
         log.error('metrics.listen_failed', {
           listen: listen === undefined ? '' : formatListen(listen),
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       });
       log.info('daemon.reloaded', { tasks: tasks(), config_file: config.file });

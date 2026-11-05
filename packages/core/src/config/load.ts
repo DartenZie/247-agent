@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 
+import { errorMessage } from '../errors.js';
 import { loadManifestFile, type ConnectorConfig } from './connector.js';
 import { locateIssues } from './locate.js';
 import { TasksFile, type TaskConfig, type TasksFileConfig } from './schema.js';
@@ -51,7 +52,7 @@ export function parseTasks(text: string, file: string): LoadResult {
   try {
     doc = parseYaml(text);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return { ok: false, file, issues: [{ path: '', message: `YAML syntax error: ${message}` }] };
   }
   const result = TasksFile.safeParse(doc);
@@ -67,7 +68,7 @@ export function loadTasksFile(path: string): LoadResult {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       ok: false,
       file: path,
@@ -107,7 +108,7 @@ function listConfigPaths(paths: readonly string[]): ConfigPath[] {
     try {
       names = readdirSync(p).sort();
     } catch (err) {
-      out.push({ file: p, unreadable: err instanceof Error ? err.message : String(err) });
+      out.push({ file: p, unreadable: errorMessage(err) });
       continue;
     }
     for (const name of names) {

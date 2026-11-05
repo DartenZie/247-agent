@@ -29,6 +29,7 @@ import type { Duplex } from 'node:stream';
 
 import { matchNetRule, normaliseHost, parseNetRule } from '../actions/sandbox-net.js';
 import { MAX_SOCKET_PATH } from '../api/socket-path.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 
 /**
@@ -230,10 +231,6 @@ function endToEnd(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const named = (headers.connection ?? '').split(',').map((h) => h.trim().toLowerCase());
   const drop = new Set([...HOP_BY_HOP, ...named]);
   return Object.fromEntries(Object.entries(headers).filter(([name]) => !drop.has(name)));
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** A complete response on a `CONNECT` socket, which has no `ServerResponse`. */

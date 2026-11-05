@@ -8,6 +8,7 @@ import type { EventBus } from './bus/bus.js';
 import { RETENTION_WORKSPACE_KEPT } from './bus/matcher.js';
 import type { Clock } from './clock.js';
 import type { RetentionPolicy } from './config/retention.js';
+import { errorMessage } from './errors.js';
 import type { Logger } from './log.js';
 import { Metrics } from './metrics.js';
 import { purgeStore, type PurgeCounts } from './store/retention.js';
@@ -146,7 +147,7 @@ export class RetentionJob {
     } catch (err) {
       this.metrics.retentionRuns.inc({ result: 'failed' });
       this.log.error('retention.failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
         duration_ms: Date.now() - startedAt,
       });
       return undefined;
@@ -193,7 +194,7 @@ export class RetentionJob {
         } catch (err) {
           this.log.error('retention.publish_failed', {
             run_id: entry.runId,
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           });
         }
         continue;

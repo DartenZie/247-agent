@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 import { LOG_LEVELS } from './config/agent.js';
 import { parseDuration } from './config/duration.js';
 import { startDaemon, type Daemon } from './daemon.js';
+import { errorMessage } from './errors.js';
 import { findHome, homeEnv } from './home.js';
 import { createLogger, type Logger, type LogLevel } from './log.js';
 import { listenForReload } from './reload-signal.js';
@@ -66,7 +67,7 @@ async function main(argv: string[]): Promise<number> {
       },
     }).values;
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n${USAGE}`);
+    process.stderr.write(`${errorMessage(err)}\n${USAGE}`);
     return 2;
   }
   if (values.help) {
@@ -112,7 +113,7 @@ async function main(argv: string[]): Promise<number> {
     });
   } catch (err) {
     hup.cancel();
-    process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`247-agent-core: ${errorMessage(err)}\n`);
     return 1;
   }
   // The daemon's own logger, so a reload that changes `log.level` reaches these lines.
@@ -143,7 +144,7 @@ async function main(argv: string[]): Promise<number> {
         },
         (err: unknown) => {
           log.error('daemon.stop_failed', {
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           });
           resolve(1);
         },
@@ -191,7 +192,7 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (err: unknown) => {
-    process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`247-agent-core: ${errorMessage(err)}\n`);
     process.exitCode = 1;
   },
 );

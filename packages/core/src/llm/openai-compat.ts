@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 
 import { NonRetryableError } from '../actions/types.js';
+import { errorMessage } from '../errors.js';
 import type { JsonValue } from '../store/types.js';
 import type { LlmUsage, ResolvedProvider } from './types.js';
 
@@ -87,7 +88,7 @@ export function parseStructured(
   try {
     return { output: JSON.parse(text) as JsonValue };
   } catch (err) {
-    const why = err instanceof Error ? err.message : String(err);
+    const why = errorMessage(err);
     return {
       output: null,
       error: `${prefix}: failed to parse the structured output as JSON: ${why}`,

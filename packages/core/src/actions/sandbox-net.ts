@@ -2,6 +2,7 @@ import { isIP, isIPv4, isIPv6 } from 'node:net';
 import { join } from 'node:path';
 
 import { z } from 'zod';
+import { errorMessage } from '../errors.js';
 
 /**
  * The network of a sandboxed agent program (`sandbox.network` on an `acp` manifest;
@@ -142,7 +143,7 @@ export const SandboxNetwork = z.strictObject({
         ctx.addIssue({
           code: 'custom',
           path: [i],
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     });

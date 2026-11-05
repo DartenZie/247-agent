@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { ApiConnectionError, ApiError } from '@247-agent/core';
+import { ApiConnectionError, ApiError, errorMessage } from '@247-agent/core';
 
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 
@@ -43,7 +43,7 @@ export async function backup(args: string[], io: Io): Promise<number> {
     if (code === 'EEXIST') {
       io.err(`${file} already exists; use --force to replace it`);
     } else {
-      io.err(`cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`);
+      io.err(`cannot write ${file}: ${errorMessage(err)}`);
     }
     return EXIT.failed;
   }

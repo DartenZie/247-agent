@@ -5,6 +5,7 @@
  * protocol category: `model` and `thought_level`.
  */
 import type { AgentConfigOption, AgentSession } from '../connectors/acp-types.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { NonRetryableError } from './types.js';
 
@@ -61,7 +62,7 @@ export async function applySessionSettings(
       options = await session.setConfigOption(option.id, value);
     } catch (err) {
       throw new NonRetryableError(
-        `agent "${connector}" refused ${field} "${value}" (${err instanceof Error ? err.message : String(err)}); it offers ${option.values.join(', ')}`,
+        `agent "${connector}" refused ${field} "${value}" (${errorMessage(err)}); it offers ${option.values.join(', ')}`,
         { cause: err },
       );
     }

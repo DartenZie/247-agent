@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 
+import { errorMessage } from './errors.js';
 import type { Logger } from './log.js';
 
 /**
@@ -88,7 +89,7 @@ export function systemdNotifier(
           failing.add(message);
           opts.log.warn('systemd.notify_failed', {
             message,
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           });
         }
       },

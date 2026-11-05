@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ChatBot, STATE_OFFSET, STATE_PENDING, whoAmI } from './bot.js';
-import { TelegramError } from './telegram.js';
+import { createTelegramApi, TelegramError } from './telegram.js';
 import {
   buttonData,
   callbackUpdate,
@@ -84,6 +84,21 @@ describe('send', () => {
     expect((err as Error).message).toBe('sendMessage: Bad Request: chat not found (400)');
     expect((err as Error).message).not.toContain(TOKEN);
     expect((err as TelegramError).transient).toBe(false);
+  });
+
+  it('keeps the token out of a transport failure, though it is in the URL', async () => {
+    const api = createTelegramApi({
+      token: TOKEN,
+      apiBase: 'https://api.telegram.org',
+      timeoutMs: 1000,
+      fetch: (url) =>
+        Promise.reject(new TypeError('fetch failed', { cause: new Error(`connect to ${url}`) })),
+    });
+    const err = await api.call('getMe').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TelegramError);
+    expect((err as Error).message).toBe(
+      'getMe: connect to https://api.telegram.org/bot<token>/getMe',
+    );
   });
 
   it('marks a rate limit transient, a send that may have gone out not (#32)', async () => {

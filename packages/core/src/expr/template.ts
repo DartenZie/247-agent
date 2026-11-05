@@ -1,5 +1,6 @@
 import { search } from 'jmespath';
 
+import { errorMessage } from '../errors.js';
 import { parseJmespath } from './jmespath.js';
 
 /**
@@ -58,7 +59,7 @@ export class TemplateRenderError extends Error {
     readonly expr: string,
     cause: unknown,
   ) {
-    super(`cannot render \${${expr}}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(`cannot render \${${expr}}: ${errorMessage(cause)}`);
     this.name = 'TemplateRenderError';
   }
 }
@@ -370,7 +371,7 @@ export function validateTemplate(text: string): string | null {
     cached(text);
     return null;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessage(err);
   }
 }
 
@@ -456,7 +457,7 @@ export function collectTemplateRefs(value: unknown, refs?: TemplateRefs): Templa
     } catch (err) {
       out.errors.push({
         template: text,
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
       return;
     }
