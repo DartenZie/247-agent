@@ -47,6 +47,7 @@ becomes an `isError` result.
 | `serveStdio(server)` | connect on stdin/stdout |
 | `ConnectorRuntime` | `{env, core, log}`; `log(line)` writes to stderr |
 | `CoreApiError` | thrown by `CoreClient` on non-2xx, with `.status` |
+| `listTools(tools)` | from `@247-agent/connector-sdk/testing`, for tests only: `tools/list` as an MCP client sees it over an in-memory transport; no handler runs |
 
 ## Push-style emitting
 
