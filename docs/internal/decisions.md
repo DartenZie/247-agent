@@ -33,7 +33,12 @@ connectors. Connectors and agents stay language-agnostic through the protocol
 Events, runs, state, the ledger, transcripts and batch bookkeeping are tables in one
 WAL-mode database. `better-sqlite3` is synchronous: every store operation is a short
 transaction on the main thread, which removes a class of async bugs and is fine at the
-scale of one server. Actions are I/O-bound (subprocesses, HTTP), so worker threads add
+scale of one server. `better-sqlite3` ships no type definitions, and
+`@types/better-sqlite3` is versioned on its own line: 9.6.0 is the newest release and
+there is no 13.x, so the two major numbers differ. The 9.6.0 types cover every
+`Database` and `Statement` method that `better-sqlite3@13` has except
+`Database#explain()`, which the store does not use. The store tests run against the
+real library, so they catch a call that the types accept and the runtime rejects. Actions are I/O-bound (subprocesses, HTTP), so worker threads add
 nothing. If a queue is ever needed, the dispatch loop in `packages/core/src/bus/` is the
 only seam to replace.
 

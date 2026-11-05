@@ -73,6 +73,8 @@ async function complete(client: OpenAI, req: LlmRequest): Promise<LlmResponse> {
       ...(req.system === undefined ? [] : [{ role: 'system' as const, content: req.system }]),
       { role: 'user' as const, content: req.input },
     ],
+    // OpenAI deprecated `max_tokens` for its own API; OpenRouter documents it as the cap.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     max_tokens: req.maxTokens,
     ...(req.outputSchema === undefined
       ? {}
