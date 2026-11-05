@@ -44,7 +44,7 @@ share/examples/ docs/examples
 share/skills/   skills/
 share/systemd/  247-agent.service, 247-agent-connector@.service
 share/etc/      the starter config (packaging/etc)
-share/install.sh, share/uninstall.sh
+share/install.sh, share/uninstall.sh, share/check-service.sh
 LICENSE VERSION (version=, target=, node=)
 ```
 
@@ -77,7 +77,16 @@ installs the identical tree under `/opt/247-agent`, links `/usr/bin/oa`, ships t
 units under `/usr/lib/systemd/system` and the starter `/etc/247-agent` as conffiles.
 The maintainer scripts in `packaging/scripts/` create the user on install, enable and
 start the service on a fresh install, restart it on upgrade, stop it on removal and
-clean up on purge. The connector template unit is installed, never enabled.
+clean up on purge. The connector template unit is installed, never enabled. On an
+upgrade, postinstall first runs the new `oa validate` on the kept `agent.yaml`. If it
+fails, the script does not restart the daemon and exits 1. apt then reports the upgrade
+as failed, and `dpkg --configure -a` retries it once the config is fixed. rpm only
+warns about a failed `%post`, so an rpm user restarts by hand. Either way, the new tree
+is already unpacked, so a connector respawn or a crash restart picks it up. After each
+start or restart, the script runs `share/check-service.sh` (below). It exits 1 with the
+rollback command when the daemon is not up. On an upgrade it restarts a unit that is
+active or enabled, so a retry after a crash-looping upgrade checks again instead of
+passing. `install.sh` does the same.
 
 nfpm copies the modes of the stage. The script opens the stage again in case an older
 build left it closed, and `nfpm.yaml` gives the units 644 and the starter config 640.
@@ -98,12 +107,31 @@ umask nor sudo's (`Defaults umask=0077`) nor a tarball built under 077 can close
 tree to the service user. `/etc/247-agent` gets its 750 and 640 from explicit modes. On an
 upgrade the new version's `oa validate` must accept the existing config before the
 symlink moves; the unit file is replaced, the config never touched, and the service
-restarted unless `--no-restart`. Options: `--version`, `--from <tarball>`, `--prefix`,
+restarted unless `--no-restart`. After a start or a restart it runs the new tree's
+`share/check-service.sh` and, if the daemon is not up, exits 1 with the rollback
+command. It never rolls back by itself, because the new version may already have
+migrated `state.db`. Options: `--version`, `--from <tarball>`, `--prefix`,
 `--bin-dir`, `--no-service`, `--no-restart`. `uninstall.sh` removes what the installer
 put there and keeps config, state, drop-ins and the user unless `--purge`.
 
 The package and the installer both own `/opt/247-agent`; the user docs say not to mix
 them on one machine.
+
+## The service check
+
+`scripts/check-service.sh`, shipped as `share/check-service.sh` in the tarball and the
+packages, decides whether a start or a restart worked. `Type=notify` makes the restart
+return only after `READY=1`, which catches a build that cannot load. It does not catch a
+build that dies a moment later. So the script waits `--settle` seconds (default 5), then
+requires three things: the unit is active, its `NRestarts` did not change, and
+`oa health` answers with neither the dispatcher nor the database `failing`. A
+`degraded` status, or a `failing` one that comes only from the connectors, passes with
+a warning. A connector whose server is unreachable is not a failed upgrade. It asks
+`oa health` up to `--tries` times, one second apart, on the `socket:` that `--config`
+(default `/etc/247-agent/agent.yaml`) names, resolved against the file's directory as
+the daemon does. Exit 0 when the daemon is up, 1 when it is not, with the reason and
+the `journalctl` command on stderr. `check-service-script.test.ts` drives it with a fake
+`systemctl` and a fake `oa`.
 
 ## The version
 
@@ -128,7 +156,11 @@ tarball and the packages for the target, and attaches the tarballs, packages, th
 `scripts/linux-test.sh` (`npm run test:linux`) is the local counterpart for a Mac:
 lint on the host, then `npm ci`, build, test with `OA_REQUIRE_BWRAP=1` and validate in a
 Debian 13 container with bubblewrap; `--systemd=always` also installs the `.deb` and
-runs the starter task (`testing.md`).
+runs the starter task (`testing.md`). It then installs the same `.deb` again, which
+takes the upgrade path: once with a good config, once with a config the build rejects,
+and once with a drop-in `RuntimeMaxSec=2` that stops the daemon after it is ready. The
+last two must fail the upgrade. Then it purges the package and checks `install.sh` with
+the tarball the same way.
 
 ## Cutting a release
 

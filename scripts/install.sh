@@ -223,6 +223,28 @@ root_mkdir "$bin_dir"
 root ln -sfn "$prefix/bin/oa" "$bin_dir/oa"
 
 # --- service -------------------------------------------------------------------------
+# The daemon did not come up: say so, name the way back, and fail. The new tree stays in
+# place so its logs can be read; nothing is rolled back automatically, because the new
+# version may already have migrated state.db.
+not_up() {
+  printf 'install.sh: %s\n' "$1" >&2
+  printf '  see: systemctl status 247-agent; journalctl -u 247-agent -n 50 --no-pager\n' >&2
+  if [ -n "$previous" ] && [ -n "$current" ] && [ "$current" != "$version" ]; then
+    printf '  rollback: ln -sfn %s %s && systemctl restart 247-agent\n' "$previous" "$prefix" >&2
+    printf '  (if %s migrated state.db, restore the state.db.schema-<n>.bak copy next to it first)\n' "$version" >&2
+  fi
+  exit 1
+}
+# After a start: the unit stays active, systemd does not restart it, `oa health` answers.
+# A tarball older than share/check-service.sh gets only the is-active check.
+check_up() {
+  if [ -f "$tree/share/check-service.sh" ]; then
+    root sh "$tree/share/check-service.sh" --oa "$tree/bin/oa" || not_up "$1"
+  else
+    sleep 5
+    root systemctl is-active --quiet 247-agent || not_up "$1"
+  fi
+}
 if [ $service = 1 ]; then
   user=247-agent
   if ! id "$user" > /dev/null 2>&1; then
@@ -255,15 +277,20 @@ if [ $service = 1 ]; then
     root install -m 644 "$tmp/247-agent-connector@.service" "/etc/systemd/system/247-agent-connector@.service"
     root systemctl daemon-reload
     if [ $fresh = 1 ]; then
-      root systemctl enable --now 247-agent
+      root systemctl enable --now 247-agent || not_up "the start of 247-agent $version failed"
+      check_up "247-agent $version did not stay up after its first start"
       say "enabled and started 247-agent"
-    elif root systemctl is-active --quiet 247-agent; then
+    # Running, or enabled but down (crash-looping after a failed upgrade, which a rerun
+    # must not report as fine). A unit that is stopped and disabled stays that way.
+    elif root systemctl is-active --quiet 247-agent || root systemctl is-enabled --quiet 247-agent; then
       if [ $restart = 1 ]; then
-        root systemctl restart 247-agent
+        root systemctl restart 247-agent || not_up "the restart into 247-agent $version failed"
+        check_up "247-agent $version did not stay up after the restart"
         say "restarted 247-agent"
       else
-        say "247-agent is still running $current; restart it when no agent run is in flight:"
-        say "  systemctl restart 247-agent"
+        say "247-agent was not restarted. Restart it when no run is in flight"
+        say "(\`sudo oa runs ls --status running\` prints \`no runs\`), then check that it came up:"
+        say "  sudo systemctl restart 247-agent && sudo sh $prefix/share/check-service.sh"
       fi
     fi
   else

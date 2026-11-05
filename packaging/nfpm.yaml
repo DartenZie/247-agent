@@ -43,6 +43,10 @@ contents:
   - src: ${STAGE}/share/skills
     dst: /opt/247-agent/share/skills
     type: tree
+  - src: ${STAGE}/share/check-service.sh
+    dst: /opt/247-agent/share/check-service.sh
+    file_info:
+      mode: 0755
   - src: ${STAGE}/LICENSE
     dst: /opt/247-agent/LICENSE
   - src: ${STAGE}/VERSION

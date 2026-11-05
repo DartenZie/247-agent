@@ -202,13 +202,30 @@ Retention does not prune the copy, so it keeps payloads and transcripts from bef
 upgrade until the next upgrade that migrates. Delete it once you no longer need a way
 back.
 
-**Package.** Install the newer `.deb` or `.rpm`; the maintainer scripts restart a running
-service. Roll back by installing the previous file.
+Both upgrade paths check that the daemon came up. After the restart, they wait five
+seconds. Then they require that the unit is active, that systemd did not restart it in
+that time, and that `oa health` answers. The dispatcher and the database must not be
+`failing`. Connectors that are down give only a warning. If any of these fails, the
+upgrade fails and prints the rollback command. Nothing is rolled back automatically. To
+run the same check yourself after a restart:
+
+```sh
+sudo sh /opt/247-agent/share/check-service.sh
+```
+
+**Package.** Install the newer `.deb` or `.rpm`. The maintainer scripts validate your
+configuration with the new version, then restart a running service. If the new version
+rejects the configuration, the upgrade fails and the service is not restarted. The old
+daemon keeps running, but the new files are already in place: a connector it respawns,
+or a restart after a crash, uses them. Fix the configuration soon. Then, for a `.deb`,
+run `sudo dpkg --configure -a`. For an `.rpm`, run `sudo systemctl restart 247-agent`
+and the check above. Roll back by installing the previous file.
 
 **Installer.** Run the installer again. It downloads the new release, unpacks it as
 `/opt/247-agent-<version>`, runs the new version's `oa validate` on your existing
 configuration, and only then moves the `/opt/247-agent` symlink and restarts the service
-(`--no-restart` skips the restart). The unit file is replaced, your drop-in and
+(`--no-restart` skips the restart; restart and check it yourself when no run is in
+flight). The unit file is replaced, your drop-in and
 `/etc/247-agent` are never touched. Roll back with:
 
 ```sh
