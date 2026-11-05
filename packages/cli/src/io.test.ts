@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
+import { ApiConnectionError } from '@247-agent/core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { exitOnClosedPipe } from './io.js';
+import { exitOnClosedPipe, reportApiError, type Io } from './io.js';
 
 function pipeError(code: string): NodeJS.ErrnoException {
   const err: NodeJS.ErrnoException = new Error(`write ${code}`);
@@ -65,4 +66,35 @@ describe('oa with a closed output pipe', () => {
     expect(stderr).toBe('');
     expect(code).toBe(141);
   }, 30_000);
+});
+
+describe('reportApiError', () => {
+  function capture(): { io: Io; err: string[] } {
+    const err: string[] = [];
+    const io = { out: () => undefined, err: (line: string) => err.push(line) } as unknown as Io;
+    return { io, err };
+  }
+
+  it('explains a denied socket and points to the group or sudo (#111)', () => {
+    const { io, err } = capture();
+    expect(reportApiError(new ApiConnectionError('/run/247-agent/core.sock', 'EACCES'), io)).toBe(
+      1,
+    );
+    expect(err).toEqual([
+      'cannot connect to the daemon at /run/247-agent/core.sock (EACCES): permission denied. ' +
+        'Add your user to the 247-agent group (then log in again) or run oa with sudo.',
+    ]);
+    expect(err[0]).not.toMatch(/running/);
+  });
+
+  it('keeps the not-running hint for other connection errors', () => {
+    const { io, err } = capture();
+    expect(reportApiError(new ApiConnectionError('/run/247-agent/core.sock', 'ENOENT'), io)).toBe(
+      1,
+    );
+    expect(err).toEqual([
+      'cannot connect to the daemon at /run/247-agent/core.sock (ENOENT). ' +
+        'Is 247-agent-core running? Set --socket or OA_CORE_SOCKET.',
+    ]);
+  });
 });

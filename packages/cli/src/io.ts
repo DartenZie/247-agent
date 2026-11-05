@@ -84,6 +84,12 @@ export async function readJson(source: string, io: Io): Promise<unknown> {
 /** Turns a failed API call into stderr lines and an exit code. */
 export function reportApiError(err: unknown, io: Io): number {
   if (err instanceof ApiConnectionError) {
+    if (err.code === 'EACCES') {
+      io.err(
+        `${err.message}: permission denied. Add your user to the 247-agent group (then log in again) or run oa with sudo.`,
+      );
+      return EXIT.failed;
+    }
     io.err(`${err.message}. Is 247-agent-core running? Set --socket or OA_CORE_SOCKET.`);
     return EXIT.failed;
   }
