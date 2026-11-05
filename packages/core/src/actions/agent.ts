@@ -3,7 +3,12 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 
 import { validateJmespath } from '../config/validators.js';
-import { TOOL_KINDS, type AgentSession, type AgentStop } from '../connectors/acp-types.js';
+import {
+  PERMISSION_CANCELLED,
+  TOOL_KINDS,
+  type AgentSession,
+  type AgentStop,
+} from '../connectors/acp-types.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
 import { evaluateExpr } from '../expr/template.js';
 import { Budget } from '../llm/config.js';
@@ -15,6 +20,7 @@ import {
   policyViolation,
   type AgentPolicy,
   type JudgedCall,
+  type PermissionDecision,
 } from './agent-policy.js';
 import {
   DEFAULT_RESULT_PATH,
@@ -189,11 +195,21 @@ interface PolicyWatch {
   /**
    * Counts a tool call toward `max_tool_calls` the first time its id shows up, whether in
    * a `tool_call`, a `tool_call_update` or a permission request: an agent that skips the
-   * announcement must not escape the cap. Set by the running turn; a no-op between turns.
+   * announcement must not escape the cap. `seen` is what the message itself reported, for
+   * the log. Returns false once the turn is cancelling, or between turns, so the permission
+   * handler answers `cancelled` instead of letting the call run. Set by the running turn.
    */
-  count: (id: string, title: string | undefined) => void;
+  count: (id: string, seen: Seen) => boolean;
   /** The ids already counted in this run. */
   counted: Set<string>;
+}
+
+/** What one message reported about a tool call. */
+interface Seen {
+  title: string | undefined;
+  toolKind: string | undefined;
+  command: string | undefined;
+  locations: readonly string[] | undefined;
 }
 
 interface TurnLimits {
@@ -272,24 +288,23 @@ async function runTurn(
       cancel('policy');
     }
   };
-  watch.count = (id, title): void => {
-    if (watch.counted.has(id)) {
-      return;
+  watch.count = (id, seen): boolean => {
+    if (!watch.counted.has(id)) {
+      watch.counted.add(id);
+      toolCalls++;
+      ctx.log.info('agent.tool_call', {
+        id,
+        tool_kind: seen.toolKind ?? null,
+        title: seen.title?.slice(0, 200) ?? null,
+        command: seen.command?.slice(0, 200) ?? null,
+        locations: seen.locations?.slice(0, 20).join(' ') ?? '',
+        n: toolCalls,
+      });
+      if (toolCalls > limits.maxToolCalls) {
+        cancel('tool_calls');
+      }
     }
-    watch.counted.add(id);
-    toolCalls++;
-    const call = watch.calls.get(id);
-    ctx.log.info('agent.tool_call', {
-      id,
-      tool_kind: call?.toolKind ?? null,
-      title: title?.slice(0, 200) ?? null,
-      command: call?.command?.slice(0, 200) ?? null,
-      locations: call?.locations.slice(0, 20).join(' ') ?? '',
-      n: toolCalls,
-    });
-    if (toolCalls > limits.maxToolCalls) {
-      cancel('tool_calls');
-    }
+    return cancelReason === undefined;
   };
   ctx.signal.addEventListener('abort', onAbort, { once: true });
   if (ctx.signal.aborted) {
@@ -329,7 +344,7 @@ async function runTurn(
             command: u.command,
             locations: u.locations,
           });
-          watch.count(u.id, u.title);
+          watch.count(u.id, u);
           unasked(u.id, u.status);
           break;
         case 'tool_call_update': {
@@ -341,8 +356,15 @@ async function runTurn(
               command: u.command ?? known.command,
               locations: u.locations ?? known.locations,
             });
+          } else if (u.toolKind !== undefined) {
+            // Never announced: judge it on what the update reports.
+            watch.calls.set(u.id, {
+              toolKind: u.toolKind,
+              command: u.command,
+              locations: u.locations ?? [],
+            });
           }
-          watch.count(u.id, undefined);
+          watch.count(u.id, { ...u, title: undefined });
           unasked(u.id, u.status);
           break;
         }
@@ -372,12 +394,13 @@ async function runTurn(
     // Not `gen.return()`: a generator parked on `nextUpdate()` would only return once that
     // resolves. `session.close()` disposes the queue, which ends the generator.
     ctx.signal.removeEventListener('abort', onAbort);
-    watch.count = noCount;
+    watch.count = betweenTurns;
     transcript.flush();
   }
 }
 
-const noCount = (): void => undefined;
+/** No turn is running, so no tool call may start. */
+const betweenTurns = (): boolean => false;
 
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new Error('cancelled');
@@ -532,7 +555,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       policy,
       judged: new Set(),
       calls: new Map(),
-      count: noCount,
+      count: betweenTurns,
       counted: new Set(),
     };
     const transcript = new TranscriptWriter({
@@ -548,8 +571,10 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       log: ctx.log,
       onPermission: (req) => {
         watch.judged.add(req.toolCall.id);
-        watch.count(req.toolCall.id, req.toolCall.title);
-        const d = decidePermission(policy, req, watch.calls.get(req.toolCall.id));
+        // Past a limit or outside a turn, ACP answers `cancelled` (as after `session/cancel`).
+        const d: PermissionDecision = watch.count(req.toolCall.id, req.toolCall)
+          ? decidePermission(policy, req, watch.calls.get(req.toolCall.id))
+          : { allow: false, optionId: PERMISSION_CANCELLED, reason: 'session cancelled' };
         transcript.permission(req, d);
         ctx.log.info('agent.permission', {
           id: req.toolCall.id,

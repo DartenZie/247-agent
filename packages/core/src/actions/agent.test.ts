@@ -627,6 +627,62 @@ describe('runAgent', () => {
     expect(lines.filter((l) => l.msg === 'agent.tool_call').map((l) => l.n)).toEqual([1, 2, 3, 4]);
   });
 
+  it('answers cancelled to the permission request that passes max_tool_calls', async () => {
+    const answers: string[] = [];
+    const agents = fakeAgents(async function* (env) {
+      for (let i = 0; i < 4; i++) {
+        answers.push(
+          env.ask({
+            toolCall: {
+              id: `c${String(i)}`,
+              title: 'Read a.txt',
+              toolKind: 'read',
+              command: undefined,
+              locations: [],
+            },
+            options: [
+              { optionId: 'allow', kind: 'allow_once' },
+              { optionId: 'reject', kind: 'reject_once' },
+            ],
+          }),
+        );
+      }
+      await sleep(5);
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent({ ...action, max_tool_calls: 3 }, ctx(agents)).catch(
+      (e: unknown) => e,
+    );
+    expect(String(err)).toMatch(/max_tool_calls \(3\)/);
+    expect(answers).toEqual(['allow', 'allow', 'allow', 'cancelled']);
+    expect(lines.find((l) => l.msg === 'agent.tool_call')).toMatchObject({
+      id: 'c0',
+      tool_kind: 'read',
+      title: 'Read a.txt',
+    });
+    expect(transcript.filter((e) => e.kind === 'permission').at(-1)).toMatchObject({
+      data: { id: 'c3', allowed: false, option_id: 'cancelled', reason: 'session cancelled' },
+    });
+  });
+
+  it('judges a call it never announced on what its update reports', async () => {
+    const agents = fakeAgents(async function* (env) {
+      yield {
+        kind: 'tool_call_update',
+        id: 'c1',
+        status: 'completed',
+        toolKind: 'execute',
+        command: 'curl http://x',
+        locations: undefined,
+      };
+      await sleep(5);
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(String(err)).toMatch(/outside the policy without asking \(command is not in bash_allow/);
+  });
+
   it('counts a call once across its announcement, permission request and updates', async () => {
     const agents = fakeAgents(async function* (env) {
       for (let i = 0; i < 3; i++) {
