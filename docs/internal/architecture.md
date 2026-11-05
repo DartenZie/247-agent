@@ -64,7 +64,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 | Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
 | Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events and events of a chain past its run cap (publishing `loop.detected`), matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
 | Matcher | `bus/matcher.ts` | Trigger matching and the labelled event-type set for metrics | A throwing filter is a non-match (`trigger.filter_error`) |
-| Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, cancel, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing |
+| Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, cancel, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing; a store failure while they commit rolls them all back (`run.bookkeeping_failed`) and leaves the run `running` for recovery at the next start |
 | Action runners | `actions/*.ts` | One file per kind; `core.ts` `defaultRunners` maps `kind` to runner | A runner reaches the world only through `ActionContext` ([`actions.md`](actions.md)) |
 | State KV | `store/state.ts` | `state(namespace, key, value)` for tasks (`${state.<ns>.<key>}`, `state_updates`) and connectors (`/v1/state`) | Tasks see a snapshot taken at run start |
 | LLM port and ledger | `llm/service.ts`, `store/ledger.ts` | Prices, budgets and ledgers every model call; the daily breaker | No model call outside the port ([`model-actions.md`](model-actions.md)) |
@@ -210,6 +210,9 @@ and `dedup_key` plus `UNIQUE(task, event_id)` make it effectively once. On
 2. Every `waiting` run without a `waits` row is failed; one whose wait already resolved
    is set `queued` and enqueued; the rest keep waiting.
 3. Every `queued` run is enqueued.
+
+When the store fails to commit a run's finish during these steps, the run keeps its
+status for the next start (`run.bookkeeping_failed`) and `start()` goes on.
 
 `executor.stop()` stops taking runs (`pump` is a no-op, the `onQueued` subscription is
 dropped, pending runs are forgotten and stay `queued`) and abandons runs in a retry
