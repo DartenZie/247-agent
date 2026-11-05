@@ -61,8 +61,9 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
    ```
 
    `oa reload` (or SIGHUP) applies a changed manifest: that connector is respawned with
-   the new manifest and freshly resolved secrets. A rotated secret alone needs only
-   `oa connector restart <name>`.
+   the new manifest and freshly resolved secrets. A secret rotated in the `file` backend
+   needs only `oa connector restart <name>`; with `env` or `systemd-credentials` it needs
+   `systemctl restart 247-agent`.
 
 ## Debugging
 

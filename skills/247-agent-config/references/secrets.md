@@ -12,6 +12,10 @@ rejects `secrets` there), and `${secrets}` as a whole is rejected.
 | `{ backend: file, path: secrets.yaml }` | Key `ftp_pass` in a YAML or JSON map, path relative to `agent.yaml`; mode 0600, owned by the service user (a wider mode fails the resolve) | re-read on every resolve |
 | `{ backend: systemd-credentials }` | File `$CREDENTIALS_DIRECTORY/ftp_pass`, provided by `LoadCredential=ftp_pass:/etc/credstore/ftp_pass` in the unit | service restart |
 
+A name starts with a letter and has only letters, digits and `_`
+(`[a-zA-Z][a-zA-Z0-9_]*`), in every backend: a credential file named `ftp-pass` or
+`ftp.pass` cannot be referenced as `secrets.<name>`.
+
 The secrets backend's own variables are removed from the `env` template scope, so a
 task cannot read `${env.OA_SECRET_X}` around the rule.
 
@@ -41,8 +45,12 @@ from `providers.<name>.api_key`, resolved per model call), `imap_user`,
 
 Change the value at the backend, then restart the service (`env`, `systemd-credentials`)
 or, with the `file` backend, nothing for actions and pollers. A connector resolved its
-secrets when it was spawned: `oa connector restart <name>` respawns just that one with
-the new value. Runs already in flight keep the value they resolved at start.
+secrets when it was spawned: with the `file` backend, `oa connector restart <name>`
+respawns just that one with the new value. With `env` and `systemd-credentials` it does
+not help: systemd copies each `LoadCredential=` file into the credentials directory at
+service start, and the environment is fixed then too, so only
+`systemctl restart 247-agent` picks up the new value. Runs already in flight keep the
+value they resolved at start.
 
 ## Trust model
 

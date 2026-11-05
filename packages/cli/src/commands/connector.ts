@@ -10,11 +10,13 @@ list             the daemon's connectors with state, transport (stdio, none, acp
                  unit=247-agent-connector@<name> for one that runs in its own systemd unit
                  (state external when it serves no ops) and, for a manifest with health
                  checks, the last check
-restart <name>   kill and respawn one connector; it re-reads its secrets, so this is
-                 how a rotated secret reaches a running connector (built-in pollers
-                 re-read on every poll and need no restart; a unit's connector with ops is
-                 reconnected, which respawns it in its unit; one without ops is restarted
-                 with systemctl)
+restart <name>   kill and respawn one connector; it re-resolves its secrets, so with
+                 the file backend this is how a rotated secret reaches a running
+                 connector. With the env or systemd-credentials backend the values
+                 are fixed when the service starts: run systemctl restart 247-agent
+                 instead (built-in pollers re-read on every poll and need no restart;
+                 a unit's connector with ops is reconnected, which respawns it in its
+                 unit; one without ops is restarted with systemctl)
 
 options:
   --json                print the response as JSON

@@ -70,10 +70,12 @@ poller. A `none` connector cannot list `ops`; an `acp` connector lists neither `
 - A changed manifest takes effect on `oa reload` (or `systemctl reload 247-agent`): that
   connector is respawned with the new manifest and freshly resolved secrets. New
   manifests are started, removed ones stopped, unchanged ones left alone.
-- Secrets are read once, when the program starts. After rotating a credential, run
-  `oa connector restart <name>`: the program is killed, its secrets resolved again, and it
-  is respawned with the backoff counter reset. The built-in poller re-reads its secrets
-  on every poll and needs no restart.
+- Secrets are read once, when the program starts. After rotating a credential in the
+  `file` backend, run `oa connector restart <name>`: the program is killed, its secrets
+  resolved again, and it is respawned with the backoff counter reset. With the `env` or
+  `systemd-credentials` backend, run `systemctl restart 247-agent` instead: the values are fixed
+  when the service starts, so a connector restart re-reads the old value. The
+  built-in poller re-reads its secrets on every poll and needs no restart.
 
 `oa connector list` prints one line per connector, tab-separated:
 

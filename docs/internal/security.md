@@ -42,7 +42,10 @@ the sandbox lives inside the unit's mount namespace.
 |---|---|---|
 | `env` | `<prefix><NAME upper-cased>`, default prefix `OA_SECRET_`; a prefix is letters, digits and `_` ending in `_`, so the scrub below can never take PATH or HOME | daemon restart |
 | `file` | a YAML or JSON map at `path` (relative to `agent.yaml`), re-read on every resolve, refused when any group or other mode bit is set ("mode must be 0600"); not read when a run needs no secrets | every resolve |
-| `systemd-credentials` | `$CREDENTIALS_DIRECTORY/<name>` from the unit's `LoadCredential=` lines, one trailing newline stripped | service restart |
+| `systemd-credentials` | `$CREDENTIALS_DIRECTORY/<name>` from the unit's `LoadCredential=` lines, one trailing newline stripped; systemd copies each file there at service start | service restart (`oa connector restart` re-reads the same copy) |
+
+A `LoadCredential=` name outside the grammar (`ftp-pass`, `ftp.pass`) loads, but no
+`secrets.<name>` reference can reach it.
 
 Where a value goes, and nowhere else:
 
@@ -69,7 +72,8 @@ Where a value goes, and nowhere else:
 - A provider's `api_key` and `headers` are resolved per model call inside the
   `ctx.llm` service and handed to the adapter; never to a runner.
 - A connector's `config` and `env` are rendered at spawn (`connectors/child-env.ts`,
-  `connectorChildEnv()`) and again on `oa connector restart`; `OA_CONFIG_JSON` carries
+  `connectorChildEnv()`) and again on `oa connector restart` (a new value only with the
+  `file` backend; see the table above); `OA_CONFIG_JSON` carries
   them into that one process, and the SDK's `connectorEnv()` deletes the variable after
   reading it so children do not inherit it. The built-in poller renders `${secrets.*}`
   in `args` fresh on every poll.

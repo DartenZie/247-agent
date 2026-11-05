@@ -437,6 +437,13 @@ describe('oa help', () => {
     expect(out[1]).toMatch(/^usage: oa emit/);
     expect(await main(['frobnicate'], io)).toBe(2);
   });
+
+  it('says which secrets backends a connector restart picks up a rotation from', async () => {
+    expect(await main(['help', 'connector'], io)).toBe(0);
+    const help = out.join('\n').replace(/\s+/g, ' ');
+    expect(help).toMatch(/`?file`? backend/);
+    expect(help).toMatch(/`?env`? or `?systemd-credentials`?.*systemctl restart 247-agent/);
+  });
 });
 
 describe('oa reload', () => {

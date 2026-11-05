@@ -149,9 +149,11 @@ never the socket or a config. Sandboxed, its whole environment is `PATH`, `HOME`
 own home under `work_dir`), `LANG` when the daemon has it, `OA_CONNECTOR_NAME` and the
 manifest's `env`.
 
-Secrets are rendered when the process starts. After rotating one, `oa connector
-restart <name>` respawns the connector with the new value; the built-in poller renders
-its `args` on every poll and needs nothing.
+Secrets are rendered when the process starts. After rotating one in the `file` backend,
+`oa connector restart <name>` respawns the connector with the new value. With the `env`
+or `systemd-credentials` backend the values are fixed when the service starts, so run
+`systemctl restart 247-agent`. The built-in poller renders its `args` on every poll and
+needs nothing.
 
 ## What `oa validate` checks on a manifest
 

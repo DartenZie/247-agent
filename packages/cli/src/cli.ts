@@ -24,7 +24,7 @@ commands:
   runs cancel <id>                   end a queued, running or waiting run as cancelled
   tasks ls|pause|resume <name>       list tasks / stop or restart new runs of one
   events tail|show <id>              the newest events (--type, --follow) / one event
-  connector list|restart <name>      show connectors / respawn one (re-reads its secrets)
+  connector list|restart <name>      show connectors / respawn one (re-resolves its secrets)
   cost [--by task|model|provider|day] [--since 7d]   sum the model-call ledger
   reload                             re-read agent.yaml, manifests and tasks files (like SIGHUP)
   health                             ok, degraded or failing, per check; exit 0 only when ok

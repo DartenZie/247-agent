@@ -122,7 +122,10 @@ failures}`; `ok` is `null` until the first check after a start.
 **Restart.** `POST /v1/connectors/<name>/restart` kills the process group (a `stdio`
 connector's stdin is closed first; then SIGTERM and SIGKILL, with a grace before each),
 resets the counter, re-resolves the secrets and respawns; it is the step after rotating a
-secret. A restart requested while one is in flight joins it
+secret in the `file` backend. The `env` and `systemd-credentials` backends read values
+fixed when the service started (the process environment, systemd's copy of each
+`LoadCredential=` file), so a respawn gets the old value and only a service restart
+picks up the new one. A restart requested while one is in flight joins it
 (`connector.restart_joined`), so two never spawn two processes. A restart, reload or
 stop that lands while a process is still starting (before `initialize` is answered)
 stops that process and waits for it to exit before a replacement spawns: the stdio
