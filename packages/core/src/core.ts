@@ -566,11 +566,12 @@ export function createCore(opts: CoreOptions): Core {
           log.warn('core.unknown_connector', { task: task.name, connector: ref });
         }
       }
-      const a = task.config.action;
-      if (a.kind === 'agent') {
-        const ref = a.connector ?? agents?.defaults.connector;
-        if (ref === undefined || !agentNames.has(ref)) {
-          log.warn('core.unknown_agent', { task: task.name, connector: ref ?? null });
+      for (const { action: a } of taskActions(task.config, 'action')) {
+        if (a.kind === 'agent') {
+          const ref = a.connector ?? agents?.defaults.connector;
+          if (ref === undefined || !agentNames.has(ref)) {
+            log.warn('core.unknown_agent', { task: task.name, connector: ref ?? null });
+          }
         }
       }
     }

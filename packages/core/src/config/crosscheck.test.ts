@@ -580,3 +580,76 @@ describe('checkSandboxes', () => {
     ]);
   });
 });
+
+describe('model steps inside a sequence', () => {
+  const sequence = (...steps: Record<string, unknown>[]) =>
+    Task.parse({
+      name: 'flow',
+      trigger: { kind: 'manual' },
+      action: { kind: 'sequence', steps: [{ kind: 'shell', cmd: ['x'] }, ...steps] },
+    });
+
+  it('checks llm and decide steps like top-level actions, at the step path', () => {
+    expect(checkLlmTasks([sequence({ kind: 'llm', input: 'x' })], ctx())).toEqual([]);
+    expect(
+      checkLlmTasks(
+        [
+          sequence(
+            { kind: 'llm', input: 'x', model: 'claude-9' },
+            {
+              kind: 'decide',
+              provider: 'anthropic',
+              state: 'x',
+              questions: { ok: { type: 'noul', instructions: 'Ok?' } },
+            },
+          ),
+        ],
+        ctx(),
+      ),
+    ).toEqual([
+      {
+        path: 'tasks[0].action.steps[1].model',
+        message: expect.stringMatching(/no price for model "claude-9"/) as string,
+      },
+      {
+        path: 'tasks[0].action.steps[2].provider',
+        message: expect.stringMatching(/decide needs an openrouter provider/) as string,
+      },
+    ]);
+  });
+
+  it('checks an agent step: its model price, its tools and its repo in the sandbox', () => {
+    const step = {
+      kind: 'agent',
+      model: 'claude-9',
+      workspace: { kind: 'git-worktree', repo: '/srv/repo' },
+      tools: ['read'],
+      prompt: 'x',
+      mcp_servers: ['nope', 'github'],
+    };
+    expect(checkLlmTasks([sequence(step)], ctx()).map((i) => i.path)).toEqual([
+      'tasks[0].action.steps[1].model',
+    ]);
+    expect(checkAgentTools([sequence(step)], manifests)).toEqual([
+      { path: 'tasks[0].action.steps[1].mcp_servers[0]', message: 'unknown connector "nope"' },
+    ]);
+    expect(agentToolWarnings([sequence(step)], manifests).map((w) => w.path)).toEqual([
+      'tasks[0].action.steps[1].mcp_servers[1]',
+    ]);
+    const sandboxed = parseManifest(
+      { name: 'claude', exec: ['claude-agent-acp'], transport: 'acp', sandbox: 'bwrap' },
+      '/etc/247-agent/connectors.d/claude.yaml',
+    );
+    if (!sandboxed.ok) {
+      throw new Error('bad manifest');
+    }
+    expect(
+      checkSandboxes([sequence(step)], {
+        manifests: [sandboxed.config],
+        defaultConnector: 'claude',
+        workDir: '/var/lib/247-agent/work',
+        protected: [],
+      }).tasks.map((i) => i.path),
+    ).toEqual(['tasks[0].action.steps[1].workspace.repo']);
+  });
+});

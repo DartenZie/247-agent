@@ -4,7 +4,10 @@ import { validateJmespath } from '../config/validators.js';
 import { evaluateExpr } from '../expr/template.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
 import type { JsonValue } from '../store/types.js';
+import { AgentAction, runAgent } from './agent.js';
 import { ConnectorAction, runConnector } from './connector.js';
+import { DecideAction, runDecide } from './decide.js';
+import { LlmAction, runLlm } from './llm.js';
 import { runShell, ShellAction } from './shell.js';
 import { NonRetryableError, withScope, type ActionContext, type ActionRunner } from './types.js';
 import { runWait, WaitAction, waitResult } from './wait.js';
@@ -17,6 +20,10 @@ export const SequenceStep = z
     ShellAction.extend({ when: WHEN }),
     ConnectorAction.extend({ when: WHEN }),
     WaitAction.extend({ when: WHEN }),
+    // Refined schemas cannot `extend`; `safeExtend` keeps their refinements.
+    LlmAction.safeExtend({ when: WHEN }),
+    DecideAction.safeExtend({ when: WHEN }),
+    AgentAction.safeExtend({ when: WHEN }),
   ])
   .superRefine((s, ctx) => {
     if (s.when !== undefined) {
@@ -32,12 +39,26 @@ export const SequenceStep = z
  * `when` is the result of step i (`null` when skipped). The run result is `{steps: [...]}`.
  * A `wait` step suspends the whole run; on resume the sequence continues from that step
  * with the earlier results restored. Each finished step is saved as progress, so a retry
- * continues after the last step that finished and never repeats a connector op.
+ * continues after the last step that finished and never repeats a connector op or a model
+ * call. A step that suspends itself (a batched `llm`) gets back what it stored on resume. At
+ * most one `agent` step: its workspace, branch and transcript are named after the run.
  */
-export const SequenceAction = z.strictObject({
-  kind: z.literal('sequence'),
-  steps: z.array(SequenceStep).min(1),
-});
+export const SequenceAction = z
+  .strictObject({
+    kind: z.literal('sequence'),
+    steps: z.array(SequenceStep).min(1),
+  })
+  .superRefine((a, ctx) => {
+    const agents = a.steps.flatMap((s, i) => (s.kind === 'agent' ? [i] : []));
+    if (agents.length > 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['steps', agents[1] ?? 0, 'kind'],
+        message:
+          'a sequence takes at most one agent step (its workspace and transcript belong to the run); split the work into tasks joined by events',
+      });
+    }
+  });
 
 export type SequenceActionConfig = z.infer<typeof SequenceAction>;
 export type SequenceStepConfig = z.infer<typeof SequenceStep>;
@@ -46,11 +67,16 @@ const STEP_RUNNERS: Record<SequenceStepConfig['kind'], ActionRunner> = {
   shell: runShell,
   connector: runConnector,
   wait: runWait,
+  llm: runLlm,
+  decide: runDecide,
+  agent: runAgent,
 };
 
 interface Checkpoint {
   step: number;
   steps: JsonValue[];
+  /** What the suspended step itself stored (a batched `llm`'s batch id); absent for a `wait`. */
+  data?: JsonValue;
 }
 
 function checkpointOf(data: JsonValue, what: string): Checkpoint {
@@ -61,7 +87,9 @@ function checkpointOf(data: JsonValue, what: string): Checkpoint {
     typeof data.step === 'number' &&
     Array.isArray(data.steps)
   ) {
-    return { step: data.step, steps: data.steps };
+    return data.data === undefined
+      ? { step: data.step, steps: data.steps }
+      : { step: data.step, steps: data.steps, data: data.data };
   }
   throw new NonRetryableError(`sequence ${what} data is corrupt`);
 }
@@ -123,8 +151,17 @@ async function sequence(
     const stepCtx: ActionContext = {
       ...withScope(ctx, { steps: results }),
       log: ctx.log.child({ step: index, step_kind: step.kind }),
-      suspend: (spec) => ctx.suspend(spec, { step: index, steps: results }),
-      resume: resume !== undefined && i === start ? resume : undefined,
+      suspend: (spec, data) =>
+        ctx.suspend(spec, {
+          step: index,
+          steps: results,
+          ...(step.kind === 'wait' ? {} : { data }),
+        }),
+      // The step gets back what it stored, not the checkpoint around it.
+      resume:
+        resume !== undefined && waited !== undefined && i === start
+          ? { ...resume, resume: waited.data ?? null }
+          : undefined,
       // The sequence owns the run's progress; a step must not overwrite it.
       saveProgress: () => undefined,
       progress: undefined,

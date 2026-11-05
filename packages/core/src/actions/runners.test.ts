@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { compileFilter } from '../expr/jmespath.js';
 import type { EventRecord, JsonValue } from '../store/types.js';
+import { fakeLlmPort } from '../llm/testing.js';
 import { ConnectorAction, runConnector } from './connector.js';
 import { runSequence, SequenceAction } from './sequence.js';
 import { testContext } from './testing.js';
@@ -249,11 +250,125 @@ describe('runSequence', () => {
     ).rejects.toThrow(/corrupt/);
   });
 
+  it('runs an llm step through ctx.llm with the run budget and hands its result to later steps', async () => {
+    const llm = fakeLlmPort({
+      defaults: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      respond: () => ({
+        output: { kind: 'bug' },
+        text: '',
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+        stopReason: 'end',
+        usd: 0.001,
+        priced_by: 'table',
+        ledgerId: 1,
+      }),
+    });
+    const connectors = fakeConnectors();
+    const result = await runSequence(
+      {
+        kind: 'sequence',
+        steps: [
+          {
+            kind: 'llm',
+            input: 'classify ${event.payload.summary}',
+            output_schema: { type: 'object' },
+            budget: { max_usd: 0.2 },
+          },
+          {
+            kind: 'connector',
+            connector: 'chat',
+            op: 'send',
+            when: "steps[0].kind == 'bug'",
+            args: { text: 'a ${steps[0].kind}' },
+          },
+        ],
+      },
+      testContext({
+        llm,
+        connectors,
+        task: { name: 'triage', budget: { max_usd: 0.5 } } as never,
+        scope: { event: { payload: event.payload } },
+      }),
+    );
+    expect(result).toEqual({ steps: [{ kind: 'bug' }, { ok: true, op: 'send' }] });
+    expect(llm.calls[0]?.req).toMatchObject({ input: 'classify new event', maxUsd: 0.2 });
+    expect(llm.calls[0]?.ctx).toMatchObject({ task: 'triage', run: { id: 'run_test' } });
+    expect(connectors.calls[0]).toMatchObject({ args: { text: 'a bug' } });
+  });
+
+  it('parks a batched llm step and hands it back its own resume data', async () => {
+    let suspended: { spec: WaitSpec; resume: JsonValue } | undefined;
+    const llm = fakeLlmPort({ defaults: { provider: 'anthropic', model: 'claude-haiku-4-5' } });
+    const action = {
+      kind: 'sequence',
+      steps: [
+        { kind: 'shell', cmd: ['echo', 'a'] },
+        { kind: 'llm', input: 'x', batch: true },
+        { kind: 'shell', cmd: ['echo', 'got ${steps[1].text}'] },
+      ],
+    };
+    await expect(
+      runSequence(
+        action,
+        testContext({
+          llm,
+          suspend: (spec, resume) => {
+            suspended = { spec, resume };
+            return Promise.reject(new Error('suspended'));
+          },
+        }),
+      ),
+    ).rejects.toThrow('suspended');
+    expect(suspended?.spec.type).toBe('llm.batch.ended');
+    expect(suspended?.resume).toMatchObject({ step: 1, steps: ['a'] });
+
+    const resumed = await runSequence(
+      action,
+      testContext({
+        llm,
+        resume: {
+          resume: suspended?.resume ?? null,
+          outcome: 'matched',
+          event: { ...event, type: 'llm.batch.ended', payload: { batch_id: 'b' } },
+        },
+      }),
+    );
+    expect(llm.batchResults).toEqual([{ payload: { batch_id: 'b' }, maxUsd: undefined }]);
+    expect(resumed).toEqual({ steps: ['a', { text: 'ok' }, 'got ok'] });
+  });
+
   it('validates step kinds and when expressions', () => {
     expect(SequenceAction.safeParse({ kind: 'sequence', steps: [] }).success).toBe(false);
     expect(SequenceAction.safeParse({ kind: 'sequence', steps: [{ kind: 'llm' }] }).success).toBe(
       false,
     );
+    expect(
+      SequenceAction.safeParse({
+        kind: 'sequence',
+        steps: [
+          { kind: 'llm', input: 'x', when: 'event' },
+          {
+            kind: 'decide',
+            questions: { ok: { type: 'noul', instructions: 'ok?' } },
+            state: 'x',
+          },
+          { kind: 'agent', prompt: 'do it', workspace: { kind: 'temp' }, tools: ['read'] },
+        ],
+      }).error?.issues,
+    ).toBeUndefined();
+    expect(
+      SequenceAction.safeParse({
+        kind: 'sequence',
+        steps: [
+          { kind: 'agent', prompt: 'a', workspace: { kind: 'temp' }, tools: ['read'] },
+          { kind: 'agent', prompt: 'b', workspace: { kind: 'temp' }, tools: ['read'] },
+        ],
+      }).error?.issues[0]?.message,
+    ).toMatch(/one agent step/);
+    expect(
+      SequenceAction.safeParse({ kind: 'sequence', steps: [{ kind: 'sequence', steps: [] }] })
+        .success,
+    ).toBe(false);
     expect(
       SequenceAction.safeParse({
         kind: 'sequence',

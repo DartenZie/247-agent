@@ -32,10 +32,47 @@ tasks:
         payload: { summary: "${event.payload.summary}" }
 ```
 
-Steps are [`shell`](shell.md), [`connector`](connector.md) or [`wait`](wait.md)
-actions, each with the fields of that action plus an optional `when`. Model actions and
-nested sequences are not steps: a model step is a task of its own, so its cost and its
-result are visible as such.
+Steps are [`shell`](shell.md), [`connector`](connector.md), [`wait`](wait.md),
+[`llm`](llm.md), [`decide`](decide.md) or [`agent`](agent.md) actions, each with the
+fields of that action plus an optional `when`. A sequence cannot be a step, and a
+sequence has at most one `agent` step.
+
+## Model steps
+
+An `llm`, `decide` or `agent` step works like the same action on its own. Its result is
+`steps[i]`, so a later step can act on a classification:
+
+```yaml
+tasks:
+  - name: triage_issue
+    trigger: { kind: event, type: issue.opened }
+    budget: { max_usd: 0.50 }
+    action:
+      kind: sequence
+      steps:
+        - kind: llm
+          input: "Title: ${event.payload.title}\n\n${event.payload.body}"
+          output_schema:
+            type: object
+            properties: { kind: { type: string, enum: [bug, feature, question] } }
+            required: [kind]
+        - kind: connector
+          when: "steps[0].kind == 'bug'"
+          connector: chat
+          op: send
+          args: { text: "New bug: ${event.payload.title}" }
+```
+
+The budget is the run's. The task's `budget.max_usd` and a step's own `budget.max_usd`
+both cap what the whole run spent, earlier model steps included, and `budgets.daily_usd`
+applies on top. Every model call is in the ledger under the run's id. `oa validate`
+checks a model step as it checks the action on its own, for example that its model has
+a price.
+
+A batched `llm` step (`batch: true`) suspends the run like a `wait` step until the
+batch result arrives. An `agent` step that ends `blocked` still finishes, and its
+result has `status: blocked`. Test it in a later step's `when`, for example
+`steps[1].status == 'done'`.
 
 ## Results and `when`
 
@@ -77,7 +114,7 @@ you remove the task, its runs in flight fail.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `steps` | yes, at least one | a list of `shell`, `connector` or `wait` actions |
+| `steps` | yes, at least one | a list of `shell`, `connector`, `wait`, `llm`, `decide` or `agent` actions, with at most one `agent` |
 | `steps[].when` | no | a JMESPath expression; a falsy value skips the step |
 
 The remaining fields of a step are those of its action kind.

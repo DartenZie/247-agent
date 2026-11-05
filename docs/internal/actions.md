@@ -184,8 +184,8 @@ wait.
 
 ## `sequence`
 
-`actions/sequence.ts`. Steps are `shell`, `connector` or `wait`, each with an optional
-`when`; `steps[i]` is the result of step i (`null` when skipped) for later templates
+`actions/sequence.ts`. Steps are `shell`, `connector`, `wait`, `llm`, `decide` or
+`agent`, each with an optional `when`; `steps[i]` is the result of step i (`null` when skipped) for later templates
 and `when`s; the run result is `{steps: [...]}`. A `wait` step suspends with
 `{step, steps}`; on resume the runner restarts at that index with the earlier results
 and takes the wait's outcome without waiting again. After each step, skipped or not,
@@ -201,6 +201,19 @@ retry of an attempt that finished no step starts at step 0. A step that finished
 whose progress was not yet saved when the daemon died runs again. Every attempt and
 resume runs under the steps the run started with (`runs.config`, see
 [`architecture.md`](architecture.md)), so a reload cannot shift a saved index.
+
+Model steps run through the same runners as the actions on their own, so each call goes
+through `ctx.llm` and is ledgered under the run id. Budgets are per run: a step's
+`budget.max_usd` and the task's both cap `ledger.sumForRun`, which includes earlier
+steps. A step that suspends itself (a batched `llm`) stores its own resume data; the
+sequence keeps it as `data` in the checkpoint (`{step, steps, data}`) and hands the step
+`{...resume, resume: data}` on resume, so the step never sees the checkpoint. A `wait`
+step stores no `data`. A sequence has at most one `agent` step (schema refinement):
+the workspace, its `agent/<run_id>` branch and the transcript are named after the run,
+so a second agent step would collide with the first. `config/walk.ts`
+`taskActions()` yields steps as well as the task's own action, so every cross-check in
+`config/crosscheck.ts` (price, provider type, `system_file`, agent tools, sandbox repo
+visibility) reports a step at `tasks[i].action.steps[k]`.
 
 ## Routing: `emit` and `state_updates`
 
