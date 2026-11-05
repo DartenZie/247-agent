@@ -117,7 +117,8 @@ budgets: { daily_usd: 10 }
   `https://openrouter.ai/api/v1` (or `base_url`), Chat Completions with a `system` and a
   `user` message, `max_tokens`, `response_format` json_schema `strict: true`, and
   OpenRouter's own `reasoning: { effort }` whenever `effort` is set (models without
-  reasoning ignore it). `usage.cost` (USD) → `reportedUsd`, so the ledger records
+  reasoning ignore it). `usage.cost` (USD, plus `cost_details.upstream_inference_cost`
+  on a bring-your-own-key response) → `reportedUsd`, so the ledger records
   `priced_by: provider` and no `pricing:` entry is needed; `usage.include` is a
   deprecated no-op and is not sent. Stop: `finish_reason` stop/length/content_filter →
   end/max_tokens/refusal, a non-empty `message.refusal` → refusal. Same client, retry

@@ -367,6 +367,16 @@ export class Metrics {
     'Model calls ledgered at $0 because neither the price table nor the provider gave a cost, by provider, model and task',
     ['provider', 'model', 'task'],
   );
+  readonly modelCostBelowTable = this.registry.counter(
+    'oa_model_cost_below_table_total',
+    'Model calls whose reported cost was under half of what their tokens cost at the table price, by provider, model and task',
+    ['provider', 'model', 'task'],
+  );
+  readonly modelCostBelowTableUsd = this.registry.counter(
+    'oa_model_cost_below_table_usd_total',
+    'USD the table price exceeds the reported cost by on those calls, by provider, model and task',
+    ['provider', 'model', 'task'],
+  );
   readonly budgetExceeded = this.registry.counter(
     'oa_budget_exceeded_total',
     'Calls refused or runs failed over a budget, by scope (daily, task)',

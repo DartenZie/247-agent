@@ -240,6 +240,7 @@ The names worth searching for:
 | `poller.polled`, `poller.failed` | info, error | a poll finished (`items`, `new`, `emitted`), or failed (`error`) |
 | `poller.seeded` | info | `first_run: skip` marked the first poll's items as seen |
 | `llm.call`, `llm.decide`, `agent.turn` | info | a model call was ledgered (`provider`, `model`, tokens, `usd`, `priced_by`) |
+| `llm.cost_below_table` | warn | a provider or agent reported less than half of what the tokens cost at the table price; the reported cost was ledgered (`task`, `provider`, `model`, `reported_usd`, `table_usd`) |
 | `budget.exceeded` | warn | the daily cap was crossed (`day`, `limit_usd`, `spent_usd`) |
 | `llm.batch_submitted`, `llm.batch_ended` | info | a Message Batches request went out, or settled (`batch_id`, `status`) |
 | `agent.permission` | info | a permission request was decided (`tool_kind`, `title`, `allowed`, `reason`) |
