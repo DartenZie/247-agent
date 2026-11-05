@@ -142,6 +142,13 @@ One event per accepted request, with `source` set to the manifest's name:
 The port or socket being taken is fatal at start: the process exits and the daemon
 retries with backoff, and `oa connector list` shows the error.
 
+When the connector stops (the daemon stops, reloads or restarts it), it stops accepting
+connections and lets a request in flight finish for up to 4 seconds. That request gets
+its normal status with `Connection: close`. A request still running after 4 seconds has
+its connection closed without an answer, and the sender sees a network error. Set
+`dedup_header` on routes whose sender retries, so that a retry of such a request is not
+recorded twice.
+
 ## Tasks
 
 ```yaml

@@ -67,24 +67,39 @@ class HttpError extends Error {
   }
 }
 
+/** Set by `stopServer`: answers from then on carry `connection: close`. */
+interface DrainState {
+  draining: boolean;
+}
+
+const drainStates = new WeakMap<Server, DrainState>();
+
 /** The request listener; exported so tests can drive it without a socket. */
 export function createHandler(
   opts: WebhookServerOptions,
+  drain: DrainState = { draining: false },
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const routes = new Map(opts.config.routes.map((r) => [r.path, r]));
   const now = opts.now ?? (() => new Date());
   return (req, res) => {
+    const send = (
+      status: number,
+      body: Record<string, JsonValue>,
+      headers: Record<string, string> = {},
+    ): void => {
+      reply(res, status, body, drain.draining ? { ...headers, connection: 'close' } : headers);
+    };
     handle(req, opts, routes, now).then(
       ({ status, body }) => {
-        reply(res, status, body);
+        send(status, body);
       },
       (err: unknown) => {
         if (err instanceof HttpError) {
-          reply(res, err.status, { ok: false, error: err.message }, err.headers);
+          send(err.status, { ok: false, error: err.message }, err.headers);
           return;
         }
         opts.log(`webhook: internal error: ${err instanceof Error ? err.message : String(err)}`);
-        reply(res, 500, { ok: false, error: 'internal error' });
+        send(500, { ok: false, error: 'internal error' });
       },
     );
   };
@@ -321,7 +336,9 @@ function reply(
 export async function startServer(
   opts: WebhookServerOptions,
 ): Promise<{ server: Server; address: string }> {
-  const server = createServer(createHandler(opts));
+  const drain: DrainState = { draining: false };
+  const server = createServer(createHandler(opts, drain));
+  drainStates.set(server, drain);
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
   const listen = opts.config.listen;
@@ -347,4 +364,26 @@ export async function startServer(
   const addr = server.address();
   const port = addr !== null && typeof addr === 'object' ? addr.port : listen.port;
   return { server, address: `http://${listen.host}:${String(port)}` };
+}
+
+/**
+ * Stops the server gracefully: it stops accepting connections, closes idle keep-alive ones,
+ * lets requests in flight finish and answer (with `connection: close`), and cuts off what is
+ * still running after `graceMs`. Resolves once every connection is closed.
+ */
+export function stopServer(server: Server, graceMs: number): Promise<void> {
+  const drain = drainStates.get(server);
+  if (drain !== undefined) {
+    drain.draining = true;
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      server.closeAllConnections();
+    }, graceMs);
+    server.close(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+    server.closeIdleConnections();
+  });
 }

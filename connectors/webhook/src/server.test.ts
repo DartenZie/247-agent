@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CoreApiError, type EmitInput, type EmitResult } from '@247-agent/connector-sdk';
 
 import { parseConfig, type WebhookConfig } from './config.js';
-import { parseBody, startServer } from './server.js';
+import { parseBody, startServer, stopServer } from './server.js';
 
 const SECRET = 'gh-secret';
 
@@ -238,6 +238,65 @@ describe('webhook server', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/** A core whose `emitEvent` holds until the test releases it, to keep a request in flight. */
+class HeldCore extends FakeCore {
+  entered: Promise<void>;
+  private enter!: () => void;
+  private gate!: Promise<void>;
+  release!: () => void;
+
+  constructor() {
+    super();
+    this.entered = new Promise((r) => (this.enter = r));
+    this.gate = new Promise((r) => (this.release = r));
+  }
+
+  override async emitEvent(input: EmitInput): Promise<EmitResult> {
+    this.enter();
+    await this.gate;
+    return super.emitEvent(input);
+  }
+}
+
+describe('stopServer', () => {
+  it('lets an in-flight request finish and answer before the server closes', async () => {
+    const core = new HeldCore();
+    const base = await start(core);
+    const [server] = servers;
+    if (server === undefined) {
+      throw new Error('no server');
+    }
+    const pending = fetch(`${base}/open`, { method: 'POST', body: 'hi' });
+    await core.entered;
+    let stopped = false;
+    const stopping = stopServer(server, 10_000).then(() => (stopped = true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopped).toBe(false);
+    core.release();
+    const res = await pending;
+    expect(res.status).toBe(202);
+    expect(res.headers.get('connection')).toBe('close');
+    expect(await res.json()).toEqual({ ok: true, event_id: 'evt_1' });
+    await stopping;
+    expect(core.events).toHaveLength(1);
+    await expect(fetch(`${base}/healthz`)).rejects.toThrow();
+  });
+
+  it('cuts off a request still running when the grace runs out', async () => {
+    const core = new HeldCore();
+    const base = await start(core);
+    const [server] = servers;
+    if (server === undefined) {
+      throw new Error('no server');
+    }
+    const pending = fetch(`${base}/open`, { method: 'POST', body: 'hi' });
+    await core.entered;
+    await stopServer(server, 100);
+    await expect(pending).rejects.toThrow();
+    core.release();
   });
 });
 
