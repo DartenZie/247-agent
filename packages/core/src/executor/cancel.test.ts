@@ -263,16 +263,23 @@ describe('Executor.cancel', () => {
 });
 
 describe('paused tasks', () => {
+  const info = {
+    get store() {
+      return env.store;
+    },
+    nextFire: () => null,
+  };
+
   it('start no run from any event, refuse a manual run, and start again once resumed', async () => {
     const ex = make(() => Promise.resolve('ok'));
-    expect(pauseTask(env.store, tasks, env.clock, env.log, 'work')).toEqual({
+    expect(pauseTask(info, tasks, env.clock, env.log, 'work')).toMatchObject({
       name: 'work',
       trigger: 'event',
       paused_at: '2026-09-19T10:00:00.000Z',
     });
     env.clock.set('2026-09-19T11:00:00.000Z');
     // A second pause keeps the first time.
-    expect(pauseTask(env.store, tasks, env.clock, env.log, 'work').paused_at).toBe(
+    expect(pauseTask(info, tasks, env.clock, env.log, 'work').paused_at).toBe(
       '2026-09-19T10:00:00.000Z',
     );
 
@@ -283,14 +290,14 @@ describe('paused tasks', () => {
       { task: 'work', event_id: skipped.id },
     ]);
     expect(() => runTaskManually(bus, env.store, tasks, 'work')).toThrow(TaskPausedError);
-    expect(listTasks(env.store, tasks).map((t) => [t.name, t.paused_at !== null])).toEqual([
+    expect(listTasks(info, tasks).map((t) => [t.name, t.paused_at !== null])).toEqual([
       ['work', true],
       ['gate', false],
       ['flaky', false],
       ['poll', false],
     ]);
 
-    expect(resumeTask(env.store, tasks, env.log, 'work').paused_at).toBeNull();
+    expect(resumeTask(info, tasks, env.log, 'work').paused_at).toBeNull();
     const run = trigger('x.work', 'work');
     await ex.idle();
     expect(status(run.id)).toBe('succeeded');
@@ -302,7 +309,7 @@ describe('paused tasks', () => {
     const ex = make(hanging);
     const run = trigger('x.gate', 'gate');
     await until(() => status(run.id) === 'waiting');
-    pauseTask(env.store, tasks, env.clock, env.log, 'gate');
+    pauseTask(info, tasks, env.clock, env.log, 'gate');
 
     publish('chat.reply');
     bus.dispatcher.drain();
@@ -311,7 +318,7 @@ describe('paused tasks', () => {
   });
 
   it('throws for an unknown task', () => {
-    expect(() => pauseTask(env.store, tasks, env.clock, env.log, 'nope')).toThrow(/unknown task/);
-    expect(() => resumeTask(env.store, tasks, env.log, 'nope')).toThrow(/unknown task/);
+    expect(() => pauseTask(info, tasks, env.clock, env.log, 'nope')).toThrow(/unknown task/);
+    expect(() => resumeTask(info, tasks, env.log, 'nope')).toThrow(/unknown task/);
   });
 });

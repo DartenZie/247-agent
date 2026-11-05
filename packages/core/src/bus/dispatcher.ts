@@ -7,7 +7,8 @@ import { Metrics } from '../metrics.js';
 import type { Store } from '../store/store.js';
 import type { EventRecord, NewEvent, RunRecord } from '../store/types.js';
 import type { WaitRecord } from '../store/waits.js';
-import { CRON_TICK, LOOP_DETECTED, type CompiledConfig } from './matcher.js';
+import type { EventExplanation, SkipReason, TaskMatch } from './explain.js';
+import { CRON_TICK, LOOP_DETECTED, type CompiledConfig, type CompiledTask } from './matcher.js';
 import { publishEvent, type PublishResult } from './publish.js';
 
 export interface DispatcherOptions {
@@ -127,7 +128,7 @@ export class Dispatcher {
     };
   }
 
-  private compileWaits(): CompiledWait[] {
+  private compileWaits(quiet = false): CompiledWait[] {
     const out: CompiledWait[] = [];
     for (const wait of this.store.waits.listPending()) {
       try {
@@ -137,6 +138,9 @@ export class Dispatcher {
           filter: wait.filter === null ? undefined : compileFilter(wait.filter),
         });
       } catch (err) {
+        if (quiet) {
+          continue;
+        }
         this.log.error('wait.invalid', {
           run_id: wait.run_id,
           task: wait.task,
@@ -147,7 +151,7 @@ export class Dispatcher {
     return out;
   }
 
-  private waitMatches(w: CompiledWait, event: EventRecord): boolean {
+  private waitMatches(w: CompiledWait, event: EventRecord, quiet = false): boolean {
     if (!w.type(event.type)) {
       return false;
     }
@@ -157,6 +161,9 @@ export class Dispatcher {
     try {
       return w.filter.evaluate(filterView(event));
     } catch (err) {
+      if (quiet) {
+        return false;
+      }
       this.log.warn('wait.filter_error', {
         run_id: w.wait.run_id,
         task: w.wait.task,
@@ -165,6 +172,73 @@ export class Dispatcher {
       });
       return false;
     }
+  }
+
+  /**
+   * `oa events show`, `oa emit`: per task of the active configuration, whether the event
+   * matched its trigger and started a run, and why not. Pure: it logs nothing and writes
+   * nothing. A skip is explained by what holds now (the pause, the limits, the active
+   * runs), which is what held at dispatch unless something changed since.
+   */
+  explain(event: EventRecord): EventExplanation {
+    const dispatched = event.seq <= this.store.cursors.get('dispatch');
+    const runs = this.store.runs.listByEvent(event.id);
+    const runOf = new Map(runs.map((r) => [r.task, r.id]));
+    const tasks = this.config.tasks.map((task): TaskMatch => {
+      const runId = runOf.get(task.name);
+      if (runId !== undefined) {
+        return { task: task.name, outcome: 'started', reason: null, detail: null, run_id: runId };
+      }
+      const verdict = task.explain(event);
+      if (!verdict.matched) {
+        const { reason, detail } = verdict;
+        return { task: task.name, outcome: 'no_match', reason, detail, run_id: null };
+      }
+      const skip = this.skipReason(task, event, dispatched);
+      if (skip === undefined) {
+        return { task: task.name, outcome: 'pending', reason: null, detail: null, run_id: null };
+      }
+      return { task: task.name, outcome: 'skipped', ...skip, run_id: null };
+    });
+    const waitingRuns = dispatched
+      ? []
+      : this.compileWaits(true)
+          .filter((w) => this.waitMatches(w, event, true))
+          .map((w) => w.wait.run_id);
+    return { event_id: event.id, dispatched, runs, tasks, waiting_runs: waitingRuns };
+  }
+
+  /** Why a matching task starts no run for the event, in the order `dispatchOnce` checks. */
+  private skipReason(
+    task: CompiledTask,
+    event: EventRecord,
+    dispatched: boolean,
+  ): { reason: SkipReason; detail: string | null } | undefined {
+    if (event.depth > this.maxDepth) {
+      return {
+        reason: 'depth',
+        detail: `depth ${String(event.depth)} is over limits.max_event_depth ${String(this.maxDepth)}`,
+      };
+    }
+    const pausedAt = this.store.pauses.pausedAt(task.name);
+    if (pausedAt !== undefined) {
+      return { reason: 'paused', detail: `paused since ${pausedAt}` };
+    }
+    if (!dispatched) {
+      return undefined;
+    }
+    if (event.type === CRON_TICK && task.overlapSkip) {
+      return { reason: 'overlap', detail: 'a run of the task was active (overlap: skip)' };
+    }
+    const root =
+      event.parent_id === null ? event.id : (this.store.events.rootOf(event.id) ?? event.id);
+    if (this.store.events.countChainRuns(root) >= this.maxChainRuns) {
+      return {
+        reason: 'chain_runs',
+        detail: `the chain of ${root} reached limits.max_runs_per_chain ${String(this.maxChainRuns)}`,
+      };
+    }
+    return { reason: 'unknown', detail: null };
   }
 
   /** Ends a wait: marks it resolved, re-queues the run and returns the run for hand-off. */
@@ -315,6 +389,7 @@ export class Dispatcher {
         // hop the depth guard limits. So a too-deep event still resumes its waiter (an
         // `llm.batch.ended` one hop past the limit must not strand a billed batch), and
         // whatever the resumed run emits is deeper still and dropped here.
+        let consumed = false;
         if (waits.length > 0) {
           const still: CompiledWait[] = [];
           for (const w of waits) {
@@ -322,6 +397,7 @@ export class Dispatcher {
               still.push(w);
               continue;
             }
+            consumed = true;
             const run = this.endWait(w.wait, 'matched', event);
             if (run !== undefined) {
               queued.push(run);
@@ -340,6 +416,7 @@ export class Dispatcher {
           if (!task.matches(event, this.log)) {
             continue;
           }
+          consumed = true;
           if (paused.has(task.name)) {
             this.log.info('task.skipped_paused', { task: task.name, event_id: event.id });
             continue;
@@ -388,6 +465,15 @@ export class Dispatcher {
         }
         if (capped) {
           this.drop(event, 'chain_runs', root);
+        }
+        if (!consumed) {
+          // Info, not debug: a mistyped event type nobody consumes must leave a trace.
+          this.log.info('event.unconsumed', {
+            event_id: event.id,
+            event_type: event.type,
+            source: event.source,
+            correlation_id: event.correlation_id,
+          });
         }
       }
       this.store.cursors.set('dispatch', last.seq);

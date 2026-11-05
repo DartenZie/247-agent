@@ -426,10 +426,16 @@ describe('oa runs cancel', () => {
 describe('oa tasks', () => {
   it('lists tasks, pauses one so oa run refuses it, and resumes it', async () => {
     expect(await oa('tasks', 'ls')).toBe(0);
-    expect(out).toEqual(['ok    manual  active', 'bad   manual  active', 'hold  manual  active']);
+    expect(out).toEqual([
+      'ok    manual  active  last=-  runs=0',
+      'bad   manual  active  last=-  runs=0',
+      'hold  manual  active  last=-  runs=0',
+    ]);
     out = [];
     expect(await oa('tasks', 'pause', 'ok')).toBe(0);
-    expect(out[0]).toMatch(/^ok {2}manual {2}paused since \d{4}-\d\d-\d\dT/);
+    expect(out[0]).toMatch(
+      /^ok {2}manual {2}paused since \d{4}-\d\d-\d\dT\S+ {2}last=- {2}runs=0$/,
+    );
     out = [];
     expect(await oa('run', 'ok')).toBe(1);
     expect(err[0]).toBe('daemon: task "ok" is paused: resume it with oa tasks resume ok');
@@ -445,7 +451,11 @@ describe('oa tasks', () => {
     expect(daemon.core.metrics.render()).toMatch(/^oa_tasks_paused 1$/m);
 
     expect(await oa('tasks', 'resume', 'ok', '--json')).toBe(0);
-    expect(JSON.parse(out[0] ?? '')).toEqual({ name: 'ok', trigger: 'manual', paused_at: null });
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      name: 'ok',
+      trigger: 'manual',
+      paused_at: null,
+    });
     expect(await oa('run', 'ok', '--wait')).toBe(0);
 
     expect(await oa('tasks', 'pause', 'nope')).toBe(1);
@@ -482,7 +492,8 @@ describe('oa events', () => {
     expect(out[1]).toBe('payload: null');
     out = [];
     expect(await oa('events', 'show', ids[2] ?? '', '--json')).toBe(0);
-    expect(JSON.parse(out[0] ?? '')).toMatchObject({ id: ids[2], type: 'chat.in' });
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ event: { id: ids[2], type: 'chat.in' } });
+    err = [];
 
     expect(await oa('events', 'tail', '--type', 'Bad Type')).toBe(2);
     expect(err[0]).toMatch(/invalid query/);
@@ -490,6 +501,149 @@ describe('oa events', () => {
     expect(await oa('events', 'tail', '-n', 'x')).toBe(2);
     expect(await oa('events', 'show')).toBe(2);
     expect(await oa('events')).toBe(2);
+  });
+});
+
+describe('why a task did or did not run (#92)', () => {
+  const WATCH = `${TASKS}  - name: watch
+    trigger: { kind: event, type: order.received, filter: "payload.total > \`10\`" }
+    action: { kind: shell, cmd: ["true"] }
+  - name: hourly
+    trigger: { kind: cron, schedule: "0 * * * *" }
+    action: { kind: shell, cmd: ["true"] }
+`;
+
+  beforeEach(async () => {
+    writeFileSync(join(dir, 'tasks.yaml'), WATCH);
+    expect(await oa('reload')).toBe(0);
+    out = [];
+  });
+
+  it('oa emit warns when no task and no waiting run matches the event', async () => {
+    expect(await oa('emit', 'order.recieved')).toBe(0);
+    expect(out[0]).toMatch(/^inserted (evt_\w+) type=order\.recieved/);
+    const id = /(evt_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    expect(err).toEqual([
+      `warning: no task would start a run for order.recieved and no waiting run matches it; oa events show ${id} says why`,
+    ]);
+    err = [];
+    stdin = '{"total": 20}';
+    expect(await oa('emit', 'order.received', '-')).toBe(0);
+    expect(err).toEqual([]);
+    expect(await oa('tasks', 'pause', 'watch')).toBe(0);
+    expect(await oa('emit', 'order.received', '-')).toBe(0);
+    expect(err).toEqual([
+      expect.stringMatching(/^warning: no task would start a run for order\.received/) as string,
+    ]);
+    expect(await oa('tasks', 'resume', 'watch')).toBe(0);
+    err = [];
+    expect(await oa('run', 'hold')).toBe(0);
+    expect(await oa('emit', 'chat.reply', '--json')).toBe(0);
+    expect(err).toEqual([]);
+    expect(JSON.parse(out.at(-1) ?? '')).toMatchObject({
+      status: 'inserted',
+      waiting_runs: [expect.stringMatching(/^run_/) as string],
+      tasks: expect.arrayContaining([
+        {
+          task: 'watch',
+          outcome: 'no_match',
+          reason: 'type',
+          detail: 'wants order.received',
+          run_id: null,
+        },
+      ]) as unknown,
+    });
+  });
+
+  it('oa events show lists the runs the event started and why each other task did not run', async () => {
+    stdin = '{"total": 20}';
+    expect(await oa('emit', 'order.received', '-', '--json')).toBe(0);
+    const big = (JSON.parse(out[0] ?? '') as { event: { id: string } }).event.id;
+    stdin = '{"total": 5}';
+    expect(await oa('emit', 'order.received', '-', '--json')).toBe(0);
+    const small = (JSON.parse(out[1] ?? '') as { event: { id: string } }).event.id;
+    await vi.waitFor(() => {
+      expect(daemon.core.store.runs.list({ task: 'watch' })).toHaveLength(1);
+    });
+    const [run] = daemon.core.store.runs.list({ task: 'watch' });
+    out = [];
+    expect(await oa('events', 'show', big)).toBe(0);
+    expect(out[1]).toBe('payload: {"total":20}');
+    expect(out.slice(2)).toEqual([
+      'tasks:',
+      '  ok      no match  type: wants manual.run for ok',
+      '  bad     no match  type: wants manual.run for bad',
+      '  hold    no match  type: wants manual.run for hold',
+      `  watch   started   ${run?.id ?? ''}`,
+      '  hourly  no match  type: wants its own cron.tick',
+    ]);
+    out = [];
+    expect(await oa('events', 'show', small)).toBe(0);
+    expect(out).toContain('  watch   no match  filter is false: payload.total > `10`');
+    out = [];
+    expect(await oa('events', 'show', big, '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      event: { id: big, type: 'order.received' },
+      dispatched: true,
+      runs: [{ id: run?.id, task: 'watch' }],
+      tasks: expect.arrayContaining([
+        { task: 'watch', outcome: 'started', reason: null, detail: null, run_id: run?.id },
+      ]) as unknown,
+    });
+  });
+
+  it('oa tasks ls shows each trigger, the next cron fire, the last run and run counts', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    expect(await oa('run', 'bad', '--wait')).toBe(1);
+    out = [];
+    expect(await oa('tasks', 'ls')).toBe(0);
+    expect(out[0]).toMatch(/^ok {6}manual {2}active {2}last=succeeded \S+ {2}runs=1$/);
+    expect(out[1]).toMatch(/^bad {5}manual {2}active {2}last=failed \S+ {2}runs=1 failed=1$/);
+    expect(out[2]).toBe('hold    manual  active  last=-  runs=0');
+    expect(out[3]).toBe(
+      'watch   event   active  on=order.received filter="payload.total > `10`"  last=-  runs=0',
+    );
+    expect(out[4]).toMatch(
+      /^hourly {2}cron {4}active {2}schedule="0 \* \* \* \*" next=\d{4}-\d\d-\d\dT\d\d:00:00\.000Z {2}last=- {2}runs=0$/,
+    );
+    out = [];
+    expect(await oa('tasks', 'ls', '--json')).toBe(0);
+    const { tasks } = JSON.parse(out[0] ?? '') as { tasks: Record<string, unknown>[] };
+    expect(tasks[1]).toMatchObject({
+      name: 'bad',
+      trigger: 'manual',
+      last_run: { status: 'failed', id: expect.stringMatching(/^run_/) as string },
+      runs: { total: 1, failed: 1, succeeded: 0 },
+    });
+    expect(tasks[3]).toMatchObject({
+      types: ['order.received'],
+      filter: 'payload.total > `10`',
+      schedule: null,
+      next_fire: null,
+      last_run: null,
+    });
+    expect(tasks[4]).toMatchObject({
+      schedule: '0 * * * *',
+      next_fire: expect.stringMatching(/:00:00\.000Z$/) as string,
+    });
+  });
+
+  it('oa runs show prints what a waiting run waits for', async () => {
+    expect(await oa('run', 'hold')).toBe(0);
+    const id = /(run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    await vi.waitFor(() => {
+      expect(daemon.core.store.runs.getById(id)?.status).toBe('waiting');
+    });
+    out = [];
+    expect(await oa('runs', 'show', id)).toBe(0);
+    expect(out).toContain('waits for   chat.reply');
+    expect(out).toContain('deadline    none');
+    out = [];
+    expect(await oa('runs', 'show', id, '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      run: { id, status: 'waiting' },
+      wait: { type: 'chat.reply', filter: null, expires_at: null, on_timeout: 'fail' },
+    });
   });
 });
 

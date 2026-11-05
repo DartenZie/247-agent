@@ -6,7 +6,8 @@ import { client, EXIT, readJson, reportApiError, UsageError, type Io } from '../
 
 export const EMIT_USAGE = `usage: oa emit <type> [payload.json|-] [options]
 
-Injects an event into the daemon as if a connector had emitted it.
+Injects an event into the daemon as if a connector had emitted it. Warns on stderr when
+no task would start a run for it and no waiting run waits for it.
 
 options:
   --source <name>       event source (default: manual)
@@ -48,11 +49,22 @@ export async function emit(args: string[], io: Io): Promise<number> {
     });
     if (values.json) {
       io.out(JSON.stringify(result));
-    } else if (result.status === 'inserted') {
-      const e = result.event;
+    }
+    if (result.status === 'duplicate') {
+      if (!values.json) {
+        io.out(`duplicate dedup_key=${result.dedup_key}`);
+      }
+      return EXIT.ok;
+    }
+    const e = result.event;
+    if (!values.json) {
       io.out(`inserted ${e.id} type=${e.type} correlation=${e.correlation_id}`);
-    } else {
-      io.out(`duplicate dedup_key=${result.dedup_key}`);
+    }
+    const starts = result.tasks?.some((t) => t.outcome === 'pending' || t.outcome === 'started');
+    if (starts === false && result.waiting_runs?.length === 0) {
+      io.err(
+        `warning: no task would start a run for ${e.type} and no waiting run matches it; oa events show ${e.id} says why`,
+      );
     }
     return EXIT.ok;
   } catch (err) {

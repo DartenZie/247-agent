@@ -16,7 +16,8 @@ import { eventLine, runLine, took, transcriptLines } from './format.js';
 export const RUNS_USAGE = `usage: oa runs <ls|show <id>|logs <id>|cancel <id>> [options]
 
 ls          the newest runs, one per line: id, task, status, created, duration, error
-show <id>   one run: its trigger event, timings, attempts, ledger rows and result or error
+show <id>   one run: its trigger event, timings, what a waiting run waits for (event
+            type, filter, deadline), attempts, ledger rows and result or error
 logs <id>   the run's agent transcript: prompt, messages, tool calls, permissions,
             usage, stop and result; for other action kinds, the tail of what each
             attempt printed to stdout and stderr
@@ -144,7 +145,7 @@ type Api = ReturnType<typeof client>;
 
 async function show(api: Api, id: string, json: boolean, io: Io): Promise<number> {
   const run: RunRecord = await api.getRun(id);
-  const [event, ledger, transcript, { attempts }] = await Promise.all([
+  const [event, ledger, transcript, { attempts }, { wait }] = await Promise.all([
     api.getEvent(run.event_id).catch((err: unknown) => {
       if (err instanceof ApiError && err.status === 404) {
         return undefined;
@@ -154,6 +155,7 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
     api.getRunLedger(id),
     api.getTranscript(id, { limit: 1 }),
     api.getRunAttempts(id),
+    run.status === 'waiting' ? api.getRunWait(id) : Promise.resolve({ wait: null }),
   ]);
   if (json) {
     io.out(
@@ -162,6 +164,7 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
         event: event ?? null,
         ledger,
         attempts,
+        wait,
         has_transcript: transcript.entries.length > 0,
       }),
     );
@@ -183,6 +186,16 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
   }
   if (run.finished_at !== null) {
     row('finished', `${run.finished_at}  (took ${took(run.started_at, run.finished_at)})`);
+  }
+  if (wait !== null) {
+    row('waits for', wait.type);
+    if (wait.filter !== null) {
+      row('filter', wait.filter);
+    }
+    row(
+      'deadline',
+      wait.expires_at === null ? 'none' : `${wait.expires_at}  (then ${wait.on_timeout})`,
+    );
   }
   if (attempts.length > 1) {
     const width = Math.max(...attempts.map((a) => a.status.length));

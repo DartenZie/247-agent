@@ -48,6 +48,8 @@ export class RunStore {
   private readonly oldestStmt: Statement;
   private readonly lastSucceededStmt: Statement;
   private readonly byTaskEventStmt: Statement;
+  private readonly byEventStmt: Statement;
+  private readonly countsStmt: Statement;
   private readonly setStatusStmt: Statement;
   private readonly finishedBeforeStmt: Statement;
   private readonly deleteStmt: Statement;
@@ -76,6 +78,10 @@ export class RunStore {
     );
     this.byIdStmt = db.prepare('SELECT * FROM runs WHERE id = ?');
     this.byTaskEventStmt = db.prepare('SELECT * FROM runs WHERE task = ? AND event_id = ?');
+    this.countsStmt = db.prepare(
+      'SELECT task, status, COUNT(*) AS n FROM runs GROUP BY task, status',
+    );
+    this.byEventStmt = db.prepare('SELECT * FROM runs WHERE event_id = ? ORDER BY created_at, id');
     this.setStatusStmt = db.prepare(
       `UPDATE runs SET status = @status,
          started_at  = COALESCE(started_at, @started_at),
@@ -150,6 +156,22 @@ export class RunStore {
   getByTaskAndEvent(task: string, eventId: string): RunRecord | undefined {
     const row: unknown = this.byTaskEventStmt.get(task, eventId);
     return row === undefined ? undefined : rowToRun(row);
+  }
+
+  /** How many runs each task has, per status, for `oa tasks ls`. */
+  countsByTask(): Map<string, Partial<Record<RunStatus, number>>> {
+    const out = new Map<string, Partial<Record<RunStatus, number>>>();
+    for (const row of this.countsStmt.all() as { task: string; status: RunStatus; n: number }[]) {
+      const counts = out.get(row.task) ?? {};
+      counts[row.status] = row.n;
+      out.set(row.task, counts);
+    }
+    return out;
+  }
+
+  /** The runs an event started, oldest first. */
+  listByEvent(eventId: string): RunRecord[] {
+    return this.byEventStmt.all(eventId).map(rowToRun);
   }
 
   /** What an earlier attempt of the run saved with `setProgress`; `undefined` when nothing. */

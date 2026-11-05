@@ -198,7 +198,7 @@ published two events, the automatic `task.say_hello.succeeded` and your own
 All four share one `correlation` id, and each carries its `parent`. That is how you
 trace anything the daemon did back to what caused it.
 
-One event, with its payload:
+One event, with its payload and what it did to each task:
 
 ```sh
 oa events show evt_01M43ZV3S8BY7T115X29WNRPJ1
@@ -207,7 +207,13 @@ oa events show evt_01M43ZV3S8BY7T115X29WNRPJ1
 ```
 2026-10-04T17:37:00.200Z  evt_01M43ZV3S8BY7T115X29WNRPJ1  hello.greeted  source=task:say_hello  correlation=cor_01M43ZV3S2XD6BY92FR56YFXZE  parent=evt_01M43ZV3S21ZZRCVA3C4QC2SAS
 payload: {"greeting":"hello, world (run run_01M43ZV3S25A74KF0X40Q05N6B)"}
+tasks:
+  say_hello      no match  own source: task:say_hello
+  echo_greeting  started   run_01M43ZV3S9C1Q2W3E4R5T6Y7U8
 ```
+
+When a task you expected did not run, this list says why: the type, the filter, or a
+pause.
 
 ## 8. Change the schedule without restarting
 

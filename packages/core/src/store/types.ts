@@ -1,4 +1,13 @@
-export type RunStatus = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+export const RUN_STATUSES = [
+  'queued',
+  'running',
+  'waiting',
+  'succeeded',
+  'failed',
+  'cancelled',
+] as const;
+
+export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /** Statuses that count as "the task is busy" for `overlap: skip`. */
 export const ACTIVE_STATUSES = [

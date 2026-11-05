@@ -76,9 +76,12 @@ Publishes an event. Body:
 The core assigns `id`, `seq`, `ts` and `depth`. A body with one of these keys, or with
 any other key that is not in the table, gets a 400.
 
-201 `{"status": "inserted", "event": <EventRecord>}` or 200
-`{"status": "duplicate", "dedup_key": "<key>"}`. An invalid type or an unknown parent is
-a 400.
+201 `{"status": "inserted", "event": <EventRecord>, "tasks": [<TaskMatch>…], "waiting_runs": ["run_…"]}`
+or 200 `{"status": "duplicate", "dedup_key": "<key>"}`. The core works out `tasks` and
+`waiting_runs` before it dispatches the event: a task whose trigger matches is
+`pending`, and `waiting_runs` lists the waiting runs whose wait the event matches. Both
+are `null` when the core could not work them out; the event is inserted all the same.
+An invalid type or an unknown parent is a 400.
 
 ### `GET /v1/events`
 
@@ -94,6 +97,25 @@ ascending order; with it, the events after that sequence number.
 ### `GET /v1/events/{id}`
 
 200 `<EventRecord>`, or 404 `unknown event "<id>"`.
+
+### `GET /v1/events/{id}/tasks`
+
+What the event did to each task:
+
+```json
+{ "event_id": "evt_01J8Z3…", "dispatched": true,
+  "runs": [],
+  "tasks": [{ "task": "classify_email", "outcome": "started", "reason": null,
+              "detail": null, "run_id": "run_01J8Z3…" }],
+  "waiting_runs": [] }
+```
+
+`dispatched` is `false` until the dispatcher has read the event. `runs` lists every
+`RunRecord` the event started, also runs of tasks that are no longer configured.
+`tasks` has one `TaskMatch` per task of the active configuration, in config order.
+`waiting_runs` lists the waiting runs whose wait the event matches. A wait ends when its
+event is dispatched, so the list is empty once `dispatched` is `true`. 404
+`unknown event "<id>"`.
 
 ### `POST /v1/runs`
 
@@ -158,6 +180,13 @@ a restart cut it short). `stdout` and `stderr` are the last 4096 characters of w
 attempt's `shell` steps printed, with each secret value replaced by `[secret:<name>]`; a cut tail starts
 with `…`, and a stream that printed nothing is `null`. Other action kinds record the
 attempt with no output. 404 for an unknown run.
+
+### `GET /v1/runs/{id}/wait`
+
+200 `{"run_id": "...", "wait": {"type", "filter", "expires_at", "on_timeout", "created_at"}}`
+for a `waiting` run: the event type or pattern it waits for, the rendered filter or
+`null`, the deadline or `null` for none, and what happens at the deadline (`fail` or
+`succeed`). `wait` is `null` for a run that is not waiting. 404 for an unknown run.
 
 ### `GET /v1/runs/{id}/ledger`
 
@@ -275,11 +304,40 @@ null`, also after a failed attempt.
 ### TaskEntry
 
 ```json
-{ "name": "fetch_email", "trigger": "cron", "paused_at": "2026-10-04T08:00:00.000Z" }
+{ "name": "fetch_email", "trigger": "cron", "paused_at": null,
+  "schedule": "*/5 * * * *", "next_fire": "2026-10-04T08:05:00.000Z",
+  "types": null, "filter": null,
+  "last_run": { "id": "run_01J8Z3…", "status": "succeeded",
+                "created_at": "…", "finished_at": "…" },
+  "runs": { "queued": 0, "running": 0, "waiting": 0, "succeeded": 41, "failed": 1,
+            "cancelled": 0, "total": 42 } }
 ```
 
 `trigger` is `cron`, `event` or `manual`. `paused_at` is when the task was paused, or
-`null` when it runs normally.
+`null` when it runs normally. A cron task has `schedule` and `next_fire`. An event task
+has `types` (the types or patterns of `type` or `type_any`) and `filter`. The other
+fields are `null`. `last_run` is the newest run, whatever its status, or `null`. `runs`
+counts the runs of the task that the database still holds, per status; retention
+deletes old ones.
+
+### TaskMatch
+
+```json
+{ "task": "classify_email", "outcome": "no_match", "reason": "filter",
+  "detail": "payload.from == 'editor@example.com'", "run_id": null }
+```
+
+| `outcome` | Meaning | `reason` |
+|---|---|---|
+| `started` | the event started the run `run_id` | `null` |
+| `pending` | the trigger matches and the event is not dispatched yet | `null` |
+| `skipped` | the trigger matches but no run started | `depth`: the event is deeper than `limits.max_event_depth`; `paused`: the task is paused; `overlap`: a cron tick while a run was active (`overlap: skip`); `chain_runs`: the chain reached `limits.max_runs_per_chain`; `unknown`: none of these holds now |
+| `no_match` | the trigger does not match | `own_source`: a run of the task produced the event; `type`: the trigger names another type, or the event is a `cron.tick` or `manual.run` for another task; `filter`: the filter is false; `filter_error`: the filter threw |
+
+`detail` gives context: the source, what the trigger wants (`wants order.received`),
+the filter, the error of the filter, or the limit. The core explains a skip from the
+pause, the limits and the runs as they are when you ask. These are the conditions at
+dispatch unless one of them changed after it.
 
 ### LedgerEntry
 

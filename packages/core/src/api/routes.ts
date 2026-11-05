@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 import { TaskPausedError, UnknownTaskError } from '../bus/manual.js';
+import type { EventExplanation, TaskMatch } from '../bus/explain.js';
 import type { TaskEntry } from '../bus/pause.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
 import type { Clock } from '../clock.js';
@@ -27,7 +28,8 @@ import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
 import type { AttemptRecord } from '../store/attempts.js';
 import type { TranscriptEntry } from '../store/transcripts.js';
-import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
+import type { WaitRecord } from '../store/waits.js';
+import { RUN_STATUSES, type EventRecord, type JsonValue, type RunRecord } from '../store/types.js';
 
 /**
  * The HTTP API (docs/internal/architecture.md), transport-free: `route()` takes a parsed request and
@@ -99,6 +101,29 @@ export interface HealthBody {
   };
 }
 
+/**
+ * `POST /v1/events`: an inserted event comes back with what it does to each task and the
+ * waiting runs it ends, worked out before it is dispatched (`oa emit` warns on none).
+ */
+export type EmitResponse =
+  | {
+      status: 'inserted';
+      event: EventRecord;
+      /** `null` when the explanation failed; the event is inserted all the same. */
+      tasks: TaskMatch[] | null;
+      waiting_runs: string[] | null;
+    }
+  | { status: 'duplicate'; dedup_key: string };
+
+/** `GET /v1/events/{id}/tasks`: the runs the event started and why each other task did not run. */
+export type EventTasksBody = EventExplanation;
+
+/** `GET /v1/runs/{id}/wait`: what a waiting run waits for; `wait` is `null` otherwise. */
+export interface RunWaitBody {
+  run_id: string;
+  wait: Pick<WaitRecord, 'type' | 'filter' | 'expires_at' | 'on_timeout' | 'created_at'> | null;
+}
+
 export interface RunResponse {
   event_id: string;
   run: RunRecord;
@@ -119,8 +144,6 @@ export type ConnectorEntry =
       restarts: 0;
       error: string | null;
     };
-
-const RUN_STATUSES = ['queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 
 /** `POST /v1/events`: the connector-facing event shape. */
 export const EmitBody = z.strictObject({
@@ -239,8 +262,26 @@ function emit(ctx: RouteContext, body: unknown): ApiResponse {
     }
     throw err;
   }
+  if (result.status === 'duplicate') {
+    return { status: 200, body: result as unknown as JsonValue };
+  }
+  // Synchronous with the publish: the dispatcher drains on a later macrotask, so a match is
+  // still `pending` and the waits it ends are still armed.
+  // The event is committed: an explanation that throws must not turn that into a 500, or a
+  // connector retrying without a dedup key would publish it twice.
+  let explained: Pick<EventExplanation, 'tasks' | 'waiting_runs'> | null = null;
+  try {
+    explained = ctx.core.bus.dispatcher.explain(result.event);
+  } catch {
+    // Left null: the answer says the explanation is missing.
+  }
+  const answer: EmitResponse = {
+    ...result,
+    tasks: explained?.tasks ?? null,
+    waiting_runs: explained?.waiting_runs ?? null,
+  };
   // The store's shape is already JSON; the cast just names it for the response type.
-  return { status: result.status === 'inserted' ? 201 : 200, body: result as unknown as JsonValue };
+  return { status: 201, body: answer as unknown as JsonValue };
 }
 
 function runTask(ctx: RouteContext, body: unknown): ApiResponse {
@@ -391,6 +432,34 @@ function getEvent(ctx: RouteContext, id: string): ApiResponse {
   return { status: 200, body: event as unknown as JsonValue };
 }
 
+function getEventTasks(ctx: RouteContext, id: string): ApiResponse {
+  const event = ctx.core.store.events.getById(id);
+  if (event === undefined) {
+    throw new ApiError(404, `unknown event "${id}"`);
+  }
+  const body: EventTasksBody = ctx.core.bus.dispatcher.explain(event);
+  return { status: 200, body: body as unknown as JsonValue };
+}
+
+function getRunWait(ctx: RouteContext, id: string): ApiResponse {
+  const run = requireRun(ctx, id);
+  const wait = run.status === 'waiting' ? ctx.core.store.waits.get(run.id) : undefined;
+  const body: RunWaitBody = {
+    run_id: run.id,
+    wait:
+      wait?.outcome !== null
+        ? null
+        : {
+            type: wait.type,
+            filter: wait.filter,
+            expires_at: wait.expires_at,
+            on_timeout: wait.on_timeout,
+            created_at: wait.created_at,
+          },
+  };
+  return { status: 200, body: body as unknown as JsonValue };
+}
+
 function getState(ctx: RouteContext, ns: string, key: string): ApiResponse {
   const entry: StateEntry | undefined = ctx.core.store.state.get(ns, key);
   if (entry === undefined) {
@@ -497,6 +566,8 @@ const RUN_CANCEL_PATH = /^\/v1\/runs\/([^/]+)\/cancel$/;
 const TASK_PAUSE_PATH = /^\/v1\/tasks\/([^/]+)\/(pause|resume)$/;
 const RUN_TRANSCRIPT_PATH = /^\/v1\/runs\/([^/]+)\/transcript$/;
 const RUN_LEDGER_PATH = /^\/v1\/runs\/([^/]+)\/ledger$/;
+const RUN_WAIT_PATH = /^\/v1\/runs\/([^/]+)\/wait$/;
+const EVENT_TASKS_PATH = /^\/v1\/events\/([^/]+)\/tasks$/;
 const RUN_ATTEMPTS_PATH = /^\/v1\/runs\/([^/]+)\/attempts$/;
 const CONNECTOR_RESTART_PATH = /^\/v1\/connectors\/([^/]+)\/restart$/;
 const EVENT_PATH = /^\/v1\/events\/([^/]+)$/;
@@ -590,6 +661,16 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   if (ledger?.[1] !== undefined) {
     const id = ledger[1];
     return only(method, 'GET', () => getRunLedger(ctx, id));
+  }
+  const wait = RUN_WAIT_PATH.exec(path);
+  if (wait?.[1] !== undefined) {
+    const id = wait[1];
+    return only(method, 'GET', () => getRunWait(ctx, id));
+  }
+  const eventTasks = EVENT_TASKS_PATH.exec(path);
+  if (eventTasks?.[1] !== undefined) {
+    const id = eventTasks[1];
+    return only(method, 'GET', () => getEventTasks(ctx, id));
   }
   const event = EVENT_PATH.exec(path);
   if (event?.[1] !== undefined) {

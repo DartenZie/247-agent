@@ -86,6 +86,11 @@ export class CronScheduler {
     }));
   }
 
+  /** When the task's job fires next; `null` when the task has no armed job. */
+  nextRun(task: string): Date | null {
+    return this.jobs.get(task)?.job.nextRun() ?? null;
+  }
+
   private arm(task: CompiledTask): void {
     const trigger = task.config.trigger;
     if (trigger.kind !== 'cron') {

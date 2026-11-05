@@ -95,8 +95,16 @@ inserted <event id> type=<type> correlation=<correlation id>
 duplicate dedup_key=<key>
 ```
 
-Both exit 0. An invalid type (wildcards, bad characters, more than 8 segments) or an
-unknown parent is a 400 from the daemon, exit 2.
+When no task would start a run for the event and no waiting run waits for it, `emit`
+also prints a warning on stderr. A mistyped type is the usual cause:
+
+```
+warning: no task would start a run for <type> and no waiting run matches it; oa events show <event id> says why
+```
+
+`--json` prints the daemon's answer, with `tasks` and `waiting_runs`
+([API](api.md#post-v1events)). All of these exit 0. An invalid type (wildcards, bad
+characters, more than 8 segments) or an unknown parent is a 400 from the daemon, exit 2.
 
 ### `oa runs ls|show <id>|logs <id>|cancel <id> [options]`
 
@@ -118,12 +126,15 @@ one. `no runs` when nothing matches. Exit 0.
 `show` prints one run as `key  value` rows: `run`, `task`, `status` (with `(attempt N)`
 after a retry), `event` (the trigger event line, or its bare id when retention removed
 it), `payload`, `created`, `started` (the first attempt's start), `finished` with `(took …)`,
+for a `waiting` run `waits for` (the event type or pattern), `filter` (when the wait has
+one) and `deadline` (`<time>  (then fail|succeed)`, or `none`),
 `attempts` with one row per attempt when there was more than one (`<n>  <status>  <start>  took <d>  <error>`),
 `output` with the `oa runs logs` command when an attempt printed something, `cost` as
 `$<usd> in <n> calls` followed by one row per ledger entry, `transcript` with the
 `oa runs logs` command when an agent run recorded one, `error`, and `result` as JSON.
 Exit 1 when the run's status is `failed`, else 0. `--json` prints
-`{"run", "event", "ledger", "attempts", "has_transcript"}`.
+`{"run", "event", "ledger", "attempts", "wait", "has_transcript"}`; `wait` is `null`
+unless the run is waiting.
 
 `logs` prints the agent transcript: a header `<time>  turn <n>  <kind>` per entry, the
 prompt and the agent's text indented, tool calls with their kind, title, command and
@@ -147,9 +158,19 @@ unknown run or one that has already finished (`run "<id>" is already <status>`).
 
 ### `oa tasks ls|pause <name>|resume <name> [options]`
 
-`ls` prints the tasks of the active configuration, one per line: name, trigger (`cron`,
-`event` or `manual`), and `active` or `paused since <time>`. `no tasks` when there are
-none.
+`ls` prints the tasks of the active configuration, one per line:
+
+```
+<name>  cron    active  schedule="<cron>" next=<time>  last=<status> <time>  runs=<n> failed=<n>
+<name>  event   paused since <time>  on=<type>[,<type>…] filter="<filter>"  last=-  runs=0
+<name>  manual  active  last=-  runs=0
+```
+
+The fields after the state are the cron schedule and when it fires next, or the event
+types and filter of the trigger; the status of the newest run and when it finished (or
+was created, while it is unfinished), `-` when there is none; and how many runs the
+database holds for the task, with `failed=<n>` when some failed. `no tasks` when there
+are none.
 
 `pause` stops the task from starting new runs, whatever triggers it, until you resume
 it: its events and cron ticks start no run, and `oa run` refuses it with
@@ -177,8 +198,27 @@ Exit 0; exit 1 for an unknown task.
 <time>  <event id>  <type>  source=<source>  correlation=<correlation id>  parent=<parent id>
 ```
 
-`no events` when nothing matches. `show` prints that line and then `payload: <JSON>`. An
-invalid pattern is a 400, exit 2; an unknown event id is exit 1; otherwise exit 0.
+`no events` when nothing matches. `show` prints that line, then `payload: <JSON>`, then
+what the event did to each task of the active configuration:
+
+```
+tasks:
+  classify_email  started   run_01J8Z3…
+  urgent          no match  filter is false: payload.priority == 'high'
+  digest          no match  type: wants email.digest
+  archive         skipped   paused: paused since 2026-10-04T08:00:00.000Z
+  notify          pending   matches; not dispatched yet
+```
+
+A task has `started` and its run, `pending`, `skipped` with the reason (`depth`,
+`paused`, `overlap`, `chain_runs`, or `no run, reason unknown`), or `no match` with the
+reason (`own source`, `type`, `filter is false`, `filter error`). A run of a task that
+is no longer configured is listed with `(task no longer configured)`. The reasons are
+the `TaskMatch` reasons of the [API](api.md#taskmatch). `--json` prints
+`{"event", "dispatched", "runs", "tasks", "waiting_runs"}`.
+
+An invalid pattern is a 400, exit 2. An unknown event id is exit 1. Otherwise the exit
+code is 0.
 
 ### `oa connector list|restart <name> [options]`
 

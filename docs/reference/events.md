@@ -210,6 +210,7 @@ The names worth searching for:
 | `task.paused`, `task.resumed` | info | `oa tasks pause` or `oa tasks resume` changed the task (`task`) |
 | `task.skipped_paused` | info | an event matched a paused task and started no run (`task`, `event_id`) |
 | `trigger.filter_error` | warn | a trigger filter threw on an event; no match |
+| `event.unconsumed` | info | no task trigger and no wait matched the event when it was dispatched (`event_id`, `event_type`, `source`); `oa events show <id>` says why for each task. Expected for a `task.<name>.succeeded` nobody listens to, and for a reply that arrives before its run arms the wait (the wait still picks it up) |
 | `event.depth_exceeded` | warn | an event past `limits.max_event_depth` started no run (`event_id`, `depth`, `root_event_id`, `limit`) |
 | `event.chain_runs_exceeded` | warn | an event whose chain reached `limits.max_runs_per_chain` started no run (`event_id`, `root_event_id`, `limit`) |
 | `loop.detected` | warn | the first event of a chain was dropped and `loop.detected` was published (`reason`, `root_event_id`, `event_id`) |

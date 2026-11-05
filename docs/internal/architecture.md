@@ -99,6 +99,18 @@ coalesces into one `setImmediate` drain; a 1 s timer is the safety net, so a wai
 timeout is noticed within a second. A `manual.run` is drained synchronously inside the
 API call, so `POST /v1/runs` returns the queued run.
 
+An event that ends no wait and matches no task trigger is logged at info
+(`event.unconsumed`), so a mistyped type leaves a trace at the default level.
+
+`Dispatcher.explain(event)` (`bus/explain.ts` holds the types) answers
+`GET /v1/events/{id}/tasks` and the `tasks` of `POST /v1/events`. It is pure: per task
+it returns the run the event started, else `CompiledTask.explain` (the same verdict
+`matches` uses: own source, type, filter, filter error), else the skip reason in the
+order above (depth, pause, overlap, chain cap). The skip reasons are not stored; they are
+worked out from the pause, the limits and the chain as they are now, so a pause lifted
+since dispatch reads `overlap`, `chain_runs` or `unknown`. Before dispatch it also lists
+the pending waits the event matches.
+
 A drain that throws is logged (`dispatch.failed`), counted
 (`oa_dispatch_failures_total`) and kept by `Dispatcher.health()` until the next drain
 succeeds (`dispatch.recovered`); the events wait past the cursor meanwhile.
