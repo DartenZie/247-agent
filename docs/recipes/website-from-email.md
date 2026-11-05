@@ -16,7 +16,7 @@ together.
   [agent program](../connectors/agents.md) named `claude`.
 - A bare or base checkout of the site at `/var/lib/247-agent/repos/website`, with an
   `npm run build` that renders it.
-- Secrets: the mailbox credentials, the chat token, the SFTP user and password and the agent's
+- Secrets: the mailbox credentials, the chat token, the SFTP credentials and the agent's
   model key, each by name in your secrets backend.
 - The email manifest's `incoming.authserv_id` set to your mail server's name, so the
   filter in task 2 can check that the mail really comes from the editor. See
