@@ -11,7 +11,7 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 | `GET /v1/events/{id}` | One event |
 | `POST /v1/runs` | Manual run `{task, event?: {type?, payload?}, correlation_id?}` → 201 `{event_id, run}`; the run is already `queued`. 404 unknown task, 409 paused |
 | `GET /v1/runs?status=&task=&limit=` | Runs, newest first. `status`: `queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled` |
-| `GET /v1/runs/{id}` | One run: status, input event, result, error, attempts |
+| `GET /v1/runs/{id}` | One run: status, `event_id` of the input event, result, error, attempt. The event itself is `GET /v1/events/{event_id}` |
 | `POST /v1/runs/{id}/cancel` | End a queued, running or waiting run → 200 the run `cancelled`, or 202 still `running` while its action stops; 409 when already finished |
 | `GET /v1/tasks` | Configured tasks `{tasks: [{name, trigger, paused_at}]}` |
 | `POST /v1/tasks/{name}/pause`, `/resume` | Stop or restart new runs of a task → 200 `{name, trigger, paused_at}`; `POST /v1/runs` of a paused task is 409 |
