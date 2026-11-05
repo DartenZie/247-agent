@@ -103,7 +103,9 @@ found.
 
 `node scripts/check-docs.mjs` checks every relative link and every `yaml` block in the
 repository's Markdown, and runs `oa validate` on blocks that are whole tasks files or
-manifests (`writing.md`). Prettier skips Markdown and `docs/`, so lint proves nothing
+manifests and on every example file under `docs/examples/` and `connectors/*/examples/`
+(`writing.md`). `npm test` runs it through `packages/core/src/check-docs.test.ts`, so
+the baseline rung covers it once `npm run build` has run. Prettier skips Markdown and `docs/`, so lint proves nothing
 about them; for a docs change, also run the commands the page states when they are
 cheap.
 

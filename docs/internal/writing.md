@@ -84,11 +84,32 @@ only when the skill ships without the repo (the five `247-agent-*` skills do).
 ## The checker
 
 ```sh
-node scripts/check-docs.mjs            # every Markdown file in the repo
+node scripts/check-docs.mjs            # every Markdown and example file in the repo
 node scripts/check-docs.mjs docs/tasks # one directory or file
 ```
 
-It fails on a relative link that does not resolve, a `yaml` block that does not parse,
-and a complete tasks file or manifest in a `yaml` block that `oa validate` rejects. A
-block preceded by `<!-- check: skip -->` is left alone. CI runs it; run it before
-reporting a docs change, together with the rungs the `verify` skill lists.
+It fails on:
+
+- a relative link that does not resolve
+- a `yaml` block that does not parse
+- a complete tasks file or manifest in a `yaml` block that `oa validate` rejects
+- an example file that `oa validate` rejects. An example file is any `.yaml` or `.yml`
+  file below a directory named `examples`, such as `docs/examples/**` (with
+  `hello-world/` and `connectors.d/`) and `connectors/<name>/examples/`. A `.yaml` file
+  named on the command line is an example file too.
+
+Each failure names the file, and for a block, the line of its opening fence. A `yaml`
+block that is a fragment or a placeholder and must not be checked gets the comment
+`<!-- check: skip -->` on the line before its fence:
+
+````markdown
+<!-- check: skip -->
+```yaml
+action: { kind: shell, cmd: [<your command>] }
+```
+````
+
+`npm test` runs the checker over the whole repository
+(`packages/core/src/check-docs.test.ts`), after `npm run build`, and so does CI. Run it
+before you report a docs or example change, together with the rungs that the `verify`
+skill lists.

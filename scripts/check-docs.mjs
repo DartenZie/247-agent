@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Checks the Markdown documentation: every relative link resolves, every `yaml` block
 // parses, and every complete tasks file or connector manifest inside a `yaml` block
-// passes `oa validate`. A block preceded by `<!-- check: skip -->` is left alone.
+// passes `oa validate`. A block preceded by `<!-- check: skip -->` is left alone. Every
+// `.yaml`/`.yml` file below a directory named `examples` (docs/examples/**,
+// connectors/*/examples/*) must pass `oa validate` too. `npm test` runs it
+// (packages/core/src/check-docs.test.ts).
 //
-//   node scripts/check-docs.mjs            # every Markdown file in the repo
-//   node scripts/check-docs.mjs docs/tasks # one directory or file
+//   node scripts/check-docs.mjs            # every Markdown and example file in the repo
+//   node scripts/check-docs.mjs docs/tasks # one directory or file (a .yaml file is an example)
 //   node scripts/check-docs.mjs --links-only <stage>/share/doc   # links only, no build needed
 //
 // Exit 0 when everything passes, 1 on a failure, 2 when it could not run.
@@ -40,30 +43,61 @@ const skipDirs = new Set([
   '.claude',
 ]);
 
-function markdownFiles(start) {
-  const out = [];
-  const walk = (dir) => {
+const isYamlFile = (name) => /\.ya?ml$/.test(name);
+
+// Markdown files, and example files: every `.yaml`/`.yml` file below a directory named
+// `examples` (docs/examples/**, connectors/*/examples/*). A file named directly is a
+// Markdown file unless its name ends in `.yaml`/`.yml`, then it is an example file.
+function collect(start, out) {
+  const walk = (dir, inExamples) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
       if (entry.isDirectory()) {
         if (!skipDirs.has(entry.name)) {
-          walk(join(dir, entry.name));
+          walk(path, inExamples || entry.name === 'examples');
         }
       } else if (entry.name.endsWith('.md')) {
-        out.push(join(dir, entry.name));
+        out.markdown.push(path);
+      } else if (inExamples && isYamlFile(entry.name)) {
+        out.examples.push(path);
       }
     }
   };
-  const st = statSync(start);
-  if (st.isDirectory()) {
-    walk(start);
+  if (statSync(start).isDirectory()) {
+    walk(start, false);
+  } else if (isYamlFile(start)) {
+    out.examples.push(start);
   } else {
-    out.push(start);
+    out.markdown.push(start);
   }
-  return out.sort();
 }
 
 const failures = [];
-const fail = (file, line, msg) => failures.push(`${relative(root, file)}:${line}: ${msg}`);
+const show = (file) => {
+  const rel = relative(root, file);
+  return rel.startsWith('..') ? file : rel;
+};
+const fail = (file, line, msg) =>
+  failures.push(`${show(file)}${line === undefined ? '' : `:${line}`}: ${msg}`);
+
+// `oa validate` on one file; the first lines of its output on a failure, else null.
+function validate(path) {
+  try {
+    execFileSync(process.execPath, [cli, 'validate', path], { stdio: ['ignore', 'pipe', 'pipe'] });
+    return null;
+  } catch (e) {
+    return `${e.stdout ?? ''}${e.stderr ?? ''}`.toString().trim().split('\n').slice(0, 6);
+  }
+}
+
+// Example files: each must pass `oa validate` (an agent.yaml also validates the tasks
+// files and manifests it points at).
+function checkExample(file) {
+  const out = validate(file);
+  if (out) {
+    fail(file, undefined, `oa validate rejects this example:\n    ${out.join('\n    ')}`);
+  }
+}
 
 // Links: [text](target) where target is relative. Anchors, URLs and mailto are skipped.
 function checkLinks(file, text) {
@@ -151,19 +185,21 @@ function checkYaml(file, text, scratch) {
     }
     const tmp = join(scratch, `block-${start}-${Math.random().toString(36).slice(2, 8)}.yaml`);
     writeFileSync(tmp, body);
-    try {
-      execFileSync(process.execPath, [cli, 'validate', tmp], { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (e) {
-      const out = `${e.stdout ?? ''}${e.stderr ?? ''}`
-        .toString()
-        .trim()
-        .split('\n')
-        .slice(0, 6)
-        .join('\n    ');
+    const out = validate(tmp);
+    if (out) {
+      // Point `<scratch file>:<n>` at the line in the Markdown file instead.
+      const where = out.map((l) =>
+        l
+          .split(tmp)
+          .map((part, k) =>
+            k === 0 ? part : part.replace(/^:(\d+)/, (_, n) => `:${start + Number(n)}`),
+          )
+          .join(show(file)),
+      );
       fail(
         file,
         start,
-        `oa validate rejects this ${isTasksFile ? 'tasks file' : 'manifest'}:\n    ${out}`,
+        `oa validate rejects this ${isTasksFile ? 'tasks file' : 'manifest'}:\n    ${where.join('\n    ')}`,
       );
     }
   }
@@ -178,15 +214,23 @@ function main() {
   }
   const paths = args.filter((a) => a !== '--links-only');
   const targets = paths.length ? paths.map((p) => resolve(p)) : [root];
-  const files = targets.flatMap(markdownFiles);
+  const found = { markdown: [], examples: [] };
+  for (const target of targets) {
+    collect(target, found);
+  }
+  const markdown = [...new Set(found.markdown)].sort();
+  const examples = linksOnly ? [] : [...new Set(found.examples)].sort();
   const scratch = mkdtempSync(join(tmpdir(), 'check-docs-'));
   try {
-    for (const file of files) {
+    for (const file of markdown) {
       const text = readFileSync(file, 'utf8');
       checkLinks(file, text);
       if (!linksOnly) {
         checkYaml(file, text, scratch);
       }
+    }
+    for (const file of examples) {
+      checkExample(file);
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -194,8 +238,9 @@ function main() {
   for (const f of failures) {
     console.error(f);
   }
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   console.log(
-    `check-docs: ${files.length} files, ${failures.length} failure${failures.length === 1 ? '' : 's'}`,
+    `check-docs: ${markdown.length} Markdown files, ${examples.length} example files, ${plural(failures.length, 'failure')}`,
   );
   return failures.length ? 1 : 0;
 }
