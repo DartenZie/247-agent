@@ -56,9 +56,13 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    that sum plus what is held in flight reaches it (see [The daily
    breaker](#the-daily-breaker)), and with
    `BudgetExceededError('task')` when the run has already spent its cap. When the
-   model has a table price, the worst case is also checked: `ceil(len(system + input)
-   / 3)` input tokens plus `max_tokens` output at table prices, added to what the run
-   has spent, must fit the cap. An `openrouter` model without a `pricing:` entry has no
+   model has a table price, the worst case is also checked (`estimateCallUsage()` in `pricing.ts`): the
+   system prompt at the cache-write price, because it is sent as a cacheable block and
+   a cache miss bills it so; the input at the input price; and `max_tokens` output, all
+   at table prices. Added to what the run has spent, it must fit the cap. Text is
+   counted by `estimateInputTokens()`: one token per 3 ASCII characters, plus one per
+   UTF-16 code unit outside ASCII, because CJK text and emoji cost close to one token
+   per character. An `openrouter` model without a `pricing:` entry has no
    table price, so it gets only the post-hoc check. `spentRun` is the ledger sum for
    the run id, so retries share one cap.
 2. **Call** the adapter with `{model, system, input, outputSchema, maxTokens, effort,

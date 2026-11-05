@@ -182,6 +182,27 @@ describe('LlmService.call', () => {
     await expect(call(s, { maxUsd: 0.01 })).resolves.toMatchObject({ priced_by: 'table' });
   });
 
+  it('prices the system prompt at the cache-write rate in the worst case (#79)', async () => {
+    fake = fakeProviderFactory(usage(5, 100));
+    const s = service();
+    // 300 chars → 100 system tokens at $1.25/Mtok ($0.000125) + 5 input + 100 output tokens
+    // = worst case $0.00063; at the plain input rate it would be $0.000605 and pass.
+    await expect(call(s, { system: 'x'.repeat(300), maxUsd: 0.00062 })).rejects.toThrow(
+      /worst case \$0\.0006/,
+    );
+    expect(fake.requests).toHaveLength(0);
+    await expect(call(s, { system: 'x'.repeat(300), maxUsd: 0.00064 })).resolves.toBeDefined();
+  });
+
+  it('counts CJK input at a token per character in the worst case (#79)', async () => {
+    const s = service();
+    // 300 CJK chars → 300 input tokens ($0.0003) + 100 output ($0.0005) = $0.0008.
+    await expect(call(s, { input: '数'.repeat(300), maxUsd: 0.0007 })).rejects.toThrow(
+      /worst case/,
+    );
+    expect(fake.requests).toHaveLength(0);
+  });
+
   it('fails the run when the actual cost overruns the budget, keeping the row', async () => {
     fake = fakeProviderFactory(usage(10_000, 100)); // $0.0105, the estimate was $0.0005
     const s = service();
@@ -725,6 +746,15 @@ describe('LlmService batches', () => {
     });
     expect(fake.batches).toHaveLength(1);
     expect(env.store.ledger.listByRun(r.id)).toEqual([]);
+  });
+
+  it('prices a batch system prompt at the batch cache-write rate (#79)', async () => {
+    const s = withBatches();
+    // Half of: 100 system tokens at $1.25/Mtok + 5 input + 100 output = $0.000315.
+    await expect(
+      s.submitBatch({ ...req, system: 'x'.repeat(300), maxUsd: 0.00031 }, ctxOf(run())),
+    ).rejects.toThrow(BudgetExceededError);
+    expect(fake.batches).toHaveLength(0);
   });
 
   it('checks the worst case at the batch price and refuses a provider without a batch API', async () => {

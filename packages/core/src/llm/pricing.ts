@@ -103,9 +103,37 @@ export function costUsd(price: ModelPrice, usage: LlmUsage): number {
   );
 }
 
-/** Deliberately pessimistic (3 chars per token) so the worst-case budget check never under-counts. */
+/**
+ * A pessimistic token count for the worst-case budget check: 3 ASCII characters per
+ * token, and one token per UTF-16 code unit outside ASCII, because CJK text and emoji
+ * cost close to one token per character (or more) (#79).
+ */
 export function estimateInputTokens(text: string): number {
-  return Math.ceil(text.length / 3);
+  let ascii = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) < 0x80) {
+      ascii += 1;
+    }
+  }
+  return Math.ceil(ascii / 3) + (text.length - ascii);
+}
+
+/**
+ * The worst-case usage of one completion: the system prompt is sent as a cacheable block,
+ * so on a cache miss it is billed at the cache-write price; the input at the input price;
+ * `maxTokens` of output.
+ */
+export function estimateCallUsage(
+  system: string | undefined,
+  input: string,
+  maxTokens: number,
+): LlmUsage {
+  return {
+    input: estimateInputTokens(input),
+    output: maxTokens,
+    cacheRead: 0,
+    cacheWrite: estimateInputTokens(system ?? ''),
+  };
 }
 
 /** `YYYY-MM-DD` of the UTC day; the daily budget window (docs/internal/model-actions.md). */
