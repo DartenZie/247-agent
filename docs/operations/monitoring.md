@@ -6,11 +6,28 @@ from growing forever.
 ## Metrics
 
 The daemon exposes Prometheus metrics at `GET /metrics` on its Unix socket; `oa metrics`
-prints them. Prometheus cannot scrape a Unix socket itself, so either write the output
-to a node_exporter textfile collector on a timer or put a small HTTP proxy in front of
-the socket.
+prints them. Prometheus cannot scrape a Unix socket, so give the daemon a TCP address
+for its metrics in `agent.yaml`:
 
-A textfile collector, as a systemd timer running every minute:
+```yaml
+metrics: { listen: 9464 }            # serves http://127.0.0.1:9464/metrics
+```
+
+Then add a scrape job for it:
+
+```yaml
+scrape_configs:
+  - job_name: 247-agent
+    static_configs:
+      - targets: ["127.0.0.1:9464"]
+```
+
+The endpoint serves only `/metrics` and has no authentication. Keep it on the loopback
+interface unless a firewall protects it. `oa reload` applies a changed `metrics.listen`.
+See [`agent.yaml`](../reference/agent-yaml.md#metrics-endpoint).
+
+If you cannot open a port, use a textfile collector instead, as a systemd timer running
+every minute:
 
 ```sh
 # /usr/local/bin/247-agent-metrics

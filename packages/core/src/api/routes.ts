@@ -453,7 +453,7 @@ async function reload(ctx: RouteContext): Promise<ApiResponse> {
 }
 
 /** Prometheus text exposition (version 0.0.4). */
-const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
+export const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
 const RUN_PATH = /^\/v1\/runs\/([^/]+)$/;
 const RUN_CANCEL_PATH = /^\/v1\/runs\/([^/]+)\/cancel$/;

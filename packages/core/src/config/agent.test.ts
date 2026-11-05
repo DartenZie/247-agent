@@ -380,3 +380,30 @@ describe('retention in agent.yaml', () => {
     expect(!typo.ok && typo.issues[0]?.path).toBe('retention.runs');
   });
 });
+
+describe('metrics in agent.yaml (#59)', () => {
+  it('is off by default and binds a bare port to the loopback interface', () => {
+    const d = parseAgent('', '/x/agent.yaml');
+    expect(d.ok && d.config.metrics).toEqual({});
+    for (const listen of ['9464', '"9464"', '":9464"']) {
+      const r = parseAgent(`metrics: { listen: ${listen} }\n`, '/x/agent.yaml');
+      expect(r.ok && r.config.metrics, listen).toEqual({
+        listen: { host: '127.0.0.1', port: 9464 },
+      });
+    }
+  });
+
+  it('takes host:port and [ipv6]:port and refuses anything else', () => {
+    const v4 = parseAgent('metrics: { listen: "0.0.0.0:9100" }\n', '/x/agent.yaml');
+    expect(v4.ok && v4.config.metrics.listen).toEqual({ host: '0.0.0.0', port: 9100 });
+    const v6 = parseAgent('metrics: { listen: "[::1]:9100" }\n', '/x/agent.yaml');
+    expect(v6.ok && v6.config.metrics.listen).toEqual({ host: '::1', port: 9100 });
+    const name = parseAgent('metrics: { listen: "localhost:9100" }\n', '/x/agent.yaml');
+    expect(name.ok && name.config.metrics.listen).toEqual({ host: 'localhost', port: 9100 });
+    for (const bad of ['"x"', '"1.2.3.4:"', '"1.2.3.4:70000"', '"::1:9100"', '-1', '""', '1.5']) {
+      const r = parseAgent(`metrics: { listen: ${bad} }\n`, '/x/agent.yaml');
+      expect(!r.ok && r.issues.map((i) => i.path), bad).toEqual(['metrics.listen']);
+    }
+    expect(parseAgent('metrics: { path: /m }\n', '/x/agent.yaml').ok).toBe(false);
+  });
+});

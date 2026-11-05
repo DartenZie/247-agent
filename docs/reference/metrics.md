@@ -5,8 +5,25 @@ get it into a scraper.
 
 ## Scraping
 
-The daemon serves metrics on its Unix socket, which Prometheus cannot scrape directly.
-Two ways in:
+The daemon always serves metrics on its Unix socket, which Prometheus cannot scrape
+directly. Three ways in:
+
+- Set `metrics.listen` in [`agent.yaml`](agent-yaml.md#metrics-endpoint). The daemon then
+  also serves `GET /metrics` over plain HTTP on that address, and a stock scrape job
+  reads it:
+
+  ```yaml
+  # agent.yaml
+  metrics: { listen: 9464 }            # 127.0.0.1:9464
+  ```
+
+  ```yaml
+  # prometheus.yml
+  scrape_configs:
+    - job_name: 247-agent
+      static_configs:
+        - targets: ["127.0.0.1:9464"]
+  ```
 
 - `oa metrics` prints the exposition. Run it from a systemd timer into a
   node_exporter textfile collector:
