@@ -30,6 +30,7 @@ ln -s ../examples "$stage/share/doc/examples"
 # links land from share/doc. The connector READMEs are development notes and stay in
 # the repository; docs/connectors/<name>.md is the reference that ships.
 for dir in connectors/*/examples; do
+  [ -d "$dir" ] || continue
   mkdir -p "$stage/share/$(dirname "$dir")"
   cp -R "$dir" "$stage/share/$dir"
 done

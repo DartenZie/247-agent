@@ -83,7 +83,7 @@ add(
   'npm run test:linux -- --systemd=always',
   'packaging, launchers, units or install paths: installs the .deb under systemd and runs a task',
   has(
-    /^(packaging\/|bin\/|scripts\/(build-release|build-package|bundle|install|uninstall)\.|packages\/core\/src\/(home|version)\.ts$|package\.json$)/,
+    /^(packaging\/|bin\/|scripts\/(build-release|build-package|bundle|install|uninstall|stage-share)\.|packages\/core\/src\/(home|version)\.ts$|package\.json$)/,
   ),
 );
 
