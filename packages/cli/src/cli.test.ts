@@ -19,6 +19,7 @@ import { main } from './cli.js';
 import type { Io } from './io.js';
 
 const EXAMPLES = new URL('../../../docs/examples/', import.meta.url).pathname;
+const FIXTURES = new URL('../../core/test/fixtures/', import.meta.url).pathname;
 
 const TASKS = `tasks:
   - name: ok
@@ -398,6 +399,100 @@ describe('oa cost (#129)', () => {
     expect(out[1]).toMatch(/ {2}table$/);
     expect(out).toHaveLength(3);
     expect(out[2]).toMatch(/^total since /);
+  });
+
+  it('groups by task, model, provider and day, costliest first, and parses --since (#137)', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    expect(await oa('run', 'bad', '--wait')).toBe(1);
+    const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    const badId = /^failed (run_\w+)/.exec(out[2] ?? '')?.[1] ?? '';
+    const ledger = daemon.core.store.ledger;
+    const now = Date.now();
+    const daysAgo = (n: number) => new Date(now - n * 86_400_000).toISOString();
+    ledger.insert(ledgerRow(okId, { ts: daysAgo(0) }));
+    ledger.insert(
+      ledgerRow(okId, {
+        model: 'claude-sonnet-5',
+        in_tok: 1000,
+        out_tok: 200,
+        usd: 0.2,
+        ts: daysAgo(2),
+      }),
+    );
+    ledger.insert(
+      ledgerRow(badId, {
+        task: 'bad',
+        provider: 'openrouter',
+        model: 'typesafe/jev-1.13',
+        usd: 0.05,
+        priced_by: 'provider',
+        ts: daysAgo(10),
+      }),
+    );
+    const day = (n: number) => daysAgo(n).slice(0, 10);
+    const total = /^total since (\S+): \$(\S+)$/;
+
+    // The default window is 24h: only the call from today.
+    out = [];
+    expect(await oa('cost')).toBe(0);
+    expect(out[1]).toBe(
+      'ok         1        100         20         10          0     0.0100  table',
+    );
+    expect(out[2]).toMatch(total);
+    expect(out).toHaveLength(3);
+
+    out = [];
+    expect(await oa('cost', '--by', 'task', '--since', '30d')).toBe(0);
+    expect(out).toEqual([
+      'task   calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by',
+      'ok         2       1100        220         20          0     0.2100  table',
+      'bad        1        100         20         10          0     0.0500  provider',
+      expect.stringMatching(total) as string,
+    ]);
+    const [, since, usd] = total.exec(out[3] ?? '') ?? [];
+    expect(usd).toBe('0.2600');
+    expect(Math.abs(Date.parse(since ?? '') - (now - 30 * 86_400_000))).toBeLessThan(60_000);
+
+    out = [];
+    expect(await oa('cost', '--by', 'model', '--since', '7d')).toBe(0);
+    expect(out).toEqual([
+      'model              calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by',
+      'claude-sonnet-5        1       1000        200         10          0     0.2000  table',
+      'claude-haiku-4-5       1        100         20         10          0     0.0100  table',
+      expect.stringMatching(/^total since \S+: \$0\.2100$/) as string,
+    ]);
+
+    out = [];
+    expect(await oa('cost', '--by', 'provider', '--since', '30d')).toBe(0);
+    expect(out).toEqual([
+      'provider     calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by',
+      'anthropic        2       1100        220         20          0     0.2100  table',
+      'openrouter       1        100         20         10          0     0.0500  provider',
+      expect.stringMatching(/^total since \S+: \$0\.2600$/) as string,
+    ]);
+
+    out = [];
+    const isoSince = daysAgo(5);
+    expect(await oa('cost', '--by', 'day', '--since', isoSince)).toBe(0);
+    expect(out.map((l) => l.split(/ +/)[0])).toEqual(['day', day(2), day(0), 'total']);
+    expect(out[3]).toBe(`total since ${isoSince}: $0.2100`);
+  });
+
+  it('says so when no call falls in the window', async () => {
+    expect(await oa('cost', '--by', 'day')).toBe(0);
+    expect(out).toEqual([expect.stringMatching(/^no model calls since \S+Z$/) as string]);
+    expect(err).toEqual([]);
+  });
+
+  it("rejects a bad --by with a usage error and a bad --since with the daemon's reason", async () => {
+    expect(await oa('cost', '--by', 'week')).toBe(2);
+    expect(err.join('\n')).toMatch(/--by must be one of task, model, provider, day/);
+    expect(out).toEqual([]);
+
+    err = [];
+    expect(await oa('cost', '--since', 'yesterday')).toBe(2);
+    expect(err.join('\n')).toMatch(/since: a duration like 7d or an ISO timestamp/);
+    expect(out).toEqual([]);
   });
 });
 
@@ -822,6 +917,59 @@ describe('oa connector', () => {
     expect(await oa('connector', 'restart')).toBe(2);
     expect(await oa('connector', 'frob')).toBe(2);
   });
+
+  it('restarts a running connector and reports it up with a new pid (#137)', async () => {
+    await daemon.stop();
+    writeFileSync(
+      join(dir, 'agent.yaml'),
+      [
+        'db: state.db',
+        'socket: core.sock',
+        'connectors:',
+        `  - { name: fake, exec: [node, "${FIXTURES}fake-mcp.ts"], restart: { base: 20ms, max: 100ms } }`,
+        '',
+      ].join('\n'),
+    );
+    daemon = await startDaemon({
+      configFile: join(dir, 'agent.yaml'),
+      log: createLogger({ sink: () => undefined }),
+    });
+    const listed = async () => {
+      out = [];
+      expect(await oa('connector', 'list', '--json')).toBe(0);
+      const body = JSON.parse(out[0] ?? '') as {
+        connectors: { name: string; state: string; pid: number | null; restarts: number }[];
+      };
+      return body.connectors[0];
+    };
+    await vi.waitFor(
+      async () => {
+        expect((await listed())?.state).toBe('up');
+      },
+      { timeout: 10_000 }, // the daemon starts connectors without waiting for them
+    );
+    const before = (await listed())?.pid;
+    expect(before).toEqual(expect.any(Number));
+
+    out = [];
+    expect(await oa('connector', 'restart', 'fake')).toBe(0);
+    expect(err).toEqual([]);
+    const m = /^fake\tup\tpid=(\d+)$/.exec(out[0] ?? '');
+    expect(m, out[0]).not.toBeNull();
+    const after = Number(m?.[1]);
+    expect(after).not.toBe(before);
+
+    expect(await listed()).toMatchObject({ name: 'fake', state: 'up', pid: after });
+    out = [];
+    expect(await oa('connector', 'list')).toBe(0);
+    expect(out).toEqual([`fake\tup\tstdio\tpid=${String(after)}\trestarts=0`]);
+
+    out = [];
+    expect(await oa('connector', 'restart', 'fake', '--json')).toBe(0);
+    const again = JSON.parse(out[0] ?? '') as { name: string; state: string; pid: number };
+    expect(again).toMatchObject({ name: 'fake', state: 'up' });
+    expect(again.pid).not.toBe(after);
+  }, 20_000);
 });
 
 describe('oa help', () => {
