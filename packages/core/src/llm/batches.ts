@@ -44,7 +44,7 @@ export const BatchEndedPayload = z.object({
   text: z.string().optional(),
   usage: Usage.optional(),
   usd: z.number().optional(),
-  priced_by: z.enum(['table', 'provider', 'unpriced']).optional(),
+  priced_by: z.enum(['table', 'provider', 'unpriced', 'estimate']).optional(),
   ledger_id: z.number().int().optional(),
   error: z.string().optional(),
   retryable: z.boolean().optional(),

@@ -82,7 +82,9 @@ oa cost --by model --since 2026-09-01
 ```
 
 A model with no known price is refused by `oa validate` unless its provider reports
-cost itself. Prices are never guessed.
+cost itself. Prices are never guessed. A call cut off by a timeout, a cancel or a stop
+while the provider was answering has no reported usage, so its row is the worst case at
+the model's price, marked `priced_by: estimate`.
 
 ## Paying less for the same answer
 

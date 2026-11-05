@@ -69,24 +69,24 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(11);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(12);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(11);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(12);
   });
 
   it('refuses a database whose schema is newer than this build', () => {
     const path = join(dir, 'state.db');
-    store.db.pragma('user_version = 12');
+    store.db.pragma('user_version = 13');
     store.close();
     expect(() => (store = openStore(path))).toThrow(
-      /schema version 12 is newer than this build's 11/,
+      /schema version 13 is newer than this build's 12/,
     );
     store = openStore(join(dir, 'other.db'));
     const db = new Database(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(12);
+    expect(db.pragma('user_version', { simple: true })).toBe(13);
     db.close();
   });
 
@@ -107,6 +107,56 @@ describe('openStore', () => {
       expect(statSync(`${path}.schema-8.bak`).mode & 0o777).toBe(0o640);
     } finally {
       process.umask(prev);
+    }
+  });
+
+  it('keeps the ledger rows and accepts priced_by estimate after migrating from schema 11', () => {
+    const path = join(dir, 'old.db');
+    atSchema(path, 11);
+    const db = new Database(path);
+    db.exec(`
+      INSERT INTO events (id, type, source, ts, correlation_id, payload)
+        VALUES ('evt_1', 'x.y', 'test', '2026-09-19T10:00:00.000Z', 'cor_1', '{}');
+      INSERT INTO runs (id, task, event_id, correlation_id, status, created_at)
+        VALUES ('run_1', 't', 'evt_1', 'cor_1', 'running', '2026-09-19T10:00:00.000Z');
+      INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts)
+        VALUES ('run_1', 't', 'anthropic', 'claude-haiku-4-5', 10, 1, 0.5, 'table', '2026-09-19T10:00:00.000Z');
+      INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts)
+        VALUES ('run_1', 't', 'anthropic', 'claude-haiku-4-5', 10, 1, 0.5, 'table', '2026-09-19T10:00:00.000Z');
+      DELETE FROM ledger WHERE id = 2;
+    `);
+    db.close();
+    const migrated = openStore(path);
+    try {
+      // Ids keep counting past a row retention removed: event payloads name ledger ids.
+      const id = migrated.ledger.insert({
+        run_id: 'run_1',
+        task: 't',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        in_tok: 5,
+        out_tok: 100,
+        cache_read: 0,
+        cache_write: 0,
+        usd: 0.25,
+        priced_by: 'estimate',
+        ts: '2026-09-19T10:01:00.000Z',
+      });
+      expect(id).toBe(3);
+      expect(migrated.ledger.listByRun('run_1').map((r) => r.priced_by)).toEqual([
+        'table',
+        'estimate',
+      ]);
+      expect(migrated.ledger.sumForRun('run_1')).toBeCloseTo(0.75);
+      expect(() =>
+        migrated.db
+          .prepare(
+            "INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts) VALUES ('run_1', 't', 'p', 'm', 0, 0, 0, 'guess', 'x')",
+          )
+          .run(),
+      ).toThrow(/CHECK constraint/);
+    } finally {
+      migrated.close();
     }
   });
 

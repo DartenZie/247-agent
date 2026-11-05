@@ -150,6 +150,34 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN root_id TEXT;
   CREATE INDEX events_root ON events(root_id);
   `,
+  `
+  -- \`priced_by = 'estimate'\`: the worst case of a call aborted while its request was in
+  -- flight (#78). SQLite cannot change a CHECK in place, so the table is rebuilt.
+  CREATE TABLE ledger_new (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT    NOT NULL REFERENCES runs(id),
+    task        TEXT    NOT NULL,
+    provider    TEXT    NOT NULL,
+    model       TEXT    NOT NULL,
+    in_tok      INTEGER NOT NULL,
+    out_tok     INTEGER NOT NULL,
+    cache_read  INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    usd         REAL    NOT NULL,
+    priced_by   TEXT    NOT NULL CHECK (priced_by IN ('table','provider','unpriced','estimate')),
+    ts          TEXT    NOT NULL
+  );
+  INSERT INTO ledger_new SELECT * FROM ledger;
+  -- Keep the id counter: \`llm.batch.ended\` payloads name ledger ids, and retention may
+  -- have removed the newest rows.
+  DELETE FROM sqlite_sequence WHERE name = 'ledger_new';
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'ledger_new', seq FROM sqlite_sequence WHERE name = 'ledger';
+  DROP TABLE ledger;
+  ALTER TABLE ledger_new RENAME TO ledger;
+  CREATE INDEX ledger_ts ON ledger(ts);
+  CREATE INDEX ledger_run ON ledger(run_id);
+  CREATE INDEX ledger_task_ts ON ledger(task, ts);
+  `,
 ];
 
 /**

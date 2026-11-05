@@ -62,7 +62,9 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    table price, so it gets only the post-hoc check. `spentRun` is the ledger sum for
    the run id, so retries share one cap.
 2. **Call** the adapter with `{model, system, input, outputSchema, maxTokens, effort,
-   signal}`, holding the worst case in flight until the ledger row is written.
+   signal}`, holding the worst case in flight until the ledger row is written. A call
+   the run's signal aborts in flight is ledgered at that worst case ([An aborted
+   call](#an-aborted-call)).
 3. **Settle** (`settle()`): price the response. A provider-reported cost wins
    (`priced_by: provider`); else the table (`table`); else the row is written at $0
    with `priced_by: unpriced` and `UnpricedModelError` fails the run so it is noticed.
@@ -78,6 +80,21 @@ parsed object with `output_schema`, else `{text}`. A response the adapter return
 with `error` (billed, but no usable structured output), or a structured call that
 stopped for another reason (`other`), fails retryably; its row is already in the
 ledger, so the retry spends from the same cap.
+
+## An aborted call
+
+When the run's signal aborts while the adapter call is in flight (the task `timeout`, `oa
+runs cancel`, or a daemon stop), the provider may already bill the request, and no
+response says how much. Before it rethrows the abort, `execute` writes the call's worst
+case as its row: the precheck's estimate (`ceil(len(system + input) / 3)` input tokens
+plus `max_tokens` output for `call`, the JSON body's input tokens and no output for
+`decide`) at table prices, `priced_by: estimate`, and logs `llm.call` or `llm.decide`
+with `aborted: true`. A model without a table price has no worst case, so the row is at
+$0. The row replaces the in-flight hold, trips the breaker like any other row, and counts
+in `spentRun`, so the retry after a timeout spends from the same cap. It overstates
+what the provider bills when the request was cut off early or not billed at all: a budget
+errs on the safe side. A call that fails without an abort (a connection error, a 5xx)
+writes no row.
 
 ## The daily breaker
 
@@ -106,8 +123,8 @@ the cancel.
 ## The ledger row
 
 `store/ledger.ts`: `run_id, task, provider, model, in_tok, out_tok, cache_read,
-cache_write, usd, priced_by, ts`, where `priced_by` is `provider`, `table` or
-`unpriced`. Usage is normalised so `in_tok` is what the vendor bills at the full input
+cache_write, usd, priced_by, ts`, where `priced_by` is `provider`, `table`,
+`unpriced` or `estimate` (see [An aborted call](#an-aborted-call)). Usage is normalised so `in_tok` is what the vendor bills at the full input
 price and cache reads and writes are separate. `GET /v1/cost` and `oa cost` sum it by
 task, model, provider or day; `GET /v1/runs/{id}/ledger` lists a run's rows. Rows of
 a run that is still `queued`, `running` or `waiting` are never swept by retention.

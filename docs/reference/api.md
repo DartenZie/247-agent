@@ -277,7 +277,9 @@ same attempt; a retry is a new attempt.
 ```
 
 `priced_by` is `table` (the built-in or configured price), `provider` (the provider
-reported the cost) or `unpriced` (recorded at $0; the run failed).
+reported the cost), `unpriced` (recorded at $0; the run failed) or `estimate` (the
+worst case of a call cut off by a timeout, a cancel or a stop while the provider was
+answering; $0 when the model has no price).
 
 ### TranscriptEntry
 

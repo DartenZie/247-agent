@@ -9,8 +9,8 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order, all pending ones in one transaction, and set
-`PRAGMA user_version` to the number applied; eleven ship, so a current database reads
-`user_version = 11`. A failed migration leaves the file at the version it had. A
+`PRAGMA user_version` to the number applied; twelve ship, so a current database reads
+`user_version = 12`. A failed migration leaves the file at the version it had. A
 `user_version` above the number this build ships means a newer release migrated the file:
 `migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
 daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
@@ -99,7 +99,7 @@ drops the task, and applies again if the task comes back. Retention never touche
 
 **`ledger`**: `id INTEGER PRIMARY KEY AUTOINCREMENT`, `run_id REFERENCES runs(id)`,
 `task`, `provider`, `model`, `in_tok`, `out_tok`, `cache_read DEFAULT 0`, `cache_write
-DEFAULT 0`, `usd REAL`, `priced_by` with a CHECK on `table`|`provider`|`unpriced`,
+DEFAULT 0`, `usd REAL`, `priced_by` with a CHECK on `table`|`provider`|`unpriced`|`estimate`,
 `ts`. Indexes `ledger_ts`, `ledger_run`, `ledger_task_ts`. Written only by
 `llm/service.ts` (`settle`), one row per model call, decision or agent turn. `GET
 /v1/cost` and the daily cap are sums over it.
