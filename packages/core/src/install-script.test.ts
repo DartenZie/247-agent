@@ -31,10 +31,22 @@ afterEach(() => {
  * A release tarball with only what install.sh reads: VERSION and the two launchers. Its
  * entries are closed to other users, as a release built under umask 077 records them.
  */
-function fakeRelease(version = '9.9.9'): string {
+function fakeRelease(version = '9.9.9', releaseTarget = target): string {
   const tree = join(root, 'src', `247-agent-${version}`);
   mkdirSync(join(tree, 'bin'), { recursive: true });
-  writeFileSync(join(tree, 'VERSION'), `version=${version}\ntarget=${target}\nnode=22\n`);
+  writeFileSync(join(tree, 'VERSION'), `version=${version}\ntarget=${releaseTarget}\nnode=22\n`);
+  // What the service part reads: the starter config, the units and the health check.
+  mkdirSync(join(tree, 'share', 'etc', 'tasks.d'), { recursive: true });
+  mkdirSync(join(tree, 'share', 'systemd'), { recursive: true });
+  writeFileSync(join(tree, 'share', 'etc', 'agent.yaml'), 'tasks: [tasks.d]\n');
+  writeFileSync(join(tree, 'share', 'etc', 'tasks.d', 'hello.yaml'), 'tasks: []\n');
+  for (const unit of ['247-agent.service', '247-agent-connector@.service']) {
+    writeFileSync(
+      join(tree, 'share', 'systemd', unit),
+      'ExecStart=/opt/247-agent/bin/247-agent-core\n',
+    );
+  }
+  writeFileSync(join(tree, 'share', 'check-service.sh'), 'exit 0\n');
   chmodSync(tree, 0o700);
   chmodSync(join(tree, 'bin'), 0o700);
   chmodSync(join(tree, 'VERSION'), 0o600);
@@ -274,6 +286,64 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(readFileSync(join(prefix, 'VERSION'), 'utf8')).toContain('version=9.9.8');
     expect(existsSync(`${prefix}-9.9.9`)).toBe(false);
     expect(existsSync(`${prefix}-9.9.9.new`)).toBe(false);
+  });
+
+  it('gives /etc/247-agent to root, readable by the service group (issue #117)', () => {
+    // Owned by the service user, the daemon or a task could rewrite the config it trusts.
+    // Shims make this host a glibc Linux with systemd where the caller is root, and log
+    // what root would run against /etc instead of running it.
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    const log = join(root, 'root.log');
+    const realFind = spawnSync('sh', ['-c', 'command -v find'], { encoding: 'utf8' }).stdout.trim();
+    const shim = (name: string, body: string) => {
+      writeFileSync(join(shims, name), `#!/bin/sh\n${body}\n`);
+      chmodSync(join(shims, name), 0o755);
+    };
+    shim('uname', 'case $1 in -s) echo Linux ;; -m) echo x86_64 ;; *) echo Linux ;; esac');
+    shim('ldd', 'echo "ldd (Debian GLIBC 2.36-9) 2.36"');
+    shim('getconf', 'echo "glibc 2.36"');
+    shim('id', '[ "$1" = -u ] && echo 0; exit 0');
+    for (const name of ['install', 'chown', 'systemctl', 'useradd']) {
+      shim(name, `echo "${name} $*" >> "${log}"`);
+    }
+    shim(
+      'find',
+      `case $1 in /etc/*) echo "find $*" >> "${log}" ;; *) exec "${realFind}" "$@" ;; esac`,
+    );
+    const prefix = join(root, 'opt', '247-agent');
+    const run = spawnSync(
+      'sh',
+      [
+        script,
+        '--from',
+        fakeRelease('9.9.9', 'linux-x64'),
+        '--prefix',
+        prefix,
+        '--bin-dir',
+        join(root, 'bin'),
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    const lines = readFileSync(log, 'utf8').split('\n');
+    const tree = `${prefix}-9.9.9`;
+    expect(lines).toContain(
+      'install -d -m 750 -o root -g 247-agent /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d',
+    );
+    expect(lines).toContain(
+      `install -m 640 -o root -g 247-agent ${tree}/share/etc/agent.yaml /etc/247-agent/agent.yaml`,
+    );
+    expect(lines).toContain(
+      `install -m 640 -o root -g 247-agent ${tree}/share/etc/tasks.d/hello.yaml /etc/247-agent/tasks.d/hello.yaml`,
+    );
+    // An install before #117 left the config with the service user; the upgrade takes it
+    // back, but only what the group can still read once root owns it.
+    expect(lines).toContain(
+      'find /etc/247-agent -user 247-agent -group 247-agent ( -type f -perm -g=r -o -type d -perm -g=rx ) -exec chown root:247-agent {} +',
+    );
+    expect(lines.filter((l) => l.includes('-o 247-agent'))).toEqual([]);
   });
 
   it.each([

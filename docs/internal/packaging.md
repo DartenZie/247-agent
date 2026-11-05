@@ -126,7 +126,11 @@ umask 022 and makes the tree `u+rwX,go+rX,go-w` after the copy, so neither a cal
 umask nor sudo's (`Defaults umask=0077`) nor a tarball built under 077 can close the
 tree to the service user. When it runs as root or through sudo, it also gives the tree
 to root (uid 0, gid 0), with or without `--no-service`, whatever owner the tarball
-records. `/etc/247-agent` gets its 750 and 640 from explicit modes. On an
+records. `/etc/247-agent` gets its 750 and 640 from explicit modes and belongs to
+`root:247-agent`, as in the packages, so the service user can read the config but not
+change it. Both the installer and the package postinstall give back to root what an
+older version left with the user and the group can read; a file closed to the group
+stays as it is. On an
 upgrade the new version's `oa validate` must accept the existing config before the
 symlink moves; the unit file is replaced, the config never touched, and the service
 restarted unless `--no-restart`. After a start or a restart it runs the new tree's
