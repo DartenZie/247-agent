@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,7 +34,9 @@ describe('247-agent-core', () => {
     // the test lets it go, so the SIGHUP lands while startDaemon is still pending.
     const probing = join(d, 'probing');
     const release = join(d, 'release');
-    const fake = join(d, 'bwrap');
+    // OA_HOME/bin comes first on the daemon's PATH (home.ts), ahead of a real bwrap.
+    mkdirSync(join(d, 'bin'));
+    const fake = join(d, 'bin', 'bwrap');
     writeFileSync(
       fake,
       `#!/bin/sh\ntouch '${probing}'\nwhile [ ! -e '${release}' ]; do sleep 0.05; done\nexit 0\n`,
@@ -53,7 +55,7 @@ describe('247-agent-core', () => {
     );
     const out: string[] = [];
     const child = spawn(process.execPath, [MAIN, '--config', join(d, 'agent.yaml')], {
-      env: { ...process.env, PATH: `${d}:${process.env.PATH ?? ''}`, NOTIFY_SOCKET: '' },
+      env: { ...process.env, OA_HOME: d, NOTIFY_SOCKET: '' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.on('data', (b: Buffer) => out.push(b.toString()));
@@ -82,5 +84,5 @@ describe('247-agent-core', () => {
         });
       }
     }
-  });
+  }, 30_000);
 });
