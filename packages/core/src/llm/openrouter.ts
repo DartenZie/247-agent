@@ -161,7 +161,7 @@ interface DecisionsBody {
   id?: unknown;
   provider?: unknown;
   answers?: unknown;
-  usage?: { input_tokens?: unknown; output_tokens?: unknown; cost?: unknown } | undefined;
+  usage?: ({ input_tokens?: unknown; output_tokens?: unknown } & CostFields) | undefined;
   error?: { message?: unknown; code?: unknown; type?: unknown } | undefined;
 }
 
@@ -263,12 +263,12 @@ function decisionUsageOf(u: DecisionsBody['usage']): LlmUsage {
     cacheRead: 0,
     cacheWrite: 0,
   };
-  return typeof u?.cost === 'number' ? { ...usage, reportedUsd: u.cost } : usage;
+  return withCost(usage, u);
 }
 
 function usageOf(res: OpenAI.ChatCompletion): LlmUsage {
   // `cost` (USD) is OpenRouter's extension to the usage block; an upstream may send `null`.
-  const u = res.usage as (OpenAI.CompletionUsage & { cost?: unknown }) | null | undefined;
+  const u = res.usage as (OpenAI.CompletionUsage & CostFields) | null | undefined;
   if (u === undefined || u === null) {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   }
@@ -278,5 +278,25 @@ function usageOf(res: OpenAI.ChatCompletion): LlmUsage {
     output: typeof u.completion_tokens === 'number' ? u.completion_tokens : 0,
     ...cacheTokensOf(u.prompt_tokens_details),
   });
-  return typeof u.cost === 'number' ? { ...usage, reportedUsd: u.cost } : usage;
+  return withCost(usage, u);
+}
+
+/** OpenRouter's cost extension to a usage block. */
+interface CostFields {
+  cost?: unknown;
+  is_byok?: unknown;
+  cost_details?: { upstream_inference_cost?: unknown } | null;
+}
+
+/**
+ * Sets `reportedUsd` from `cost`. With bring-your-own-key, `cost` is only OpenRouter's fee
+ * and the upstream provider bills `cost_details.upstream_inference_cost` to the key, so
+ * the two are added and the ledger keeps what the call cost in total (#128).
+ */
+function withCost(usage: LlmUsage, u: CostFields | null | undefined): LlmUsage {
+  if (typeof u?.cost !== 'number') {
+    return usage;
+  }
+  const upstream = u.is_byok === true ? u.cost_details?.upstream_inference_cost : undefined;
+  return { ...usage, reportedUsd: u.cost + (typeof upstream === 'number' ? upstream : 0) };
 }

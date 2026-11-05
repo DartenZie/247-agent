@@ -166,6 +166,38 @@ describe('openrouter adapter: response mapping', () => {
     expect(res.usage).not.toHaveProperty('reportedUsd');
   });
 
+  it('adds the upstream cost of a bring-your-own-key response to the OpenRouter fee (#128)', async () => {
+    const { res } = await call(
+      completion({
+        usage: {
+          prompt_tokens: 7,
+          completion_tokens: 3,
+          total_tokens: 10,
+          cost: 0.0001,
+          is_byok: true,
+          cost_details: { upstream_inference_cost: 0.002 },
+        },
+      }),
+    );
+    expect(res.usage.reportedUsd).toBeCloseTo(0.0021, 10);
+  });
+
+  it('ignores an upstream cost when the response is not bring-your-own-key', async () => {
+    const { res } = await call(
+      completion({
+        usage: {
+          prompt_tokens: 7,
+          completion_tokens: 3,
+          total_tokens: 10,
+          cost: 0.002,
+          is_byok: false,
+          cost_details: { upstream_inference_cost: 0.002 },
+        },
+      }),
+    );
+    expect(res.usage.reportedUsd).toBe(0.002);
+  });
+
   it('counts cache writes separately', async () => {
     const { res } = await call(
       completion({
@@ -463,6 +495,21 @@ describe('openrouter adapter: decide', () => {
       cacheWrite: 0,
       reportedUsd: 0.000019992,
     });
+  });
+
+  it('adds the upstream cost of a bring-your-own-key decision to the fee (#128)', async () => {
+    const { res } = await decide(
+      decision({
+        usage: {
+          input_tokens: 476,
+          output_tokens: 0,
+          cost: 0.00001,
+          is_byok: true,
+          cost_details: { upstream_inference_cost: 0.0002 },
+        },
+      }),
+    );
+    expect(res.usage.reportedUsd).toBeCloseTo(0.00021, 12);
   });
 
   it('leaves reportedUsd unset without a cost and tolerates a missing usage block', async () => {

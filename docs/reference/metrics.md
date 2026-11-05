@@ -79,6 +79,8 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_model_tokens_total` | counter | `provider`, `model`, `direction` (`input`, `output`, `cache_read`, `cache_write`) | tokens ledgered |
 | `oa_model_cost_usd_total` | counter | `provider`, `model`, `task` | dollars ledgered |
 | `oa_model_calls_unpriced_total` | counter | `provider`, `model`, `task` | model calls ledgered at $0 because neither the price table nor the provider gave a cost; they count as $0 against the daily cap |
+| `oa_model_cost_below_table_total` | counter | `provider`, `model`, `task` | model calls whose reported cost was under half of what their tokens cost at the table price; the reported cost is what the ledger and the budgets count |
+| `oa_model_cost_below_table_usd_total` | counter | `provider`, `model`, `task` | USD by which the table price exceeded the reported cost on those calls |
 | `oa_model_spend_today_usd` | gauge, at scrape | | dollars ledgered since 00:00 UTC |
 | `oa_model_daily_budget_usd` | gauge, at scrape | | `budgets.daily_usd`; absent when unset |
 | `oa_budget_exceeded_total` | counter | `scope` (`daily`, `task`) | calls refused or runs failed over a budget |

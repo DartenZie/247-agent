@@ -86,6 +86,11 @@ export type LlmServiceSettings = Pick<
 /** The event the daily circuit breaker emits, once per UTC day (docs/internal/model-actions.md). */
 export { BUDGET_EXCEEDED };
 
+/** The log line for a reported cost far under the table price (#128). */
+export const COST_BELOW_TABLE = 'llm.cost_below_table';
+/** A reported cost under this share of the table price is flagged. */
+const COST_BELOW_TABLE_RATIO = 0.5;
+
 /** What `execute` needs to know about a call before and after the adapter runs it. */
 interface ExecuteSpec {
   provider: string;
@@ -782,6 +787,20 @@ export class LlmService implements LlmPort, BatchSource {
     this.metrics.modelCost.inc({ ...labels, task: cctx.task }, usd);
     if (pricedBy === 'unpriced') {
       this.metrics.modelCallsUnpriced.inc({ ...labels, task: cctx.task });
+    }
+    if (pricedBy === 'provider' && price !== undefined) {
+      // A reported cost is ledgered as is; one far under the table price is flagged (#128).
+      const tableUsd = costUsd(price, usage);
+      if (usd < tableUsd * COST_BELOW_TABLE_RATIO) {
+        this.metrics.modelCostBelowTable.inc({ ...labels, task: cctx.task });
+        this.metrics.modelCostBelowTableUsd.inc({ ...labels, task: cctx.task }, tableUsd - usd);
+        cctx.log.warn(COST_BELOW_TABLE, {
+          task: cctx.task,
+          ...labels,
+          reported_usd: usd,
+          table_usd: tableUsd,
+        });
+      }
     }
     this.metrics.modelTokens.inc({ ...labels, direction: 'input' }, usage.input);
     this.metrics.modelTokens.inc({ ...labels, direction: 'output' }, usage.output);

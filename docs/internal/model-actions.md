@@ -74,6 +74,12 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
 3. **Settle** (`settle()`): price the response. A provider-reported cost wins
    (`priced_by: provider`); else the table (`table`); else the row is written at $0
    with `priced_by: unpriced` and `UnpricedModelError` fails the run so it is noticed.
+   A reported cost is ledgered as reported, even `0`; when the model has a table price
+   and the reported cost is under half of it, `settle()` also logs `llm.cost_below_table`
+   (warn: `task`, `provider`, `model`, `reported_usd`, `table_usd`) and counts it in
+   `oa_model_cost_below_table_total` and `oa_model_cost_below_table_usd_total` (#128).
+   An agent turn whose cumulative cost update arrives after its stop records `0` for
+   that turn and can be flagged even though the next turn carries the cost.
    Write the ledger row, trip the daily breaker when `spentToday + usd` reaches the
    cap (the crossing call still returns its result), log `llm.call` with token counts
    and USD, never the prompt or the key.
@@ -207,6 +213,10 @@ An adapter without `decide` (every type but `openrouter`) is
 any other non-2xx → `NonRetryableError` (400 bad question, 401 no key, 402 no credits,
 413 over 32k tokens); a non-JSON body, a 2xx carrying `error`, or no `answers` map →
 retryable. `usage.cost` is the price when reported, else the table.
+
+On a bring-your-own-key response (`usage.is_byok: true`), from Chat Completions or the
+Decisions API, `usage.cost` is only OpenRouter's fee; the adapter adds
+`usage.cost_details.upstream_inference_cost` to it so the ledger keeps the upstream charge.
 
 The runner then checks every declared question is answered with its declared type, a
 `choice` is one of its labels, a `score` is within `0..levels−1`, a `noul` is a number in

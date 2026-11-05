@@ -318,6 +318,62 @@ describe('LlmService.call', () => {
     expect(unpriced('vendor/other')).toBe(1);
     expect(unpriced('vendor/some-model')).toBeUndefined();
   });
+
+  it('ledgers a reported cost far below the table price but warns and counts it (#128)', async () => {
+    const metrics = new Metrics();
+    // haiku at the table: 1000 in + 100 out = $0.0015; the provider reports $0.
+    fake = fakeProviderFactory({
+      ...usage(1000, 100),
+      usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, reportedUsd: 0 },
+    });
+    const r = run('triage');
+    const res = await call(service({ metrics }), { provider: 'router' }, r);
+    expect(res).toMatchObject({ usd: 0, priced_by: 'provider' });
+    expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'provider' });
+    expect(env.lines.find((l) => l.msg === 'llm.cost_below_table')).toMatchObject({
+      level: 'warn',
+      task: 'triage',
+      provider: 'router',
+      model: 'claude-haiku-4-5',
+      reported_usd: 0,
+      table_usd: expect.closeTo(0.0015, 6) as number,
+    });
+    const below = metrics.registry.value('oa_model_cost_below_table_total', {
+      provider: 'router',
+      model: 'claude-haiku-4-5',
+      task: 'triage',
+    });
+    expect(below).toBe(1);
+    expect(
+      metrics.registry.value('oa_model_cost_below_table_usd_total', {
+        provider: 'router',
+        model: 'claude-haiku-4-5',
+        task: 'triage',
+      }),
+    ).toBeCloseTo(0.0015);
+  });
+
+  it('stays quiet when the reported cost is near the table price or the model has no price (#128)', async () => {
+    const metrics = new Metrics();
+    fake = fakeProviderFactory({
+      ...usage(1000, 100),
+      usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.0012 },
+    });
+    await call(service({ metrics }), { provider: 'router' });
+    fake = fakeProviderFactory({
+      ...usage(1000, 100),
+      usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, reportedUsd: 0 },
+    });
+    await call(service({ metrics }), { provider: 'router', model: 'vendor/some-model' });
+    expect(env.lines.filter((l) => l.msg === 'llm.cost_below_table')).toHaveLength(0);
+    expect(
+      metrics.registry.value('oa_model_cost_below_table_total', {
+        provider: 'router',
+        model: 'claude-haiku-4-5',
+        task: 'classify',
+      }),
+    ).toBeUndefined();
+  });
 });
 
 /** A provider that answers only when the request's signal aborts, rejecting with its reason. */
@@ -654,6 +710,28 @@ describe('LlmService agent turns (checkBudget + record)', () => {
     expect(env.lines.at(-1)).toMatchObject({
       msg: 'agent.turn',
       run_usd: expect.closeTo(0.053, 4) as number,
+    });
+  });
+
+  it('warns when an agent reports $0 for a turn of a priced model (#128)', () => {
+    const s = service();
+    const r = run('agent_task');
+    const res = s.record(
+      {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, reportedUsd: 0 },
+      },
+      cctx(r),
+    );
+    expect(res).toMatchObject({ usd: 0, priced_by: 'provider' });
+    expect(env.lines.find((l) => l.msg === 'llm.cost_below_table')).toMatchObject({
+      level: 'warn',
+      task: 'agent_task',
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+      reported_usd: 0,
+      table_usd: expect.closeTo(0.003, 6) as number,
     });
   });
 
