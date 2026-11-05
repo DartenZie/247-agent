@@ -92,7 +92,8 @@ A connector that must hold a secret the daemon should not see, or needs privileg
 `managed_by: systemd` ([`connectors.md`](connectors.md)): the unit's
 `247-agent-connector-host` resolves that connector's secrets from the unit's own
 `LoadCredential=` lines and the daemon never does. Drop-ins set `User=`, capabilities
-and credentials; `Group=247-agent` stays, which is how it reads `/etc/247-agent` and
+and credentials; `Group=247-agent` stays, which is how it reads `/etc/247-agent` (owned by root, so no
+process of the service can rewrite the config) and
 the daemon's socket (created `0660`), and the daemon's state directory is hidden from
 it. The directory hides the file only: anyone who can open the socket can read the whole
 database through `POST /v1/backup`, as they could read most of it through `/v1/runs`,

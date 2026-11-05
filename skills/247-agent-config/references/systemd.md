@@ -110,8 +110,8 @@ tar -xzf 247-agent-<version>-linux-x64.tar.gz   # from the GitHub release of tag
 mv 247-agent-<version>-linux-x64 /opt/247-agent
 ln -s /opt/247-agent/bin/oa /usr/local/bin/oa
 apt install bubblewrap          # for sandbox: bwrap on shell actions and agent programs
-install -d -m 750 -o 247-agent /etc/247-agent
-# write agent.yaml, tasks.d/, connectors.d/ ; put secrets under /etc/credstore
+install -d -m 750 -o root -g 247-agent /etc/247-agent
+# write agent.yaml, tasks.d/, connectors.d/ as root:247-agent, mode 640 ; put secrets under /etc/credstore
 cp /opt/247-agent/share/systemd/247-agent.service /etc/systemd/system/
 systemctl edit 247-agent        # drop-in with one LoadCredential= per secret
 oa validate /etc/247-agent/agent.yaml

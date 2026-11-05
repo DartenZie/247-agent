@@ -229,10 +229,21 @@ oa run hello --wait
 # The state directory and the database are closed to other local users (issue #42).
 open=$(find /var/lib/247-agent -maxdepth 1 -perm /o=rwx)
 [ -z "$open" ] || { ls -la /var/lib/247-agent; echo "readable by other users: $open"; exit 1; }
+# The config belongs to root, readable by the service group only (issue #117).
+etc_owner() {
+  wrong=$(find /etc/247-agent ! \( -user root -group 247-agent \) -o -type d ! -perm 750 -o -type f ! -perm 640)
+  [ -z "$wrong" ] || { ls -laR /etc/247-agent; echo "not root:247-agent 750/640: $wrong"; exit 1; }
+}
+etc_owner
+systemctl reload 247-agent
+oa health
 step "an upgrade checks the config and that the daemon came up (issue #61)"
 deb=$(ls dist-release/247-agent_*_"$(dpkg --print-architecture)".deb)
+# As a package before issue #117 left it: the upgrade gives the config back to root.
+chown -R 247-agent:247-agent /etc/247-agent
 dpkg -i "$deb" 2>&1 | tee /tmp/upgrade.log
 grep "247-agent is up: ok" /tmp/upgrade.log
+etc_owner
 pid=$(systemctl show -p MainPID --value 247-agent)
 echo "not_a_key: 1" >> /etc/247-agent/agent.yaml
 if dpkg -i "$deb" 2> /tmp/upgrade.err; then echo "the upgrade accepted a bad config"; exit 1; fi
@@ -254,6 +265,11 @@ step "install.sh checks that the daemon came up (issue #61)"
 tarball=$(ls dist-release/247-agent-*-linux-*.tar.gz)
 sh scripts/install.sh --from "$tarball" | tee /tmp/install.log
 grep "247-agent is up: ok" /tmp/install.log
+etc_owner
+# As an install.sh before issue #117 left it: a rerun gives the config back to root.
+chown -R 247-agent:247-agent /etc/247-agent
+sh scripts/install.sh --from "$tarball" > /tmp/install.log
+etc_owner
 mkdir -p /etc/systemd/system/247-agent.service.d
 printf "[Service]\nRuntimeMaxSec=2\n" > /etc/systemd/system/247-agent.service.d/crash-test.conf
 if sh scripts/install.sh --from "$tarball" 2> /tmp/install.err; then echo "install.sh missed a daemon that went down"; exit 1; fi

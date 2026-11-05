@@ -227,8 +227,8 @@ root chmod -R u+rwX,go+rX,go-w "$tree.new"
 
 # --- the config must satisfy the new version before anything changes -----------------
 config=/etc/247-agent/agent.yaml
-# /etc/247-agent is 750 and owned by the service user, so a sudoer cannot see into it:
-# look through root.
+# /etc/247-agent is 750 and owned by root:247-agent, so a sudoer cannot see into it: look
+# through root.
 has_config=0
 [ $service = 1 ] && root test -f "$config" && has_config=1
 if [ $has_config = 1 ]; then
@@ -293,12 +293,20 @@ if [ $service = 1 ]; then
     root useradd --system --home-dir /var/lib/247-agent --no-create-home --shell "$nologin" "$user"
     say "created user $user"
   fi
-  root install -d -m 750 -o "$user" -g "$user" /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d
+  # The config is root's and the service group only reads it, so neither the daemon nor a
+  # task or connector running as the user can rewrite the workflows it trusts (issue #117).
+  root install -d -m 750 -o root -g "$user" /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d
+  # An install before #117 gave the config to the user: take back what the group can still
+  # read once root owns it. A file the admin closed to the group (mode 600) stays as it is.
+  # One chown per path, -h, as find reaches it: a directory is root's before find reads it,
+  # so the user cannot swap an entry for a symlink to a file outside.
+  root find /etc/247-agent -user "$user" -group "$user" \( -type f -perm -g=r -o -type d -perm -g=rx \) \
+    -exec chown -h "root:$user" {} \;
   if [ $has_config = 0 ]; then
     # The starter config from the tree (packaging/etc in the repository, shared with the
     # .deb/.rpm): the production defaults and a manual `hello` task.
-    root install -m 640 -o "$user" -g "$user" "$tree/share/etc/agent.yaml" "$config"
-    root install -m 640 -o "$user" -g "$user" "$tree/share/etc/tasks.d/hello.yaml" /etc/247-agent/tasks.d/hello.yaml
+    root install -m 640 -o root -g "$user" "$tree/share/etc/agent.yaml" "$config"
+    root install -m 640 -o root -g "$user" "$tree/share/etc/tasks.d/hello.yaml" /etc/247-agent/tasks.d/hello.yaml
     say "wrote $config and /etc/247-agent/tasks.d/hello.yaml"
   fi
 

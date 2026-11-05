@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 const script = fileURLToPath(new URL('../../../scripts/build-package.sh', import.meta.url));
 const pkg = fileURLToPath(new URL('../../../package.json', import.meta.url));
+const nfpm = fileURLToPath(new URL('../../../packaging/nfpm.yaml', import.meta.url));
 const version = (JSON.parse(readFileSync(pkg, 'utf8')) as { version: string }).version;
 
 let root: string;
@@ -69,6 +71,33 @@ describe.skipIf(process.platform === 'win32')('build-package.sh', () => {
         expect(check.status, check.stderr).toBe(0);
         expect(check.stdout).toBe(`${name}: OK\n`);
       }
+    }
+  });
+});
+
+describe('packaging/nfpm.yaml', () => {
+  it('gives /etc/247-agent to root, readable by the service group (issue #117)', () => {
+    // Owned by the service user, the daemon or a task could rewrite the config it trusts.
+    const contents = (
+      parse(readFileSync(nfpm, 'utf8')) as {
+        contents: { dst: string; type?: string; file_info?: Record<string, unknown> }[];
+      }
+    ).contents;
+    const etc = contents.filter((c) => c.dst.startsWith('/etc/247-agent'));
+    expect(etc.map((c) => c.dst).sort()).toEqual([
+      '/etc/247-agent',
+      '/etc/247-agent/agent.yaml',
+      '/etc/247-agent/connectors.d',
+      '/etc/247-agent/tasks.d',
+      '/etc/247-agent/tasks.d/hello.yaml',
+    ]);
+    for (const c of etc) {
+      // The digits as written: nfpm reads 0640 as octal, the yaml package (YAML 1.2) as 640.
+      expect(c.file_info, c.dst).toEqual({
+        mode: c.type === 'dir' ? 750 : 640,
+        owner: 'root',
+        group: '247-agent',
+      });
     }
   });
 });

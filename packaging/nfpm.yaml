@@ -70,32 +70,32 @@ contents:
     type: config|noreplace
     file_info:
       mode: 0640
-      owner: 247-agent
+      owner: root
       group: 247-agent
   - src: packaging/etc/tasks.d/hello.yaml
     dst: /etc/247-agent/tasks.d/hello.yaml
     type: config|noreplace
     file_info:
       mode: 0640
-      owner: 247-agent
+      owner: root
       group: 247-agent
   - dst: /etc/247-agent
     type: dir
     file_info:
       mode: 0750
-      owner: 247-agent
+      owner: root
       group: 247-agent
   - dst: /etc/247-agent/tasks.d
     type: dir
     file_info:
       mode: 0750
-      owner: 247-agent
+      owner: root
       group: 247-agent
   - dst: /etc/247-agent/connectors.d
     type: dir
     file_info:
       mode: 0750
-      owner: 247-agent
+      owner: root
       group: 247-agent
 scripts:
   preinstall: packaging/scripts/preinstall.sh

@@ -38,8 +38,8 @@ The package:
   template unit for connectors that run on their own;
 - creates the `247-agent` system user;
 - writes a starter configuration to `/etc/247-agent` (`agent.yaml`, one task in
-  `tasks.d/hello.yaml`, an empty `connectors.d/`), as configuration files the package
-  manager never overwrites;
+  `tasks.d/hello.yaml`, an empty `connectors.d/`), owned by root and readable by the
+  `247-agent` group, as configuration files the package manager never overwrites;
 - on a fresh install, enables and starts the service; on an upgrade, restarts it;
 - checks that the daemon came up and stays up, and fails the install if it did not.
 
@@ -72,7 +72,8 @@ Run it as root or with `sudo` rights. It:
 - unpacks it to `/opt/247-agent-<version>` and points the symlink `/opt/247-agent` at
   it;
 - links `oa` into `/usr/local/bin`;
-- creates the `247-agent` user and, once, the starter `/etc/247-agent`;
+- creates the `247-agent` user and, once, the starter `/etc/247-agent`, owned by root
+  and readable by the `247-agent` group;
 - installs the units and starts the service.
 
 Run it again to upgrade. The new version validates your existing configuration before
