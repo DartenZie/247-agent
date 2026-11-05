@@ -27,7 +27,8 @@ and an in-memory core (`state`, `events` with `dedup_key`). `bot.test.ts` covers
 the ask → reply flow for buttons and text replies, foreign chats, offset persistence and
 the poll loop's backoff. `matrix-bot.test.ts` does the same for Matrix against a fake
 homeserver behind `fetch`: alias resolution, reactions and text replies as answers,
-ignored edits and encrypted rooms, the `since` cursor, a retried batch and the 429 wait.
+ignored edits and encrypted rooms, the `since` cursor, a limited timeline's gap filled from `/messages`, a rejected
+`since` token, a retried batch and the 429 wait.
 The Matrix backend also runs against a real Synapse in the smoke rig (Telegram has no
 server one can run):
 
