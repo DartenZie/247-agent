@@ -942,9 +942,12 @@ describe('oa connector', () => {
       };
       return body.connectors[0];
     };
-    await vi.waitFor(async () => {
-      expect((await listed())?.state).toBe('up');
-    });
+    await vi.waitFor(
+      async () => {
+        expect((await listed())?.state).toBe('up');
+      },
+      { timeout: 10_000 }, // the daemon starts connectors without waiting for them
+    );
     const before = (await listed())?.pid;
     expect(before).toEqual(expect.any(Number));
 
@@ -963,8 +966,10 @@ describe('oa connector', () => {
 
     out = [];
     expect(await oa('connector', 'restart', 'fake', '--json')).toBe(0);
-    expect(JSON.parse(out[0] ?? '')).toMatchObject({ name: 'fake', state: 'up' });
-  });
+    const again = JSON.parse(out[0] ?? '') as { name: string; state: string; pid: number };
+    expect(again).toMatchObject({ name: 'fake', state: 'up' });
+    expect(again.pid).not.toBe(after);
+  }, 20_000);
 });
 
 describe('oa help', () => {
