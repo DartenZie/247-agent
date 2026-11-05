@@ -39,11 +39,13 @@ running daemon.
 ## The unit
 
 The package and the installer both ship this unit, and the release carries it as
-`share/systemd/247-agent.service`:
+`share/systemd/247-agent.service`. The file starts with comments that repeat the notes
+below; this listing leaves them out:
 
 ```ini
 [Unit]
 Description=247-agent core
+Documentation=file:///opt/247-agent/share/doc/operations/production.md https://github.com/DartenZie/247-agent/blob/main/docs/operations/production.md
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
