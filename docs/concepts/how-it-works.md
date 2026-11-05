@@ -97,11 +97,29 @@ store, so a connector can be restarted at any time. Tasks read state in template
 
 ## What survives, and what does not
 
-Every event and run is committed to the database before anything acts on it. A crash
-never loses an email and never runs a finished job again: dispatch is at-least-once,
-and the dedup key plus one run per task and event make it effectively once. When the
-daemon starts, runs that were mid-flight are retried if their policy allows and failed
-as interrupted otherwise; waiting runs keep waiting.
+Every event and run is committed to the database before anything acts on it. If the
+daemon crashes or restarts, it loses no event and never runs a finished job again:
+dispatch is at-least-once, and the dedup key plus one run per task and event make it
+effectively once. When the daemon starts, runs that were mid-flight are retried if
+their policy allows and failed as interrupted otherwise; waiting runs keep waiting.
+
+An operating-system crash or a power loss is different. The database reports a commit
+as done before the operating system has written it to disk, so the most recent events,
+runs and state changes can be lost. A run that had finished can run again when the
+daemon starts. The effect on events depends on how the event got in:
+
+- When the daemon reads from a source and keeps its place in state, such as the
+  `last_uid` of an email task, the place is lost together with the event. The next
+  poll reads the same messages again, as long as the source still has them, and the
+  tasks they start run again.
+- When the source was told that the event arrived, or the event was removed from the
+  source, the event is lost. Examples are a webhook that already answered 202, a
+  Telegram update that the next poll confirmed, and mail that the POP3 connector
+  deleted with `delete_after_fetch`.
+
+To lower the risk, run the server on a UPS or on storage that protects its write cache
+against power loss. For events you cannot lose, prefer a source that the daemon reads
+from over one that pushes to it.
 
 Two things are deliberately not replayed: cron ticks missed while the daemon was down,
 and events caught in a runaway chain. At startup, a cron task that missed ticks

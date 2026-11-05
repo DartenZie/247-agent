@@ -14,7 +14,9 @@ durability, or when you need the module map. The reasons behind the choices are 
   actions, each with a model, effort, turn and dollar budget.
 - Connectors plug into the core through one interface, in any language.
 - Durable and observable: every event and run is persisted before anything acts on it;
-  a crash never loses an email and never re-runs a finished job.
+  a process crash or restart never loses an event and never re-runs a finished job. An
+  OS crash or power loss can lose the last commits (see
+  [Durability and recovery](#durability-and-recovery)).
 - Not a workflow engine with a UI, and not multi-node: one server, one process, one
   SQLite file.
 
@@ -61,7 +63,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 |---|---|---|---|
 | Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file or a failed connector change on reload changes nothing, and no run starts while one applies; `db`, `socket`, `secrets` are fixed for the process |
 | Scheduler | `scheduler/cron.ts`, `scheduler/schedule.ts` | One schedule timer per cron task and poller; croner computes the run times, and near a clock change `Schedule` scans the instants itself, so patterns whose hour field is `*` also run in the second pass of the repeated hour and others run once; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Each tick and each arming moves the cursor `cron:<task>` to that instant; at startup the boundaries between it and now publish one `cron.missed` and, with `missed: run_once`, one catch-up `cron.tick` for the last of them; a start drops the cursors of tasks no longer configured; a duplicate boundary is dropped by the key |
-| Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
+| Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it (durable across a process crash, not a power loss) |
 | Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events and events of a chain past its run cap (publishing `loop.detected`), matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
 | Matcher | `bus/matcher.ts` | Trigger matching and the labelled event-type set for metrics | A throwing filter is a non-match (`trigger.filter_error`) |
 | Executor | `executor/executor.ts` | Worker pool: global `workers` and per-task `concurrency`, per-attempt timeout, retries with backoff, secret resolution, the runner call, `emit` and `state_updates` in one transaction with the terminal status, wait suspend and resume, cancel, recovery at start | A run's terminal status, its state updates and its emitted events commit together; a render failure after success fails the run and emits nothing; a store failure while they commit rolls them all back (`run.bookkeeping_failed`) and leaves the run `running` for recovery at the next start |
@@ -241,8 +243,22 @@ running or waiting are untouched; `oa runs cancel` ends them.
 ## Durability and recovery
 
 Events and runs are committed before they are acted on; dispatch is at-least-once,
-and `dedup_key` plus `UNIQUE(task, event_id)` make it effectively once. On
-`core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
+and `dedup_key` plus `UNIQUE(task, event_id)` make it effectively once.
+
+The guarantee covers a process crash or restart, not an OS crash or power loss. The
+database runs in WAL mode with `synchronous = NORMAL` (`store/db.ts`): a commit is in
+the WAL when it returns, but the WAL is fsynced only at a checkpoint, so the most recent
+commits can roll back after the OS goes down. `POST /v1/events` answers 201 after the
+commit, not after an fsync. A cursor kept in the same database (an email task's
+`last_uid`, the Matrix backend's `since`) rolls back with its events, so a pull source
+is read again. An acknowledgement already sent upstream is not undone, so that event
+is lost. A finished run can also roll back to `running` or `queued` and run again at
+start. The guarantee is fixed by `store/db.ts`; `synchronous = FULL` would buy it with
+one fsync per commit. The effect per source is stated once, in
+[How it works](../concepts/how-it-works.md#what-survives-and-what-does-not); keep that
+page in step with `store/db.ts`.
+
+On `core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
 
 1. Every `running` run whose task is still configured and whose `attempt <
    retry.attempts` (of its pinned definition) is re-enqueued (`run.recovered`) and runs as the next attempt;
