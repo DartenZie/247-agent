@@ -10,7 +10,7 @@
 #   lib/            one bundled .mjs per program (scripts/bundle.mjs)
 #   node/           a vendored Node (bin/node, npm, npx) pinned by .node-version
 #   node_modules/   better-sqlite3 with the target's prebuilt addon only
-#   share/          doc/ (README.md + the user docs), examples/, skills/, systemd/ (247-agent.service, 247-agent-connector@.service), etc/ (starter config), install.sh, uninstall.sh, check-service.sh
+#   share/          doc/ (the user docs; doc/examples links to ../examples), examples/, connectors/<name>/examples/, skills/, systemd/ (247-agent.service, 247-agent-connector@.service), etc/ (starter config), install.sh, uninstall.sh, check-service.sh
 #   LICENSE VERSION
 #
 # Defaults: the host's platform-arch, the Node version in .node-version, ./dist-release.
@@ -102,16 +102,7 @@ ln -s ../lib/node_modules/npm/bin/npx-cli.js "$stage/node/bin/npx"
 
 # 4. Launchers, docs, examples, skills, the unit file.
 cp -R bin "$stage/bin"
-mkdir -p "$stage/share/doc" "$stage/share/systemd"
-cp README.md "$stage/share/doc/"
-# The user documentation (docs/ without internal/, which is for contributors, and
-# examples/, shipped under share/examples).
-tar -C docs --exclude=./internal --exclude=./examples -cf - . | tar -C "$stage/share/doc" -xf -
-cp -R docs/examples "$stage/share/examples"
-cp -R skills "$stage/share/skills"
-cp packaging/247-agent.service packaging/247-agent-connector@.service "$stage/share/systemd/"
-cp scripts/install.sh scripts/uninstall.sh scripts/check-service.sh "$stage/share/"
-cp -R packaging/etc "$stage/share/etc"
+scripts/stage-share.sh "$stage"
 cp LICENSE "$stage/LICENSE"
 printf 'version=%s\ntarget=%s\nnode=%s\n' "$version" "$target" "$node_version" > "$stage/VERSION"
 

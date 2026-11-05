@@ -5,6 +5,7 @@
 //
 //   node scripts/check-docs.mjs            # every Markdown file in the repo
 //   node scripts/check-docs.mjs docs/tasks # one directory or file
+//   node scripts/check-docs.mjs --links-only <stage>/share/doc   # links only, no build needed
 //
 // Exit 0 when everything passes, 1 on a failure, 2 when it could not run.
 
@@ -169,20 +170,23 @@ function checkYaml(file, text, scratch) {
 }
 
 function main() {
-  if (!existsSync(cli)) {
+  const args = process.argv.slice(2);
+  const linksOnly = args.includes('--links-only');
+  if (!linksOnly && !existsSync(cli)) {
     console.error(`check-docs: ${relative(root, cli)} is missing; run npm run build first`);
     return 2;
   }
-  const targets = process.argv.slice(2).length
-    ? process.argv.slice(2).map((p) => resolve(p))
-    : [root];
+  const paths = args.filter((a) => a !== '--links-only');
+  const targets = paths.length ? paths.map((p) => resolve(p)) : [root];
   const files = targets.flatMap(markdownFiles);
   const scratch = mkdtempSync(join(tmpdir(), 'check-docs-'));
   try {
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
       checkLinks(file, text);
-      checkYaml(file, text, scratch);
+      if (!linksOnly) {
+        checkYaml(file, text, scratch);
+      }
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

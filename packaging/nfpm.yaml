@@ -40,6 +40,9 @@ contents:
   - src: ${STAGE}/share/examples
     dst: /opt/247-agent/share/examples
     type: tree
+  - src: ${STAGE}/share/connectors
+    dst: /opt/247-agent/share/connectors
+    type: tree
   - src: ${STAGE}/share/skills
     dst: /opt/247-agent/share/skills
     type: tree

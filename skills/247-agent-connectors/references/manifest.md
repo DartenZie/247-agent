@@ -12,7 +12,7 @@ emits: [email.received]                       # documentation of the event types
 ops: [fetch_new, mark_read, send]             # MCP tools the core may call; [] = any
 config:                                       # passed as OA_CONFIG_JSON, secrets rendered
   user: "${secrets.email_user}"               # free-form: each connector defines its own
-  password: "${secrets.email_pass}"           # (email: connectors/email/README.md)
+  password: "${secrets.email_pass}"           # (email: docs/connectors/email.md)
   incoming: { protocol: imap, host: imap.example.com, folder: INBOX }
   outgoing: { host: smtp.example.com, from: info@example.com, footer: "-- \nOffice" }
 env: { NODE_ENV: production }                 # extra environment for the process
@@ -138,7 +138,7 @@ IMAP or POP3 in (`incoming`), SMTP out (`outgoing`), each side optional. Ops `fe
 (`{since_uid?, folder?, limit?}` → `{emails, last_uid}`; the task owns the cursor and
 passes `last_uid` back, which on POP3 also confirms the batch and allows its deletion), `mark_read` (IMAP only) and `send` (the configured `footer` is
 appended to every mail; `in_reply_to` threads replies). `initial: none` (default) makes
-the first fetch skip mail already in the box. Full reference: `connectors/email/README.md`.
+the first fetch skip mail already in the box. Full reference: `docs/connectors/email.md`.
 
 ## The ftp connector (`connectors/ftp`)
 
@@ -148,7 +148,7 @@ Files inside one remote directory over `sftp` (password or `private_key`, option
 to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans `list` out with
 `each: "${result.entries[?type == 'file']}"` and a `dedup_key` on path, size and mtime
 (`connectors/ftp/examples/inbox-import.yaml`). Give agents a manifest copy with
-`ops: [list, stat, read]`. Full reference: `connectors/ftp/README.md`.
+`ops: [list, stat, read]`. Full reference: `docs/connectors/ftp.md`.
 
 ## The chat connector (`connectors/chat`)
 
@@ -165,7 +165,7 @@ from, message_id, chat_id}` and the same `correlation_id` on the event. `approve
 for the first option. On Matrix, ids are strings (event ids `$…`, room ids, user ids
 `@…`) and `ask` lists the options with keycap reactions (1️⃣ 2️⃣ …, at most 10) that
 the user taps, or replies with an option's text or number. Full reference:
-`connectors/chat/README.md`.
+`docs/connectors/chat.md`.
 
 ## The webhook connector (`connectors/webhook`)
 
@@ -178,7 +178,7 @@ scheme}` or `{kind: none}`), `max_body`, `drop_headers`, `trust_proxy`. Payload
 `{route, method, path, query, headers, content_type, body_format, body, remote,
 received_at}` with the body parsed for JSON and forms; credential headers never stored.
 Answers 202 emitted, 200 duplicate, 401 bad signature, 503 core down (retry). Full
-reference: `connectors/webhook/README.md`.
+reference: `docs/connectors/webhook.md`.
 
 ## The github connector (`connectors/github`)
 
@@ -189,7 +189,7 @@ first repo). List ops return `{repo, <items>: […]}` for the poller: `list_pull
 `list_commits` → `commits`, `list_workflow_runs` → `workflow_runs`, `search_issues` →
 `issues`; plus `get_pull_request`, `get_pull_request_diff`, `get_issue` and the writes
 `create_issue`, `update_issue`, `add_comment`, `add_labels`, `remove_label`,
-`create_pull_request`. Full reference: `connectors/github/README.md`.
+`create_pull_request`. Full reference: `docs/connectors/github.md`.
 
 ## The jira connector (`connectors/jira`)
 
@@ -199,7 +199,7 @@ confined to `projects: [KEY, …]` (`base_url`; `email` + `api_token`, `token`, 
 wrapped as `project in (…) AND (…)`; `get_issue`, `list_comments`, `create_issue`,
 `update_issue`, `add_comment`, `list_transitions`, `transition_issue` (by name, id or
 target status). Poll it with `items: issues`, `item_key: key`. Full reference:
-`connectors/jira/README.md`.
+`docs/connectors/jira.md`.
 
 ## Using an existing MCP server
 

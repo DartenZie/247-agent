@@ -22,4 +22,18 @@ location (`.claude/skills/<name>` for Claude Code, or the skills directory the r
 is configured with). Each skill is self-contained; where it cites a page under `docs/`
 that is the source of truth in this repo, not required reading at run time.
 
+A path in a skill is relative to a checkout of the repository. A release installs some
+of these files under `/opt/247-agent/share/`:
+
+| In a checkout | In an installed tree |
+|---|---|
+| `docs/` (except `docs/internal/` and `docs/examples/`) | `share/doc/` |
+| `docs/examples/` | `share/examples/` |
+| `connectors/<name>/examples/` | `share/connectors/<name>/examples/` |
+| `skills/` | `share/skills/` |
+
+The other paths, such as `packages/`, `scripts/`, `docs/internal/`,
+`connectors/<name>/README.md` and the test fakes in `packages/core/test/fixtures/`,
+exist only in the repository: <https://github.com/DartenZie/247-agent>.
+
 When the architecture or the CLI changes, update the affected skill in the same change.
