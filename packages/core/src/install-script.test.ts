@@ -106,4 +106,42 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(run.status).toBe(0);
     expect(existsSync(log) ? readFileSync(log, 'utf8') : '').toBe(`-R 0:0 ${prefix}-9.9.9.new\n`);
   });
+
+  it.each([
+    ['INT', 130],
+    ['TERM', 143],
+  ])('stops after cleaning up on SIG%s, with status %i', (signal, code) => {
+    // A `tar` shim unpacks the tarball, then signals the installer, as a Ctrl-C or a
+    // SIGTERM during the unpack would. The installer must not carry on (issue #113).
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    const realTar = spawnSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).stdout.trim();
+    const tmpLog = join(root, 'tmp.log');
+    writeFileSync(
+      join(shims, 'tar'),
+      `#!/bin/sh\n"${realTar}" "$@" || exit\n` +
+        `case "$*" in *-xzf*) echo "$4" > "${tmpLog}"; kill -${signal} "$PPID";; esac\n`,
+    );
+    chmodSync(join(shims, 'tar'), 0o755);
+    const prefix = join(root, 'opt', '247-agent');
+    const run = spawnSync(
+      'sh',
+      [
+        script,
+        '--from',
+        fakeRelease(),
+        '--prefix',
+        prefix,
+        '--bin-dir',
+        join(root, 'bin'),
+        '--no-service',
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(code);
+    const unpacked = readFileSync(tmpLog, 'utf8').trim();
+    expect(existsSync(unpacked)).toBe(false);
+    expect(existsSync(`${prefix}-9.9.9`)).toBe(false);
+  });
 });
