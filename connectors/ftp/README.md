@@ -46,7 +46,7 @@ connection, a file over `max_bytes` fails with `too_large`, and `write` with
 directory, which the adapter restores).
 
 `packages/core/test/fixtures/fake-ftp.ts` is the fake for the core's integration test and
-for trying task files without a server: it serves the same eight ops over the files
+for trying task files without a server: it serves every op except `sync` over the files
 listed in the manifest's `config.files`. `examples/inbox-import.yaml` is a complete
 deterministic import workflow.
 
