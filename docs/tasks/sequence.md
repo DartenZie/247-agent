@@ -65,14 +65,22 @@ tasks:
 
 The budget is the run's. The task's `budget.max_usd` and a step's own `budget.max_usd`
 both cap what the whole run spent, earlier model steps included, and `budgets.daily_usd`
-applies on top. Every model call is in the ledger under the run's id. `oa validate`
+applies on top. An `agent` step without a budget of its own uses
+`defaults.agent.budget.max_usd`, so that cap also counts what earlier steps spent. Every model call is in the ledger under the run's id. `oa validate`
 checks a model step as it checks the action on its own, for example that its model has
 a price.
 
 A batched `llm` step (`batch: true`) suspends the run like a `wait` step until the
 batch result arrives. An `agent` step that ends `blocked` still finishes, and its
 result has `status: blocked`. Test it in a later step's `when`, for example
-`steps[1].status == 'done'`.
+`steps[1].status == 'done'`. The step's `post` gates can read `steps` as well as
+`result`.
+
+> [!WARNING]
+> Do not publish from the same sequence as an `agent` step. A step after the agent
+> that uses a deploy secret runs in a workspace the agent wrote, without a human check
+> in between. Publish from a task of its own that holds the secret, triggered by an
+> event after review.
 
 ## Results and `when`
 

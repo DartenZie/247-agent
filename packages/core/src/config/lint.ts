@@ -84,6 +84,8 @@ export function lintTasks(
       bare(task.trigger.filter, `${at}.trigger.filter`, EVENT_FIELDS);
     }
     const inAction = task.action.kind === 'sequence' ? SEQUENCE_ROOTS : ACTION_ROOTS;
+    // An `agent` post gate sees the action's scope (with `steps` in a sequence) plus `result`.
+    const inPost = [...inAction, 'result'];
     for (const { action, at: actionAt } of taskActions(task, `${at}.action`)) {
       if ('when' in action) {
         bare(action.when, `${actionAt}.when`, inAction);
@@ -92,7 +94,7 @@ export function lintTasks(
         add(`${actionAt}.for.filter`, lintWaitFilter(action.for.filter));
       } else if (action.kind === 'agent') {
         action.post.forEach((gate, g) => {
-          bare(gate.when, `${actionAt}.post[${String(g)}].when`, POST_ROOTS);
+          bare(gate.when, `${actionAt}.post[${String(g)}].when`, inPost);
         });
       }
     }
@@ -103,7 +105,7 @@ export function lintTasks(
       if (!RENDERED[kind].includes(String(field))) {
         return undefined;
       }
-      return kind === 'agent' && field === 'post' ? POST_ROOTS : inAction;
+      return kind === 'agent' && field === 'post' ? inPost : inAction;
     });
     task.emit?.forEach((rule, j) => {
       const ruleAt = `${at}.emit[${String(j)}]`;
@@ -233,8 +235,6 @@ const EVENT_FIELDS = [
 ];
 const ACTION_ROOTS = ['event', 'state', 'secrets', 'env', 'run'];
 const SEQUENCE_ROOTS = [...ACTION_ROOTS, 'steps'];
-/** An `agent` post gate runs with the agent's result added to the action's scope. */
-const POST_ROOTS = [...ACTION_ROOTS, 'result'];
 /** `emit` and `state_updates`. */
 const ROUTING_ROOTS = ['event', 'result', 'state', 'env', 'run'];
 const EACH_ROOTS = [...ROUTING_ROOTS, 'item'];

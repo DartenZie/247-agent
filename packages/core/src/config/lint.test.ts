@@ -217,6 +217,29 @@ describe('lintTasks', () => {
     ]);
   });
 
+  it('lets the post gates of an agent step in a sequence read steps and result', () => {
+    const tasks = parse([
+      {
+        name: 'flow',
+        trigger: { kind: 'manual' },
+        action: {
+          kind: 'sequence',
+          steps: [
+            { kind: 'shell', cmd: ['echo', 'hi'] },
+            {
+              kind: 'agent',
+              workspace: { kind: 'temp' },
+              tools: ['read'],
+              prompt: 'x ${steps[0]}',
+              post: [{ shell: ['test', '${steps[0]}'], when: "steps[0] == 'hi' && result.ok" }],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(lintTasks(tasks)).toEqual([]);
+  });
+
   it('lints a wait filter around its templates, each standing for a value', () => {
     const wait = (filter: string) =>
       parse([

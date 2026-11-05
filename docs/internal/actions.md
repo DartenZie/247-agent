@@ -204,8 +204,10 @@ resume runs under the steps the run started with (`runs.config`, see
 
 Model steps run through the same runners as the actions on their own, so each call goes
 through `ctx.llm` and is ledgered under the run id. Budgets are per run: a step's
-`budget.max_usd` and the task's both cap `ledger.sumForRun`, which includes earlier
-steps. A step that suspends itself (a batched `llm`) stores its own resume data; the
+`budget.max_usd` (for an `agent` step without one, `defaults.agent.budget.max_usd`) and
+the task's both cap `ledger.sumForRun`, which includes earlier steps. An agent step's
+post gates see the step's scope, `steps` included, plus `result`. On a retry, an agent
+step's prompt quotes `run.error` even when an earlier step caused it. A step that suspends itself (a batched `llm`) stores its own resume data; the
 sequence keeps it as `data` in the checkpoint (`{step, steps, data}`) and hands the step
 `{...resume, resume: data}` on resume, so the step never sees the checkpoint. A `wait`
 step stores no `data`. A sequence has at most one `agent` step (schema refinement):
