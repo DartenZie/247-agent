@@ -11,7 +11,7 @@ import { LOG_LEVELS } from './config/agent.js';
 import { parseDuration } from './config/duration.js';
 import { startDaemon, type Daemon } from './daemon.js';
 import { findHome, homeEnv } from './home.js';
-import { createLogger, type LogLevel } from './log.js';
+import { createLogger, type Logger, type LogLevel } from './log.js';
 import { listenForReload } from './reload-signal.js';
 import { systemdNotifier } from './systemd.js';
 import { VERSION } from './version.js';
@@ -32,6 +32,25 @@ const STOP_DEADLINE_MARGIN_MS = 10_000;
 
 function isLogLevel(v: string): v is LogLevel {
   return (LOG_LEVELS as readonly string[]).includes(v);
+}
+
+/** A logger that writes through whichever logger `target` returns at the time. */
+function forwardTo(target: () => Logger): Logger {
+  return {
+    debug: (msg, fields) => {
+      target().debug(msg, fields);
+    },
+    info: (msg, fields) => {
+      target().info(msg, fields);
+    },
+    warn: (msg, fields) => {
+      target().warn(msg, fields);
+    },
+    error: (msg, fields) => {
+      target().error(msg, fields);
+    },
+    child: (fields) => target().child(fields),
+  };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -73,7 +92,10 @@ async function main(argv: string[]): Promise<number> {
 
   // Before the daemon reads the environment, so no child inherits NOTIFY_SOCKET.
   const early = createLogger({ level: level ?? 'info' });
-  const systemd = systemdNotifier(process.env, { log: early });
+  // Until the daemon is up there is only `early`; then the daemon's logger, whose level
+  // follows a reload of `log.level`.
+  let current: Logger = early;
+  const systemd = systemdNotifier(process.env, { log: forwardTo(() => current) });
   // Before startup, which can take a while (store, socket, the bwrap probe): a SIGHUP
   // meanwhile would otherwise end the process. It reloads once the daemon is up.
   const hup = listenForReload(process, {
@@ -93,7 +115,9 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
-  const log = createLogger({ level: level ?? daemon.config.log.level });
+  // The daemon's own logger, so a reload that changes `log.level` reaches these lines.
+  const log = daemon.log;
+  current = log;
   log.info('daemon.home', { version: VERSION, home: home ?? null });
   // startDaemon resolves once the config is loaded, the store open and the socket bound.
   systemd.ready();
