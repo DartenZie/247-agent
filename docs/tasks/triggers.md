@@ -18,6 +18,12 @@ work too. `oa validate` rejects a schedule that can never fire.
 `tz` is a time zone name such as `Europe/Prague` or `UTC`; without it the daemon's own
 zone applies.
 
+When the clocks change for daylight saving time, a schedule that names fixed hours
+(`30 2 * * *`) runs once a day. In autumn it runs only in the first pass of the hour
+that repeats. In spring, a run in the hour that is skipped moves one hour later on the
+wall clock: 02:30 runs at 03:30. A schedule whose hour field is `*` (`*/30 * * * *`,
+`@hourly`) keeps its pace in real time and also runs in the repeated hour.
+
 Each tick publishes a `cron.tick` event with `payload: { task, scheduled_at }` and a
 `dedup_key` of `cron:<task>:<scheduled_at>`, and one run starts from it. With
 `overlap: skip`, the default, a tick is dropped while a run of the task is still queued,

@@ -1,15 +1,12 @@
-import { Cron, CronPattern, type CronOptions } from 'croner';
-
 import type { EventBus } from '../bus/bus.js';
 import { CRON_TICK, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
-import type { Clock } from '../clock.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import type { NewEvent } from '../store/types.js';
+import { armSchedule, Schedule, type ScheduleTimer } from './schedule.js';
 
 export interface SchedulerOptions {
   bus: EventBus;
-  clock: Clock;
   log: Logger;
   metrics?: Metrics | undefined;
 }
@@ -31,28 +28,19 @@ export function makeTickEvent(task: string, scheduledAt: Date): NewEvent {
   };
 }
 
-/** Floors `now` to the boundary the pattern fires on: seconds for 6/7-field, else minutes. */
-export function floorToBoundary(now: Date, schedule: string): Date {
-  const fields = new CronPattern(schedule).pattern.split(' ').length;
-  const unit = fields >= 6 ? 1000 : 60_000;
-  return new Date(Math.floor(now.getTime() / unit) * unit);
-}
-
 /**
- * One croner job per cron task. Each tick publishes a `cron.tick` event; the dispatcher
+ * One schedule timer per cron task (see `schedule.ts`). Each tick publishes a `cron.tick` event; the dispatcher
  * decides whether to queue a run (see `overlap`). Missed ticks while the daemon was down
  * are not replayed.
  */
 export class CronScheduler {
   private readonly bus: EventBus;
-  private readonly clock: Clock;
   private readonly log: Logger;
   private readonly metrics: Metrics;
-  private jobs = new Map<string, { job: Cron; schedule: string }>();
+  private jobs = new Map<string, { job: ScheduleTimer; schedule: string }>();
 
   constructor(opts: SchedulerOptions) {
     this.bus = opts.bus;
-    this.clock = opts.clock;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
   }
@@ -97,24 +85,21 @@ export class CronScheduler {
       return;
     }
     const { schedule } = trigger;
-    const options: CronOptions = {
-      name: task.name,
-      catch: (err: unknown) => {
+    const job = armSchedule(new Schedule(schedule, trigger.tz), {
+      onTick: (at) => {
+        const result = this.bus.publish(makeTickEvent(task.name, at));
+        this.metrics.cronTicks.inc({ task: task.name });
+        this.log.debug(result.status === 'inserted' ? 'cron.tick' : 'cron.tick_duplicate', {
+          task: task.name,
+          scheduled_at: at.toISOString(),
+        });
+      },
+      onError: (err: unknown) => {
         this.log.error('cron.tick_failed', {
           task: task.name,
           error: err instanceof Error ? err.message : String(err),
         });
       },
-      ...(trigger.tz === undefined ? {} : { timezone: trigger.tz }),
-    };
-    const job = new Cron(schedule, options, () => {
-      const at = floorToBoundary(this.clock.now(), schedule);
-      const result = this.bus.publish(makeTickEvent(task.name, at));
-      this.metrics.cronTicks.inc({ task: task.name });
-      this.log.debug(result.status === 'inserted' ? 'cron.tick' : 'cron.tick_duplicate', {
-        task: task.name,
-        scheduled_at: at.toISOString(),
-      });
     });
     this.jobs.set(task.name, { job, schedule });
     this.log.info('cron.armed', {

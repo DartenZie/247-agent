@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectorClients } from '../actions/types.js';
 import { ApiClient } from '../api/client.js';
@@ -349,6 +349,24 @@ describe('Poller', () => {
     expect(p.status().next_run).toBeNull();
     expect(await hung).toEqual({ status: 'failed', error: 'aborted' });
     expect(p.status().polling).toBe(false);
+  });
+
+  it('keeps polling every 30 minutes through the hour that repeats when clocks go back', async () => {
+    vi.useFakeTimers();
+    try {
+      // 02:45 CEST; at 01:00Z the clocks of Europe/Prague go back to 02:00 CET.
+      vi.setSystemTime(new Date('2026-10-25T00:45:00Z'));
+      clients.next = prs();
+      const p = poller({ schedule: '*/30 * * * *', tz: 'Europe/Prague' });
+      p.start();
+      expect(p.status().next_run).toBe('2026-10-25T01:00:00.000Z');
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(clients.calls).toHaveLength(2); // 01:00Z and 01:30Z, both 02:xx CET
+      expect(p.status().next_run).toBe('2026-10-25T02:00:00.000Z');
+      await p.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a manifest that is not a poller', () => {
