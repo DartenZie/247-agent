@@ -64,4 +64,13 @@ describe('costUsd and helpers', () => {
     expect(utcDay(d)).toBe('2026-09-19');
     expect(startOfUtcDay(d)).toBe('2026-09-19T00:00:00.000Z');
   });
+
+  it('counts a token per character outside ASCII, so CJK and emoji input is not under-counted (#79)', () => {
+    expect(estimateInputTokens('数据处理')).toBe(4);
+    expect(estimateInputTokens('한국어')).toBe(3);
+    // An emoji is two UTF-16 code units and costs at least as many tokens.
+    expect(estimateInputTokens('😀')).toBe(2);
+    // ASCII keeps 3 chars per token; the rest adds one each.
+    expect(estimateInputTokens('abcdef数')).toBe(3);
+  });
 });

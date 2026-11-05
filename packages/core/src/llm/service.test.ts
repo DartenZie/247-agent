@@ -182,6 +182,35 @@ describe('LlmService.call', () => {
     await expect(call(s, { maxUsd: 0.01 })).resolves.toMatchObject({ priced_by: 'table' });
   });
 
+  it('prices the system prompt at the cache-write rate in the worst case (#79)', async () => {
+    fake = fakeProviderFactory(usage(5, 100));
+    const s = service();
+    // 300 chars → 100 system tokens at $1.25/Mtok ($0.000125) + 5 input + 100 output tokens
+    // = worst case $0.00063; at the plain input rate it would be $0.000605 and pass.
+    await expect(call(s, { system: 'x'.repeat(300), maxUsd: 0.00062 })).rejects.toThrow(
+      /worst case \$0\.0006/,
+    );
+    expect(fake.requests).toHaveLength(0);
+    await expect(call(s, { system: 'x'.repeat(300), maxUsd: 0.00064 })).resolves.toBeDefined();
+  });
+
+  it('counts CJK input at a token per character in the worst case (#79)', async () => {
+    const s = service();
+    // 300 CJK chars → 300 input tokens ($0.0003) + 100 output ($0.0005) = $0.0008.
+    await expect(call(s, { input: '数'.repeat(300), maxUsd: 0.0007 })).rejects.toThrow(
+      /worst case/,
+    );
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it('counts the output schema as input in the worst case (#79)', async () => {
+    const s = service();
+    // A 600-char schema adds ~200 input tokens ($0.0002) to 5 input + 100 output ($0.000505).
+    const outputSchema = { description: 'x'.repeat(600) };
+    await expect(call(s, { outputSchema, maxUsd: 0.0006 })).rejects.toThrow(/worst case/);
+    expect(fake.requests).toHaveLength(0);
+  });
+
   it('fails the run when the actual cost overruns the budget, keeping the row', async () => {
     fake = fakeProviderFactory(usage(10_000, 100)); // $0.0105, the estimate was $0.0005
     const s = service();
@@ -313,6 +342,30 @@ describe('LlmService: a call aborted in flight (#78)', () => {
     // The retry sees the abandoned spend: two worst cases no longer fit $0.0008.
     fake = fakeProviderFactory(usage(1000, 100));
     await expect(call(service(), { maxUsd: 0.0008 }, r)).rejects.toThrow(/worst case/);
+  });
+
+  it('ledgers the system prompt of an aborted call as cache-write tokens (#79)', async () => {
+    fake = hanging();
+    const s = service();
+    const r = run();
+    const ac = new AbortController();
+    const pending = s.call(
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        system: 'x'.repeat(300),
+        input: 'classify this',
+        maxTokens: 100,
+      },
+      { run: r, task: r.task, signal: ac.signal, log: env.log },
+    );
+    ac.abort(new Error('timed out after 5s'));
+    await expect(pending).rejects.toThrow('timed out after 5s');
+    // 100 system tokens at $1.25/Mtok + 5 input + 100 output = $0.00063.
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      { in_tok: 5, out_tok: 100, cache_write: 100, priced_by: 'estimate' },
+    ]);
+    expect(env.store.ledger.sumForRun(r.id)).toBeCloseTo(0.00063, 9);
   });
 
   it('ledgers an aborted decide at its input-only worst case', async () => {
@@ -725,6 +778,15 @@ describe('LlmService batches', () => {
     });
     expect(fake.batches).toHaveLength(1);
     expect(env.store.ledger.listByRun(r.id)).toEqual([]);
+  });
+
+  it('prices a batch system prompt at the batch cache-write rate (#79)', async () => {
+    const s = withBatches();
+    // Half of: 100 system tokens at $1.25/Mtok + 5 input + 100 output = $0.000315.
+    await expect(
+      s.submitBatch({ ...req, system: 'x'.repeat(300), maxUsd: 0.00031 }, ctxOf(run())),
+    ).rejects.toThrow(BudgetExceededError);
+    expect(fake.batches).toHaveLength(0);
   });
 
   it('checks the worst case at the batch price and refuses a provider without a batch API', async () => {

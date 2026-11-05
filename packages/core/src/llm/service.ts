@@ -31,6 +31,7 @@ import { BudgetExceededError, ProviderUnavailableError, UnpricedModelError } fro
 import {
   batchPrice,
   costUsd,
+  estimateCallUsage,
   estimateInputTokens,
   startOfUtcDay,
   utcDay,
@@ -162,12 +163,7 @@ export class LlmService implements LlmPort, BatchSource {
         model: req.model,
         maxUsd: req.maxUsd,
         msg: 'llm.call',
-        estimate: {
-          input: estimateInputTokens((req.system ?? '') + req.input),
-          output: req.maxTokens,
-          cacheRead: 0,
-          cacheWrite: 0,
-        },
+        estimate: estimateCallUsage(req),
       },
       cctx,
       (adapter) =>
@@ -231,14 +227,7 @@ export class LlmService implements LlmPort, BatchSource {
     }
     const { cfg, factory, price } = this.lookup(req.provider, req.model);
     const worst =
-      price === undefined
-        ? undefined
-        : costUsd(batchPrice(price), {
-            input: estimateInputTokens((req.system ?? '') + req.input),
-            output: req.maxTokens,
-            cacheRead: 0,
-            cacheWrite: 0,
-          });
+      price === undefined ? undefined : costUsd(batchPrice(price), estimateCallUsage(req));
     const { now } = this.precheck({ maxUsd: req.maxUsd, estimate: worst }, cctx);
     // Batches in flight are spend the ledger does not show yet: without reserving their
     // worst case, any number of them would pass the daily cap before the first one ends.

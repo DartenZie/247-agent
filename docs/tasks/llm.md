@@ -103,7 +103,9 @@ somewhere to go.
 Every call passes through one place in the daemon that checks budgets and records the
 cost. Before the call, the worst case is estimated from the prompt length and
 `max_tokens` at the model's price; if it would not fit in the run's `budget.max_usd`,
-the call is refused. After the call, the real cost must fit too, or the run fails
+the call is refused. The estimate counts one token for each character outside
+ASCII (CJK text, emoji), counts the `output_schema` as input, and prices the system
+prompt at the cache-write price. After the call, the real cost must fit too, or the run fails
 with the ledger row kept. The run's budget is the smaller of the task's and the
 action's `budget`, and it covers every attempt of the run together.
 

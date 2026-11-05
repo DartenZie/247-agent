@@ -1,5 +1,5 @@
 import type { PricingConfig } from './config.js';
-import type { LlmUsage } from './types.js';
+import type { LlmCall, LlmUsage } from './types.js';
 
 /** USD per million tokens, every component known. */
 export interface ModelPrice {
@@ -103,9 +103,38 @@ export function costUsd(price: ModelPrice, usage: LlmUsage): number {
   );
 }
 
-/** Deliberately pessimistic (3 chars per token) so the worst-case budget check never under-counts. */
+/**
+ * A pessimistic token count for the worst-case budget check: 3 ASCII characters per
+ * token, and one token per UTF-16 code unit outside ASCII, because CJK text and emoji
+ * cost close to one token per character (#79). It is an estimate, not a bound: rare
+ * characters and dense ASCII (hex, base64) can cost more, and the post-call check
+ * catches that.
+ */
 export function estimateInputTokens(text: string): number {
-  return Math.ceil(text.length / 3);
+  let ascii = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) < 0x80) {
+      ascii += 1;
+    }
+  }
+  return Math.ceil(ascii / 3) + (text.length - ascii);
+}
+
+/**
+ * The worst-case usage of one completion: the system prompt is sent as a cacheable block,
+ * so on a cache miss it is billed at the cache-write price; the input and the output
+ * schema (billed as input) at the input price; `maxTokens` of output.
+ */
+export function estimateCallUsage(
+  req: Pick<LlmCall, 'system' | 'input' | 'outputSchema' | 'maxTokens'>,
+): LlmUsage {
+  const schema = req.outputSchema === undefined ? '' : JSON.stringify(req.outputSchema);
+  return {
+    input: estimateInputTokens(req.input) + estimateInputTokens(schema),
+    output: req.maxTokens,
+    cacheRead: 0,
+    cacheWrite: estimateInputTokens(req.system ?? ''),
+  };
 }
 
 /** `YYYY-MM-DD` of the UTC day; the daily budget window (docs/internal/model-actions.md). */
