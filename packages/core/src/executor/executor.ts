@@ -87,6 +87,11 @@ export interface ExecutorOptions {
   /** ACP sessions for `agent` actions; its `workDir` names `${run.workspace}`. */
   agents?: AgentClients;
   metrics?: Metrics | undefined;
+  /**
+   * How often a running executor looks in the store for `queued` runs it was never handed
+   * (#104); defaults to 10 s.
+   */
+  adoptIntervalMs?: number;
 }
 
 /** What a reload may change on a running executor; applies to runs not yet started. */
@@ -152,6 +157,9 @@ const INTERRUPTED = 'interrupted: the daemon restarted while the run was in prog
 const CANCELLED = 'cancelled on request';
 /** How long `cancel()` waits for an aborted attempt to settle before it answers. */
 const CANCEL_SETTLE_MS = 5000;
+/** How often, and how many oldest `queued` runs, the adoption sweep looks at (#104). */
+const ADOPT_INTERVAL_MS = 10_000;
+const ADOPT_BATCH = 1000;
 const NO_SECRETS = staticSecrets({});
 
 function errorMessage(err: unknown): string {
@@ -336,6 +344,8 @@ export class Executor {
   private readonly perTask = new Map<string, number>();
   private readonly idleWaiters: (() => void)[] = [];
   private unsubscribe: (() => void) | undefined;
+  private readonly adoptIntervalMs: number;
+  private adoptTimer: NodeJS.Timeout | undefined;
   private stopping = false;
   /** Open `hold()`s; while any is open, `pump` starts nothing. */
   private holds = 0;
@@ -360,6 +370,7 @@ export class Executor {
     this.env = opts.env ?? {};
     this.childEnv = opts.childEnv ?? this.secrets.scrub(process.env);
     this.metrics = opts.metrics ?? new Metrics();
+    this.adoptIntervalMs = opts.adoptIntervalMs ?? ADOPT_INTERVAL_MS;
     parseDuration(this.defaultTimeout); // fail fast on a bad default
     parseDuration(this.stopGrace);
   }
@@ -434,6 +445,12 @@ export class Executor {
       }
     }
     resumed += this.enqueue(this.store.runs.listByStatus('queued', 1_000_000));
+    if (this.adoptTimer === undefined) {
+      this.adoptTimer = setInterval(() => {
+        this.adopt();
+      }, this.adoptIntervalMs);
+      this.adoptTimer.unref();
+    }
     this.log.info('executor.started', { workers: this.workers, interrupted, resumed, waiting });
     return { interrupted, resumed, waiting };
   }
@@ -455,6 +472,33 @@ export class Executor {
       log.error('run.bookkeeping_failed', { error: errorMessage(err) });
       return false;
     }
+  }
+
+  /**
+   * Safety net for a hand-off that never arrived (#104): takes over the `queued` runs in the
+   * store that the executor does not hold, oldest first. A hand-off happens after the
+   * dispatcher commits, so a run committed while the executor was not subscribed, or one a
+   * store failure left `queued` before its first status change, would otherwise wait for the next start. A store failure
+   * here is logged; the next sweep tries again.
+   */
+  private adopt(): void {
+    if (this.stopping) {
+      return;
+    }
+    let orphans: RunRecord[];
+    try {
+      orphans = this.store.runs
+        .listByStatus('queued', ADOPT_BATCH)
+        .filter((run) => !this.known.has(run.id));
+    } catch (err) {
+      this.log.error('executor.adopt_failed', { error: errorMessage(err) });
+      return;
+    }
+    for (const run of orphans) {
+      this.log.child(runFields(run)).warn('run.adopted');
+      this.metrics.runsAdopted.inc({ task: run.task });
+    }
+    this.enqueue(orphans);
   }
 
   /** Takes runs from the dispatcher. Returns how many were new to the executor. */
@@ -481,6 +525,8 @@ export class Executor {
    */
   async stop(opts: { grace?: boolean } = {}): Promise<void> {
     this.stopping = true;
+    clearInterval(this.adoptTimer);
+    this.adoptTimer = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     for (const run of this.pending.splice(0)) {

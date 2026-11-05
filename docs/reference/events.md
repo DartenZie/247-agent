@@ -218,6 +218,7 @@ The names worth searching for:
 | `run.waiting` | info | the run parked on a wait (`wait_type`, `expires_at`) |
 | `run.cancelled` | warn | `oa runs cancel` ended the run (`previous_status`: `queued`, `running` or `waiting`; `attempt`) |
 | `run.recovered`, `run.abandoned` | warn | a run re-queued after a restart; a run left `running` by a stop, to run again on the next start |
+| `run.adopted` | warn | a `queued` run that the executor did not receive, found in the store and run without a restart |
 | `wait.matched`, `wait.timeout` | info | a wait ended (`run_id`, `wait_type`, `event_id`) |
 | `wait.filter_error` | warn | a wait's filter threw on an event; no match |
 | `cron.armed` | info | a cron job armed (`task`, `schedule`, `next_run`) |

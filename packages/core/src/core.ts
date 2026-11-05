@@ -454,6 +454,7 @@ export function createCore(opts: CoreOptions): Core {
       metrics.runsQueued.init(labels);
       metrics.runAttempts.init(labels);
       metrics.runsInterrupted.init(labels);
+      metrics.runsAdopted.init(labels);
       for (const status of ['succeeded', 'failed', 'cancelled']) {
         metrics.runsFinished.init({ ...labels, status });
       }
