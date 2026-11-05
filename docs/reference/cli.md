@@ -318,7 +318,9 @@ shows how to schedule it and how to restore.
 ### `oa help [command]`, `oa version`
 
 `help` prints the top-level usage or one command's usage to stdout and exits 0 (`oa`
-with no arguments prints the usage and exits 2). `version`, `--version` and `-V` print
+with no arguments prints the usage and exits 2). `oa <command> --help` and
+`oa <command> -h` print the same usage as `oa help <command>` and exit 0. After a `--`,
+`--help` is an argument: `oa validate -- --help` validates a file named `--help`. `version`, `--version` and `-V` print
 the version.
 
 ## `247-agent-core`

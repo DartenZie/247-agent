@@ -9,7 +9,9 @@ referenced tasks file checked. Warnings (a filter comparison that cannot mean wh
 says) are printed but do not fail the file.
 `;
 
-export function validate(files: string[], io: Io): number {
+export function validate(args: string[], io: Io): number {
+  // A leading `--` ends the options, so a file may start with a dash (`oa validate -- -x`).
+  const files = args[0] === '--' ? args.slice(1) : args;
   if (files.length === 0) {
     throw new UsageError('validate: at least one file is required');
   }
