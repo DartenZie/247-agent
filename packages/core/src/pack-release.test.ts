@@ -25,6 +25,21 @@ interface Entry {
   gname: string;
 }
 
+/** Runs `sha256sum -c` and `shasum -a 256 -c`, each one that is installed, on a checksum file in `dir`. */
+function checkSha256(dir: string, file: string) {
+  const has = (cmd: string) => spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0;
+  const runs = [
+    has('sha256sum')
+      ? spawnSync('sha256sum', ['-c', file], { cwd: dir, encoding: 'utf8' })
+      : undefined,
+    has('shasum')
+      ? spawnSync('shasum', ['-a', '256', '-c', file], { cwd: dir, encoding: 'utf8' })
+      : undefined,
+  ].filter((r) => r !== undefined);
+  expect(runs.length).toBeGreaterThan(0);
+  return runs;
+}
+
 /** The ustar headers of a .tar.gz, without the pax and GNU long-name records. */
 function entries(tarball: string): Entry[] {
   const tar = gunzipSync(readFileSync(tarball));
@@ -74,6 +89,23 @@ describe.skipIf(process.platform === 'win32')('pack-release.sh', () => {
       expect({ name: e.name, uid: e.uid, gid: e.gid }).toEqual({ name: e.name, uid: 0, gid: 0 });
       expect(['', 'root'], e.name).toContain(e.uname);
       expect(['', 'root'], e.name).toContain(e.gname);
+    }
+  });
+
+  it('writes a .sha256 file that sha256sum -c and shasum -c accept (issue #116)', () => {
+    const tree = join(root, '247-agent-9.9.9');
+    mkdirSync(tree, { recursive: true });
+    writeFileSync(join(tree, 'VERSION'), 'version=9.9.9\n');
+
+    const run = spawnSync('bash', [script, root, '247-agent-9.9.9'], { encoding: 'utf8' });
+    expect(run.status, run.stderr).toBe(0);
+
+    expect(readFileSync(join(root, '247-agent-9.9.9.tar.gz.sha256'), 'utf8')).toMatch(
+      /^[0-9a-f]{64} {2}247-agent-9\.9\.9\.tar\.gz\n$/,
+    );
+    for (const check of checkSha256(root, '247-agent-9.9.9.tar.gz.sha256')) {
+      expect(check.status, check.stderr).toBe(0);
+      expect(check.stdout).toBe('247-agent-9.9.9.tar.gz: OK\n');
     }
   });
 });
