@@ -44,6 +44,22 @@ describe('parseConfig', () => {
     ).toThrow(/one more segment/);
   });
 
+  it('limits connections by default and checks the timestamp layout', () => {
+    expect(parseConfig({ routes: [route] }).max_connections).toBe(128);
+    const hmac = (timestamp: unknown) => ({
+      routes: [{ ...route, verify: { kind: 'hmac', secret: 's', header: 'x-sig', timestamp } }],
+    });
+    expect(parseConfig(hmac({ header: 'X-Ts' })).routes[0]?.verify).toMatchObject({
+      timestamp: { header: 'x-ts', signed: '{timestamp}.{body}', tolerance: 300 },
+    });
+    expect(() => parseConfig(hmac({ header: 'x-ts', signed: '{body}' }))).toThrow(
+      /\{timestamp\} and \{body\}/,
+    );
+    expect(() => parseConfig(hmac({ header: 'x-ts', signed: '{timestamp}{body}{body}' }))).toThrow(
+      /\{timestamp\} and \{body\}/,
+    );
+  });
+
   it('rejects unknown keys', () => {
     expect(() => parseConfig({ routes: [route], port: 80 })).toThrow(/port/);
   });
@@ -61,5 +77,7 @@ describe('secretHeader', () => {
     expect(secretHeader({ kind: 'github', secret: 's' })).toBe('x-hub-signature-256');
     expect(secretHeader({ kind: 'gitlab', token: 't' })).toBe('x-gitlab-token');
     expect(secretHeader({ kind: 'none' })).toBeUndefined();
+    expect(secretHeader({ kind: 'slack', secret: 's', tolerance: 300 })).toBe('x-slack-signature');
+    expect(secretHeader({ kind: 'stripe', secret: 's', tolerance: 300 })).toBe('stripe-signature');
   });
 });

@@ -181,9 +181,12 @@ the user taps, or replies with an option's text or number. Full reference:
 Generic HTTP in, `transport: none`, no ops. `listen` (`{host, port}`, default
 `127.0.0.1:8787`, or `{path, mode}` for a Unix socket), `routes` (each `path`, `event`,
 optional `type_header` appending `.<header value>`, `dedup_header` for the delivery id,
-`methods`, and `verify`: `{kind: github, secret}`, `{kind: gitlab, token}`, `{kind:
-hmac, secret, header, algorithm, encoding, prefix}`, `{kind: token, token, header,
-scheme}` or `{kind: none}`), `max_body`, `drop_headers`, `trust_proxy`. Payload
+`methods`, and `verify`: `{kind: github, secret}`, `{kind: gitlab, token}`, `{kind: slack|stripe, secret,
+tolerance}`, `{kind: hmac, secret, header, algorithm, encoding, prefix, timestamp: {header,
+signed, tolerance}}`, `{kind: token, token, header,
+scheme}` or `{kind: none}`), `max_body`, `max_connections`, `drop_headers`,
+`trust_proxy`. A timestamp outside `tolerance` seconds gets 401, and so does a request
+whose headers fail the check, before its body is read. Payload
 `{route, method, path, query, headers, content_type, body_format, body, remote,
 received_at}` with the body parsed for JSON and forms; credential headers never stored.
 Answers 202 emitted, 200 duplicate, 401 bad signature, 503 core down (retry). Full

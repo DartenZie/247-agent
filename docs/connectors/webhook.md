@@ -42,6 +42,7 @@ emits: [github.push, github.pull_request, deploy.requested]
 config:
   listen: { host: 127.0.0.1, port: 8787 }   # or { path: /run/247-agent-webhook/http.sock, mode: "0660" }
   max_body: 1048576                         # bytes; larger requests get 413
+  max_connections: 128                      # more concurrent connections are closed at once
   drop_headers: []                          # more request headers to keep out of events
   trust_proxy: false                        # take `remote` from X-Forwarded-For (only behind your own proxy)
   routes:
@@ -63,6 +64,7 @@ config:
 | `listen` | `{ host: 127.0.0.1, port: 8787 }` | a TCP address (`port: 0` picks a free one, shown in the log) or `{ path, mode }` for a Unix socket, `mode` an octal string, default `"0660"` |
 | `routes` | required | at least one route; two routes cannot share a `path`, and `/healthz` is reserved |
 | `max_body` | `1048576` | request bodies over this many bytes get 413 |
+| `max_connections` | `128` | concurrent connections; a connection over the limit is closed before anything is read, and the sender sees a network error. A connection that sends no request headers within 10 seconds is closed, so idle connections cannot hold the slots |
 | `drop_headers` | `[]` | request headers to leave out of events, on top of the ones always dropped |
 | `trust_proxy` | `false` | take the client address from the first `X-Forwarded-For` entry |
 
@@ -84,13 +86,51 @@ Per route:
 |---|---|---|
 | `github` | `secret` | `X-Hub-Signature-256: sha256=<HMAC-SHA256 of the body>` |
 | `gitlab` | `token` | `X-Gitlab-Token: <token>` |
-| `hmac` | `secret`, `header`, `algorithm` (`sha256`; `sha1`, `sha512`), `encoding` (`hex`; `base64`), `prefix` (`""`) | `<header>: <prefix><HMAC of the raw body>` |
+| `slack` | `secret`, `tolerance` (`300`) | `X-Slack-Signature: v0=<HMAC-SHA256 of v0:<timestamp>:<body>>`, with the timestamp from `X-Slack-Request-Timestamp` |
+| `stripe` | `secret`, `tolerance` (`300`) | `Stripe-Signature: t=<timestamp>,v1=<HMAC-SHA256 of <timestamp>.<body>>`; any one of several `v1=` values can match |
+| `hmac` | `secret`, `header`, `algorithm` (`sha256`; `sha1`, `sha512`), `encoding` (`hex`; `base64`), `prefix` (`""`), `timestamp` (none) | `<header>: <prefix><HMAC of the raw body>`, or of the `timestamp.signed` layout when `timestamp` is set |
 | `token` | `token`, `header` (`Authorization`), `scheme` (`Bearer`; `""` for a bare token) | `<header>: <scheme> <token>` |
 | `none` | | nothing; logged as a warning at start |
 
+### Timestamped signatures
+
+`slack`, `stripe` and an `hmac` with `timestamp` sign a Unix time in seconds together
+with the body. A request whose timestamp differs from the connector's clock by more than
+`tolerance` seconds, in either direction, gets 401. A captured request therefore cannot
+be replayed after the window closes. Inside the window, a replay passes the check and
+emits a second event. Slack and Stripe send no delivery id header for `dedup_header`, so
+filter or deduplicate on an id in the body where it matters. Keep the server clock synchronized (for example
+with `systemd-timesyncd`).
+
+For a service that is not a preset, set `timestamp` on an `hmac` check:
+
+```yaml
+verify:
+  kind: hmac
+  secret: "${secrets.vendor_webhook_secret}"
+  header: X-Vendor-Signature
+  prefix: "v1="
+  timestamp:
+    header: X-Vendor-Timestamp           # the Unix time in seconds
+    signed: "{timestamp}.{body}"         # the default; {timestamp} and {body} once each
+    tolerance: 300                       # seconds, the default
+```
+
+`signed` is the exact byte layout the sender signs. Slack's layout, for example, is
+`v0:{timestamp}:{body}`.
+
+### Rejections
+
 Comparisons are constant-time. A failed check answers `401 unauthorized` and logs one line
 with the route, the peer and the reason (`signature mismatch`, `missing
-x-hub-signature-256`), never the expected value.
+x-hub-signature-256`, `timestamp outside the 300 s window`), never the expected value.
+
+The connector checks the headers before it reads the body. When the headers alone fail
+the check, the connector answers 401 with `Connection: close` and does not buffer the body.
+The headers alone fail the check for a wrong or missing token, a missing or malformed
+signature header, and a missing or out-of-window timestamp. A signature that is well
+formed but wrong is found only after the body is read, so a sender with a fresh timestamp
+and a made-up signature can still make the connector read up to `max_body`.
 
 ## Events
 

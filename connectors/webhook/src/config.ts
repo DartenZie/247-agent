@@ -27,14 +27,33 @@ const headerName = z
 
 const secret = z.string().min(1, 'the secret is empty (is the secret set in the backend?)');
 
+/** Seconds a signed timestamp may differ from the clock, either way. */
+const tolerance = z.number().int().min(1).max(86_400).default(300);
+
+/** A signature that covers a timestamp header as well as the body, for replay protection. */
+const Timestamp = z.strictObject({
+  /** The header carrying the Unix time in seconds. */
+  header: headerName,
+  /** What is signed: `{timestamp}` and `{body}` once each, in the order the sender uses. */
+  signed: z
+    .string()
+    .default('{timestamp}.{body}')
+    .refine((t) => t.split('{timestamp}').length === 2 && t.split('{body}').length === 2, {
+      message: 'signed holds {timestamp} and {body} exactly once each',
+    }),
+  tolerance,
+});
+
 /**
- * How a route checks a request. `github` and `gitlab` are presets of `hmac` and `token`
- * with the headers those services send; `none` accepts anything and is meant for a
+ * How a route checks a request. `github`, `gitlab`, `slack` and `stripe` are presets of `hmac` and `token`
+ * with the headers and signed layout those services send; `none` accepts anything and is meant for a
  * listener only a trusted proxy can reach.
  */
 const Verify = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('github'), secret }),
   z.strictObject({ kind: z.literal('gitlab'), token: secret }),
+  z.strictObject({ kind: z.literal('slack'), secret, tolerance }),
+  z.strictObject({ kind: z.literal('stripe'), secret, tolerance }),
   z.strictObject({
     kind: z.literal('hmac'),
     secret,
@@ -44,6 +63,8 @@ const Verify = z.discriminatedUnion('kind', [
     encoding: z.enum(['hex', 'base64']).default('hex'),
     /** Stripped from the header value before comparing (`sha256=`). */
     prefix: z.string().default(''),
+    /** Sign a timestamp with the body and reject requests outside the window. */
+    timestamp: Timestamp.optional(),
   }),
   z.strictObject({
     kind: z.literal('token'),
@@ -105,6 +126,8 @@ const schema = z
   .strictObject({
     listen: Listen.prefault({}),
     routes: z.array(Route).min(1, 'at least one route is needed'),
+    /** Concurrent connections; one more is closed at once, before anything is read. */
+    max_connections: z.number().int().min(1).default(128),
     /** Largest accepted body in bytes; bigger requests get 413. */
     max_body: z
       .number()
@@ -179,6 +202,10 @@ export function secretHeader(verify: VerifyConfig): string | undefined {
       return 'x-hub-signature-256';
     case 'gitlab':
       return 'x-gitlab-token';
+    case 'slack':
+      return 'x-slack-signature';
+    case 'stripe':
+      return 'stripe-signature';
     case 'hmac':
     case 'token':
       return verify.header;
