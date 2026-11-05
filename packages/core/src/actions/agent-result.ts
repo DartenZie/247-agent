@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 import { z } from 'zod';
 
@@ -22,6 +22,9 @@ export const BaselineResult = z.looseObject({
 export type AgentResult = z.infer<typeof BaselineResult> & Record<string, JsonValue>;
 
 export const DEFAULT_RESULT_PATH = 'RESULT.json';
+
+/** The largest result file the runner reads; a bigger one fails the attempt. */
+export const MAX_RESULT_BYTES = 1024 * 1024;
 
 /** What the runner appends to every prompt so the contract is stated, not assumed. */
 export function resultInstructions(
@@ -75,6 +78,66 @@ function firstIssue(err: z.ZodError): string {
   return at === '' ? issue.message : `${at}: ${issue.message}`;
 }
 
+function invalid(error: string): ReadResult {
+  return { ok: false, missing: false, error };
+}
+
+/**
+ * The file's text, read only when it is a regular file whose real directory is inside the
+ * real workspace: the agent may have planted a symlink (to a file its sandbox hides, or a
+ * directory outside the workspace), a FIFO that would block the read, or a huge file.
+ * Nothing of a refused file is read, so its content never reaches the run error or the
+ * retry prompt.
+ */
+function readRegularFile(workspace: string, path: string, relative: string): string | ReadResult {
+  let fd: number;
+  try {
+    if (!isInside(realpathSync(workspace), realpathSync(dirname(path)))) {
+      return invalid(`${relative} is outside the workspace`);
+    }
+    // O_NOFOLLOW refuses a symlink as the last component; O_NONBLOCK keeps a FIFO from
+    // blocking the open until fstat refuses it.
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return { ok: false, missing: true };
+    }
+    if (code === 'ELOOP' || code === 'EMLINK') {
+      return invalid(`${relative} is not a regular file`);
+    }
+    return invalid(`cannot read ${relative}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) {
+      return invalid(`${relative} is not a regular file`);
+    }
+    const tooLarge = invalid(`${relative} is larger than ${String(MAX_RESULT_BYTES)} bytes`);
+    if (st.size > MAX_RESULT_BYTES) {
+      return tooLarge;
+    }
+    // Read one byte past the limit, so a file that grew after fstat is still refused.
+    const buf = Buffer.alloc(MAX_RESULT_BYTES + 1);
+    let n = 0;
+    for (;;) {
+      const got = readSync(fd, buf, n, buf.length - n, null);
+      if (got === 0) {
+        break;
+      }
+      n += got;
+      if (n > MAX_RESULT_BYTES) {
+        return tooLarge;
+      }
+    }
+    return buf.toString('utf8', 0, n);
+  } catch (err) {
+    return invalid(`cannot read ${relative}: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Reads and validates the result file. `relative` must stay inside the workspace. A
  * missing file is reported as such (the runner nudges once); anything else invalid is an
@@ -89,20 +152,11 @@ export function readAgentResult(
   if (!isInside(workspace, path)) {
     throw new NonRetryableError(`result.path must stay inside the workspace: ${relative}`);
   }
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') {
-      return { ok: false, missing: true };
-    }
-    return {
-      ok: false,
-      missing: false,
-      error: `cannot read ${relative}: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  const read = readRegularFile(workspace, path, relative);
+  if (typeof read !== 'string') {
+    return read;
   }
+  const text = read;
   let doc: unknown;
   try {
     doc = JSON.parse(text);

@@ -178,10 +178,15 @@ agent never holds the connector's secrets, only a per-run socket and token.
 `status: "done" | "blocked"` and `summary`, plus the task's `result.schema` (read
 relative to `agent.yaml` and kept under it) as JSON; and "do not publish, push or
 deploy anything". After turn 1 the runner reads it. Only a **missing** file
-(`ENOENT`/`ENOTDIR`) gets one nudge turn in the same session ("You have not written
+(`ENOENT`/`ENOTDIR`, including a missing parent directory) gets one nudge turn in the same session ("You have not written
 RESULT.json. Write it now and do nothing else." plus the contract); a file that exists
 but is not JSON, lacks `status` or `summary`, or fails the schema fails the attempt at
-once. Still missing or invalid after the nudge fails the attempt. Both failures are
+once. So does a path that is not a regular file, or whose real directory is not inside
+the real workspace: the reader opens it with `O_NOFOLLOW | O_NONBLOCK` and checks
+`fstat`, so a symlink planted by the agent (to a file its sandbox hides, or a directory
+outside the workspace) or a FIFO is refused unread, and none of its content reaches the
+run error or the retry prompt. A file above `MAX_RESULT_BYTES` (1 MiB) fails the
+attempt too; the reader stops one byte past the limit. Still missing or invalid after the nudge fails the attempt. Both failures are
 plain `Error`, so `retry` repeats the run in a fresh workspace with the error in the
 prompt.
 
