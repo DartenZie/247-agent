@@ -186,6 +186,14 @@ interface PolicyWatch {
   policy: AgentPolicy;
   judged: Set<string>;
   calls: Map<string, JudgedCall>;
+  /**
+   * Counts a tool call toward `max_tool_calls` the first time its id shows up, whether in
+   * a `tool_call`, a `tool_call_update` or a permission request: an agent that skips the
+   * announcement must not escape the cap. Set by the running turn; a no-op between turns.
+   */
+  count: (id: string, title: string | undefined) => void;
+  /** The ids already counted in this run. */
+  counted: Set<string>;
 }
 
 interface TurnLimits {
@@ -264,6 +272,25 @@ async function runTurn(
       cancel('policy');
     }
   };
+  watch.count = (id, title): void => {
+    if (watch.counted.has(id)) {
+      return;
+    }
+    watch.counted.add(id);
+    toolCalls++;
+    const call = watch.calls.get(id);
+    ctx.log.info('agent.tool_call', {
+      id,
+      tool_kind: call?.toolKind ?? null,
+      title: title?.slice(0, 200) ?? null,
+      command: call?.command?.slice(0, 200) ?? null,
+      locations: call?.locations.slice(0, 20).join(' ') ?? '',
+      n: toolCalls,
+    });
+    if (toolCalls > limits.maxToolCalls) {
+      cancel('tool_calls');
+    }
+  };
   ctx.signal.addEventListener('abort', onAbort, { once: true });
   if (ctx.signal.aborted) {
     onAbort();
@@ -297,23 +324,12 @@ async function runTurn(
           }
           break;
         case 'tool_call':
-          toolCalls++;
-          ctx.log.info('agent.tool_call', {
-            id: u.id,
-            tool_kind: u.toolKind,
-            title: u.title.slice(0, 200),
-            command: u.command?.slice(0, 200) ?? null,
-            locations: u.locations.slice(0, 20).join(' '),
-            n: toolCalls,
-          });
-          if (toolCalls > limits.maxToolCalls) {
-            cancel('tool_calls');
-          }
           watch.calls.set(u.id, {
             toolKind: u.toolKind,
             command: u.command,
             locations: u.locations,
           });
+          watch.count(u.id, u.title);
           unasked(u.id, u.status);
           break;
         case 'tool_call_update': {
@@ -326,6 +342,7 @@ async function runTurn(
               locations: u.locations ?? known.locations,
             });
           }
+          watch.count(u.id, undefined);
           unasked(u.id, u.status);
           break;
         }
@@ -355,9 +372,12 @@ async function runTurn(
     // Not `gen.return()`: a generator parked on `nextUpdate()` would only return once that
     // resolves. `session.close()` disposes the queue, which ends the generator.
     ctx.signal.removeEventListener('abort', onAbort);
+    watch.count = noCount;
     transcript.flush();
   }
 }
+
+const noCount = (): void => undefined;
 
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new Error('cancelled');
@@ -508,7 +528,13 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       workspace: ws.path,
       unaskedExecute: cfg.unasked_execute,
     };
-    const watch: PolicyWatch = { policy, judged: new Set(), calls: new Map() };
+    const watch: PolicyWatch = {
+      policy,
+      judged: new Set(),
+      calls: new Map(),
+      count: noCount,
+      counted: new Set(),
+    };
     const transcript = new TranscriptWriter({
       sink: ctx.transcripts,
       runId: ctx.run.id,
@@ -522,6 +548,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       log: ctx.log,
       onPermission: (req) => {
         watch.judged.add(req.toolCall.id);
+        watch.count(req.toolCall.id, req.toolCall.title);
         const d = decidePermission(policy, req, watch.calls.get(req.toolCall.id));
         transcript.permission(req, d);
         ctx.log.info('agent.permission', {

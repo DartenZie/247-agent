@@ -140,9 +140,10 @@ agent never holds the connector's secrets, only a per-run socket and token.
 
 ## Limits and money
 
-- `max_tool_calls` (action, else `defaults.agent.max_tool_calls`, 40): counted from
-  `tool_call` updates across both turns; past it, `cancel('tool_calls')` and
-  `NonRetryableError`.
+- `max_tool_calls` (action, else `defaults.agent.max_tool_calls`, 40): counted once per
+  tool-call id across both turns, from the first `tool_call`, `tool_call_update` or
+  permission request that names it, so an agent that skips the announcement is still
+  counted; past it, `cancel('tool_calls')` and `NonRetryableError`.
 - The cost cap is the smaller of `task.budget.max_usd` and the action's
   (`action.budget.max_usd ?? defaults.agent.budget.max_usd`), either may be absent.
   During the turn every `usage_update.cost` asks `ctx.llm.overBudget({maxUsd,
