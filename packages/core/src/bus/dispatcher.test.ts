@@ -457,4 +457,98 @@ describe('Dispatcher', () => {
       vi.useRealTimers();
     }
   });
+
+  describe('wait deadlines when dispatch lags (#100)', () => {
+    const T0 = '2026-09-19T10:00:00.000Z';
+    const DEADLINE = '2026-09-19T10:01:00.000Z';
+
+    /** A run of task `m` waiting for `chat.reply` until DEADLINE. */
+    function armWait(): void {
+      const trigger = publish('x.trigger');
+      dispatcher.drain();
+      env.store.runs.insertQueued({
+        id: 'run_w',
+        task: 'm',
+        event_id: trigger.id,
+        correlation_id: trigger.correlation_id,
+        created_at: T0,
+      });
+      env.store.runs.setStatus('run_w', 'waiting');
+      env.store.waits.insert({
+        run_id: 'run_w',
+        task: 'm',
+        type: 'chat.reply',
+        filter: null,
+        expires_at: DEADLINE,
+        on_timeout: 'fail',
+        resume: null,
+        created_at: T0,
+        consumed: [],
+      });
+    }
+
+    beforeEach(() => {
+      env.clock.set(T0);
+      armWait();
+    });
+
+    it('resumes the wait with a reply stored before the deadline but dispatched after it', () => {
+      env.clock.set('2026-09-19T10:00:30.000Z');
+      const reply = publish('chat.reply');
+      env.clock.set('2026-09-19T10:05:00.000Z'); // the daemon was down past the deadline
+      expect(dispatcher.drain().map((r) => r.id)).toEqual(['run_w']);
+      expect(env.store.waits.get('run_w')).toMatchObject({
+        outcome: 'matched',
+        event_id: reply.id,
+      });
+    });
+
+    it('resumes the wait when more than a batch of events is queued ahead of the reply', () => {
+      env.clock.set('2026-09-19T10:00:10.000Z');
+      for (let i = 0; i < 7; i++) {
+        publish('y.other');
+      }
+      env.clock.set('2026-09-19T10:00:50.000Z');
+      const reply = publish('chat.reply');
+      env.clock.set('2026-09-19T10:05:00.000Z');
+      expect(dispatcher.drain().map((r) => r.id)).toEqual(['run_w']);
+      expect(env.store.waits.get('run_w')).toMatchObject({
+        outcome: 'matched',
+        event_id: reply.id,
+      });
+    });
+
+    it('times the wait out when the reply was stored at or after the deadline', () => {
+      env.clock.set('2026-09-19T10:00:10.000Z');
+      for (let i = 0; i < 4; i++) {
+        publish('y.other');
+      }
+      env.clock.set(DEADLINE);
+      publish('chat.reply');
+      env.clock.set('2026-09-19T10:05:00.000Z');
+      expect(dispatcher.drain().map((r) => r.id)).toEqual(['run_w']);
+      expect(env.store.waits.get('run_w')).toMatchObject({ outcome: 'timeout', event_id: null });
+    });
+
+    it('times the wait out on the clock once the backlog is dispatched', () => {
+      env.clock.set('2026-09-19T10:00:59.999Z');
+      expect(dispatcher.drain()).toEqual([]);
+      expect(env.store.waits.get('run_w')?.outcome).toBeNull();
+      env.clock.set(DEADLINE);
+      expect(dispatcher.drain().map((r) => r.id)).toEqual(['run_w']);
+      expect(env.store.waits.get('run_w')).toMatchObject({ outcome: 'timeout', event_id: null });
+    });
+
+    it('does not time the wait out while a full batch of earlier events is undispatched', () => {
+      env.clock.set('2026-09-19T10:00:10.000Z');
+      for (let i = 0; i < 3; i++) {
+        publish('y.other');
+      }
+      env.clock.set('2026-09-19T10:05:00.000Z');
+      expect(dispatcher.dispatchOnce().queued).toEqual([]); // full batch: more may follow
+      expect(env.store.waits.get('run_w')?.outcome).toBeNull();
+      expect(dispatcher.dispatchOnce().queued.map((r) => r.id)).toEqual(['run_w']);
+      expect(env.store.waits.get('run_w')?.outcome).toBe('timeout');
+    });
+  });
 });

@@ -80,10 +80,10 @@ reads its settings through a `configure()` seam so a reload applies them live
 `Dispatcher.dispatchOnce()` runs one `BEGIN IMMEDIATE` transaction per batch of 100
 events after the `dispatch` cursor:
 
-1. Expire waits whose `expires_at` has passed (`endWait('timeout')`).
-2. Read the next batch of events.
-3. For each event: end every pending wait whose type pattern matches and whose filter
-   is truthy (`endWait('matched', event)`); if `depth > limits.max_event_depth`
+1. Read the next batch of events.
+2. For each event: time out every pending wait (with a valid type and filter) whose `expires_at` is at or before the
+   event's `ts` (`endWait('timeout')`); end every other pending wait whose type
+   pattern matches and whose filter is truthy (`endWait('matched', event)`); if `depth > limits.max_event_depth`
    (default 32) drop it (`drop('depth')`) and start no run; else
    match tasks; for a `cron.tick` with `overlap: skip`, skip while the task has a run
    in `queued`, `running` or `waiting` (`cron.skipped_overlap`); skip a task listed in
@@ -92,7 +92,17 @@ events after the `dispatch` cursor:
    started `limits.max_runs_per_chain` runs (default 1000), which drops the event
    (`drop('chain_runs')`) for every task left. A paused task still has its
    waits ended in the step before: a pause stops new runs, not runs in the chain.
-4. Advance the cursor to the last `seq`, commit, hand the new runs to the executor.
+3. Advance the cursor to the last `seq`. When the batch is short (or empty), the backlog
+   is dispatched: expire the waits whose `expires_at` has passed on the clock
+   (`endWait('timeout')`).
+4. Commit, hand the new runs to the executor.
+
+A wait's deadline is judged by when an event was stored, not when it is dispatched. A
+reply stored before the deadline still ends the wait when dispatch lags behind it (a
+crash between storing and dispatching it, a long backlog); the clock times a wait out
+only once no stored event is left undispatched, so a wait whose type or filter no longer
+compiles times out after the backlog is drained. Both `ts` and `expires_at` come from
+the daemon clock; a backward clock step can still order a timeout before its reply.
 
 `drain()` repeats until a batch is short. Every inserted event calls `wake()`, which
 coalesces into one `setImmediate` drain; a 1 s timer is the safety net, so a wait

@@ -77,6 +77,11 @@ too, so a reply that races the question is not lost.
   published, so your notify task hears about it.
 - `succeed`: the run continues with `{ timed_out: true }` as the result.
 
+An event the daemon stored before the timeout passed resumes the run, even if the daemon
+handles it later, for example behind a long queue of other events. The timeout counts
+from when the daemon stores an event, not from when it happened elsewhere: a reply a
+connector fetches after the timeout is too late.
+
 The task's own `timeout` bounds active work only; time spent waiting does not count
 against it.
 
