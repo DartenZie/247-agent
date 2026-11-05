@@ -121,15 +121,12 @@ export function lintTasks(
   return out;
 }
 
-/** `lintTasks` as issues for `oa validate`, each message naming its task. */
+/** `lintTasks` as issues for `oa validate`, each naming its task. */
 export function lintIssues(
   tasks: readonly TaskConfig[],
   all: readonly TaskConfig[] = tasks,
 ): ConfigIssue[] {
-  return lintTasks(tasks, all).map((w) => ({
-    path: w.path,
-    message: `task "${w.task}": ${w.message}`,
-  }));
+  return lintTasks(tasks, all).map((w) => ({ path: w.path, task: w.task, message: w.message }));
 }
 
 /** One hop of an event cycle: `task` produces `type`, which triggers the next hop's task. */

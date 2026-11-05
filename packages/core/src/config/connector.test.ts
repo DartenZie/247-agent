@@ -450,6 +450,8 @@ describe('oa validate with a sandboxed agent program', () => {
     expect(byFile['tasks.yaml']).toEqual([
       {
         path: 'tasks[0].action.workspace.repo',
+        task: 'edit',
+        line: 6,
         message: expect.stringMatching(
           /\/srv\/repos\/site is not visible to the sandboxed agent program "claude": add it to sandbox.ro_binds/,
         ) as string,

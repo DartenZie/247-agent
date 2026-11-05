@@ -172,6 +172,18 @@ describe('createCore with the reference workflow', () => {
 
     writeFileSync(
       join(dir, 'tasks.yaml'),
+      'tasks:\n  - name: only\n    trigger: { kind: event, type: x.y, filter: "#TOKEN" }\n    action: { kind: shell, cmd: ["true"] }\n',
+    );
+    expect((await core.reload()).ok).toBe(false);
+    expect(lines.filter((l) => l.msg === 'core.config_invalid').at(-1)).toMatchObject({
+      file: join(dir, 'tasks.yaml'),
+      path: 'tasks[0].trigger.filter',
+      task: 'only',
+      line: 3,
+    });
+
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
       'tasks:\n  - name: only\n    trigger: { kind: cron, schedule: "0 * * * *" }\n    action: { kind: shell, cmd: ["true"] }\n',
     );
     expect((await core.reload()).ok).toBe(true);

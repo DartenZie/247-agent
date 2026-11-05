@@ -61,7 +61,7 @@ export {
   type SecretsBackend,
   scrubEnv,
 } from './secrets/secrets.js';
-export { formatLoadResult } from './config/format.js';
+export { formatIssue, formatLoadResult } from './config/format.js';
 export { parseDuration, DURATION } from './config/duration.js';
 export {
   Retention,

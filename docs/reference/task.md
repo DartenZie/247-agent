@@ -115,11 +115,14 @@ these checks are added:
 - An `agent` task whose workspace is a worktree of a repository names one its
   sandboxed agent program can see.
 
-Issues are printed one per line as `<file>: <path>: <message>`; the command exits 1
-when any check failed and 2 when it was given no file.
+Issues are printed one per line as `<file>:<line>: <path>: task "<name>": <message>`,
+with the line of the offending key and the name of the task that holds it, for example
+`tasks.d/x.yaml:41: tasks[3].action.cmd: task "needs_secret": …`. The path indexes the
+tasks of that file, not the merged list. The command exits 1 when any check failed and
+2 when it was given no file.
 
 Some expressions are valid but almost certainly wrong. `oa validate` prints these as
-`<file>: <path>: warning: <message>`, naming the task, and still exits 0; the daemon
+`<file>:<line>: <path>: warning: task "<name>": <message>` and still exits 0; the daemon
 logs the same warnings as `core.config_warning` when it starts and on every reload.
 Warnings cover every `filter` and `when` (a post gate's too) and the expression inside
 every `${…}` template, wherever a task holds one. They flag a comparison that:

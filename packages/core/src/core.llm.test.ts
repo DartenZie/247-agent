@@ -57,7 +57,7 @@ describe('createCore with providers', () => {
     core2 = make({ providers: {} });
     await expect(core2.start()).rejects.toThrow(ConfigLoadError);
     await expect(core2.start()).rejects.toThrow(
-      /tasks\[1\]\.action\.provider: unknown provider "anthropic"/,
+      /tasks\.yaml:32: tasks\[1\]\.action\.provider: task "classify_email": unknown provider "anthropic"/,
     );
     await core2.stop();
     core2 = make();
@@ -70,7 +70,13 @@ describe('createCore with providers', () => {
     expect(reload.ok).toBe(false);
     expect(reload.files[0]).toMatchObject({
       ok: false,
-      issues: [expect.objectContaining({ path: 'tasks[1].action.provider' })],
+      issues: [
+        expect.objectContaining({
+          path: 'tasks[1].action.provider',
+          task: 'classify_email',
+          line: 32,
+        }),
+      ],
     });
     expect(core2.config().tasks).toHaveLength(9); // the previous config stays active
   });

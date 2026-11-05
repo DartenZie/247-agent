@@ -236,10 +236,10 @@ The names worth searching for:
 | `retention.workspace_kept` | warn | a workspace past `retention.workspaces` was kept because its branch holds commits not pushed yet (`reason: unpushed`, with `commits`) or because git could not tell (`reason: unknown`); also `run_id`, `path`; logged on every pass, published once as the event of the same name |
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
 | `core.connectors_start_failed` | error | starting the connectors threw (`error`); the daemon keeps running |
-| `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `warning`); the config still loads |
+| `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `line`, `warning`); the config still loads |
 | `daemon.reloaded`, `daemon.reload_needs_restart` | info, warn | a reload applied, or changed a key that needs a restart |
 | `daemon.reload_invalid` | error | a reload was refused because `agent.yaml` or a connector manifest is invalid; one line per issue (`file`, `path`, `issue`); the previous config stays |
-| `core.config_invalid` | error | a reload was refused because a tasks file is invalid or fails a cross-check against `agent.yaml` or a manifest, such as a sandbox bind; one line per issue (`file`, `path`, `issue`); the previous config stays |
+| `core.config_invalid` | error | a reload was refused because a tasks file is invalid or fails a cross-check against `agent.yaml` or a manifest, such as a sandbox bind; one line per issue (`file`, `path`, `issue`, and `task` and `line` when the issue is in a task); the previous config stays |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
 | `daemon.stop_timeout` | error | a stop took longer than `after_ms`: `shutdown.grace` plus 10 s after a signal, 10 s after an uncaught error; the daemon exits 1 without waiting for it |
 | `api.stale_socket_removed` | warn | a dead daemon's socket file was removed at start |

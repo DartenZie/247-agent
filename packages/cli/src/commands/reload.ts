@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 
+import { formatIssue } from '@247-agent/core';
+
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 
 export const RELOAD_USAGE = `usage: oa reload [options]
@@ -40,7 +42,7 @@ export async function reload(args: string[], io: Io): Promise<number> {
         continue;
       }
       for (const i of f.issues ?? []) {
-        io.err(i.path === '' ? `${f.file}: ${i.message}` : `${f.file}: ${i.path}: ${i.message}`);
+        io.err(formatIssue(f.file, i));
       }
     }
     if (!r.ok) {

@@ -5,16 +5,27 @@ import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 
 import { loadManifestFile, type ConnectorConfig } from './connector.js';
+import { locateIssues } from './locate.js';
 import { TasksFile, type TaskConfig, type TasksFileConfig } from './schema.js';
 
 export interface ConfigIssue {
   /** Dotted/indexed path like `tasks[1].trigger.filter`; empty for file-level problems. */
   path: string;
   message: string;
+  /** The `name` of the task the path is in, for an issue in a tasks file. */
+  task?: string;
+  /** 1-based line of the offending key, when the file holds the path. */
+  line?: number;
 }
 
 export type LoadResult =
-  | { ok: true; file: string; config: TasksFileConfig }
+  | {
+      ok: true;
+      file: string;
+      config: TasksFileConfig;
+      /** Adds `task` and `line` to issues found later in this file (`locateIssues`). */
+      locate: (issues: readonly ConfigIssue[]) => ConfigIssue[];
+    }
   | { ok: false; file: string; issues: ConfigIssue[] };
 
 /** A zod-style path as an issue path: `tasks[1].trigger.filter`. */
@@ -45,9 +56,9 @@ export function parseTasks(text: string, file: string): LoadResult {
   }
   const result = TasksFile.safeParse(doc);
   if (!result.success) {
-    return { ok: false, file, issues: issuesFromZod(result.error) };
+    return { ok: false, file, issues: locateIssues(text, issuesFromZod(result.error)) };
   }
-  return { ok: true, file, config: result.data };
+  return { ok: true, file, config: result.data, locate: (issues) => locateIssues(text, issues) };
 }
 
 /** Reads and validates a tasks file. Never throws; a missing file is an issue. */
@@ -174,7 +185,7 @@ export function loadTasks(paths: readonly string[]): TasksLoadResult {
     });
     if (issues.length > 0) {
       ok = false;
-      results.push({ ok: false, file: r.file, issues });
+      results.push({ ok: false, file: r.file, issues: r.locate(issues) });
     } else {
       results.push(r);
     }

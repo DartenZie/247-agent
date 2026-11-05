@@ -22,7 +22,8 @@ import {
   checkSandboxes,
   type SandboxCheckContext,
 } from './config/crosscheck.js';
-import { lintTasks } from './config/lint.js';
+import { formatIssue } from './config/format.js';
+import { lintIssues } from './config/lint.js';
 import { loadTasks, type ConfigIssue, type TasksLoadResult } from './config/load.js';
 import type { RetentionPolicy } from './config/retention.js';
 import type { RetryConfig } from './config/schema.js';
@@ -211,13 +212,7 @@ export class ConfigLoadError extends Error {
     super(
       'invalid config:\n' +
         result.files
-          .flatMap((f) =>
-            f.ok
-              ? []
-              : f.issues.map(
-                  (i) => `  ${f.file}: ${i.path === '' ? '' : i.path + ': '}${i.message}`,
-                ),
-          )
+          .flatMap((f) => (f.ok ? [] : f.issues.map((i) => `  ${formatIssue(f.file, i)}`)))
           .join('\n'),
     );
     this.name = 'ConfigLoadError';
@@ -256,8 +251,9 @@ const noConnectors: ConnectorClients = {
 };
 
 /**
- * Logs every issue of every invalid file as its own error line (`file`, `path`, `issue`),
- * so a reload refused on SIGHUP explains itself in the journal (#44).
+ * Logs every issue of every invalid file as its own error line (`file`, `path`, `issue`,
+ * and `task` and `line` when the issue carries them), so a reload refused on SIGHUP
+ * explains itself in the journal (#44).
  */
 export function logConfigIssues(
   log: Logger,
@@ -269,7 +265,13 @@ export function logConfigIssues(
       continue;
     }
     for (const issue of f.issues ?? []) {
-      log.error(msg, { file: f.file, path: issue.path, issue: issue.message });
+      log.error(msg, {
+        file: f.file,
+        path: issue.path,
+        ...(issue.task === undefined ? {} : { task: issue.task }),
+        ...(issue.line === undefined ? {} : { line: issue.line }),
+        issue: issue.message,
+      });
     }
   }
 }
@@ -492,11 +494,12 @@ export function createCore(opts: CoreOptions): Core {
       if (!f.ok) {
         continue;
       }
-      for (const w of lintTasks(f.config.tasks, result.config.tasks)) {
+      for (const w of f.locate(lintIssues(f.config.tasks, result.config.tasks))) {
         log.warn('core.config_warning', {
           task: w.task,
           file: f.file,
           path: w.path,
+          ...(w.line === undefined ? {} : { line: w.line }),
           warning: w.message,
         });
       }
@@ -745,7 +748,7 @@ function crossCheck(
         ? []
         : [{ ...i, path: i.path.replace(/^tasks\[\d+\]/, `tasks[${String(local)}]`) }];
     });
-    return own.length === 0 ? f : { ok: false as const, file: f.file, issues: own };
+    return own.length === 0 ? f : { ok: false as const, file: f.file, issues: f.locate(own) };
   });
   return { ok: false, files: [...files, ...extra] };
 }

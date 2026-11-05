@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { checkConfigFile } from './check.js';
+import { checkConfigFile, formatCheck, formatWarnings } from './check.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import { expandConfigPaths, loadConnectors, loadTasks } from './load.js';
 
@@ -60,6 +60,8 @@ describe('loadTasks', () => {
       issues: [
         {
           path: 'tasks[0].name',
+          task: 'a',
+          line: 2,
           message: expect.stringMatching(
             /duplicate task name "a" \(also defined in .*tasks\.yaml\)/,
           ) as string,
@@ -205,5 +207,37 @@ describe('checkConfigFile with directories and manifests', () => {
       kind: 'connector',
       issues: [{ path: 'config', message: expect.stringMatching(/only \$\{secrets/) as string }],
     });
+  });
+
+  it('names the task and the line of a cross-check issue and of a warning in a tasks.d file', () => {
+    writeFileSync(join(dir, 'agent.yaml'), 'tasks: [tasks.yaml, tasks.d]\n');
+    writeFileSync(
+      join(dir, 'tasks.d', '20-b.yaml'),
+      [
+        'tasks:', // 1
+        task('b').trimEnd(), // 2-4
+        '  - name: call', // 5
+        '    trigger: { kind: event, type: x.y, filter: "payload.ok == true" }', // 6
+        '    action:', // 7
+        '      kind: connector', // 8
+        '      connector: nope', // 9
+        '      op: send', // 10
+        '',
+      ].join('\n'),
+    );
+    const check = checkConfigFile(join(dir, 'agent.yaml')).find(
+      (c) => c.file === join(dir, 'tasks.d', '20-b.yaml'),
+    );
+    expect(check).toMatchObject({
+      ok: false,
+      issues: [{ path: 'tasks[1].action.connector', task: 'call', line: 9 }],
+      warnings: [{ path: 'tasks[1].trigger.filter', task: 'call', line: 6 }],
+    });
+    expect(check === undefined ? [] : [...formatCheck(check), ...formatWarnings(check)]).toEqual([
+      `${join(dir, 'tasks.d', '20-b.yaml')}:9: tasks[1].action.connector: task "call": unknown connector "nope"`,
+      expect.stringMatching(
+        /20-b\.yaml:6: tasks\[1\]\.trigger\.filter: warning: task "call": payload\.ok == true: /,
+      ) as string,
+    ]);
   });
 });
