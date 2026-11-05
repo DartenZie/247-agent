@@ -29,7 +29,8 @@ Senders get a status they can act on: `202` emitted, `200` a redelivery that was
    `github_webhook_secret`. GitHub's "Redeliver" button sends the same delivery id, which
    the dedup key drops.
 3. **Write the manifest** and `oa validate agent.yaml`. The connector logs its routes at
-   start; `GET /healthz` answers `200 {"ok":true}` without touching the daemon, for the
+   start, with a warning for each route that has `verify: none` or no `dedup_header`.
+   `GET /healthz` answers `200 {"ok":true}` without touching the daemon, for the
    proxy's or a monitor's checks.
 
 ## Manifest
@@ -99,7 +100,7 @@ with the body. A request whose timestamp differs from the connector's clock by m
 `tolerance` seconds, in either direction, gets 401. A captured request therefore cannot
 be replayed after the window closes. Inside the window, a replay passes the check and
 emits a second event. Slack and Stripe send no delivery id header for `dedup_header`, so
-filter or deduplicate on an id in the body where it matters. Keep the server clock synchronized (for example
+these routes always log the `dedup_header` warning at start. Filter or deduplicate on an id in the body where it matters. Keep the server clock synchronized (for example
 with `systemd-timesyncd`).
 
 For a service that is not a preset, set `timestamp` on an `hmac` check:

@@ -108,4 +108,12 @@ describe('startupWarnings', () => {
       [],
     );
   });
+
+  it('gives a route with neither check both warnings, verify first', () => {
+    const c = parseConfig({ routes: [{ path: '/in', event: 'x', verify: { kind: 'none' } }] });
+    expect(startupWarnings(c)).toEqual([
+      'webhook: route /in accepts unauthenticated requests (verify: none)',
+      'webhook: route /in has no dedup_header; sender retries will create duplicate events',
+    ]);
+  });
 });
