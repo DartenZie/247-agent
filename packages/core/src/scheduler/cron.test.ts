@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createBus, type EventBus } from '../bus/bus.js';
 import { config, shell, testEnv, type TestEnv } from '../bus/testing.js';
+import { Metrics } from '../metrics.js';
 import { CronScheduler, makeTickEvent } from './cron.js';
 
 let env: TestEnv;
@@ -231,8 +232,8 @@ describe('ticks missed while the daemon was down (#99)', () => {
     expect(events()).toEqual([]);
   });
 
-  it('counts at most 1000 missed ticks', () => {
-    const tasks = config([every('poll', '* * * * *', { tz: 'UTC' })]);
+  it('counts at most 1000 missed ticks but still catches up on the latest one', () => {
+    const tasks = config([every('poll', '* * * * *', { tz: 'UTC', missed: 'run_once' })]);
     scheduler.start(tasks, { checkMissed: true });
     restartAt('2026-09-21T02:59:00.000Z', tasks);
     expect(events()).toEqual([
@@ -242,10 +243,37 @@ describe('ticks missed while the daemon was down (#99)', () => {
           task: 'poll',
           missed: 1000,
           first_missed: '2026-09-19T03:00:00.000Z',
-          last_missed: '2026-09-19T19:39:00.000Z',
-          run: false,
+          last_missed: '2026-09-21T02:59:00.000Z',
+          run: true,
         },
       ],
+      ['cron.tick', { task: 'poll', scheduled_at: '2026-09-21T02:59:00.000Z', catch_up: true }],
     ]);
+  });
+
+  it('forgets a task removed across a restart, so adding it back later reports nothing', () => {
+    const tasks = nightly({ missed: 'run_once' });
+    scheduler.start(tasks, { checkMissed: true });
+    restartAt('2026-09-19T10:00:00.000Z', config([every('m', '0 4 * * *', { tz: 'UTC' })]));
+    const before = events().length;
+    restartAt('2026-09-25T10:00:00.000Z', tasks);
+    expect(
+      events()
+        .slice(before)
+        .filter(([, p]) => (p as { task: string }).task === 'backup'),
+    ).toEqual([]);
+  });
+
+  it('counts the catch-up tick and the missed ticks in the metrics', () => {
+    const metrics = new Metrics();
+    const tasks = nightly({ missed: 'run_once' });
+    scheduler.start(tasks, { checkMissed: true });
+    scheduler.stop();
+    vi.setSystemTime(new Date('2026-09-21T12:00:00.000Z'));
+    scheduler = new CronScheduler({ bus, log: env.log, metrics, cursors: env.store.cursors });
+    scheduler.start(tasks, { checkMissed: true });
+    const text = metrics.render();
+    expect(text).toContain('oa_cron_missed_ticks_total{task="backup"} 3');
+    expect(text).toContain('oa_cron_ticks_total{task="backup"} 1');
   });
 });

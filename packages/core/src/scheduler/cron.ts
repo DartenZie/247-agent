@@ -11,7 +11,7 @@ export interface SchedulerOptions {
   log: Logger;
   metrics?: Metrics | undefined;
   /** Where each task's last accounted-for instant is kept, to find ticks missed while down. */
-  cursors?: Pick<CursorStore, 'get' | 'set'> | undefined;
+  cursors?: Pick<CursorStore, 'get' | 'set' | 'names' | 'delete'> | undefined;
 }
 
 export interface StartOptions {
@@ -40,7 +40,8 @@ export function makeTickEvent(task: string, scheduledAt: Date, catchUp = false):
 }
 
 /** The cursor holding the instant up to which the task's ticks are accounted for. */
-const cursorName = (task: string): string => `cron:${task}`;
+const CURSOR_PREFIX = 'cron:';
+const cursorName = (task: string): string => `${CURSOR_PREFIX}${task}`;
 
 /**
  * One schedule timer per cron task (see `schedule.ts`). Each tick publishes a `cron.tick` event; the dispatcher
@@ -53,7 +54,7 @@ export class CronScheduler {
   private readonly bus: EventBus;
   private readonly log: Logger;
   private readonly metrics: Metrics;
-  private readonly cursors: Pick<CursorStore, 'get' | 'set'> | undefined;
+  private readonly cursors: Pick<CursorStore, 'get' | 'set' | 'names' | 'delete'> | undefined;
   private jobs = new Map<string, { job: ScheduleTimer; schedule: string }>();
 
   constructor(opts: SchedulerOptions) {
@@ -65,12 +66,19 @@ export class CronScheduler {
 
   start(config: CompiledConfig, opts: StartOptions = {}): void {
     this.stop();
+    const armed = new Set<string>();
     for (const task of config.tasks) {
       if (task.kind === 'cron') {
-        if (opts.checkMissed === true) {
-          this.checkMissed(task);
-        }
-        this.arm(task);
+        // A failed check keeps the cursor, so the next start reports the miss again.
+        const keepCursor = opts.checkMissed === true && !this.checkMissed(task);
+        this.arm(task, !keepCursor);
+        armed.add(cursorName(task.name));
+      }
+    }
+    // A task that comes back later starts afresh instead of counting its absence as missed.
+    for (const name of this.cursors?.names(CURSOR_PREFIX) ?? []) {
+      if (!armed.has(name)) {
+        this.cursors?.delete(name);
       }
     }
   }
@@ -100,13 +108,15 @@ export class CronScheduler {
     return this.jobs.get(task)?.job.nextRun() ?? null;
   }
 
-  private arm(task: CompiledTask): void {
+  private arm(task: CompiledTask, moveCursor = true): void {
     const trigger = task.config.trigger;
     if (trigger.kind !== 'cron') {
       return;
     }
     const { schedule } = trigger;
-    this.cursors?.set(cursorName(task.name), Date.now());
+    if (moveCursor) {
+      this.cursors?.set(cursorName(task.name), Date.now());
+    }
     const job = armSchedule(new Schedule(schedule, trigger.tz), {
       onTick: (at) => {
         this.cursors?.set(cursorName(task.name), at.getTime());
@@ -132,12 +142,15 @@ export class CronScheduler {
     });
   }
 
-  /** Publishes `cron.missed` (and a catch-up tick) for boundaries in (cursor, now]. */
-  private checkMissed(task: CompiledTask): void {
+  /**
+   * Publishes `cron.missed` (and a catch-up tick) for boundaries in (cursor, now]. Counts at
+   * most `MAX_MISSED` of them, but `last_missed` is always the latest. False when publishing failed.
+   */
+  private checkMissed(task: CompiledTask): boolean {
     const trigger = task.config.trigger;
     const since = this.cursors?.get(cursorName(task.name)) ?? 0;
     if (trigger.kind !== 'cron' || since <= 0) {
-      return; // first start, or a task never armed before
+      return true; // first start, or a task never armed before
     }
     const now = Date.now();
     const schedule = new Schedule(trigger.schedule, trigger.tz);
@@ -154,7 +167,10 @@ export class CronScheduler {
       missed += 1;
     }
     if (first === null || last === null) {
-      return;
+      return true;
+    }
+    if (missed === MAX_MISSED) {
+      last = lastAtOrBefore(schedule, now, last);
     }
     const run = trigger.missed === 'run_once';
     const fields = {
@@ -182,6 +198,30 @@ export class CronScheduler {
         task: task.name,
         error: err instanceof Error ? err.message : String(err),
       });
+      return false;
+    }
+    return true;
+  }
+}
+
+/**
+ * The schedule's latest boundary at or before `now`, given one (`known`) that is. A binary
+ * search over (known, now]: about 40 steps whatever the schedule and the outage.
+ */
+function lastAtOrBefore(schedule: Schedule, now: number, known: Date): Date {
+  let last = known;
+  let hi = now;
+  for (;;) {
+    const next = schedule.next(last);
+    if (next === null || next.getTime() > now) {
+      return last;
+    }
+    const mid = new Date(Math.floor((last.getTime() + hi) / 2));
+    const at = schedule.next(mid);
+    if (at !== null && at.getTime() <= now) {
+      last = at;
+    } else {
+      hi = mid.getTime();
     }
   }
 }

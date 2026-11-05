@@ -77,7 +77,7 @@ with `runs.progress(id)` and `runs.config(id)`, hands the progress to the next a
 and runs every attempt under the config.
 
 **`cursors`**: `name TEXT PRIMARY KEY`, `seq INTEGER`; seeded with `('dispatch', 0)`.
-The dispatcher's position. `GET /v1/health` also writes `('health', <epoch ms>)` on every call to prove the database still takes a commit. The scheduler keeps `('cron:<task>', <epoch ms>)`: the instant up to which the task's ticks are accounted for, which it compares with the clock at startup to find ticks missed while the daemon was down. Rows for removed tasks stay; they are a few bytes each.
+The dispatcher's position. `GET /v1/health` also writes `('health', <epoch ms>)` on every call to prove the database still takes a commit. The scheduler keeps `('cron:<task>', <epoch ms>)`: the instant up to which the task's ticks are accounted for, which it compares with the clock at startup to find ticks missed while the daemon was down. Each scheduler start deletes the `cron:` rows of tasks the config no longer has, so a task added back later starts afresh. If publishing `cron.missed` fails, the cursor stays where it was and the next start reports the miss again.
 
 **`state`**: `namespace`, `key`, `value TEXT` (JSON), `updated_at`, `PRIMARY KEY
 (namespace, key)`. Written by the executor (`state_updates`, after a successful run),

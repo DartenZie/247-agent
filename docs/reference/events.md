@@ -78,7 +78,7 @@ event:
                "last_missed": "2026-10-05T03:00:00.000Z", "run": true } }
 ```
 
-`missed` counts the ticks, at most 1000; past that, `last_missed` is the 1000th.
+`missed` counts the ticks, at most 1000. `last_missed` is always the latest missed tick.
 `run` is `true` when the task has `missed: run_once`. Such a task then gets one
 `cron.tick` for `last_missed`, with `catch_up: true` in its payload.
 
