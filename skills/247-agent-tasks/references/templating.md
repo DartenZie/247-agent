@@ -56,28 +56,24 @@ Each snippet below is a fragment of a task, not a whole task file.
 
 Trigger filter, only the trusted sender's mail:
 
-<!-- check: skip -->
 ```yaml
 trigger: { kind: event, type: email.received, filter: "payload.from == 'editor@example.com'" }
 ```
 
 Connector arguments with fallback text (a notify task):
 
-<!-- check: skip -->
 ```yaml
 args: { text: "[247-agent] ${event.type} (${event.payload.task}): ${event.payload.error || event.payload.spent_usd || 'ok'}" }
 ```
 
 Pass a template into a bash script safely, as an argument:
 
-<!-- check: skip -->
 ```yaml
 cmd: ["bash", "-c", 'printf "hello (run %s)\n" "$1"', "--", "${run.id}"]
 ```
 
 Or pass it through the environment:
 
-<!-- check: skip -->
 ```yaml
 cmd: ["bash", "-c", 'echo "core said: $GREETING"']
 env: { GREETING: "${event.payload.greeting}" }
@@ -85,7 +81,6 @@ env: { GREETING: "${event.payload.greeting}" }
 
 Approval correlation in a `wait` action:
 
-<!-- check: skip -->
 ```yaml
 for: { type: chat.reply, filter: "payload.correlation_id == '${event.correlation_id}'" }
 ```
