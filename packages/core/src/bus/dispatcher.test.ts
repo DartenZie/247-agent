@@ -458,6 +458,116 @@ describe('Dispatcher', () => {
     }
   });
 
+  describe('wait matching cost (#101)', () => {
+    /** A `waiting` run of task `m` with a wait for `type`, triggered by a fresh event. */
+    function armWait(runId: string, type: string, filter: string | null = null): void {
+      const trigger = publish('x.trigger');
+      dispatcher.drain();
+      addWait(runId, trigger, type, filter);
+    }
+
+    /** What `ctx.suspend` writes: the run goes `waiting` with a wait row. */
+    function addWait(
+      runId: string,
+      trigger: { id: string; correlation_id: string },
+      type: string,
+      filter: string | null,
+    ): void {
+      env.store.runs.insertQueued({
+        id: runId,
+        task: 'm',
+        event_id: trigger.id,
+        correlation_id: trigger.correlation_id,
+        created_at: env.clock.now().toISOString(),
+      });
+      env.store.runs.setStatus(runId, 'waiting');
+      env.store.waits.insert({
+        run_id: runId,
+        task: 'm',
+        type,
+        filter,
+        expires_at: null,
+        on_timeout: 'fail',
+        resume: null,
+        created_at: env.clock.now().toISOString(),
+        consumed: [],
+      });
+    }
+
+    it('reads the pending waits once, not per batch, while no wait changes', () => {
+      armWait('run_1', 'chat.reply', 'payload.ok == `true`');
+      publish('y.other');
+      dispatcher.drain(); // reads the new wait
+      const spy = vi.spyOn(env.store.waits, 'listPending');
+      for (let i = 0; i < 7; i++) {
+        publish('y.other');
+      }
+      dispatcher.drain();
+      expect(spy).toHaveBeenCalledTimes(0);
+      armWait('run_2', 'chat.reply');
+      const reply = publish('chat.reply', { ok: true });
+      expect(
+        dispatcher
+          .drain()
+          .map((r) => r.id)
+          .sort(),
+      ).toEqual(['run_1', 'run_2']);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(env.store.waits.get('run_1')).toMatchObject({
+        outcome: 'matched',
+        event_id: reply.id,
+      });
+    });
+
+    it('re-reads the waits after a batch that ended a wait rolls back', () => {
+      armWait('run_1', 'chat.reply');
+      dispatcher.drain();
+      publish('chat.reply');
+      const spy = vi.spyOn(env.store.cursors, 'set').mockImplementationOnce(() => {
+        throw new Error('disk full');
+      });
+      expect(() => dispatcher.dispatchOnce()).toThrow('disk full');
+      spy.mockRestore();
+      expect(env.store.waits.get('run_1')?.outcome).toBeNull();
+      expect(dispatcher.drain().map((r) => r.id)).toEqual(['run_1']);
+    });
+
+    it('checks a new wait against the backlog by type, without reading every event since its trigger', () => {
+      const trigger = publish('x.trigger');
+      publish('chat.reply', { ok: false });
+      for (let i = 0; i < 6; i++) {
+        publish('y.other');
+      }
+      const reply = publish('chat.answer', { ok: true });
+      publish('chat.later', { ok: true }); // stored but not dispatched yet
+      dispatcher.dispatchOnce();
+      dispatcher.dispatchOnce();
+      dispatcher.dispatchOnce();
+      expect(env.store.cursors.get('dispatch')).toBe(reply.seq);
+      addWait('run_1', trigger, 'chat.*', 'payload.ok == `true`');
+      const spy = vi.spyOn(env.store.events, 'listAfter');
+      expect(dispatcher.matchWaitAgainstBacklog('run_1', trigger.seq)?.id).toBe(reply.id);
+      expect(spy).not.toHaveBeenCalled();
+      expect(env.store.waits.get('run_1')).toMatchObject({
+        outcome: 'matched',
+        event_id: reply.id,
+      });
+    });
+
+    it('drains a woken backlog one batch per macrotask, so other work runs in between', async () => {
+      for (let i = 0; i < 7; i++) {
+        publish('x.happened');
+      }
+      dispatcher.wake();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(env.store.cursors.get('dispatch')).toBeLessThan(7);
+      for (let i = 0; i < 5; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(env.store.runs.listByStatus('queued')).toHaveLength(7);
+    });
+  });
+
   describe('wait deadlines when dispatch lags (#100)', () => {
     const T0 = '2026-09-19T10:00:00.000Z';
     const DEADLINE = '2026-09-19T10:01:00.000Z';

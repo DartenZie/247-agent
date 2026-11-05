@@ -48,6 +48,7 @@ export class WaitStore {
   private readonly expiredStmt: Statement;
   private readonly resolveStmt: Statement;
   private readonly deleteStmt: Statement;
+  private rev = 0;
 
   constructor(db: Database) {
     this.insertStmt = db.prepare(
@@ -69,8 +70,22 @@ export class WaitStore {
     this.deleteStmt = db.prepare('DELETE FROM waits WHERE run_id = ?');
   }
 
+  /**
+   * Bumped by every change to the waits, and by `invalidate()` after a rolled-back
+   * transaction: a reader that caches the pending waits re-reads them when it moves.
+   */
+  get revision(): number {
+    return this.rev;
+  }
+
+  /** A transaction rolled back: changes counted in `revision` may have been undone. */
+  invalidate(): void {
+    this.rev++;
+  }
+
   /** One wait per run: a second insert for the same run replaces the first. */
   insert(wait: Omit<WaitRecord, 'outcome' | 'event_id'>): void {
+    this.rev++;
     this.deleteStmt.run(wait.run_id);
     this.insertStmt.run({
       ...wait,
@@ -105,10 +120,12 @@ export class WaitStore {
 
   /** Marks the wait over. Returns false when it was already resolved or removed. */
   resolve(runId: string, outcome: WaitOutcome, eventId: string | null): boolean {
+    this.rev++;
     return this.resolveStmt.run(outcome, eventId, runId).changes === 1;
   }
 
   delete(runId: string): boolean {
+    this.rev++;
     return this.deleteStmt.run(runId).changes === 1;
   }
 }

@@ -38,6 +38,9 @@ export class EventStore {
   private readonly byIdStmt: Statement;
   private readonly afterStmt: Statement;
   private readonly countAfterStmt: Statement;
+  private readonly ofTypeStmt: Statement;
+  private readonly ofPrefixStmt: Statement;
+  private readonly ofPatternStmt: Statement;
   private readonly purgeStmt: Statement;
   private readonly rootStmt: Statement;
   private readonly chainRunsStmt: Statement;
@@ -56,6 +59,18 @@ export class EventStore {
     );
     this.byIdStmt = db.prepare('SELECT * FROM events WHERE id = ?');
     this.afterStmt = db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?');
+    this.ofTypeStmt = db.prepare(
+      'SELECT * FROM events WHERE type = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?',
+    );
+    this.ofPrefixStmt = db.prepare(
+      // Without the hint `ORDER BY seq` makes SQLite walk the rowid range instead.
+      `SELECT * FROM events INDEXED BY events_type_seq WHERE type >= ? AND type < ? AND seq > ? AND seq <= ?
+       AND type_matches(?, type) ORDER BY seq LIMIT ?`,
+    );
+    this.ofPatternStmt = db.prepare(
+      `SELECT * FROM events WHERE type_matches(?, type) AND seq > ? AND seq <= ?
+       ORDER BY seq LIMIT ?`,
+    );
     this.countAfterStmt = db.prepare('SELECT COUNT(*) AS n FROM events WHERE seq > ?');
     this.rootStmt = db.prepare('SELECT COALESCE(root_id, id) AS root FROM events WHERE id = ?');
     this.chainRunsStmt = db.prepare(
@@ -112,6 +127,26 @@ export class EventStore {
 
   listAfter(seq: number, limit: number): EventRecord[] {
     return this.afterStmt.all(seq, limit).map(rowToEvent);
+  }
+
+  /**
+   * Events of type `pattern` (exact, or `*` = one segment) with `after < seq <= upTo`, in
+   * `seq` order: the backlog check of a new wait. The `events(type, seq)` index serves an
+   * exact type and the literal prefix of a pattern, so the rows read do not grow with the
+   * events of other types; only a pattern that starts with `*` reads the whole range.
+   */
+  listOfType(pattern: string, after: number, upTo: number, limit: number): EventRecord[] {
+    if (!isTypePattern(pattern)) {
+      return this.ofTypeStmt.all(pattern, after, upTo, limit).map(rowToEvent);
+    }
+    const star = pattern.indexOf('*');
+    const prefix = pattern.slice(0, star); // '' or literal segments ending in '.'
+    if (prefix === '') {
+      return this.ofPatternStmt.all(pattern, after, upTo, limit).map(rowToEvent);
+    }
+    // Every type that starts with the prefix sorts in [prefix, upper): '/' follows '.'.
+    const upper = `${prefix.slice(0, -1)}/`;
+    return this.ofPrefixStmt.all(prefix, upper, after, upTo, pattern, limit).map(rowToEvent);
   }
 
   /** In `seq` order, for `oa events tail`: the newest `limit`, or those after a `seq`. */

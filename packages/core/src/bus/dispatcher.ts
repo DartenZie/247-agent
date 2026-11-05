@@ -1,5 +1,5 @@
 import type { Clock } from '../clock.js';
-import { compileTypePattern, type TypeMatcher } from '../expr/glob.js';
+import { compileTypePattern, isTypePattern, type TypeMatcher } from '../expr/glob.js';
 import { compileFilter, type Filter } from '../expr/jmespath.js';
 import { newId } from '../ids.js';
 import type { Logger } from '../log.js';
@@ -53,6 +53,27 @@ interface CompiledWait {
   readonly filter: Filter | undefined;
 }
 
+/**
+ * The pending waits that compile, indexed for matching. Built from `store.waits` only when
+ * its `revision` moves, so a batch neither re-reads nor recompiles waits that did not change,
+ * and an event is checked only against waits for its exact type and the wildcard ones.
+ */
+interface WaitIndex {
+  readonly revision: number;
+  /** In `created_at` order. */
+  readonly all: readonly CompiledWait[];
+  readonly byType: ReadonlyMap<string, readonly CompiledWait[]>;
+  readonly patterns: readonly CompiledWait[];
+  /** Those with an `expires_at`, earliest first. */
+  readonly byExpiry: readonly CompiledWait[];
+  /** Waits whose type or filter does not compile, with the error. */
+  readonly invalid: readonly { wait: WaitRecord; error: string }[];
+  /** Whether `wait.invalid` was logged for `invalid`. */
+  logged: boolean;
+}
+
+const NO_WAITS: readonly CompiledWait[] = [];
+
 /** Whether the wait's deadline had passed when the event was stored. */
 function expiredBy(w: CompiledWait, event: EventRecord): boolean {
   return w.wait.expires_at !== null && w.wait.expires_at <= event.ts;
@@ -95,6 +116,9 @@ export class Dispatcher {
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
   private lastHealth: DispatcherHealth = { ok: true, error: null, failing_since: null };
+  private waitIndex: WaitIndex | undefined;
+  private typeCache = new Map<string, TypeMatcher>();
+  private filterCache = new Map<string, Filter>();
 
   constructor(opts: DispatcherOptions) {
     this.store = opts.store;
@@ -133,27 +157,78 @@ export class Dispatcher {
     };
   }
 
-  private compileWaits(quiet = false): CompiledWait[] {
-    const out: CompiledWait[] = [];
+  /** Compiles a wait's type and filter, reusing the matchers of the previous index. */
+  private compileWait(
+    wait: WaitRecord,
+    types = new Map<string, TypeMatcher>(),
+    filters = new Map<string, Filter>(),
+  ): CompiledWait {
+    const type =
+      types.get(wait.type) ?? this.typeCache.get(wait.type) ?? compileTypePattern(wait.type);
+    types.set(wait.type, type);
+    let filter: Filter | undefined;
+    if (wait.filter !== null) {
+      filter =
+        filters.get(wait.filter) ?? this.filterCache.get(wait.filter) ?? compileFilter(wait.filter);
+      filters.set(wait.filter, filter);
+    }
+    return { wait, type, filter };
+  }
+
+  /** The pending waits, compiled and indexed; rebuilt only when a wait changed. Logs nothing. */
+  private pendingWaits(): WaitIndex {
+    const revision = this.store.waits.revision;
+    if (this.waitIndex?.revision === revision) {
+      return this.waitIndex;
+    }
+    const types = new Map<string, TypeMatcher>();
+    const filters = new Map<string, Filter>();
+    const all: CompiledWait[] = [];
+    const byType = new Map<string, CompiledWait[]>();
+    const patterns: CompiledWait[] = [];
+    const invalid: { wait: WaitRecord; error: string }[] = [];
     for (const wait of this.store.waits.listPending()) {
+      let w: CompiledWait;
       try {
-        out.push({
-          wait,
-          type: compileTypePattern(wait.type),
-          filter: wait.filter === null ? undefined : compileFilter(wait.filter),
-        });
+        w = this.compileWait(wait, types, filters);
       } catch (err) {
-        if (quiet) {
-          continue;
+        invalid.push({ wait, error: err instanceof Error ? err.message : String(err) });
+        continue;
+      }
+      all.push(w);
+      if (isTypePattern(wait.type)) {
+        patterns.push(w);
+      } else {
+        const list = byType.get(wait.type);
+        if (list === undefined) {
+          byType.set(wait.type, [w]);
+        } else {
+          list.push(w);
         }
-        this.log.error('wait.invalid', {
-          run_id: wait.run_id,
-          task: wait.task,
-          error: err instanceof Error ? err.message : String(err),
-        });
       }
     }
-    return out;
+    const byExpiry = all
+      .filter((w) => w.wait.expires_at !== null)
+      .sort((a, b) => {
+        const x = a.wait.expires_at ?? '';
+        const y = b.wait.expires_at ?? '';
+        return x < y ? -1 : x > y ? 1 : 0;
+      });
+    // Only matchers still in use are kept, so rendered filters do not pile up.
+    this.typeCache = types;
+    this.filterCache = filters;
+    this.waitIndex = { revision, all, byType, patterns, byExpiry, invalid, logged: false };
+    return this.waitIndex;
+  }
+
+  private logInvalidWaits(index: WaitIndex): void {
+    if (index.logged) {
+      return;
+    }
+    index.logged = true;
+    for (const { wait, error } of index.invalid) {
+      this.log.error('wait.invalid', { run_id: wait.run_id, task: wait.task, error });
+    }
   }
 
   private waitMatches(w: CompiledWait, event: EventRecord, quiet = false): boolean {
@@ -207,8 +282,8 @@ export class Dispatcher {
     });
     const waitingRuns = dispatched
       ? []
-      : this.compileWaits(true)
-          .filter((w) => !expiredBy(w, event) && this.waitMatches(w, event, true))
+      : this.pendingWaits()
+          .all.filter((w) => !expiredBy(w, event) && this.waitMatches(w, event, true))
           .map((w) => w.wait.run_id);
     return { event_id: event.id, dispatched, runs, tasks, waiting_runs: waitingRuns };
   }
@@ -279,23 +354,28 @@ export class Dispatcher {
     if (wait?.outcome !== null) {
       return undefined;
     }
-    const [compiled] = this.compileWaits().filter((w) => w.wait.run_id === runId);
-    if (compiled === undefined) {
+    let compiled: CompiledWait;
+    try {
+      compiled = this.compileWait(wait);
+    } catch (err) {
+      this.log.error('wait.invalid', {
+        run_id: wait.run_id,
+        task: wait.task,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return undefined;
     }
     const consumed = new Set(wait.consumed);
+    // Events past the cursor are not dispatched yet; the dispatch loop will see them.
     const cursor = this.store.cursors.get('dispatch');
     let seq = afterSeq;
     while (seq < cursor) {
-      const events = this.store.events.listAfter(seq, this.batchSize);
+      const events = this.store.events.listOfType(wait.type, seq, cursor, this.batchSize);
       const last = events[events.length - 1];
       if (last === undefined) {
         break;
       }
       for (const event of events) {
-        if (event.seq > cursor) {
-          break; // not dispatched yet; the dispatch loop will see it
-        }
         if (!consumed.has(event.id) && this.waitMatches(compiled, event)) {
           const run = this.endWait(wait, 'matched', event);
           if (run !== undefined) {
@@ -389,7 +469,11 @@ export class Dispatcher {
         return { scanned: 0, queued: this.expireWaits(this.clock.now().toISOString()) };
       }
       const queued: RunRecord[] = [];
-      let waits = this.compileWaits();
+      const waits = this.pendingWaits();
+      this.logInvalidWaits(waits);
+      // Waits this batch ended; the index stays as it was until the next batch rebuilds it.
+      const ended = new Set<string>();
+      let nextExpiry = 0;
       const paused = new Set(this.store.pauses.list().map((p) => p.task));
       // Runs per chain root, read once per batch and counted up as runs are inserted.
       const chainRuns = new Map<string, number>();
@@ -399,28 +483,34 @@ export class Dispatcher {
         // `llm.batch.ended` one hop past the limit must not strand a billed batch), and
         // whatever the resumed run emits is deeper still and dropped here.
         let consumed = false;
-        if (waits.length > 0) {
-          const still: CompiledWait[] = [];
-          for (const w of waits) {
-            if (expiredBy(w, event)) {
-              // The deadline passed before the event was stored: it is too late for this wait.
-              const run = this.endWait(w.wait, 'timeout', undefined);
-              if (run !== undefined) {
-                queued.push(run);
-              }
-              continue;
-            }
-            if (!this.waitMatches(w, event)) {
-              still.push(w);
+        // The deadline passed before the event was stored: it is too late for these waits.
+        // `byExpiry` is sorted, so the waits left past `nextExpiry` expire after this event.
+        for (; nextExpiry < waits.byExpiry.length; nextExpiry++) {
+          const w = waits.byExpiry[nextExpiry];
+          if (w === undefined || !expiredBy(w, event)) {
+            break;
+          }
+          if (ended.has(w.wait.run_id)) {
+            continue;
+          }
+          ended.add(w.wait.run_id);
+          const run = this.endWait(w.wait, 'timeout', undefined);
+          if (run !== undefined) {
+            queued.push(run);
+          }
+        }
+        for (const candidates of [waits.byType.get(event.type) ?? NO_WAITS, waits.patterns]) {
+          for (const w of candidates) {
+            if (ended.has(w.wait.run_id) || !this.waitMatches(w, event)) {
               continue;
             }
             consumed = true;
+            ended.add(w.wait.run_id);
             const run = this.endWait(w.wait, 'matched', event);
             if (run !== undefined) {
               queued.push(run);
             }
           }
-          waits = still;
         }
         const rootId = event.parent_id === null ? event.id : this.store.events.rootOf(event.id);
         const root = rootId ?? event.id;
@@ -508,7 +598,10 @@ export class Dispatcher {
     return result;
   }
 
-  /** Dispatches until the backlog is empty. */
+  /**
+   * Dispatches until the backlog is empty, in one go: start-up recovery and `manual.run`,
+   * which must see their runs queued on return. A woken drain yields between batches.
+   */
   drain(): RunRecord[] {
     const queued: RunRecord[] = [];
     for (;;) {
@@ -520,7 +613,11 @@ export class Dispatcher {
     }
   }
 
-  /** Schedules a drain on the next macrotask; many wakes coalesce into one drain. */
+  /**
+   * Schedules a drain on the next macrotask; many wakes coalesce into one drain. The drain
+   * dispatches one batch per macrotask, so API requests, cron ticks and finished runs are
+   * served between the batches of a long backlog.
+   */
   wake(): void {
     if (this.wakePending) {
       return;
@@ -529,7 +626,7 @@ export class Dispatcher {
     setImmediate(() => {
       this.wakePending = false;
       if (!this.stopped) {
-        this.safeDrain();
+        this.drainStep();
       }
     });
   }
@@ -539,7 +636,7 @@ export class Dispatcher {
     this.stop();
     this.stopped = false;
     this.timer = setInterval(() => {
-      this.safeDrain();
+      this.drainStep();
     }, intervalMs);
   }
 
@@ -556,9 +653,11 @@ export class Dispatcher {
     return { ...this.lastHealth };
   }
 
-  private safeDrain(): void {
+  /** One batch; a full one wakes the next. A batch that throws is logged, not rethrown. */
+  private drainStep(): void {
+    let full: boolean;
     try {
-      this.drain();
+      full = this.dispatchOnce().scanned >= this.batchSize;
       if (!this.lastHealth.ok) {
         this.log.info('dispatch.recovered', { failing_since: this.lastHealth.failing_since });
       }
@@ -572,6 +671,10 @@ export class Dispatcher {
         error,
         failing_since: this.lastHealth.failing_since ?? this.clock.now().toISOString(),
       };
+      return; // the 1 s timer retries
+    }
+    if (full) {
+      this.wake();
     }
   }
 }

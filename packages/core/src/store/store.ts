@@ -46,6 +46,7 @@ export interface Store {
 export function openStore(path: string): Store {
   const db = openDatabase(path);
   const cursors = new CursorStore(db);
+  const waits = new WaitStore(db);
   return {
     db,
     events: new EventStore(db),
@@ -53,12 +54,19 @@ export function openStore(path: string): Store {
     attempts: new RunAttemptStore(db),
     cursors,
     state: new StateStore(db),
-    waits: new WaitStore(db),
+    waits,
     ledger: new LedgerStore(db),
     transcripts: new TranscriptStore(db),
     batches: new BatchStore(db),
     pauses: new PauseStore(db),
-    transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),
+    transaction: <T>(fn: () => T): T => {
+      try {
+        return db.transaction(fn).immediate();
+      } catch (err) {
+        waits.invalidate(); // a rollback may undo a wait change a cache already saw
+        throw err;
+      }
+    },
     probeWrite: (at) => {
       const busy = db.pragma('busy_timeout', { simple: true }) as number;
       db.pragma('busy_timeout = 250');
