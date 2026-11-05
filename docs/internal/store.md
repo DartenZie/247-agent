@@ -9,8 +9,8 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order, all pending ones in one transaction, and set
-`PRAGMA user_version` to the number applied; twelve ship, so a current database reads
-`user_version = 12`. A failed migration leaves the file at the version it had. A
+`PRAGMA user_version` to the number applied; thirteen ship, so a current database reads
+`user_version = 13`. A failed migration leaves the file at the version it had. A
 `user_version` above the number this build ships means a newer release migrated the file:
 `migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
 daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
@@ -110,6 +110,24 @@ DEFAULT 0`, `usd REAL`, `priced_by` with a CHECK on `table`|`provider`|`unpriced
 `transcripts_run(run_id, id)`. Written by `actions/agent-transcript.ts` through
 `ctx.transcripts`, with secrets redacted before the row exists.
 
+**`run_attempts`**: `run_id REFERENCES runs(id)`, `attempt INTEGER`, `status` with a CHECK on
+`running`|`waiting`|`succeeded`|`failed`|`cancelled`|`interrupted`, `started_at`,
+`finished_at`, `error`, `stdout`, `stderr`, `PRIMARY KEY (run_id, attempt)`. Written by the
+executor only (`store/attempts.ts`): a row when the attempt starts, its output tail when
+the runner returns, its end when a retry follows, the run finishes or a stop gives the
+attempt back (`interrupted`; the next start replaces the row, so an attempt that a stop
+cut short after a wait loses its start and the output from before the wait). An attempt
+parked in a `wait` stays `waiting` with no `finished_at` and goes on, same row and
+start, when the run resumes. Recovery closes the open attempt of a run found `running`:
+`interrupted` when the run has attempts left and is retried, `failed` with the
+interrupted error when recovery fails the run. `stdout` and `stderr` are the last 4096
+UTF-16 code units each stream printed (`executor/output-tail.ts`; a cut tail starts with
+`…`; `NULL` when silent). Every resolved secret value of the run of 4 characters or more
+is replaced by `[secret:<name>]` before the row is written (`secrets/redact.ts`, the
+same rule as transcripts), in the output and in `error`; the executor also redacts the
+run's `runs.error`, which can quote a shell step's stderr. A run keeps at most
+`retry.attempts` (100) rows, so about 200 attempt-streams of 4096 code units each.
+
 **`llm_batches`**: `batch_id TEXT PRIMARY KEY`, `run_id`, `task`, `attempt`, `provider`,
 `model`, `structured INTEGER`, `worst_usd REAL`, `submitted_at`. Index
 `llm_batches_run(run_id)`. No foreign key to `runs` on purpose: a run with a batch in
@@ -136,7 +154,7 @@ the write lock for long. The order and the conditions:
 
 1. **Runs** older than `runs` (`finished_at < cutoff`), in a terminal status, with no
    `llm_batches` row: for each batch, their `ledger` rows, their `transcripts`, their
-   `waits` row, then the runs. Active runs are never selected.
+   `run_attempts`, their `waits` row, then the runs. Active runs are never selected.
 2. **Ledger** rows older than `ledger` whose run is not `queued`, `running` or
    `waiting`.
 3. **Events** already dispatched (`seq <=` the cursor), older than `events`, referenced
@@ -179,5 +197,6 @@ the rest for the next one.
 - Every write that must be atomic with another goes through `store.transaction`; the
   executor's terminal transaction (status, `state_updates`, lifecycle event, emitted
   events, `waits` delete) is the model.
-- Secrets never reach a row: values are resolved per run and redacted from transcripts;
+- Secrets never reach a row: values are resolved per run and redacted from transcripts and
+  from the output tails in `run_attempts`;
   `state`, `events` and `runs.result` hold only what tasks and connectors put there.

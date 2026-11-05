@@ -106,6 +106,52 @@ describe('runShell', () => {
     expect((err as ShellError).exitCode).toBe(2);
   });
 
+  describe('hands what the command printed to ctx.output', () => {
+    function recording(signal?: AbortSignal): {
+      c: ActionContext;
+      seen: [string, string][];
+    } {
+      const seen: [string, string][] = [];
+      const output = {
+        write: (stream: 'stdout' | 'stderr', text: string) => {
+          seen.push([stream, text]);
+        },
+      };
+      return { c: testContext({ output, ...(signal ? { signal } : {}) }), seen };
+    }
+
+    it('on success, stdout and stderr both', async () => {
+      const { c, seen } = recording();
+      await run({ cmd: ['sh', '-c', 'echo out; echo err >&2'] }, c);
+      expect(seen).toEqual([
+        ['stdout', 'out\n'],
+        ['stderr', 'err\n'],
+      ]);
+    });
+
+    it('on a failed exit', async () => {
+      const { c, seen } = recording();
+      await expect(
+        run({ cmd: ['sh', '-c', 'echo half; echo boom >&2; exit 2'] }, c),
+      ).rejects.toThrow('exit code 2: boom');
+      expect(seen).toEqual([
+        ['stdout', 'half\n'],
+        ['stderr', 'boom\n'],
+      ]);
+    });
+
+    it('up to the moment an abort killed it', async () => {
+      const controller = new AbortController();
+      const { c, seen } = recording(controller.signal);
+      const p = run({ cmd: ['sh', '-c', 'echo started; exec sleep 30'] }, c);
+      setTimeout(() => {
+        controller.abort(new Error('timed out'));
+      }, 200);
+      await expect(p).rejects.toThrow('timed out');
+      expect(seen).toEqual([['stdout', 'started\n']]);
+    });
+  });
+
   it('writes stdin verbatim for strings and as JSON otherwise', async () => {
     await expect(run({ cmd: ['cat'], stdin: 'raw text' })).resolves.toBe('raw text');
     await expect(run({ cmd: ['cat'], stdin: { a: 1 } })).resolves.toBe('{"a":1}');

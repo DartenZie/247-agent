@@ -1,4 +1,5 @@
 import type { AgentStop, AgentUpdate, PermissionRequest } from '../connectors/acp-types.js';
+import { redact, redactions } from '../secrets/redact.js';
 import type { Logger } from '../log.js';
 import type { NewTranscriptEntry, TranscriptSink } from '../store/transcripts.js';
 import type { JsonValue } from '../store/types.js';
@@ -7,8 +8,6 @@ import type { AgentResult } from './agent-result.js';
 
 /** Characters of text kept in one row; a longer message continues in the next row. */
 export const TRANSCRIPT_TEXT_MAX = 64_000;
-/** Secret values shorter than this are not redacted (they would match everywhere). */
-const REDACT_MIN = 4;
 
 export interface TranscriptWriterOptions {
   /** Absent when the core runs without a store (runner tests): nothing is written. */
@@ -35,10 +34,7 @@ export class TranscriptWriter {
   private readonly clock: () => Date;
 
   constructor(private readonly opts: TranscriptWriterOptions) {
-    this.redactions = Object.entries(opts.secrets)
-      .filter(([, value]) => value.length >= REDACT_MIN)
-      .sort((a, b) => b[1].length - a[1].length)
-      .map(([name, value]) => [value, `[secret:${name}]`]);
+    this.redactions = redactions(opts.secrets);
     this.clock = opts.clock ?? (() => new Date());
   }
 
@@ -165,11 +161,7 @@ export class TranscriptWriter {
   }
 
   private redact(text: string): string {
-    let out = text;
-    for (const [value, replacement] of this.redactions) {
-      out = out.split(value).join(replacement);
-    }
-    return out;
+    return redact(text, this.redactions);
   }
 
   private redactValue(value: JsonValue): JsonValue {

@@ -252,6 +252,33 @@ describe('wait inside a sequence', () => {
     );
   });
 
+  it('keeps one attempt across the wait, waiting while parked, with the output of both sides (#89)', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = await askAndSuspend(ex);
+    const id = runOf('gate', trigger)?.id ?? '';
+    expect(env.store.attempts.listByRun(id)).toMatchObject([
+      { attempt: 1, status: 'waiting', finished_at: null, stdout: 'asked ok?\n' },
+    ]);
+    env.clock.set('2026-09-19T10:05:00.000Z');
+    publish(
+      'chat.reply',
+      { correlation_id: trigger.correlation_id, approved: true, text: 'yes' },
+      trigger.correlation_id,
+    );
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(env.store.attempts.listByRun(id)).toEqual([
+      expect.objectContaining({
+        attempt: 1,
+        status: 'succeeded',
+        started_at: '2026-09-19T10:00:00.000Z',
+        finished_at: '2026-09-19T10:05:00.000Z',
+        stdout: 'asked ok?\npushed after yes (asked ok?)\n',
+      }),
+    ]);
+  });
+
   it('skips the guarded step when the reply is not an approval', async () => {
     const ex = make();
     ex.start();

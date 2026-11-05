@@ -107,7 +107,7 @@ unknown parent is a 400 from the daemon, exit 2.
 | `-n, --limit <n>` | `ls` | how many | 20 |
 | `-f, --follow` | `logs` | keep printing while the run is queued, running or waiting | off |
 | `--after <id>` | `logs` | transcript entries after this entry id | 0 |
-| `--json` | all | JSON output (`logs`: one entry per line; `cancel`: the run) | off |
+| `--json` | all | JSON output (`logs`: one entry or attempt per line; `cancel`: the run) | off |
 | `--socket <path>` | all | the daemon socket | see above |
 
 `ls` prints the newest runs, one per line: id, task, status, created time, duration
@@ -117,17 +117,25 @@ one. `no runs` when nothing matches. Exit 0.
 
 `show` prints one run as `key  value` rows: `run`, `task`, `status` (with `(attempt N)`
 after a retry), `event` (the trigger event line, or its bare id when retention removed
-it), `payload`, `created`, `started` (the first attempt's start), `finished` with `(took …)`, `cost` as
+it), `payload`, `created`, `started` (the first attempt's start), `finished` with `(took …)`,
+`attempts` with one row per attempt when there was more than one (`<n>  <status>  <start>  took <d>  <error>`),
+`output` with the `oa runs logs` command when an attempt printed something, `cost` as
 `$<usd> in <n> calls` followed by one row per ledger entry, `transcript` with the
 `oa runs logs` command when an agent run recorded one, `error`, and `result` as JSON.
 Exit 1 when the run's status is `failed`, else 0. `--json` prints
-`{"run", "event", "ledger", "has_transcript"}`.
+`{"run", "event", "ledger", "attempts", "has_transcript"}`.
 
 `logs` prints the agent transcript: a header `<time>  turn <n>  <kind>` per entry, the
 prompt and the agent's text indented, tool calls with their kind, title, command and
 paths, each permission decision as `allowed` or `refused` with the reason, usage,
-how the turn stopped and the result. For a run of another action kind it prints
-`no transcript for <run id> (<task>, <status>): only agent runs record one`. Always exit 0.
+how the turn stopped and the result. For a run of another action kind it prints, per
+attempt that printed something, a header `attempt <n>  <status>  <start>  took <d>  <error>`
+and then `stdout` and `stderr` with their lines indented: the last 4096 characters of
+each, secrets replaced by `[secret:<name>]`. An attempt's output is recorded when the attempt ends,
+so `--follow` prints it once the run has finished. `--json` prints one attempt per line.
+When there is neither a transcript nor output it prints
+`no output for <run id> (<task>, <status>): it printed nothing and has no agent transcript`.
+Always exit 0.
 
 `cancel` ends a queued, running or waiting run as `cancelled` and prints
 `<run id>  <task>  cancelled`. A queued run never starts, a waiting run stops waiting,

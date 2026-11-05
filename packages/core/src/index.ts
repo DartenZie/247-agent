@@ -371,6 +371,7 @@ export {
   type FileKind,
 } from './config/check.js';
 export type { RunFilter } from './store/runs.js';
+export type { AttemptRecord, AttemptStatus } from './store/attempts.js';
 export type { EventFilter } from './store/events.js';
 export {
   TRANSCRIPT_KINDS,
@@ -393,6 +394,7 @@ export {
   type CostBody,
   type HealthBody,
   type RouteContext,
+  type RunAttemptsBody,
   type RunLedgerBody,
   type RunResponse,
   type TranscriptBody,

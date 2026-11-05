@@ -21,6 +21,7 @@ import type {
   ConnectorEntry,
   CostBody,
   HealthBody,
+  RunAttemptsBody,
   RunLedgerBody,
   RunResponse,
   TranscriptBody,
@@ -161,6 +162,11 @@ export class ApiClient {
       'GET',
       `/v1/runs/${encodeURIComponent(id)}/transcript${qs}`,
     );
+  }
+
+  /** The run's attempts, oldest first: times, status, error and output tail. */
+  getRunAttempts(id: string): Promise<RunAttemptsBody> {
+    return this.request<RunAttemptsBody>('GET', `/v1/runs/${encodeURIComponent(id)}/attempts`);
   }
 
   /** The run's ledger rows (one per model call or agent turn) and their total. */

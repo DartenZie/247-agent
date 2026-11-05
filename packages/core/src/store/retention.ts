@@ -35,7 +35,7 @@ function cutoff(now: Date, ms: number): string {
 
 /**
  * The database half of a retention pass (docs/internal/config.md, `retention:`). Order matters
- * for the foreign keys: a run's ledger rows, transcript and wait go first, then the run, and an event
+ * for the foreign keys: a run's ledger rows, transcript, attempts and wait go first, then the run, and an event
  * only once no run points at it. Active runs (`queued`, `running`, `waiting`) are never
  * touched, nor are events the dispatcher has not passed yet. Each batch is its own short
  * transaction and the event loop gets a turn between batches, so a big backlog (the first
@@ -54,6 +54,7 @@ export async function purgeStore(
       const ids = store.runs.listFinishedBefore(before, BATCH);
       counts.ledger += store.ledger.deleteForRuns(ids);
       counts.transcripts += store.transcripts.deleteForRuns(ids);
+      store.attempts.deleteForRuns(ids);
       for (const id of ids) {
         store.waits.delete(id);
       }

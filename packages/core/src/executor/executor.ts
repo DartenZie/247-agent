@@ -38,8 +38,10 @@ import {
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
+import { redact, redactions } from '../secrets/redact.js';
 import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
+import { OutputTail } from './output-tail.js';
 import {
   ACTIVE_STATUSES,
   type EventRecord,
@@ -402,6 +404,11 @@ export class Executor {
       const log = this.log.child(runFields(run));
       if (task !== undefined && run.attempt < this.retryFor(task).attempts) {
         log.warn('run.recovered', { attempt: run.attempt });
+        this.store.attempts.closeOpen(run.id, {
+          status: 'interrupted',
+          finished_at: this.clock.now().toISOString(),
+          error: INTERRUPTED,
+        });
         resumed += this.enqueue([run]);
         continue;
       }
@@ -670,10 +677,13 @@ export class Executor {
       }
       for (;;) {
         const current: RunRecord = { ...run, attempt, status: 'running', error: lastError };
-        this.store.runs.setStatus(run.id, 'running', {
-          started_at: this.clock.now().toISOString(),
-          attempt,
-        });
+        const startedAt = this.clock.now().toISOString();
+        this.store.runs.setStatus(run.id, 'running', { started_at: startedAt, attempt });
+        this.store.attempts.start(run.id, attempt, startedAt, { resume: resuming });
+        // A resumed attempt goes on from what it printed before its wait.
+        const output = new OutputTail(
+          resuming ? this.store.attempts.get(run.id, attempt) : undefined,
+        );
         log.info(resuming ? 'run.resumed' : 'run.started', { attempt, event_id: run.event_id });
         if (!resuming) {
           this.metrics.runAttempts.inc({ task: run.task });
@@ -687,7 +697,8 @@ export class Executor {
                 event:
                   resume.event_id === null ? undefined : this.store.events.getById(resume.event_id),
               };
-        const performed = await this.perform(current, task, slot, resumeInfo, log);
+        const performed = await this.perform(current, task, slot, resumeInfo, log, output);
+        this.store.attempts.setOutput(run.id, attempt, output.snapshot());
         if (performed === 'cancelled') {
           this.finishCancelled(current, log);
           return;
@@ -696,10 +707,16 @@ export class Executor {
           // Give the attempt back: the next start runs it again instead of failing the run
           // as interrupted (#39).
           this.store.runs.setStatus(run.id, 'running', { attempt: attempt - 1 });
+          this.endAttempt(run.id, attempt, 'interrupted', null);
           log.warn('run.abandoned', { attempt });
           return;
         }
         if (performed === 'suspended') {
+          this.store.attempts.end(run.id, attempt, {
+            status: 'waiting',
+            finished_at: null,
+            error: null,
+          });
           if (cancelRequested(slot)) {
             // Parked after the cancel: end the wait it just armed.
             const parked = this.store.runs.getById(run.id);
@@ -719,6 +736,7 @@ export class Executor {
         if (this.stopping) {
           // Failed during a stop's grace window: the next start makes the next attempt.
           this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
+          this.endAttempt(run.id, attempt, 'failed', outcome.error);
           log.warn('run.abandoned', { attempt, error: outcome.error });
           return;
         }
@@ -730,6 +748,7 @@ export class Executor {
           error: outcome.error,
         });
         this.store.runs.setStatus(run.id, 'running', { error: outcome.error });
+        this.endAttempt(run.id, attempt, 'failed', outcome.error);
         lastError = outcome.error;
         // The backoff holds the task's `concurrency` but not a worker.
         this.backingOff.add(run.id);
@@ -794,6 +813,7 @@ export class Executor {
     slot: Slot,
     resume: ResumeInfo | undefined,
     log: Logger,
+    output: OutputTail,
   ): Promise<Outcome | 'stopped' | 'cancelled' | 'suspended'> {
     if (task === undefined) {
       return fatal(`task "${run.task}" is no longer configured`);
@@ -816,6 +836,9 @@ export class Executor {
       }
       return { ok: false, error: errorMessage(err), retryable: true };
     }
+    output.addSecrets(secrets);
+    // An error message can quote what the command printed (a shell step's stderr tail).
+    const hide = redactions(secrets);
     const timeout = task.config.timeout ?? this.defaultTimeout;
     const attemptController = new AbortController();
     const timer = setTimeout(() => {
@@ -848,6 +871,7 @@ export class Executor {
       llm: this.llm,
       agents: this.agents,
       transcripts: this.store.transcripts,
+      output,
       suspend: (spec, data) => this.suspend(run, trigger, spec, data, log),
       resume,
       saveProgress: (progress) => {
@@ -874,7 +898,7 @@ export class Executor {
           retryable: true,
         };
       }
-      return { ok: false, error: errorMessage(err), retryable: isRetryable(err) };
+      return { ok: false, error: redact(errorMessage(err), hide), retryable: isRetryable(err) };
     } finally {
       clearTimeout(timer);
     }
@@ -965,6 +989,11 @@ export class Executor {
           result: final.result,
           error: null, // an earlier attempt's failure is not the run's
         });
+        this.store.attempts.closeOpen(run.id, {
+          status: 'succeeded',
+          finished_at: finishedAt,
+          error: null,
+        });
         for (const u of updates) {
           this.store.state.put(u.namespace, u.key, u.value, finishedAt);
         }
@@ -979,6 +1008,11 @@ export class Executor {
         }
       } else {
         this.store.runs.setStatus(run.id, 'failed', {
+          finished_at: finishedAt,
+          error: final.error,
+        });
+        this.store.attempts.closeOpen(run.id, {
+          status: 'failed',
           finished_at: finishedAt,
           error: final.error,
         });
@@ -1014,6 +1048,11 @@ export class Executor {
         finished_at: finishedAt,
         error: CANCELLED,
       });
+      this.store.attempts.closeOpen(run.id, {
+        status: 'cancelled',
+        finished_at: finishedAt,
+        error: CANCELLED,
+      });
       this.publish({
         type: `task.${run.task}.cancelled`,
         source: taskSource(run.task),
@@ -1028,6 +1067,20 @@ export class Executor {
     });
     this.countFinished(run, 'cancelled', finishedAt);
     log.warn('run.cancelled', { previous_status: run.status, attempt: run.attempt });
+  }
+
+  /** Ends one attempt that is not the run's last: a retry follows, or a stop gave it back. */
+  private endAttempt(
+    runId: string,
+    attempt: number,
+    status: 'failed' | 'interrupted',
+    error: string | null,
+  ): void {
+    this.store.attempts.end(runId, attempt, {
+      status,
+      finished_at: this.clock.now().toISOString(),
+      error,
+    });
   }
 
   private countFinished(

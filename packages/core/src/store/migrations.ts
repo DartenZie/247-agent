@@ -178,6 +178,21 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX ledger_run ON ledger(run_id);
   CREATE INDEX ledger_task_ts ON ledger(task, ts);
   `,
+  `
+  -- One row per attempt of a run (#89): its times, status, error and a capped,
+  -- secret-redacted tail of what the action printed. Deleted with the run.
+  CREATE TABLE run_attempts (
+    run_id      TEXT    NOT NULL REFERENCES runs(id),
+    attempt     INTEGER NOT NULL,
+    status      TEXT    NOT NULL CHECK (status IN ('running','waiting','succeeded','failed','cancelled','interrupted')),
+    started_at  TEXT    NOT NULL,
+    finished_at TEXT,
+    error       TEXT,
+    stdout      TEXT,
+    stderr      TEXT,
+    PRIMARY KEY (run_id, attempt)
+  );
+  `,
 ];
 
 /**

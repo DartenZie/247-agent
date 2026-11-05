@@ -157,6 +157,14 @@ export async function runShell(action: unknown, ctx: ActionContext): Promise<Jso
     stderr_bytes: Buffer.byteLength(proc.stderr),
   });
 
+  // Before any outcome, so a failed or aborted attempt keeps what it printed (#89).
+  if (proc.stdout !== '') {
+    ctx.output?.write('stdout', proc.stdout);
+  }
+  if (proc.stderr !== '') {
+    ctx.output?.write('stderr', proc.stderr);
+  }
+
   if (abortedBy !== undefined) {
     // The executor aborted us (timeout or shutdown); its reason names why.
     throw abortedBy;
