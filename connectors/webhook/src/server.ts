@@ -4,6 +4,7 @@
  * delivery), 4xx (never retry this request), 503 (the core is unreachable; retry later).
  */
 import { chmodSync, rmSync } from 'node:fs';
+import type { Socket } from 'node:net';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -35,6 +36,8 @@ export interface WebhookServerOptions {
   log: (line: string) => void;
   /** Clock for `received_at`; tests pin it. */
   now?: () => Date;
+  /** How long a new connection may wait before its first request's headers arrive. */
+  firstRequestTimeoutMs?: number;
 }
 
 /** Headers that carry credentials and never reach an event. */
@@ -349,6 +352,30 @@ function reply(
   res.end(text);
 }
 
+/** Default for `firstRequestTimeoutMs`, the same as `headersTimeout`. */
+const FIRST_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Closes a connection whose first request has not arrived within `ms`. `headersTimeout`
+ * only runs once bytes arrive, so without this a socket that sends nothing would hold one
+ * of the `max_connections` slots forever. After the first request, `keepAliveTimeout`
+ * closes an idle connection.
+ */
+function closeSilentConnections(server: Server, ms: number): void {
+  const timers = new WeakMap<Socket, NodeJS.Timeout>();
+  server.on('connection', (socket: Socket) => {
+    const timer = setTimeout(() => socket.destroy(), ms);
+    timer.unref();
+    timers.set(socket, timer);
+    socket.once('close', () => {
+      clearTimeout(timer);
+    });
+  });
+  server.on('request', (req: IncomingMessage) => {
+    clearTimeout(timers.get(req.socket));
+  });
+}
+
 /** Starts listening as configured; resolves with the server and where it listens. */
 export async function startServer(
   opts: WebhookServerOptions,
@@ -357,6 +384,7 @@ export async function startServer(
   const server = createServer(createHandler(opts, drain));
   drainStates.set(server, drain);
   server.maxConnections = opts.config.max_connections;
+  closeSilentConnections(server, opts.firstRequestTimeoutMs ?? FIRST_REQUEST_TIMEOUT_MS);
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
   const listen = opts.config.listen;

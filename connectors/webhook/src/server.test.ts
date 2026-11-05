@@ -224,6 +224,12 @@ describe('webhook server', () => {
     const now = Date.parse('2026-09-30T12:00:00Z') / 1000;
     expect((await post(now - 10)).status).toBe(202);
     expect((await post(now - 600)).status).toBe(401);
+    // A stale timestamp is settled by the headers: 401 without waiting for the body.
+    const stale = await openPost(base, '/hooks/slack', {
+      'x-slack-request-timestamp': String(now - 600),
+      'x-slack-signature': 'v0=' + '00'.repeat(32),
+    });
+    expect(stale).toEqual({ status: 401, connection: 'close' });
     expect(core.events).toHaveLength(1);
     expect(core.events[0]?.payload).toMatchObject({ body: { command: '/deploy' } });
   });
@@ -251,6 +257,29 @@ describe('webhook server', () => {
     } finally {
       first.destroy();
     }
+  });
+
+  it('closes a connection that sends no request, freeing its max_connections slot', async () => {
+    const core = new FakeCore();
+    const { server, address } = await startServer({
+      config: config({ max_connections: 1 }),
+      core,
+      name: 'webhook',
+      log: (l) => logs.push(l),
+      firstRequestTimeoutMs: 100,
+    });
+    servers.push(server);
+    const url = new URL(address);
+    const idle = connect(Number(url.port), url.hostname);
+    const closed = new Promise((r) => idle.once('close', r));
+    idle.on('error', () => undefined);
+    await closed;
+    const res = await fetch(`${address}/healthz`);
+    expect(res.status).toBe(200);
+    await res.text();
+    // A connection that did send a request is left to the keep-alive timeout.
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await fetch(`${address}/healthz`)).status).toBe(200);
   });
 
   it('answers 400 for invalid JSON', async () => {
