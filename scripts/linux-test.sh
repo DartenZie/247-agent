@@ -212,6 +212,8 @@ step "the watchdog restarts a daemon whose event loop stops"
 mkdir -p /etc/systemd/system/247-agent.service.d
 printf "[Service]\nWatchdogSec=3\nTimeoutAbortSec=5\n" > /etc/systemd/system/247-agent.service.d/watchdog-test.conf
 systemctl daemon-reload
+# Each restart below counts against the start limit (5 in 10 min); start from zero.
+systemctl reset-failed 247-agent
 systemctl restart 247-agent
 pid=$(systemctl show -p MainPID --value 247-agent)
 kill -STOP "$pid"

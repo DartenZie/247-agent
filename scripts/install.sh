@@ -233,7 +233,7 @@ not_up() {
   printf 'install.sh: %s\n' "$1" >&2
   printf '  see: systemctl status 247-agent; journalctl -u 247-agent -n 50 --no-pager\n' >&2
   if [ -n "$previous" ] && [ -n "$current" ] && [ "$current" != "$version" ]; then
-    printf '  rollback: ln -sfn %s %s && systemctl restart 247-agent\n' "$previous" "$prefix" >&2
+    printf '  rollback: ln -sfn %s %s && systemctl reset-failed 247-agent; systemctl restart 247-agent\n' "$previous" "$prefix" >&2
     printf '  (if %s migrated state.db, restore the state.db.schema-<n>.bak copy next to it first)\n' "$version" >&2
   fi
   exit 1
@@ -308,7 +308,7 @@ fi
 say ""
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
   say "upgraded 247-agent $current -> $version ($prefix -> $tree)"
-  say "rollback: ln -sfn $previous $prefix && systemctl restart 247-agent"
+  say "rollback: ln -sfn $previous $prefix && systemctl reset-failed 247-agent; systemctl restart 247-agent"
   say "  (if $version migrated state.db, $current refuses it: stop it, then restore the state.db.schema-<n>.bak copy next to state.db)"
   say "remove old versions with: rm -rf $prefix-<version>"
 else

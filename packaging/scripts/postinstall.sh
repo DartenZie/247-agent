@@ -30,7 +30,7 @@ rollback() {
 if [ $upgrade = 1 ] && [ -f "$config" ]; then
   if ! "$prefix/bin/oa" validate "$config" > /dev/null; then
     echo "247-agent: the new version rejects $config (the issues are above); the service was not restarted." >&2
-    echo "  fix the config, then: dpkg --configure -a (deb), or systemctl restart 247-agent && sh $prefix/share/check-service.sh" >&2
+    echo "  fix the config, then: dpkg --configure -a (deb), or systemctl reset-failed 247-agent; systemctl restart 247-agent && sh $prefix/share/check-service.sh" >&2
     rollback
     exit 1
   fi

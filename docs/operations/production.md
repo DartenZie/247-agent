@@ -268,8 +268,8 @@ configuration with the new version, then restart a running service. If the new v
 rejects the configuration, the upgrade fails and the service is not restarted. The old
 daemon keeps running, but the new files are already in place: a connector it respawns,
 or a restart after a crash, uses them. Fix the configuration soon. Then, for a `.deb`,
-run `sudo dpkg --configure -a`. For an `.rpm`, run `sudo systemctl restart 247-agent`
-and the check above. Roll back by installing the previous file.
+run `sudo dpkg --configure -a`. For an `.rpm`, run `sudo systemctl reset-failed 247-agent`,
+then `sudo systemctl restart 247-agent` and the check above. Roll back by installing the previous file.
 
 **Installer.** Run the installer again. It downloads the new release, unpacks it as
 `/opt/247-agent-<version>`, runs the new version's `oa validate` on your existing
@@ -280,6 +280,7 @@ flight). The unit file is replaced, your drop-in and
 
 ```sh
 ln -sfn /opt/247-agent-<previous version> /opt/247-agent
+systemctl reset-failed 247-agent
 systemctl restart 247-agent
 ```
 
@@ -426,8 +427,11 @@ on /run/247-agent/core.sock` and exit 1.
 systemd counts every start of the unit: a start after a crash, a watchdog restart, and a
 `systemctl start` or `restart`. The sixth start within ten minutes is refused. The unit
 then stays `failed` with the result `start-limit-hit`, and the daemon does not run. A
-single crash still restarts the daemon after five seconds. A loop, for example a
-configuration that fails at every start, ends in `failed` within about a minute.
+single crash still restarts the daemon after five seconds, unless five starts already
+happened in the last ten minutes. A loop, for example a configuration that fails at every
+start, ends in `failed` within about a minute. A start that hangs until `TimeoutStartSec=`
+does not loop fast enough: its starts are five minutes apart, so the unit keeps
+restarting.
 
 To find the cause and start the daemon again:
 
