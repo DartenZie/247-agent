@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { defineTool, type JsonValue, type ToolDef } from '@247-agent/connector-sdk';
+import { defineTool, toJson, type ToolDef } from '@247-agent/connector-sdk';
 
 import type { FileOps } from './ops.js';
 
@@ -14,20 +14,20 @@ export function ftpTools(ops: FileOps): ToolDef[] {
       description:
         'Entries of a directory (default: the root), sorted by name. Returns {path, entries: [{name, path, type, size, mtime}], truncated}.',
       input: { path: z.string().optional(), limit: z.number().int().min(1).optional() },
-      handler: async (args) => (await ops.list(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.list(args)),
     }),
     defineTool({
       name: 'stat',
       description: 'Whether a path exists and what it is: {path, exists, type?, size?, mtime?}.',
       input: { path: z.string() },
-      handler: async (args) => (await ops.stat(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.stat(args)),
     }),
     defineTool({
       name: 'read',
       description:
         'The content of one file as utf8 (default) or base64. Fails when the file is larger than max_bytes.',
       input: { path: z.string(), encoding },
-      handler: async (args) => (await ops.read(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.read(args)),
     }),
     defineTool({
       name: 'write',
@@ -40,7 +40,7 @@ export function ftpTools(ops: FileOps): ToolDef[] {
         parents: z.boolean().optional(),
         overwrite: z.boolean().optional(),
       },
-      handler: async (args) => (await ops.write(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.write(args)),
     }),
     defineTool({
       name: 'delete',
@@ -51,27 +51,27 @@ export function ftpTools(ops: FileOps): ToolDef[] {
         recursive: z.boolean().optional(),
         missing_ok: z.boolean().optional(),
       },
-      handler: async (args) => (await ops.delete(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.delete(args)),
     }),
     defineTool({
       name: 'rename',
       description:
         'Moves or renames a file or directory inside the root. parents: true creates the target directory first.',
       input: { from: z.string(), to: z.string(), parents: z.boolean().optional() },
-      handler: async (args) => (await ops.rename(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.rename(args)),
     }),
     defineTool({
       name: 'mkdir',
       description: 'Creates a directory and its parents; succeeds when it already exists.',
       input: { path: z.string() },
-      handler: async (args) => (await ops.mkdir(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.mkdir(args)),
     }),
     defineTool({
       name: 'sync',
       description:
         'Uploads every file below a local directory (inside the config’s local_roots) to a remote directory, default the root; prune: true then removes remote files and directories the local tree lacks, and is refused when the local tree has no files. Returns {local, remote, uploaded, bytes, pruned}.',
       input: { local: z.string(), remote: z.string().optional(), prune: z.boolean().optional() },
-      handler: async (args) => (await ops.sync(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await ops.sync(args)),
     }),
   ];
 }

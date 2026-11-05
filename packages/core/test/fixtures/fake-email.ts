@@ -6,7 +6,12 @@
  */
 import { z } from 'zod';
 
-import { defineTool, runConnector, type JsonValue } from '../../../connector-sdk/src/index.ts';
+import {
+  defineTool,
+  runConnector,
+  toJson,
+  type JsonValue,
+} from '../../../connector-sdk/src/index.ts';
 
 interface Mail {
   uid: number;
@@ -33,7 +38,7 @@ await runConnector({
           rt.log(
             `fetch_new folder=${args.folder ?? 'INBOX'} since=${String(since)} -> ${String(fresh.length)}`,
           );
-          return { emails: fresh as unknown as JsonValue, last_uid: last };
+          return { emails: toJson(fresh), last_uid: last };
         },
       }),
       defineTool({
@@ -56,7 +61,7 @@ await runConnector({
           }
           const sent = ((await rt.core.getState('sent')) ?? []) as JsonValue[];
           const message_id = `<fake-${String(sent.length + 1)}@example.com>`;
-          sent.push({ ...args, message_id } as unknown as JsonValue);
+          sent.push(toJson({ ...args, message_id }));
           await rt.core.putState('sent', sent);
           const to = Array.isArray(args.to) ? args.to : [args.to];
           rt.log(`send to=${to.join(',')} subject=${args.subject}`);

@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 
-import { defineTool, runConnector, type JsonValue } from '@247-agent/connector-sdk';
+import { defineTool, runConnector, toJson, type JsonValue } from '@247-agent/connector-sdk';
 
 interface Item {
   id: string;
@@ -34,7 +34,7 @@ await runConnector({
         if (next !== null && next !== undefined) {
           await rt.core.putState('cursor', next);
         }
-        return { items: items as unknown as JsonValue, cursor: next ?? null };
+        return { items: toJson(items), cursor: next ?? null };
       },
     }),
 

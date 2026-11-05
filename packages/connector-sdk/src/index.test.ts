@@ -18,7 +18,9 @@ import {
   isTransient,
   isConnectError,
   isTransientHttpError,
+  toJson,
   TransientError,
+  type JsonValue,
 } from './index.js';
 
 describe('connectorEnv', () => {
@@ -238,5 +240,30 @@ describe('CoreClient', () => {
     });
     await expect(core.getState('x', 'other')).rejects.toThrow(CoreApiError);
     await expect(core.getState('x', 'other')).rejects.toThrow('boom');
+  });
+});
+
+describe('toJson', () => {
+  interface Entry {
+    name: string;
+    size?: number;
+  }
+
+  it('returns a record with optional fields unchanged, typed as JsonValue', () => {
+    const entries: Entry[] = [{ name: 'a' }, { name: 'b', size: 2 }];
+    const out: JsonValue = toJson({ entries, truncated: false });
+    expect(out).toEqual({ entries, truncated: false });
+  });
+
+  it('rejects values that JSON cannot represent at compile time', () => {
+    const bad = (): void => {
+      // @ts-expect-error a Date serializes to a string, not to itself
+      toJson({ mtime: new Date() });
+      // @ts-expect-error JSON.stringify throws on a bigint
+      toJson([1n]);
+      // @ts-expect-error a Map serializes to {}
+      toJson(new Map<string, string>());
+    };
+    expect(typeof bad).toBe('function');
   });
 });

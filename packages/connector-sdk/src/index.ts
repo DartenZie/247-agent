@@ -15,6 +15,36 @@ import type { z } from 'zod';
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/**
+ * `T` when every part of it is JSON: primitives, arrays and plain objects whose fields
+ * are JSON or absent. Anything else maps to `never`, which `toJson`'s argument rejects.
+ * Kept in step with `packages/core/src/json.ts`.
+ */
+export type JsonCompatible<T> = unknown extends T
+  ? never
+  : T extends JsonValue
+    ? T
+    : T extends readonly unknown[]
+      ? { [K in keyof T]: JsonCompatible<T[K]> }
+      : T extends Date | Map<unknown, unknown> | Set<unknown> | ((...args: never[]) => unknown)
+        ? never
+        : T extends object
+          ? { [K in keyof T]: JsonCompatible<Exclude<T[K], undefined>> | OptionalOf<T, K> }
+          : never;
+
+/** `undefined` for an optional field, so `{ a?: string }` stays compatible. */
+type OptionalOf<T, K extends keyof T> = object extends Pick<T, K> ? undefined : never;
+
+/**
+ * `value` typed as `JsonValue`, for a handler result with optional fields (which plain
+ * `JsonValue` rejects under `exactOptionalPropertyTypes`). Compiles only when the value is
+ * JSON-serializable as it stands: a `Date`, `bigint`, `Map`, `Set`, function, `undefined`
+ * or `unknown` anywhere in it is a compile error.
+ */
+export function toJson<T>(value: T & JsonCompatible<T>): JsonValue {
+  return value as JsonValue;
+}
+
 export interface ConnectorEnv {
   /** The core's Unix socket. */
   socket: string;

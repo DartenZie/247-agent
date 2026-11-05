@@ -43,6 +43,7 @@ becomes an `isError` result.
 | `connectorEnv()` | `{socket, name, config}` from `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME`, `OA_CONFIG_JSON`; throws when not started by the core |
 | `CoreClient({socket, name, timeoutMs?})` | `emitEvent({type, payload?, dedup_key?, parent_id?, correlation_id?})` → `{status: 'inserted', event}` or `{status: 'duplicate', dedup_key}`; `getState(key)`, `putState(key, value)` in the connector's own namespace |
 | `defineTool({name, description?, input?, handler})` | `input` is a zod raw shape; the handler is typed from it |
+| `toJson(value)` | types a result with optional fields as `JsonValue`; a `Date`, `bigint`, `Map`, `Set`, function or `unknown` in it is a compile error. Use it instead of `as unknown as JsonValue` |
 | `createConnectorServer({name, version?, tools})` | an `McpServer` with the tools registered; results are one JSON text block |
 | `serveStdio(server)` | connect on stdin/stdout |
 | `ConnectorRuntime` | `{env, core, log}`; `log(line)` writes to stderr |
