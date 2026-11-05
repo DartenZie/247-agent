@@ -224,7 +224,38 @@ oa run hello --wait
 # The state directory and the database are closed to other local users (issue #42).
 open=$(find /var/lib/247-agent -maxdepth 1 -perm /o=rwx)
 [ -z "$open" ] || { ls -la /var/lib/247-agent; echo "readable by other users: $open"; exit 1; }
+step "an upgrade checks the config and that the daemon came up (issue #61)"
+deb=$(ls dist-release/247-agent_*_"$(dpkg --print-architecture)".deb)
+dpkg -i "$deb" 2>&1 | tee /tmp/upgrade.log
+grep "247-agent is up: ok" /tmp/upgrade.log
+pid=$(systemctl show -p MainPID --value 247-agent)
+echo "not_a_key: 1" >> /etc/247-agent/agent.yaml
+if dpkg -i "$deb" 2> /tmp/upgrade.err; then echo "the upgrade accepted a bad config"; exit 1; fi
+grep "the new version rejects /etc/247-agent/agent.yaml" /tmp/upgrade.err
+[ "$(systemctl show -p MainPID --value 247-agent)" = "$pid" ]
+sed -i "/^not_a_key: 1\$/d" /etc/247-agent/agent.yaml
+dpkg --configure -a
+mkdir -p /etc/systemd/system/247-agent.service.d
+printf "[Service]\nRuntimeMaxSec=2\n" > /etc/systemd/system/247-agent.service.d/crash-test.conf
+if dpkg -i "$deb" 2> /tmp/upgrade.err; then echo "the upgrade missed a daemon that went down"; exit 1; fi
+cat /tmp/upgrade.err
+grep "247-agent is not up" /tmp/upgrade.err
+grep "the upgraded daemon did not come up" /tmp/upgrade.err
+rm -r /etc/systemd/system/247-agent.service.d
+dpkg --configure -a
+oa health
 apt-get purge -y 247-agent
+step "install.sh checks that the daemon came up (issue #61)"
+tarball=$(ls dist-release/247-agent-*-linux-*.tar.gz)
+sh scripts/install.sh --from "$tarball" | tee /tmp/install.log
+grep "247-agent is up: ok" /tmp/install.log
+mkdir -p /etc/systemd/system/247-agent.service.d
+printf "[Service]\nRuntimeMaxSec=2\n" > /etc/systemd/system/247-agent.service.d/crash-test.conf
+if sh scripts/install.sh --from "$tarball" 2> /tmp/install.err; then echo "install.sh missed a daemon that went down"; exit 1; fi
+cat /tmp/install.err
+grep "did not stay up after the restart" /tmp/install.err
+rm -r /etc/systemd/system/247-agent.service.d
+sh /opt/247-agent/share/uninstall.sh --purge --yes
 '
 fi
 

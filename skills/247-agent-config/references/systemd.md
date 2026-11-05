@@ -97,7 +97,9 @@ daemon wrote before migrating), links
 `/usr/local/bin/oa`, creates the user and a starter `/etc/247-agent` once, replaces the
 unit file (keep local changes in `systemctl edit 247-agent`), validates the existing
 config with the new version before switching, and restarts a running service unless
-`--no-restart`. `--from <tarball>` installs a local build, `--no-service` only the tree.
+`--no-restart`, then checks that the daemon came up (`share/check-service.sh`) and
+exits 1 with the rollback command if it did not. The packages do the same check, and
+fail an upgrade whose kept config the new version rejects. `--from <tarball>` installs a local build, `--no-service` only the tree.
 
 By hand:
 

@@ -37,9 +37,13 @@ The package:
 - writes a starter configuration to `/etc/247-agent` (`agent.yaml`, one task in
   `tasks.d/hello.yaml`, an empty `connectors.d/`), as configuration files the package
   manager never overwrites;
-- on a fresh install, enables and starts the service; on an upgrade, restarts it.
+- on a fresh install, enables and starts the service; on an upgrade, restarts it;
+- checks that the daemon came up and stays up, and fails the install if it did not.
 
-To upgrade, install the newer file the same way. If the new version migrates the
+To upgrade, install the newer file the same way. The new version validates your
+existing configuration first. If it rejects the configuration, the upgrade fails and
+the running daemon is not restarted. Fix the configuration and run
+`sudo dpkg --configure -a` to finish the upgrade. If the new version migrates the
 database, an older package refuses to start on it. The daemon keeps a copy from before
 the migration for that case
 ([upgrading and rolling back](../operations/production.md#upgrading-and-rolling-back)).
@@ -68,8 +72,10 @@ Run it as root or with `sudo` rights. It:
 Run it again to upgrade. The new version validates your existing configuration before
 the symlink moves, the unit file is replaced (keep local changes in
 `systemctl edit 247-agent`), your configuration is never touched, and the service
-restarts unless you pass `--no-restart`. To roll back, point the symlink at the old
-tree and restart:
+restarts unless you pass `--no-restart`. After the restart, the installer waits a few
+seconds and checks that the service is still active and that `oa health` answers. If
+not, it exits with an error and prints the rollback command. To roll back, point the
+symlink at the old tree and restart:
 
 ```sh
 sudo ln -sfn /opt/247-agent-<old version> /opt/247-agent
@@ -89,7 +95,7 @@ Options, passed after `sh -s --`:
 | `--prefix <dir>` | somewhere other than `/opt` |
 | `--bin-dir <dir>` | where to link `oa` |
 | `--no-service` | only the tree and the symlinks: no user, no `/etc`, no unit. Also for macOS and user-local installs, which then need no `sudo` |
-| `--no-restart` | leave a running daemon alone after an upgrade |
+| `--no-restart` | leave a running daemon alone after an upgrade. Restart it yourself when `oa runs ls --status running` prints `no runs`, then run `sudo sh /opt/247-agent/share/check-service.sh` to check that it came up |
 
 `sh /opt/247-agent/share/uninstall.sh` removes what the installer put there and keeps
 the configuration, state, drop-ins and user; add `--purge` to remove those too.
