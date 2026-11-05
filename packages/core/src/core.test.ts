@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -345,6 +345,113 @@ describe('createCore with the reference workflow', () => {
     });
     await expect(broken.start()).rejects.toThrow(ConfigLoadError);
     await broken.stop();
+  });
+});
+
+describe('createCore exposes health metrics (#90)', () => {
+  const TASKS = [
+    'fetch_email',
+    'classify_email',
+    'update_event_list',
+    'push_event_list',
+    'reply_blocked',
+    'update_site_general',
+    'approve_general_change',
+    'publish_site',
+    'notify',
+  ];
+  const sample = (text: string, series: string): number | undefined => {
+    const line = text.split('\n').find((l) => l.startsWith(`${series} `));
+    return line === undefined ? undefined : Number(line.slice(series.length + 1));
+  };
+  let n = 0;
+  const event = (ts = new Date().toISOString()) => {
+    n += 1;
+    const id = `evt_metrics_${String(n)}`;
+    core.store.events.insert({
+      id,
+      type: 'x.unmatched',
+      source: 'test',
+      ts,
+      correlation_id: id,
+      parent_id: null,
+      dedup_key: null,
+      depth: 0,
+      payload: {},
+    });
+    return id;
+  };
+
+  it('renders run counters at 0 for every configured task and status from startup', () => {
+    const text = core.metrics.render();
+    expect(sample(text, 'oa_dispatch_failures_total')).toBe(0);
+    for (const task of TASKS) {
+      for (const status of ['succeeded', 'failed', 'cancelled']) {
+        expect(sample(text, `oa_runs_finished_total{task="${task}",status="${status}"}`)).toBe(0);
+      }
+      expect(sample(text, `oa_runs_queued_total{task="${task}"}`)).toBe(0);
+      expect(sample(text, `oa_run_attempts_total{task="${task}"}`)).toBe(0);
+      expect(sample(text, `oa_runs_interrupted_total{task="${task}"}`)).toBe(0);
+    }
+  });
+
+  it('reports undispatched events, the oldest queued run and the last success per task', () => {
+    let text = core.metrics.render();
+    expect(sample(text, 'oa_events_undispatched')).toBe(0);
+    expect(sample(text, 'oa_runs_oldest_pending_age_seconds')).toBe(0);
+    expect(text).not.toContain('oa_task_last_success_timestamp_seconds{');
+
+    const done = event();
+    core.store.runs.insertQueued({
+      id: 'run_done',
+      task: 'notify',
+      event_id: done,
+      correlation_id: done,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    core.store.runs.setStatus('run_done', 'succeeded', {
+      finished_at: '2026-01-02T03:04:05.000Z',
+    });
+    core.bus.dispatcher.drain();
+    const queued = event();
+    core.store.runs.insertQueued({
+      id: 'run_old',
+      task: 'publish_site',
+      event_id: queued,
+      correlation_id: queued,
+      created_at: new Date(Date.now() - 90_000).toISOString(),
+    });
+    event();
+    event();
+
+    text = core.metrics.render();
+    expect(sample(text, 'oa_events_undispatched')).toBe(3);
+    const age = sample(text, 'oa_runs_oldest_pending_age_seconds') ?? 0;
+    expect(age).toBeGreaterThanOrEqual(90);
+    expect(age).toBeLessThan(120);
+    expect(sample(text, 'oa_task_last_success_timestamp_seconds{task="notify"}')).toBe(
+      Date.parse('2026-01-02T03:04:05.000Z') / 1000,
+    );
+  });
+
+  it('reports the write-ahead log and the free disk space next to the database size', () => {
+    const text = core.metrics.render();
+    expect(sample(text, 'oa_db_wal_size_bytes')).toBe(statSync(join(dir, 'state.db-wal')).size);
+    expect(sample(text, 'oa_db_disk_free_bytes')).toBeGreaterThan(0);
+  });
+
+  it('counts a run that a stop or a crash cut short when the next start finds it', async () => {
+    core.runTask('publish_site');
+    await core.stop();
+    core = createCore({
+      tasksFiles: [join(dir, 'tasks.yaml')],
+      dbPath: join(dir, 'state.db'),
+      log: createLogger({ sink: () => undefined }),
+      runners: hangAll,
+      secrets: staticSecrets(SECRETS),
+    });
+    await core.start();
+    expect(sample(core.metrics.render(), 'oa_runs_interrupted_total{task="publish_site"}')).toBe(1);
   });
 });
 

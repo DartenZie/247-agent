@@ -1,3 +1,6 @@
+import { statfsSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 import { runAgent } from './actions/agent.js';
 import type { AgentDefaultsConfig } from './actions/agent-config.js';
 import { runConnector } from './actions/connector.js';
@@ -435,6 +438,31 @@ export function createCore(opts: CoreOptions): Core {
     metrics.runsPending.set(undefined, stats.pending);
     metrics.runsInFlight.set(undefined, stats.in_flight);
     metrics.runsWaiting.set(undefined, store.waits.countPending());
+    const oldest = store.runs.oldestCreatedAt('queued');
+    metrics.oldestPendingAge.set(
+      undefined,
+      oldest === undefined ? 0 : Math.max(0, (now.getTime() - Date.parse(oldest)) / 1000),
+    );
+    metrics.eventsUndispatched.set(
+      undefined,
+      store.events.countAfter(store.cursors.get('dispatch')),
+    );
+    // Present at 0 from startup, so rate() and absent() work before the first run (#90).
+    for (const task of compiled.tasks) {
+      const labels = { task: task.name };
+      metrics.runsQueued.init(labels);
+      metrics.runAttempts.init(labels);
+      metrics.runsInterrupted.init(labels);
+      for (const status of ['succeeded', 'failed', 'cancelled']) {
+        metrics.runsFinished.init({ ...labels, status });
+      }
+    }
+    metrics.taskLastSuccess.reset();
+    for (const { task, finished_at } of store.runs.lastSucceeded()) {
+      if (compiled.byName.has(task)) {
+        metrics.taskLastSuccess.set({ task }, Date.parse(finished_at) / 1000);
+      }
+    }
     metrics.llmBatchesPending.set(undefined, store.batches.count());
     metrics.cronNextRun.reset();
     for (const job of scheduler.list()) {
@@ -461,6 +489,12 @@ export function createCore(opts: CoreOptions): Core {
     const pageCount = store.db.pragma('page_count', { simple: true }) as number;
     const pageSize = store.db.pragma('page_size', { simple: true }) as number;
     metrics.dbSize.set(undefined, pageCount * pageSize);
+    metrics.dbWalSize.set(undefined, fileSize(`${opts.dbPath}-wal`));
+    const free = diskFree(dirname(opts.dbPath));
+    metrics.dbDiskFree.reset();
+    if (free !== undefined) {
+      metrics.dbDiskFree.set(undefined, free);
+    }
   });
 
   /** What the sandbox check judges the tasks against: the manifests and agent settings that will be active. */
@@ -851,4 +885,23 @@ function connectorRefs(task: CompiledConfig['tasks'][number]['config']): string[
   return taskActions(task, 'action').flatMap(({ action }) =>
     action.kind === 'connector' ? [action.connector] : [],
   );
+}
+
+/** A file's size, 0 when it does not exist (no WAL yet, or an in-memory database). */
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** Bytes an unprivileged writer can still use on the file system holding `dir`. */
+function diskFree(dir: string): number | undefined {
+  try {
+    const fs = statfsSync(dir);
+    return fs.bavail * fs.bsize;
+  } catch {
+    return undefined;
+  }
 }

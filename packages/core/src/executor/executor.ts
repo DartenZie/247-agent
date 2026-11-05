@@ -402,6 +402,7 @@ export class Executor {
       }
       const task = this.pinned(run, config.byName.get(run.task));
       const log = this.log.child(runFields(run));
+      this.metrics.runsInterrupted.inc({ task: run.task });
       if (task !== undefined && run.attempt < this.retryFor(task).attempts) {
         log.warn('run.recovered', { attempt: run.attempt });
         this.store.attempts.closeOpen(run.id, {

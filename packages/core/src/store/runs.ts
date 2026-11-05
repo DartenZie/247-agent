@@ -45,6 +45,8 @@ export class RunStore {
   private readonly hasActiveStmt: Statement;
   private readonly byStatusStmt: Statement;
   private readonly byIdStmt: Statement;
+  private readonly oldestStmt: Statement;
+  private readonly lastSucceededStmt: Statement;
   private readonly byTaskEventStmt: Statement;
   private readonly setStatusStmt: Statement;
   private readonly finishedBeforeStmt: Statement;
@@ -66,6 +68,11 @@ export class RunStore {
     );
     this.byStatusStmt = db.prepare(
       'SELECT * FROM runs WHERE status = ? ORDER BY created_at, id LIMIT ?',
+    );
+    this.oldestStmt = db.prepare('SELECT MIN(created_at) AS created_at FROM runs WHERE status = ?');
+    this.lastSucceededStmt = db.prepare(
+      `SELECT task, MAX(finished_at) AS finished_at FROM runs
+       WHERE status = 'succeeded' AND finished_at IS NOT NULL GROUP BY task`,
     );
     this.byIdStmt = db.prepare('SELECT * FROM runs WHERE id = ?');
     this.byTaskEventStmt = db.prepare('SELECT * FROM runs WHERE task = ? AND event_id = ?');
@@ -98,6 +105,17 @@ export class RunStore {
   /** True when the task has a run in `queued`, `running` or `waiting`. */
   hasActive(task: string): boolean {
     return this.hasActiveStmt.get(task) !== undefined;
+  }
+
+  /** `created_at` of the oldest run in `status`, or `undefined` when there is none. */
+  oldestCreatedAt(status: RunStatus): string | undefined {
+    const row = this.oldestStmt.get(status) as { created_at: string | null };
+    return row.created_at ?? undefined;
+  }
+
+  /** The newest `finished_at` of a succeeded run, per task that has one. */
+  lastSucceeded(): { task: string; finished_at: string }[] {
+    return this.lastSucceededStmt.all() as { task: string; finished_at: string }[];
   }
 
   listByStatus(status: RunStatus, limit = 1000): RunRecord[] {

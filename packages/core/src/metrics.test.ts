@@ -55,6 +55,19 @@ describe('Registry', () => {
     expect(second).not.toContain('c0');
   });
 
+  it('renders a counter at 0 before its first increment (#90)', () => {
+    const r = new Registry();
+    r.counter('bare_total', 'no labels');
+    const c = r.counter('labelled_total', 'labels', ['task', 'status']);
+    c.init({ task: 'a', status: 'failed' });
+    c.inc({ task: 'a', status: 'succeeded' });
+    c.init({ task: 'a', status: 'succeeded' });
+    const text = r.render();
+    expect(text).toContain('bare_total 0\n');
+    expect(text).toContain('labelled_total{task="a",status="failed"} 0\n');
+    expect(text).toContain('labelled_total{task="a",status="succeeded"} 1\n');
+  });
+
   it('rejects bad names, duplicate definitions, unknown labels and negative increments', () => {
     const r = new Registry();
     expect(() => r.counter('1bad', 'x')).toThrow(/invalid metric name/);

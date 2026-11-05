@@ -780,6 +780,9 @@ export class LlmService implements LlmPort, BatchSource {
     const labels = { provider: spec.provider, model: spec.model };
     this.metrics.modelCalls.inc({ ...labels, task: cctx.task });
     this.metrics.modelCost.inc({ ...labels, task: cctx.task }, usd);
+    if (pricedBy === 'unpriced') {
+      this.metrics.modelCallsUnpriced.inc({ ...labels, task: cctx.task });
+    }
     this.metrics.modelTokens.inc({ ...labels, direction: 'input' }, usage.input);
     this.metrics.modelTokens.inc({ ...labels, direction: 'output' }, usage.output);
     this.metrics.modelTokens.inc({ ...labels, direction: 'cache_read' }, usage.cacheRead);

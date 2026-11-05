@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isRetryable, NonRetryableError } from '../actions/types.js';
 import { createBus, type EventBus } from '../bus/bus.js';
 import { testEnv, type TestEnv } from '../bus/testing.js';
+import { Metrics } from '../metrics.js';
 import { staticSecrets } from '../secrets/secrets.js';
 import type { RunRecord } from '../store/types.js';
 import { Batches, type ProviderConfigParsed } from './config.js';
@@ -295,6 +296,27 @@ describe('LlmService.call', () => {
       UnpricedModelError,
     );
     expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'unpriced' });
+  });
+
+  it('counts a row ledgered unpriced, and only that one (#90)', async () => {
+    const metrics = new Metrics();
+    fake = fakeProviderFactory({
+      ...usage(500, 50),
+      usage: { input: 500, output: 50, cacheRead: 0, cacheWrite: 0, reportedUsd: 0.042 },
+    });
+    await call(service({ metrics }), { provider: 'router', model: 'vendor/some-model' });
+    fake = fakeProviderFactory(usage(500, 50));
+    await expect(
+      call(service({ metrics }), { provider: 'router', model: 'vendor/other' }),
+    ).rejects.toThrow(UnpricedModelError);
+    const unpriced = (model: string) =>
+      metrics.registry.value('oa_model_calls_unpriced_total', {
+        provider: 'router',
+        model,
+        task: 'classify',
+      });
+    expect(unpriced('vendor/other')).toBe(1);
+    expect(unpriced('vendor/some-model')).toBeUndefined();
   });
 });
 
