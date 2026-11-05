@@ -31,7 +31,21 @@ export interface CostRow {
   cache_read: number;
   cache_write: number;
   usd: number;
+  /** How many of the group's calls each source priced; `unpriced` calls count as $0 in `usd`. */
+  priced_by: Record<PricedBy, number>;
 }
+
+const PRICED_BY_ORDER: Record<PricedBy, number> = {
+  table: 0,
+  provider: 1,
+  estimate: 2,
+  unpriced: 3,
+};
+
+/** Every pricing source, in the order `oa cost` lists them; the record keeps it exhaustive. */
+export const PRICED_BY = Object.keys(PRICED_BY_ORDER) as readonly PricedBy[];
+
+type CostRowSql = Omit<CostRow, 'priced_by'> & Record<`priced_${PricedBy}`, number>;
 
 const GROUP_EXPR: Record<CostGroup, string> = {
   task: 'task',
@@ -75,7 +89,8 @@ export class LedgerStore {
       db.prepare(
         `SELECT ${GROUP_EXPR[group]} AS key, COUNT(*) AS calls, SUM(in_tok) AS in_tok,
                 SUM(out_tok) AS out_tok, SUM(cache_read) AS cache_read,
-                SUM(cache_write) AS cache_write, SUM(usd) AS usd
+                SUM(cache_write) AS cache_write, SUM(usd) AS usd,
+                ${PRICED_BY.map((p) => `SUM(priced_by = '${p}') AS priced_${p}`).join(', ')}
          FROM ledger WHERE ts >= ? GROUP BY 1 ORDER BY usd DESC, key`,
       );
     this.summaryStmts = {
@@ -123,6 +138,16 @@ export class LedgerStore {
 
   /** Totals grouped by `by` for rows with `ts >= since`, most expensive first. */
   summary(opts: { since: string; by: CostGroup }): CostRow[] {
-    return this.summaryStmts[opts.by].all(opts.since) as CostRow[];
+    return (this.summaryStmts[opts.by].all(opts.since) as CostRowSql[]).map(
+      ({ priced_table, priced_provider, priced_estimate, priced_unpriced, ...sums }) => ({
+        ...sums,
+        priced_by: {
+          table: priced_table,
+          provider: priced_provider,
+          estimate: priced_estimate,
+          unpriced: priced_unpriced,
+        },
+      }),
+    );
   }
 }

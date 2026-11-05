@@ -276,8 +276,14 @@ Sums the model-call ledger.
 | `--json` | the response as JSON | off |
 | `--socket <path>` | the daemon socket | see above |
 
-Output: a header `task  calls  in_tok  out_tok  cache_rd  usd`, one row per group, then
-`total since <timestamp>: $<usd>`; or `no model calls since <timestamp>`. A bad `--since`
+Output: a header `task  calls  in_tok  out_tok  cache_rd  cache_wr  usd  priced_by`, one
+row per group, then `total since <timestamp>: $<usd>`; or `no model calls since
+<timestamp>`. `cache_rd` and `cache_wr` are the cache-read and cache-write tokens.
+`priced_by` names how the group's calls were priced (`table`, `provider`, `estimate` or
+`unpriced`), or counts them when they differ, as in `table:40,unpriced:1`. An
+`unpriced` call adds $0 to `usd`. When there are unpriced calls, a last line counts them:
+`2 unpriced calls count as $0: the daemon could not price them`. `--json` returns the
+body of [`GET /v1/cost`](api.md#get-v1cost), where `priced_by` is an object of counts. A bad `--since`
 is a 400, exit 2; otherwise exit 0.
 
 ### `oa reload [options]`

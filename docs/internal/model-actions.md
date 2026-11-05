@@ -142,7 +142,8 @@ the cancel.
 cache_write, usd, priced_by, ts`, where `priced_by` is `provider`, `table`,
 `unpriced` or `estimate` (see [An aborted call](#an-aborted-call)). Usage is normalised so `in_tok` is what the vendor bills at the full input
 price and cache reads and writes are separate. `GET /v1/cost` and `oa cost` sum it by
-task, model, provider or day; `GET /v1/runs/{id}/ledger` lists a run's rows. Rows of
+task, model, provider or day, with a count of calls per `priced_by` so a $0 `unpriced`
+group never reads as a cheap one; `GET /v1/runs/{id}/ledger` lists a run's rows. Rows of
 a run that is still `queued`, `running` or `waiting` are never swept by retention.
 
 ## Adapters

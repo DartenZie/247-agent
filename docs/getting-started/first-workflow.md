@@ -290,8 +290,8 @@ oa cost --by task --since 7d
 ```
 
 ```
-task             calls     in_tok    out_tok   cache_rd        usd
-classify_email       1        412         38          0     0.0006
+task             calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by
+classify_email       1        412         38          0          0     0.0006  table
 total since 2026-09-27T18:05:11.004Z: $0.0006
 ```
 
