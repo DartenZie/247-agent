@@ -62,6 +62,16 @@ export {
   scrubEnv,
 } from './secrets/secrets.js';
 export { formatIssue, formatLoadResult } from './config/format.js';
+export {
+  dryRun,
+  parseStubs,
+  readDataFile,
+  type DryRunEmit,
+  type DryRunEvent,
+  type DryRunInput,
+  type DryRunReport,
+  type DryRunStubs,
+} from './dry-run.js';
 export { parseDuration, DURATION } from './config/duration.js';
 export {
   Retention,

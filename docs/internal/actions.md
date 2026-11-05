@@ -227,6 +227,36 @@ transaction: the run's status, the `state_updates`, `task.<name>.succeeded` (pay
   `limits.max_event_depth` and `limits.max_runs_per_chain` in the dispatcher
   ([`architecture.md`](architecture.md)), and `oa validate` warns about cycles.
 
+## Dry runs
+
+`dry-run.ts`, behind `oa dry-run` ([CLI reference](../reference/cli.md#oa-dry-run-task-options)).
+It runs one task in the CLI process with no store, no bus and no daemon, so it writes no
+event, run, state or ledger row. It reuses the pieces of the daemon path that decide
+what a run does:
+
+- The trigger: an `event` trigger gets the sample event and must match it
+  (`CompiledTask.explain`, so the same type patterns and filter); a `cron` task with no
+  sample gets `makeTickEvent`, as the scheduler publishes it; otherwise a `manual` or
+  `cron` task gets a `manual.run` that carries the sample, with `params` applied, as
+  `oa run` does.
+  `contextEvent` then gives the action its `event`.
+- The action: `llm`, `decide`, `agent`, `connector` and `wait` steps return the result
+  the stub file gives for their path (`action`, or `action.steps[<k>]` from
+  `config/walk.ts`); one without a stub fails the dry run with the step's path. A
+  `shell` step runs for real through `runShell` unless it has a stub. A sequence runs
+  through `createSequenceRunner` with that stub lookup in place of the built-in step
+  runners, so `when` and `steps[i]` behave as in a run. The context has no `llm`,
+  `connectors` or `agents` port, so nothing can reach a model or a connector.
+- Routing: `renderEmits` and `renderStateUpdates`, the functions `finish()` uses. The
+  rendered events and updates are returned and never applied.
+
+`state` is the stub file's `state`, `env` is the CLI's environment scrubbed with the
+default secrets config (the dry run never reads `agent.yaml`, so a configured prefix,
+`defaults.sandbox` and `defaults.timeout` do not apply; the timeout is the task's or
+15 minutes), and each `${secrets.<name>}` renders as `<secret <name>>`. A
+stub for a path the task does not have is refused, so a renamed step cannot leave a
+stub that silently answers nothing.
+
 ## Attempts, retries, timeouts
 
 The executor is a worker pool bounded by `workers` globally and `concurrency` per task

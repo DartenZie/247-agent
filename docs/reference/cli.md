@@ -17,7 +17,7 @@ works, `oa --json run hello` is an unknown command.
 | Code | When |
 |---|---|
 | 0 | the command did what it was asked |
-| 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `health` is not `ok`, `connector restart` left the connector not `up`, `validate` found a problem |
+| 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `health` is not `ok`, `connector restart` left the connector not `up`, `validate` found a problem, `dry-run` failed |
 | 2 | usage: an unknown command or flag, a missing argument, an unreadable or invalid JSON file, no arguments at all, or the daemon answered 400 (a bad event type, pattern or `--since`) |
 | 141 | the program reading the output closed the pipe (`oa runs list \| head -1`): `oa` stops at its next write, without a message. A shell reports the same status for a program that SIGPIPE ends |
 
@@ -98,6 +98,74 @@ daemon: invalid params for task "greet"
   age: expected integer, got string "old"
   nmae: unknown parameter; declared: name, age
 ```
+
+### `oa dry-run <task> [options]`
+
+Runs one task offline against a sample event, to test its trigger filter, templates,
+`emit` rules and `state_updates` before it can spend money or touch a real system. The
+task definition is not changed. Its `llm`, `decide`, `agent`, `connector` and `wait`
+steps return results from a stub file. The daemon does not need to run. A dry run needs
+no credentials, makes no model or connector call, and writes no ledger entry, event or
+state. `shell` steps run for real, unless they have a stub. They run without a sandbox,
+with the environment of the shell that runs `oa`, minus the `OA_SECRET_` variables. The
+dry run does not read `agent.yaml`, so it does not apply `defaults.sandbox` or another
+secrets prefix. A step stops after the task's `timeout`, or after 15 minutes when the task
+sets none.
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--tasks <path>` | a tasks file or a `tasks.d` directory; repeat it for more than one; required | none |
+| `--event <file>` | the sample event, in YAML or JSON: `{type, source, payload}`; `source` is optional | none |
+| `--stubs <file>` | the stub file, in YAML or JSON | no stubs |
+
+For a task with an `event` trigger, `--event` is required and must have a `type`. The
+event must match the trigger, including its filter. For a `manual` or `cron` task, the
+event is the run's input, as with `oa run --event`: its `type` defaults to
+`manual.input`, and its `payload` is checked against the task's `params`. A `cron` task
+without `--event` gets a `cron.tick` event for the current time, as the scheduler
+publishes it. The event file accepts only the keys `type`, `source` and `payload`.
+
+The stub file has two keys, both optional:
+
+```yaml
+results:
+  action.steps[1]: { id: "m-42" }            # the result of step 1 of a sequence
+  action.steps[2]:                           # a wait step: the event that ends the wait
+    type: chat.reply
+    payload: { text: "approve" }
+state:
+  site: { last_build: "2026-11-01" }         # what ${state.site.last_build} reads
+```
+
+A key in `results` is the path of a step: `action` for the task's action, or
+`action.steps[<k>]` for step `<k>` of a `sequence` (from 0). Its value is the result the
+step returns, in the shape the real step returns it. A path that the task does not have
+is refused. `${secrets.<name>}` renders as the text `<secret <name>>`.
+
+Output, on success, is JSON on stdout. Nothing in it is published or written:
+
+```json
+{
+  "result": { "steps": ["ok", { "id": "m-42" }, { "type": "chat.reply", "payload": { "text": "approve" } }] },
+  "emitted": [{ "type": "deploy.approved", "payload": { "message": "m-42" } }],
+  "state_updates": [{ "namespace": "site", "key": "approved", "value": true }]
+}
+```
+
+`emitted` lists each event the `emit` rules would publish, with `dedup_key` when the rule
+has one. `state_updates` lists each value the run would write.
+
+A failure prints one line on stderr and exits 1. Some examples:
+
+```
+dry-run: action.steps[1] (connector chat.send) has no stub: add results."action.steps[1]" to the stub file
+dry-run: the event does not trigger task "triage": filter payload.from != 'noreply@example.com' is false
+dry-run: emit[0] (item.found): each did not render to an array (got string)
+dry-run: no task "nope" in the tasks files
+```
+
+An invalid tasks file prints its problems as `oa validate` does and exits 1. An
+unreadable or invalid event file or stub file exits 2.
 
 ### `oa emit <type> [payload.json|-] [options]`
 
