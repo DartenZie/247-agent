@@ -38,6 +38,8 @@ The package and the installer both ship this unit, and the release carries it as
 Description=247-agent core
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=notify
@@ -65,6 +67,7 @@ WantedBy=multi-user.target
 
 | Line | What it does for you |
 |---|---|
+| `StartLimitIntervalSec=600`, `StartLimitBurst=5` | a daemon that crashes again and again stops after the fifth start in ten minutes and the unit becomes `failed`, which `systemctl is-failed 247-agent` and failed-unit alerts show ([crash loops](#crash-loops)) |
 | `Type=notify` | `systemctl start 247-agent` returns only once the daemon has loaded its configuration, opened the database and bound its socket; a start that fails returns an error, and units ordered `After=247-agent.service` start after that point |
 | `NotifyAccess=all` | the daemon sends its notifications through `systemd-notify`, a child process |
 | `User=` / `Group=` | the daemon and every connector it starts run as the unprivileged `247-agent` user |
@@ -265,8 +268,8 @@ configuration with the new version, then restart a running service. If the new v
 rejects the configuration, the upgrade fails and the service is not restarted. The old
 daemon keeps running, but the new files are already in place: a connector it respawns,
 or a restart after a crash, uses them. Fix the configuration soon. Then, for a `.deb`,
-run `sudo dpkg --configure -a`. For an `.rpm`, run `sudo systemctl restart 247-agent`
-and the check above. Roll back by installing the previous file.
+run `sudo dpkg --configure -a`. For an `.rpm`, run `sudo systemctl reset-failed 247-agent`,
+then `sudo systemctl restart 247-agent` and the check above. Roll back by installing the previous file.
 
 **Installer.** Run the installer again. It downloads the new release, unpacks it as
 `/opt/247-agent-<version>`, runs the new version's `oa validate` on your existing
@@ -277,6 +280,7 @@ flight). The unit file is replaced, your drop-in and
 
 ```sh
 ln -sfn /opt/247-agent-<previous version> /opt/247-agent
+systemctl reset-failed 247-agent
 systemctl restart 247-agent
 ```
 
@@ -417,6 +421,31 @@ it exits 1 even if the stop has not finished. On the next start:
 A socket file left by a dead daemon is replaced silently (`api.stale_socket_removed`). A
 socket with a live daemon behind it refuses the start with `another daemon is listening
 on /run/247-agent/core.sock` and exit 1.
+
+### Crash loops
+
+systemd counts every start of the unit: a start after a crash, a watchdog restart, and a
+`systemctl start` or `restart`. The sixth start within ten minutes is refused. The unit
+then stays `failed` with the result `start-limit-hit`, and the daemon does not run. A
+single crash still restarts the daemon after five seconds, unless five starts already
+happened in the last ten minutes. A loop, for example a configuration that fails at every
+start, ends in `failed` within about a minute. A start that hangs until `TimeoutStartSec=`
+does not loop fast enough: its starts are five minutes apart, so the unit keeps
+restarting.
+
+To find the cause and start the daemon again:
+
+```sh
+systemctl is-failed 247-agent        # prints failed
+journalctl -u 247-agent -n 50 --no-pager
+sudo systemctl reset-failed 247-agent
+sudo systemctl start 247-agent
+```
+
+Without `reset-failed`, systemd refuses a start until ten minutes have passed since the
+first counted start. An upgrade with the package or the installer resets the counter
+before it starts the daemon. To change the limits, set `StartLimitIntervalSec=` and
+`StartLimitBurst=` under `[Unit]` in a drop-in.
 
 ## Daemon flags
 

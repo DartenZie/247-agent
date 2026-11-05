@@ -78,8 +78,14 @@ notification through a `systemd-notify` child, which is why the access is `all` 
 template's `After=247-agent.service` therefore waits for a daemon that is ready, not one
 that was forked. A notification from a short-lived child counts only if systemd can
 still attribute it to the unit; the rigs prove it on systemd 255 (CI, Ubuntu 24.04) and
-257 (`npm run test:linux`, Debian 13). `docs/operations/production.md` shows the unit and
-must match it.
+257 (`npm run test:linux`, Debian 13). `StartLimitIntervalSec=600` and
+`StartLimitBurst=5` sit in `[Unit]`: systemd's default (5 starts in 10 seconds) never
+trips with `RestartSec=5`, so a crash loop would restart forever and never show as
+`failed` (issue #108). Every start counts, manual ones too, so `postinstall.sh` and
+`install.sh` run `systemctl reset-failed 247-agent` before they start or restart the
+unit; a retry after a crash-looping upgrade would otherwise be refused.
+`docs/operations/production.md` shows the unit and must match it;
+`systemd-unit.test.ts` checks both, and the reset before each start.
 
 ## The packages
 

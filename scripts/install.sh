@@ -233,7 +233,7 @@ not_up() {
   printf 'install.sh: %s\n' "$1" >&2
   printf '  see: systemctl status 247-agent; journalctl -u 247-agent -n 50 --no-pager\n' >&2
   if [ -n "$previous" ] && [ -n "$current" ] && [ "$current" != "$version" ]; then
-    printf '  rollback: ln -sfn %s %s && systemctl restart 247-agent\n' "$previous" "$prefix" >&2
+    printf '  rollback: ln -sfn %s %s && systemctl reset-failed 247-agent; systemctl restart 247-agent\n' "$previous" "$prefix" >&2
     printf '  (if %s migrated state.db, restore the state.db.schema-<n>.bak copy next to it first)\n' "$version" >&2
   fi
   exit 1
@@ -280,6 +280,7 @@ if [ $service = 1 ]; then
     root install -m 644 "$tmp/247-agent-connector@.service" "/etc/systemd/system/247-agent-connector@.service"
     root systemctl daemon-reload
     if [ $fresh = 1 ]; then
+      root systemctl reset-failed 247-agent 2> /dev/null || true
       root systemctl enable --now 247-agent || not_up "the start of 247-agent $version failed"
       check_up "247-agent $version did not stay up after its first start"
       say "enabled and started 247-agent"
@@ -287,6 +288,8 @@ if [ $service = 1 ]; then
     # must not report as fine). A unit that is stopped and disabled stays that way.
     elif root systemctl is-active --quiet 247-agent || root systemctl is-enabled --quiet 247-agent; then
       if [ $restart = 1 ]; then
+        # A unit that crash-looped into its start limit refuses a restart until it is reset.
+        root systemctl reset-failed 247-agent 2> /dev/null || true
         root systemctl restart 247-agent || not_up "the restart into 247-agent $version failed"
         check_up "247-agent $version did not stay up after the restart"
         say "restarted 247-agent"
@@ -305,7 +308,7 @@ fi
 say ""
 if [ -n "$current" ] && [ "$current" != "$version" ]; then
   say "upgraded 247-agent $current -> $version ($prefix -> $tree)"
-  say "rollback: ln -sfn $previous $prefix && systemctl restart 247-agent"
+  say "rollback: ln -sfn $previous $prefix && systemctl reset-failed 247-agent; systemctl restart 247-agent"
   say "  (if $version migrated state.db, $current refuses it: stop it, then restore the state.db.schema-<n>.bak copy next to state.db)"
   say "remove old versions with: rm -rf $prefix-<version>"
 else

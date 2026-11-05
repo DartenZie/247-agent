@@ -56,6 +56,10 @@ Counters reset when the daemon restarts; `oa_build_info{version}` and
 `oa_uptime_seconds` tell you when that happened. The [metrics reference](../reference/metrics.md)
 lists every metric with its labels.
 
+A daemon that crashes again and again stops being restarted and its unit becomes
+`failed` ([crash loops](production.md#crash-loops)). Alert on failed systemd units, or
+check `systemctl is-failed 247-agent`.
+
 Queries that make useful alerts:
 
 ```promql

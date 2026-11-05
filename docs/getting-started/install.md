@@ -44,7 +44,7 @@ To upgrade, install the newer file the same way. The new version validates your
 existing configuration first. If it rejects the configuration, the upgrade fails and
 the running daemon is not restarted. Fix the configuration. Then, for a `.deb`, run
 `sudo dpkg --configure -a` to finish the upgrade. For an `.rpm`, run
-`sudo systemctl restart 247-agent`, then
+`sudo systemctl reset-failed 247-agent`, then `sudo systemctl restart 247-agent`, then
 `sudo sh /opt/247-agent/share/check-service.sh`. The old daemon keeps running until
 then, but the new files are already in place, so restart it soon. If the new version migrates the
 database, an older package refuses to start on it. The daemon keeps a copy from before
@@ -82,6 +82,7 @@ symlink at the old tree and restart:
 
 ```sh
 sudo ln -sfn /opt/247-agent-<old version> /opt/247-agent
+sudo systemctl reset-failed 247-agent
 sudo systemctl restart 247-agent
 ```
 
