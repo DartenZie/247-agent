@@ -257,7 +257,9 @@ Statuses: `queued` (created, `attempt` 0), `running` (an attempt is executing, o
 retry is waiting out its backoff with `error` set), `waiting` (parked for an event or a
 timeout), `succeeded`, `failed`, `cancelled` (ended by `POST /v1/runs/{id}/cancel`, with
 `error: "cancelled on request"`). A run re-queued because its wait ended continues the
-same attempt; a retry is a new attempt.
+same attempt; a retry is a new attempt. `started_at` is when the first attempt started,
+so the time to `finished_at` includes retries and waits. A `succeeded` run has `error:
+null`, also after a failed attempt.
 
 ### TaskEntry
 

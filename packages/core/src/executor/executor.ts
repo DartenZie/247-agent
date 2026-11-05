@@ -963,6 +963,7 @@ export class Executor {
         this.store.runs.setStatus(run.id, 'succeeded', {
           finished_at: finishedAt,
           result: final.result,
+          error: null, // an earlier attempt's failure is not the run's
         });
         for (const u of updates) {
           this.store.state.put(u.namespace, u.key, u.value, finishedAt);

@@ -30,10 +30,12 @@ export interface RunFilter {
 }
 
 export interface RunPatch {
+  /** Set once: the first attempt's start stays when a later attempt or a resume passes another. */
   started_at?: string;
   finished_at?: string;
   result?: JsonValue;
-  error?: string;
+  /** `null` clears it; left out, it stays. */
+  error?: string | null;
   attempt?: number;
 }
 
@@ -69,10 +71,10 @@ export class RunStore {
     this.byTaskEventStmt = db.prepare('SELECT * FROM runs WHERE task = ? AND event_id = ?');
     this.setStatusStmt = db.prepare(
       `UPDATE runs SET status = @status,
-         started_at  = COALESCE(@started_at, started_at),
+         started_at  = COALESCE(started_at, @started_at),
          finished_at = COALESCE(@finished_at, finished_at),
          result      = COALESCE(@result, result),
-         error       = COALESCE(@error, error),
+         error       = CASE WHEN @clear_error THEN NULL ELSE COALESCE(@error, error) END,
          attempt     = COALESCE(@attempt, attempt)
        WHERE id = @id`,
     );
@@ -180,6 +182,7 @@ export class RunStore {
       finished_at: patch.finished_at ?? null,
       result: patch.result === undefined ? null : JSON.stringify(patch.result),
       error: patch.error ?? null,
+      clear_error: patch.error === null ? 1 : 0,
       attempt: patch.attempt ?? null,
     });
   }
