@@ -125,7 +125,39 @@ On the server the default socket path matches the unit, so no `--socket` or
 `sandbox: bwrap` on a shell action, `defaults.sandbox: bwrap`, and the agent program's
 manifest sandbox all need the `bubblewrap` package (`apt install bubblewrap`; the
 packages recommend it) and unprivileged user namespaces. Older Debian needs
-`sysctl kernel.unprivileged_userns_clone=1`; elsewhere it is the default. A setuid `bwrap`
+`sysctl kernel.unprivileged_userns_clone=1`. Ubuntu 23.10 and later set
+`kernel.apparmor_restrict_unprivileged_userns=1`, which blocks bubblewrap unless an
+AppArmor profile allows it. If your AppArmor ships a `bwrap-userns-restrict` profile
+(AppArmor 4.1 and later), load that one, because it keeps the programs bwrap starts
+confined. Otherwise, add a profile for `bwrap` and load it. Such a profile lets every
+local user create user namespaces through `bwrap`, not only the service user.
+
+```text
+# /etc/apparmor.d/bwrap
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+```
+
+```sh
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
+To check the host before you enable a sandbox, run a minimal sandbox as the service user
+with the unit's `NoNewPrivileges`:
+
+```sh
+sudo systemd-run --pty --wait -p User=247-agent -p NoNewPrivileges=yes \
+  bwrap --unshare-pid --unshare-ipc --ro-bind / / true
+```
+
+The daemon runs the same check at start and on every reload when a task or an agent
+connector uses `sandbox: bwrap`. When the check fails, the daemon logs
+`core.sandbox_unavailable` with the cause and keeps running. A setuid `bwrap`
 does not work under `NoNewPrivileges=yes`, and the unit must not set
 `RestrictNamespaces=`. Directories a sandboxed step or agent writes to still need
 `ReadWritePaths=` in the unit, because the sandbox lives inside the service's own mount

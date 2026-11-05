@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { BwrapProbeResult } from './actions/bwrap-probe.js';
+import type { SandboxConfig } from './actions/sandbox.js';
 import type { ActionRunner, ActionRunners } from './actions/types.js';
 import { taskSource } from './bus/matcher.js';
 import { ConfigLoadError, createCore, type Core } from './core.js';
@@ -418,6 +420,101 @@ describe('createCore with an event loop', () => {
     } finally {
       await looping.stop();
       rmSync(loopDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('createCore checks bubblewrap when something is sandboxed', () => {
+  const boxed = [
+    'tasks:',
+    '  - name: boxed',
+    '    trigger: { kind: manual }',
+    '    action: { kind: shell, cmd: ["true"], sandbox: bwrap }',
+  ].join('\n');
+  const plain = [
+    'tasks:',
+    '  - name: plain',
+    '    trigger: { kind: manual }',
+    '    action: { kind: shell, cmd: ["true"] }',
+  ].join('\n');
+
+  const startWith = async (
+    tasks: string,
+    result: BwrapProbeResult,
+    extra: { defaultSandbox?: SandboxConfig } = {},
+  ) => {
+    const file = join(dir, 'boxed.yaml');
+    writeFileSync(file, tasks);
+    const out: Record<string, unknown>[] = [];
+    let probes = 0;
+    const c = createCore({
+      tasksFiles: [file],
+      dbPath: join(dir, 'boxed.db'),
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => out.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      runners: hangAll,
+      bwrapProbe: () => {
+        probes += 1;
+        return Promise.resolve(result);
+      },
+      ...extra,
+    });
+    await c.start();
+    return { c, out, file, probes: () => probes };
+  };
+  const unavailable = (out: Record<string, unknown>[]) =>
+    out.filter((l) => l.msg === 'core.sandbox_unavailable');
+  const cause = 'bwrap cannot start a sandbox (bwrap: setting up uid map: Permission denied)';
+
+  it('warns at start with the cause and what is sandboxed, and starts anyway', async () => {
+    const { c, out } = await startWith(boxed, { ok: false, cause });
+    try {
+      expect(unavailable(out)).toEqual([
+        expect.objectContaining({ level: 'warn', cause, used_by: 'task boxed' }),
+      ]);
+      expect(out.some((l) => l.msg === 'core.started')).toBe(true);
+    } finally {
+      await c.stop();
+    }
+  });
+
+  it('counts defaults.sandbox', async () => {
+    const { c, out } = await startWith(
+      plain,
+      { ok: false, cause },
+      { defaultSandbox: { backend: 'bwrap', extra_args: [], ro_binds: [], rw_binds: [] } },
+    );
+    try {
+      expect(unavailable(out)).toEqual([expect.objectContaining({ used_by: 'task plain' })]);
+    } finally {
+      await c.stop();
+    }
+  });
+
+  it('does not probe when nothing uses bwrap, and stays quiet when bwrap works', async () => {
+    const none = await startWith(plain, { ok: false, cause });
+    await none.c.stop();
+    expect(none.probes()).toBe(0);
+    expect(unavailable(none.out)).toEqual([]);
+
+    const works = await startWith(boxed, { ok: true });
+    await works.c.stop();
+    expect(works.probes()).toBe(1);
+    expect(unavailable(works.out)).toEqual([]);
+  });
+
+  it('probes again on a reload that adds a sandbox', async () => {
+    const { c, out, file, probes } = await startWith(plain, { ok: false, cause });
+    try {
+      expect(probes()).toBe(0);
+      writeFileSync(file, boxed);
+      expect((await c.reload()).ok).toBe(true);
+      expect(probes()).toBe(1);
+      expect(unavailable(out)).toEqual([expect.objectContaining({ used_by: 'task boxed' })]);
+    } finally {
+      await c.stop();
     }
   });
 });
