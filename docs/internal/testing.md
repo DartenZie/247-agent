@@ -37,6 +37,16 @@ that another test file or a parallel run can share, such as the supervisor's def
 agent `work_dir` under `tmpdir()`: pass `agents.workDir` instead. The ftp connector's
 tests use `tempDir()` and `removeTempDirs()` from `connectors/ftp/src/test-helpers.ts`.
 
+A test that asserts that nothing happens after a delay does not sleep for real time. It
+uses the time seam of the code under test and moves it past the delay: `vi.useFakeTimers()`
+for the dispatcher, cron and poller schedules, and a manual `setTimer` (`SetTimer` in
+`packages/core/src/clock.ts`) for the supervisor's restart and health timers. Calling
+`poll()` directly gives the same result without waiting for a cron tick. A test that waits
+for something to happen polls for it (`vi.waitFor`, or an `until` helper) and does not
+sleep for a fixed time. The exception is a wait for the operating system, such as a
+child process that dies after a burst of output. No timer controls such a wait, so the
+test sleeps and says why.
+
 Integration tests (`packages/core/src/integration.test.ts`,
 `integration.agent.test.ts`, `core.*.test.ts`, `daemon.test.ts`) start a real daemon on
 a temp SQLite file with the fixtures below and drive it through the API: the non-model

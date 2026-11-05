@@ -68,9 +68,36 @@ beforeEach(() => {
   agentWork = tempDir('oa-sup-work-');
 });
 
+/** A one-shot timer the test fires by hand: `advance(ms)` runs every timer due by then. */
+function manualTimer(): {
+  setTimer: (fn: () => void, ms: number) => () => void;
+  pending: () => number[];
+  advance: (ms: number) => void;
+} {
+  let now = 0;
+  const timers = new Set<{ at: number; fn: () => void }>();
+  return {
+    setTimer: (fn, ms) => {
+      const t = { at: now + ms, fn };
+      timers.add(t);
+      return () => timers.delete(t);
+    },
+    pending: () => [...timers].map((t) => t.at - now),
+    advance: (ms) => {
+      now += ms;
+      for (const t of [...timers].sort((a, b) => a.at - b.at)) {
+        if (t.at <= now && timers.delete(t)) {
+          t.fn();
+        }
+      }
+    },
+  };
+}
+
 function make(
   manifests: ConnectorConfig[],
   secrets: Record<string, string> = {},
+  setTimer?: (fn: () => void, ms: number) => () => void,
 ): ConnectorSupervisor {
   lines = [];
   sup = new ConnectorSupervisor({
@@ -83,6 +110,7 @@ function make(
     }),
     env: { PATH: process.env.PATH ?? '', FAKE_EXTRA: 'from-base' },
     agents: { defaults: AgentDefaults.parse({}), workDir: agentWork },
+    ...(setTimer === undefined ? {} : { setTimer }),
   });
   return sup;
 }
@@ -432,21 +460,45 @@ describe('ConnectorSupervisor', () => {
     }
   });
 
+  it('waits for the injected timer before it respawns a crashed connector', async () => {
+    const timer = manualTimer();
+    const s = make([manifest()], {}, timer.setTimer);
+    await s.start();
+    await s.call('fake', 'crash', {}, { signal: signal() });
+    await until(() => timer.pending().length === 1);
+    expect(timer.pending()).toEqual([20]); // restart.base
+    expect(s.status()[0]).toMatchObject({ state: 'down', restarts: 1 });
+    timer.advance(19);
+    expect(s.status()[0]?.state).toBe('down');
+    timer.advance(1);
+    await until(() => s.status()[0]?.state === 'up');
+    expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
+  });
+
   it('restart() of a plain process does not double-spawn it', async () => {
     // fake-plain.ts exits once its emit to the test socket fails; an idle process is needed here.
-    const s = make([
-      manifest({
-        name: 'plain',
-        transport: 'none',
-        exec: ['node', '-e', 'setInterval(() => undefined, 60000)'],
-      }),
-    ]);
+    const timer = manualTimer();
+    const s = make(
+      [
+        manifest({
+          name: 'plain',
+          transport: 'none',
+          exec: ['node', '-e', 'setInterval(() => undefined, 60000)'],
+        }),
+      ],
+      {},
+      timer.setTimer,
+    );
     await s.start();
     const first = s.status()[0]?.pid;
     const status = await s.restart('plain');
     expect(status).toMatchObject({ name: 'plain', state: 'up', restarts: 0 });
     expect(status.pid).not.toBe(first);
-    await new Promise((r) => setTimeout(r, 200)); // long enough for a stray restart timer
+    // The old process exit is handled before kill() returns, so a stray restart would be
+    // scheduled by now. Past restart.max, any such timer has fired.
+    expect(timer.pending()).toEqual([]);
+    timer.advance(100);
+    expect(s.status()[0]).toMatchObject({ state: 'up', pid: status.pid });
     expect(lines.filter((l) => l.msg === 'connector.exited')).toEqual([]);
     expect(lines.filter((l) => l.msg === 'connector.up')).toHaveLength(2);
   });
@@ -475,6 +527,7 @@ describe('ConnectorSupervisor', () => {
         ),
       30_000,
     );
+    // A process the output limit killed exits on its own time; no timer seam covers that.
     await new Promise((r) => setTimeout(r, 200));
     expect(lines.filter((l) => l.msg === 'connector.exited')).toEqual([]);
     expect(s.status()[0]).toMatchObject({ name: 'loud', state: 'up', restarts: 0 });

@@ -460,8 +460,18 @@ tasks:
     await until(
       async () => (await api.listRuns({ task: 'react', status: 'succeeded' })).length === 2,
     );
-    // A few more ticks pass; the same two items never fire again.
-    await until(() => Promise.resolve(lines.filter((l) => l.msg === 'poller.polled').length >= 3));
+    // Two more polls by hand, with the cron disarmed: the same two items never fire again.
+    const [poller] = daemon.core.pollers;
+    await poller?.stop();
+    for (let i = 0; i < 2; i++) {
+      expect(await poller?.poll()).toEqual({
+        status: 'polled',
+        items: 2,
+        new: 0,
+        emitted: 0,
+        duplicates: 0,
+      });
+    }
     await daemon.core.executor.idle();
     const runs = await api.listRuns({ task: 'react' });
     expect(runs.map((r) => r.result).sort()).toEqual(['a', 'b']);
