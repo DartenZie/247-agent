@@ -186,7 +186,12 @@ the rest for the next one.
 ## Rules a change must keep
 
 - A schema change is a new migration appended to `migrations.ts`; existing ones are
-  never edited. `user_version` moves with it.
+  never edited. `user_version` moves with it. It comes with an entry in `SEEDS` in
+  `store/migrations.test.ts`: rows for what it adds, written right after it runs. The
+  tests build a database with rows at every earlier version, upgrade it, and fail when a
+  row changes, an index is missing, or the schema differs from a new database's. A column
+  added to an existing table goes in `ADDED_COLUMNS` with the value older rows read, and a
+  new index goes in `INDEXES`.
 - A new table that references runs either carries a foreign key to `runs(id)` and is
   deleted in step 1 before the runs, or is kept alive like `llm_batches` and documented
   here.
