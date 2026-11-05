@@ -209,7 +209,11 @@ export class Dispatcher {
     }
     const byExpiry = all
       .filter((w) => w.wait.expires_at !== null)
-      .sort((a, b) => ((a.wait.expires_at ?? '') < (b.wait.expires_at ?? '') ? -1 : 1));
+      .sort((a, b) => {
+        const x = a.wait.expires_at ?? '';
+        const y = b.wait.expires_at ?? '';
+        return x < y ? -1 : x > y ? 1 : 0;
+      });
     // Only matchers still in use are kept, so rendered filters do not pile up.
     this.typeCache = types;
     this.filterCache = filters;

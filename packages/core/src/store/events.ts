@@ -63,7 +63,8 @@ export class EventStore {
       'SELECT * FROM events WHERE type = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?',
     );
     this.ofPrefixStmt = db.prepare(
-      `SELECT * FROM events WHERE type >= ? AND type < ? AND seq > ? AND seq <= ?
+      // Without the hint `ORDER BY seq` makes SQLite walk the rowid range instead.
+      `SELECT * FROM events INDEXED BY events_type_seq WHERE type >= ? AND type < ? AND seq > ? AND seq <= ?
        AND type_matches(?, type) ORDER BY seq LIMIT ?`,
     );
     this.ofPatternStmt = db.prepare(
