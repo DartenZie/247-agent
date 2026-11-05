@@ -81,7 +81,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 events after the `dispatch` cursor:
 
 1. Read the next batch of events.
-2. For each event: time out every pending wait whose `expires_at` is at or before the
+2. For each event: time out every pending wait (with a valid type and filter) whose `expires_at` is at or before the
    event's `ts` (`endWait('timeout')`); end every other pending wait whose type
    pattern matches and whose filter is truthy (`endWait('matched', event)`); if `depth > limits.max_event_depth`
    (default 32) drop it (`drop('depth')`) and start no run; else
@@ -99,8 +99,10 @@ events after the `dispatch` cursor:
 
 A wait's deadline is judged by when an event was stored, not when it is dispatched. A
 reply stored before the deadline still ends the wait when dispatch lags behind it (a
-stopped daemon, a long backlog); the clock times a wait out only once no stored event is
-left undispatched.
+crash between storing and dispatching it, a long backlog); the clock times a wait out
+only once no stored event is left undispatched, so a wait whose type or filter no longer
+compiles times out after the backlog is drained. Both `ts` and `expires_at` come from
+the daemon clock; a backward clock step can still order a timeout before its reply.
 
 `drain()` repeats until a batch is short. Every inserted event calls `wake()`, which
 coalesces into one `setImmediate` drain; a 1 s timer is the safety net, so a wait
