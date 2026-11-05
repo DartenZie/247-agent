@@ -6,7 +6,6 @@
  * session id to the run's policy; updates stream back through `AgentSession.prompt`.
  * This is the only module that imports the protocol SDK.
  */
-import { createInterface } from 'node:readline';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -29,6 +28,7 @@ import {
 import { execa } from 'execa';
 
 import type { Logger } from '../log.js';
+import { type OutputLimiter, pipeLines } from './output.js';
 import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 import {
   PERMISSION_CANCELLED,
@@ -51,6 +51,8 @@ export interface AcpSpawnOptions {
   /** The whole environment of the child (secrets already rendered). */
   env: Record<string, string>;
   log: Logger;
+  /** Bounds the stderr lines logged (a fresh one per spawn when absent). */
+  outputLimiter?: OutputLimiter | undefined;
   /** Reported to the agent as `clientInfo.version`. */
   version?: string | undefined;
   /** How long `initialize` may take before the spawn counts as failed. */
@@ -61,21 +63,6 @@ export interface AcpSpawnOptions {
 
 /** Bounds a spawn whose program never answers `initialize` (not an ACP agent, or hung). */
 const DEFAULT_INIT_TIMEOUT_MS = 30_000;
-
-/** Logs each line of a child's stream as `connector.output` (the supervisor does the same for MCP children). */
-export function pipeLines(
-  stream: NodeJS.ReadableStream | null | undefined,
-  name: string,
-  log: Logger,
-): void {
-  if (stream === null || stream === undefined) {
-    return;
-  }
-  const rl = createInterface({ input: stream });
-  rl.on('line', (line) => {
-    log.info('connector.output', { stream: name, line: line.slice(0, 2000) });
-  });
-}
 
 interface Registered {
   onPermission: PermissionHandler;
@@ -328,7 +315,7 @@ export class AcpAgent {
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     );
     const conn = app.connect(stream);
-    pipeLines(child.stderr, 'stderr', opts.log);
+    void pipeLines(child.stderr, 'stderr', opts.log, opts.outputLimiter);
     // On the exit, not execa's result, which waits for pipes a helper can hold (#198).
     const exited = sweepGroupAfter(child.pid, exitOf(child)).then(async () => {
       await releasePipes(child); // even from a helper outside the group (#200)

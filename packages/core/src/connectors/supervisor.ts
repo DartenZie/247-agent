@@ -37,7 +37,8 @@ import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { VERSION } from '../version.js';
 import type { AgentInfo, AgentSession } from './acp-types.js';
-import { AcpAgent, pipeLines } from './acp.js';
+import { AcpAgent } from './acp.js';
+import { OutputLimiter, pipeLines } from './output.js';
 import { connectorBaseEnv, connectorChildEnv, sandboxOf } from './child-env.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
 import { openNetProxy, type NetProxy } from './net-proxy.js';
@@ -683,6 +684,15 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     return this.managed.get(m.manifest.name) === m;
   }
 
+  /** One per process: its streams share the budget of logged output lines (#91). */
+  private outputLimiter(connector: string): OutputLimiter {
+    return new OutputLimiter({
+      onDrop: (lines) => {
+        this.metrics.connectorOutputDropped.inc({ connector }, lines);
+      },
+    });
+  }
+
   /**
    * Whether a spawn begun at `epoch` may still attach its process: not when the core is
    * stopping, `m` was killed meanwhile (stop, restart, a failed health check) or a reload
@@ -779,8 +789,9 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
           ),
       };
       m.process = proc;
-      pipeLines(child.stdout, 'stdout', log);
-      pipeLines(child.stderr, 'stderr', log);
+      const limiter = this.outputLimiter(m.manifest.name);
+      void pipeLines(child.stdout, 'stdout', log, limiter);
+      void pipeLines(child.stderr, 'stderr', log, limiter);
       this.up(m, log);
       return;
     }
@@ -800,6 +811,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
           cwd: spawn.cwd,
           env: spawn.env,
           log,
+          outputLimiter: this.outputLimiter(m.manifest.name),
           signal,
         });
       } catch (err) {
@@ -838,7 +850,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     transport.onerror = (err) => {
       log.warn('connector.transport_error', { error: err.message });
     };
-    pipeLines(transport.stderr, 'stderr', log);
+    void pipeLines(transport.stderr, 'stderr', log, this.outputLimiter(m.manifest.name));
     try {
       await connectUntil(client, transport, signal);
     } catch (err) {

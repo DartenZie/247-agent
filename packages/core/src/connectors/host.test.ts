@@ -278,6 +278,19 @@ describe('a unit without ops', () => {
     await expect(h.done).resolves.toBe(0);
   });
 
+  it('logs the process output as JSON connector.output lines, not raw text (#91)', async () => {
+    const h = await host('plain');
+    await h.done;
+    await until(() => hostLogs.some((l) => l.includes('fake-plain plain up')));
+    const line = hostLogs.find((l) => l.includes('fake-plain plain up')) ?? '';
+    expect(JSON.parse(line)).toMatchObject({
+      level: 'info',
+      msg: 'connector.output',
+      stream: 'stderr',
+      line: 'fake-plain plain up',
+    });
+  });
+
   it('exits non-zero when the process dies, so systemd restarts the unit', async () => {
     // No core socket: fake-plain's first emit fails and the process exits.
     const h = await host('plain');

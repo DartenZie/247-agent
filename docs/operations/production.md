@@ -387,7 +387,8 @@ Every line has `ts`, `level` and `msg`, the event name such as `run.started`,
 `wait.matched`, `connector.exited` or `sandbox.net_denied`. Every line about a run also
 carries `run_id`, `task` and `correlation_id`, and the correlation id is shared by every
 task the same real-world event caused, so one `select` shows an email's whole path.
-Connector output appears as `connector.output` lines with the connector's name.
+Connector output appears as `connector.output` lines with the connector's name, at most
+100 lines in 10 seconds per connector process; `connector.output_dropped` counts the rest.
 
 At start you see, in order, `core.config_loaded`, `core.started` with how many runs were
 recovered, `api.listening`, `daemon.started` and `daemon.home` with the version and the

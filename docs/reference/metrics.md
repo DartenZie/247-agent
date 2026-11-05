@@ -84,6 +84,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_llm_batches_pending` | gauge, at scrape | | batches submitted and not settled |
 | `oa_connector_up` | gauge, at scrape | `connector`, `transport` | 1 when the connector is up; a built-in poller is always 1 |
 | `oa_connector_restarts_total` | counter | `connector` | respawns scheduled after a crash or a failed start |
+| `oa_connector_output_dropped_total` | counter | `connector` | lines of connector output not logged because the process wrote more than 100 lines in 10 seconds |
 | `oa_connector_ops_total` | counter | `connector`, `op`, `result` (`ok`, `error`) | connector operations called, including through an agent's tool bridge |
 | `oa_connector_op_duration_seconds` | histogram | `connector`, `op` | seconds per operation call |
 | `oa_connector_health_checks_total` | counter | `connector`, `result` (`ok`, `failed`) | health pings |

@@ -3,7 +3,7 @@
  * `247-agent-connector-host [--config <agent.yaml>] [--socket <path>] <name>`: runs one
  * `managed_by: systemd` connector in its own `247-agent-connector@<name>` unit
  * (docs/internal/connectors.md, `connectors/host.ts`). Logs are JSON lines on stderr for journald,
- * like the daemon's; the connector's own stderr goes there too. SIGTERM/SIGINT stop the connector and exit.
+ * like the daemon's; the connector's own output goes there too, as `connector.output` lines. SIGTERM/SIGINT stop the connector and exit.
  */
 import { parseArgs } from 'node:util';
 
