@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createBus, type EventBus } from '../bus/bus.js';
 import { config, shell, testEnv, type TestEnv } from '../bus/testing.js';
-import { CronScheduler, floorToBoundary, makeTickEvent } from './cron.js';
+import { CronScheduler, makeTickEvent } from './cron.js';
 
 let env: TestEnv;
 let bus: EventBus;
@@ -12,10 +12,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-09-19T10:00:30.000Z'));
   env = testEnv();
-  // The scheduler reads the clock through the same fake time.
   const clock = { now: () => new Date() };
   bus = createBus({ store: env.store, clock, log: env.log });
-  scheduler = new CronScheduler({ bus, clock, log: env.log });
+  scheduler = new CronScheduler({ bus, log: env.log });
 });
 
 afterEach(() => {
@@ -31,7 +30,7 @@ const every = (name: string, schedule: string, over: Record<string, unknown> = {
   action: shell,
 });
 
-describe('makeTickEvent / floorToBoundary', () => {
+describe('makeTickEvent', () => {
   it('builds a deduplicated tick event', () => {
     expect(makeTickEvent('poll', new Date('2026-09-19T10:02:00.000Z'))).toEqual({
       type: 'cron.tick',
@@ -41,14 +40,14 @@ describe('makeTickEvent / floorToBoundary', () => {
     });
   });
 
-  it('floors to minutes for 5-field patterns and seconds for 6-field ones', () => {
-    const late = new Date('2026-09-19T10:02:00.734Z');
-    expect(floorToBoundary(late, '*/2 * * * *').toISOString()).toBe('2026-09-19T10:02:00.000Z');
-    expect(floorToBoundary(late, '@hourly').toISOString()).toBe('2026-09-19T10:02:00.000Z');
-    expect(floorToBoundary(late, '*/5 * * * * *').toISOString()).toBe('2026-09-19T10:02:00.000Z');
-    expect(floorToBoundary(new Date('2026-09-19T10:02:07.900Z'), '* * * * * *').toISOString()).toBe(
-      '2026-09-19T10:02:07.000Z',
-    );
+  it('stamps a late tick with the time it was scheduled for', () => {
+    scheduler.start(config([every('poll', '* * * * *')]));
+    // The process stalls past the 10:01 boundary; the timer still wakes 30 s after it was armed.
+    vi.setSystemTime(new Date('2026-09-19T10:02:30.000Z'));
+    vi.advanceTimersByTime(30_000);
+    expect(env.store.events.listAfter(0, 10).map((e) => e.payload)).toEqual([
+      { task: 'poll', scheduled_at: '2026-09-19T10:01:00.000Z' },
+    ]);
   });
 });
 

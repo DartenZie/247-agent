@@ -2,20 +2,26 @@ import { Cron, CronPattern } from 'croner';
 
 /** Wider than any real daylight-saving shift (Troll station moves by 2 h). */
 const SHIFT_WINDOW_MS = 3 * 60 * 60_000;
-/** The longest delay `setTimeout` accepts; a later run is waited out in several steps. */
-const MAX_TIMEOUT_MS = 2_147_483_647;
+/**
+ * The longest single wait. Timers run on a monotonic clock, so a wall clock that is
+ * stepped (NTP after boot, a resumed VM) is noticed at the next wake-up, as croner does.
+ */
+const MAX_WAIT_MS = 30_000;
 
 /**
- * A cron schedule's run times. croner runs each wall-clock time once, so in the hour that
- * repeats when clocks go back it skips the second pass. That is right for a fixed-time
- * schedule (`30 2 * * *` runs once), but it opens a gap of an hour or more in a schedule
- * whose hour field matches every hour (every 30 minutes, `@hourly`). For those, `next` also
- * returns the second pass of each match in the repeated hour, so they keep their pace in
- * real time (#98).
+ * A cron schedule's run times, on top of croner. Near the instant the clocks go back,
+ * croner maps each ambiguous wall time to one of its two instants, which one depending on
+ * the zone, and asked from inside the repeated hour it can answer with a time already
+ * past. So around that instant `next` scans the instants itself and asks croner only
+ * whether each one matches. A schedule whose hour field matches every hour (every 30
+ * minutes, `@hourly`) runs in both passes of the repeated hour and keeps its pace in real
+ * time (#98). Any other schedule (`30 2 * * *`) runs in the first pass only, once.
  */
 export class Schedule {
   private readonly cron: Cron;
   private readonly everyHour: boolean;
+  /** The step of the scan: a second for 6- and 7-field patterns, else a minute. */
+  private readonly unit: number;
 
   constructor(
     readonly pattern: string,
@@ -23,37 +29,36 @@ export class Schedule {
   ) {
     const options = { paused: true, ...(tz === undefined ? {} : { timezone: tz }) };
     this.cron = new Cron(pattern, options);
-    this.everyHour = new CronPattern(pattern, tz).hour.every((h) => h === 1);
+    const parsed = new CronPattern(pattern, tz);
+    this.everyHour = parsed.hour.every((h) => h === 1);
+    this.unit = parsed.pattern.split(' ').length >= 6 ? 1000 : 60_000;
   }
 
   /** The first run strictly after `after`, or `null` when the schedule never runs again. */
   next(after: Date): Date | null {
     const from = after.getTime();
-    const back = this.clocksBackNear(from);
+    const plain = this.cron.nextRun(after);
+    const back =
+      this.clocksBackNear(from) ?? (plain === null ? null : this.clocksBackNear(plain.getTime()));
     if (back === null) {
-      return this.cron.nextRun(after);
-    }
-    const { change, shift } = back;
-    let plain: Date | null;
-    if (from >= change && from < change + shift) {
-      // Asked from inside the second pass, croner answers with a time in the first pass,
-      // which is already past. Its next run proper is at or after the repeated hour.
-      const end = new Date(change + shift);
-      plain = this.cron.match(end) ? end : this.cron.nextRun(end);
-    } else {
-      plain = this.cron.nextRun(after);
-    }
-    if (!this.everyHour) {
       return plain;
     }
-    // Wall times in [change, change + shift) repeat those in [change - shift, change). A run
-    // `r` of the first pass recurs at `r + shift`; it must land after `from`.
-    const first = this.cron.nextRun(new Date(Math.max(from - shift, change - shift - 1000)));
-    if (first === null || first.getTime() >= change || first.getTime() + shift <= from) {
-      return plain;
+    // Wall times in [change, end) repeat those in [start, change).
+    const start = back.change - back.shift;
+    const end = back.change + back.shift;
+    if (from >= end || (plain !== null && plain.getTime() < start)) {
+      return plain; // croner is exact away from the ambiguous wall times
     }
-    const repeat = new Date(first.getTime() + shift);
-    return plain !== null && plain.getTime() <= repeat.getTime() ? plain : repeat;
+    const first = Math.ceil(Math.max(from + 1, start) / this.unit) * this.unit;
+    for (let t = first; t < end; t += this.unit) {
+      const at = new Date(t);
+      if ((t < back.change || this.everyHour) && this.cron.match(at)) {
+        return at;
+      }
+    }
+    // The wall time at `end` is past the repeated ones, so croner is exact from there.
+    const endAt = new Date(end);
+    return this.cron.match(endAt) ? endAt : this.cron.nextRun(endAt);
   }
 
   /** When clocks go back within a few hours of `from`: the instant and by how much. */
@@ -139,7 +144,7 @@ export function armSchedule(schedule: Schedule, handlers: ScheduleHandlers): Sch
     if (next === null) {
       return;
     }
-    const wait = Math.min(Math.max(next.getTime() - Date.now(), 0), MAX_TIMEOUT_MS);
+    const wait = Math.min(Math.max(next.getTime() - Date.now(), 0), MAX_WAIT_MS);
     timer = setTimeout(fire, wait);
   };
 
@@ -150,7 +155,7 @@ export function armSchedule(schedule: Schedule, handlers: ScheduleHandlers): Sch
     }
     const now = Date.now();
     if (now < next.getTime()) {
-      arm(); // woke early, or a run further away than one timer allows
+      arm(); // woke early, or a run further away than one wait
       return;
     }
     const at = next;

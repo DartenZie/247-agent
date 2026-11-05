@@ -19,10 +19,10 @@ work too. `oa validate` rejects a schedule that can never fire.
 zone applies.
 
 When the clocks change for daylight saving time, a schedule that names fixed hours
-(`30 2 * * *`) runs once a day: never twice in the hour that repeats in autumn, and at
-03:00 instead of the hour that is skipped in spring. A schedule whose hour field is `*`
-(`*/30 * * * *`, `@hourly`) keeps its pace in real time and also runs in the repeated
-hour.
+(`30 2 * * *`) runs once a day. In autumn it runs only in the first pass of the hour
+that repeats. In spring, a run in the hour that is skipped moves one hour later on the
+wall clock: 02:30 runs at 03:30. A schedule whose hour field is `*` (`*/30 * * * *`,
+`@hourly`) keeps its pace in real time and also runs in the repeated hour.
 
 Each tick publishes a `cron.tick` event with `payload: { task, scheduled_at }` and a
 `dedup_key` of `cron:<task>:<scheduled_at>`, and one run starts from it. With

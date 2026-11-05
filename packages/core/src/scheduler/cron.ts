@@ -1,8 +1,5 @@
-import { CronPattern } from 'croner';
-
 import type { EventBus } from '../bus/bus.js';
 import { CRON_TICK, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
-import type { Clock } from '../clock.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import type { NewEvent } from '../store/types.js';
@@ -10,7 +7,6 @@ import { armSchedule, Schedule, type ScheduleTimer } from './schedule.js';
 
 export interface SchedulerOptions {
   bus: EventBus;
-  clock: Clock;
   log: Logger;
   metrics?: Metrics | undefined;
 }
@@ -32,13 +28,6 @@ export function makeTickEvent(task: string, scheduledAt: Date): NewEvent {
   };
 }
 
-/** Floors `now` to the boundary the pattern fires on: seconds for 6/7-field, else minutes. */
-export function floorToBoundary(now: Date, schedule: string): Date {
-  const fields = new CronPattern(schedule).pattern.split(' ').length;
-  const unit = fields >= 6 ? 1000 : 60_000;
-  return new Date(Math.floor(now.getTime() / unit) * unit);
-}
-
 /**
  * One schedule timer per cron task (see `schedule.ts`). Each tick publishes a `cron.tick` event; the dispatcher
  * decides whether to queue a run (see `overlap`). Missed ticks while the daemon was down
@@ -46,14 +35,12 @@ export function floorToBoundary(now: Date, schedule: string): Date {
  */
 export class CronScheduler {
   private readonly bus: EventBus;
-  private readonly clock: Clock;
   private readonly log: Logger;
   private readonly metrics: Metrics;
   private jobs = new Map<string, { job: ScheduleTimer; schedule: string }>();
 
   constructor(opts: SchedulerOptions) {
     this.bus = opts.bus;
-    this.clock = opts.clock;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
   }
@@ -99,8 +86,7 @@ export class CronScheduler {
     }
     const { schedule } = trigger;
     const job = armSchedule(new Schedule(schedule, trigger.tz), {
-      onTick: () => {
-        const at = floorToBoundary(this.clock.now(), schedule);
+      onTick: (at) => {
         const result = this.bus.publish(makeTickEvent(task.name, at));
         this.metrics.cronTicks.inc({ task: task.name });
         this.log.debug(result.status === 'inserted' ? 'cron.tick' : 'cron.tick_duplicate', {

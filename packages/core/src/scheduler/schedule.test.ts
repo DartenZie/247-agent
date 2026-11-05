@@ -92,6 +92,28 @@ describe('Schedule.next across daylight-saving changes', () => {
     ]);
   });
 
+  it('keeps its pace through a two-hour shift (Antarctica/Troll)', () => {
+    // 2026-10-25 01:00Z: 03:00 +02 becomes 01:00 +00, so 01:00–02:59 repeats.
+    const s = new Schedule('*/30 * * * *', 'Antarctica/Troll');
+    expect(runs(s, '2026-10-24T23:00:00Z', 8)).toEqual(
+      ['23:30', '00:00', '00:30', '01:00', '01:30', '02:00', '02:30', '03:00'].map((hm) =>
+        hm === '23:30' ? '2026-10-24T23:30:00.000Z' : `2026-10-25T${hm}:00.000Z`,
+      ),
+    );
+    // A fixed time in the repeated hours runs once, in the first pass.
+    expect(runs(new Schedule('30 2 * * *', 'Antarctica/Troll'), '2026-10-24T12:00:00Z', 2)).toEqual(
+      ['2026-10-25T00:30:00.000Z', '2026-10-26T02:30:00.000Z'],
+    );
+  });
+
+  it('keeps its pace through a 30-minute shift (Australia/Lord_Howe)', () => {
+    // 2026-04-04 15:00Z: 02:00 +11 becomes 01:30 +10:30, so 01:30–01:59 repeats.
+    const s = new Schedule('*/15 * * * *', 'Australia/Lord_Howe');
+    expect(runs(s, '2026-04-04T14:20:00Z', 5)).toEqual(
+      ['14:30', '14:45', '15:00', '15:15', '15:30'].map((hm) => `2026-04-04T${hm}:00.000Z`),
+    );
+  });
+
   describe('without tz, in the host zone', () => {
     const tz = process.env.TZ;
     afterEach(() => {
@@ -154,6 +176,21 @@ describe('armSchedule', () => {
     vi.advanceTimersByTime(2 * 60_000);
     expect(n).toBe(2);
     expect(errors.map((e) => (e as Error).message)).toEqual(['boom', 'boom']);
+    timer.stop();
+  });
+
+  it('fires on time when the wall clock is stepped forward', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const fired: string[] = [];
+    const timer = armSchedule(new Schedule('0 12 * * *', 'UTC'), {
+      onTick: (at) => fired.push(at.toISOString()),
+      onError: () => undefined,
+    });
+    // NTP steps the clock 12 h forward; timers do not move with it.
+    vi.setSystemTime(new Date('2026-01-01T11:59:50Z'));
+    vi.advanceTimersByTime(40_000);
+    expect(fired).toEqual(['2026-01-01T12:00:00.000Z']);
     timer.stop();
   });
 

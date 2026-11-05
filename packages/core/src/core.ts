@@ -307,7 +307,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.maxEventDepth === undefined ? {} : { maxDepth: opts.maxEventDepth }),
     ...(opts.maxChainRuns === undefined ? {} : { maxChainRuns: opts.maxChainRuns }),
   });
-  const scheduler = new CronScheduler({ bus, clock, log, metrics });
+  const scheduler = new CronScheduler({ bus, log, metrics });
   const taskInfo: TaskInfo = { store, nextFire: (task) => scheduler.nextRun(task) };
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
   let tasksFiles = opts.tasksFiles;
