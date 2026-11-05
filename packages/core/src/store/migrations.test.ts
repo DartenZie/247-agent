@@ -36,12 +36,14 @@ const SEEDS: readonly string[] = [
   INSERT INTO waits (run_id, task, type, filter, expires_at, on_timeout, resume, created_at, outcome, event_id)
     VALUES ('run_2', 'approve', 'approval.given', 'event.payload.ok', '2026-01-02T00:00:00.000Z', 'fail', '{"step":1}', '2026-01-01T00:00:01.100Z', NULL, NULL);
   `,
-  // 3: ledger.
+  // 3: ledger. Retention removed the newest row, so the id counter is ahead of max(id).
   `
   INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, cache_read, cache_write, usd, priced_by, ts)
     VALUES ('run_1', 'triage', 'anthropic', 'claude-haiku-4-5', 1200, 80, 1000, 200, 0.0042, 'table', '2026-01-01T00:00:00.500Z'),
            ('run_1', 'triage', 'openrouter', 'typesafe/jev-1.13', 300, 0, 0, 0, 0.0001, 'provider', '2026-01-01T00:00:00.600Z'),
-           ('run_3', 'notify', 'local', 'llama', 10, 10, 0, 0, 0, 'unpriced', '2026-01-01T00:00:01.500Z');
+           ('run_3', 'notify', 'local', 'llama', 10, 10, 0, 0, 0, 'unpriced', '2026-01-01T00:00:01.500Z'),
+           ('run_3', 'notify', 'local', 'llama', 1, 1, 0, 0, 0, 'unpriced', '2026-01-01T00:00:01.600Z');
+  DELETE FROM ledger WHERE ts = '2026-01-01T00:00:01.600Z';
   `,
   // 4: indexes on runs(event_id) and waits(event_id); a resolved wait exercises the latter.
   `
@@ -84,7 +86,7 @@ const SEEDS: readonly string[] = [
   INSERT INTO events (id, type, source, ts, correlation_id, parent_id, depth, payload, root_id)
     VALUES ('evt_4', 'mail.received', 'email', '2026-01-01T00:00:05.000Z', 'cor_4', NULL, 0, '{}', 'evt_4');
   `,
-  // 12: ledger rebuilt for priced_by 'estimate'; a deleted newest row pins the id counter.
+  // 12: ledger rebuilt for priced_by 'estimate'; another deleted newest row.
   `
   INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts)
     VALUES ('run_2', 'approve', 'anthropic', 'claude-sonnet-5', 50, 4000, 0.06, 'estimate', '2026-01-01T00:00:05.000Z'),
@@ -220,6 +222,8 @@ describe('migrations with data', () => {
         const added = ADDED_COLUMNS[table] ?? {};
         const old = beforeColumns[table] ?? [];
         const columns = columnsOf(db, table);
+        const dropped = old.filter((c) => !columns.includes(c));
+        expect(dropped, `${table}: columns the upgrade dropped`).toEqual([]);
         const unknown = columns.filter((c) => !old.includes(c) && !(c in added));
         expect(unknown, `${table}: columns added without an ADDED_COLUMNS entry`).toEqual([]);
         const expected = rows
@@ -271,6 +275,34 @@ describe('migrations with data', () => {
     },
   );
 
+  it.each(versions.filter((v) => v >= 3))(
+    'keeps the ledger id counter past deleted rows when upgrading from schema %i',
+    (version) => {
+      const path = join(dir, 'old.db');
+      seededAt(path, version);
+      const store = openStore(path);
+      try {
+        const id = store.ledger.insert({
+          run_id: 'run_1',
+          task: 'triage',
+          provider: 'anthropic',
+          model: 'claude-haiku-4-5',
+          in_tok: 1,
+          out_tok: 1,
+          cache_read: 0,
+          cache_write: 0,
+          usd: 0,
+          priced_by: 'table',
+          ts: '2026-01-01T00:00:06.000Z',
+        });
+        // Seed 3 leaves the counter at 4, seed 12 at 6.
+        expect(id).toBe(version >= 12 ? 7 : 5);
+      } finally {
+        store.close();
+      }
+    },
+  );
+
   it('reads the rows of the schema before through the store after the upgrade, and writes new ones', () => {
     const path = join(dir, 'old.db');
     seededAt(path, MIGRATIONS.length - 1);
@@ -282,6 +314,8 @@ describe('migrations with data', () => {
       expect(store.events.rootOf('evt_4')).toBe('evt_4');
       expect(store.state.get('triage', 'seen')?.value).toEqual({ 'mail:1': true });
       expect(store.waits.get('run_2')?.consumed).toEqual(['evt_9']);
+      // A wait written before `consumed` existed reads the default.
+      expect(store.waits.get('run_4')?.consumed).toEqual([]);
       expect(store.waits.listPending().map((w) => w.run_id)).toEqual(['run_2']);
       expect(store.ledger.sumForRun('run_1')).toBeCloseTo(0.0043);
       expect(store.ledger.listByRun('run_2').map((r) => r.priced_by)).toEqual(['estimate']);
@@ -291,7 +325,6 @@ describe('migrations with data', () => {
       ]);
       expect(store.batches.forRun('run_2')?.batch_id).toBe('msgbatch_1');
       expect(store.pauses.pausedAt('notify')).toBe('2026-01-01T00:00:04.000Z');
-      // The ledger id counter survives the table rebuild past a deleted newest row.
       const id = store.ledger.insert({
         run_id: 'run_2',
         task: 'approve',
@@ -305,7 +338,7 @@ describe('migrations with data', () => {
         priced_by: 'table',
         ts: '2026-01-01T00:00:06.000Z',
       });
-      expect(id).toBe(6);
+      expect(id).toBe(7);
       store.attempts.start('run_2', 1, '2026-01-01T00:00:06.000Z');
       expect(store.attempts.listByRun('run_2').map((a) => a.status)).toEqual(['running']);
     } finally {
