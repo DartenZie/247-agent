@@ -289,7 +289,7 @@ export class Metrics {
   );
   readonly taskLastSuccess = this.registry.gauge(
     'oa_task_last_success_timestamp_seconds',
-    'Unix time the newest succeeded run still stored finished, by task',
+    'Unix time the newest succeeded run finished, by task',
     ['task'],
   );
   readonly runDuration = this.registry.histogram(
@@ -438,6 +438,23 @@ export class Metrics {
     'API requests, by method and status',
     ['method', 'status'],
   );
+
+  /**
+   * Unix seconds of the newest success per task, for `taskLastSuccess`. The core seeds it
+   * from the database at start and the executor updates it, so a scrape reads no runs.
+   */
+  readonly lastSuccess = new Map<string, number>();
+
+  /** Records a success of `task` that finished at `seconds`; an older one changes nothing. */
+  recordSuccess(task: string, seconds: number): void {
+    if (Number.isNaN(seconds)) {
+      return;
+    }
+    const prev = this.lastSuccess.get(task);
+    if (prev === undefined || seconds > prev) {
+      this.lastSuccess.set(task, seconds);
+    }
+  }
 
   /** Registers a scrape-time collector; see `Registry.collect`. */
   collect(fn: () => void): void {

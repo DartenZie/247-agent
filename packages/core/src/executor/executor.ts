@@ -1090,6 +1090,9 @@ export class Executor {
     finishedAt: string,
   ): void {
     this.metrics.runsFinished.inc({ task: run.task, status });
+    if (status === 'succeeded') {
+      this.metrics.recordSuccess(run.task, Date.parse(finishedAt) / 1000);
+    }
     const queuedAt = Date.parse(run.created_at);
     if (!Number.isNaN(queuedAt)) {
       this.metrics.runDuration.observe(

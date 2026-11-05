@@ -62,12 +62,12 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_runs_queued_total` | counter | `task` | runs created |
 | `oa_run_attempts_total` | counter | `task` | attempts started, retries included |
 | `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`, `cancelled`) | runs that reached a terminal status |
-| `oa_runs_interrupted_total` | counter | `task` | runs that a stop or a crash cut short, counted when the next start finds them still running; the run then retries or fails |
-| `oa_task_last_success_timestamp_seconds` | gauge, at scrape | `task` | Unix time the newest succeeded run of the task finished; absent when no succeeded run is stored, for example after retention removed it |
+| `oa_runs_interrupted_total` | counter | `task` | runs that a stop or a crash cut short, counted when the next start finds them still running; the run then retries or fails. The count is made before the first scrape of the new process, so `increase()` can miss it when the previous process ended at the same count |
+| `oa_task_last_success_timestamp_seconds` | gauge, at scrape | `task` | Unix time the newest succeeded run of the task finished. At start the daemon reads it from the newest succeeded run still stored; absent when there is none |
 | `oa_run_duration_seconds` | histogram | `task` | seconds from a run being queued to its terminal status |
 | `oa_waits_ended_total` | counter | `task`, `outcome` (`matched`, `timeout`) | waits that ended |
 | `oa_runs_pending` | gauge, at scrape | | runs queued for a worker |
-| `oa_runs_oldest_pending_age_seconds` | gauge, at scrape | | seconds since the oldest queued run was created; 0 when no run is queued |
+| `oa_runs_oldest_pending_age_seconds` | gauge, at scrape | | seconds since the oldest queued run was created, including time it spent in a wait or behind its task's `concurrency`; 0 when no run is queued |
 | `oa_events_undispatched` | gauge, at scrape | | events stored that the dispatcher has not processed yet |
 | `oa_runs_in_flight` | gauge, at scrape | | runs executing now |
 | `oa_runs_waiting` | gauge, at scrape | | runs parked in a wait |
@@ -117,12 +117,11 @@ A task that has not succeeded in 24 hours:
 time() - oa_task_last_success_timestamp_seconds > 86400
 ```
 
-A dispatcher that fails, or runs that wait more than ten minutes for a worker:
+A dispatcher that fails, or a queued run created more than ten minutes ago:
 
 ```promql
 increase(oa_dispatch_failures_total[5m]) > 0 or oa_runs_oldest_pending_age_seconds > 600
 ```
-
 
 Spend against the daily cap, as a fraction:
 

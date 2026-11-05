@@ -458,9 +458,9 @@ export function createCore(opts: CoreOptions): Core {
       }
     }
     metrics.taskLastSuccess.reset();
-    for (const { task, finished_at } of store.runs.lastSucceeded()) {
+    for (const [task, seconds] of metrics.lastSuccess) {
       if (compiled.byName.has(task)) {
-        metrics.taskLastSuccess.set({ task }, Date.parse(finished_at) / 1000);
+        metrics.taskLastSuccess.set({ task }, seconds);
       }
     }
     metrics.llmBatchesPending.set(undefined, store.batches.count());
@@ -490,7 +490,7 @@ export function createCore(opts: CoreOptions): Core {
     const pageSize = store.db.pragma('page_size', { simple: true }) as number;
     metrics.dbSize.set(undefined, pageCount * pageSize);
     metrics.dbWalSize.set(undefined, fileSize(`${opts.dbPath}-wal`));
-    const free = diskFree(dirname(opts.dbPath));
+    const free = opts.dbPath === ':memory:' ? undefined : diskFree(dirname(opts.dbPath));
     metrics.dbDiskFree.reset();
     if (free !== undefined) {
       metrics.dbDiskFree.set(undefined, free);
@@ -766,6 +766,10 @@ export function createCore(opts: CoreOptions): Core {
       }
       activate(result);
       startedAt = clock.now();
+      // Once per start: the executor keeps it current, so no scrape reads the runs table.
+      for (const { task, finished_at } of store.runs.lastSucceeded()) {
+        metrics.recordSuccess(task, Date.parse(finished_at) / 1000);
+      }
       log.info('core.config_loaded', {
         files: result.files.map((f) => f.file).join(', '),
         tasks: compiled.tasks.length,

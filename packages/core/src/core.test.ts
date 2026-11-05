@@ -395,24 +395,11 @@ describe('createCore exposes health metrics (#90)', () => {
     }
   });
 
-  it('reports undispatched events, the oldest queued run and the last success per task', () => {
+  it('reports undispatched events and the oldest queued run', () => {
     let text = core.metrics.render();
     expect(sample(text, 'oa_events_undispatched')).toBe(0);
     expect(sample(text, 'oa_runs_oldest_pending_age_seconds')).toBe(0);
-    expect(text).not.toContain('oa_task_last_success_timestamp_seconds{');
 
-    const done = event();
-    core.store.runs.insertQueued({
-      id: 'run_done',
-      task: 'notify',
-      event_id: done,
-      correlation_id: done,
-      created_at: '2026-01-01T00:00:00.000Z',
-    });
-    core.store.runs.setStatus('run_done', 'succeeded', {
-      finished_at: '2026-01-02T03:04:05.000Z',
-    });
-    core.bus.dispatcher.drain();
     const queued = event();
     core.store.runs.insertQueued({
       id: 'run_old',
@@ -429,9 +416,40 @@ describe('createCore exposes health metrics (#90)', () => {
     const age = sample(text, 'oa_runs_oldest_pending_age_seconds') ?? 0;
     expect(age).toBeGreaterThanOrEqual(90);
     expect(age).toBeLessThan(120);
-    expect(sample(text, 'oa_task_last_success_timestamp_seconds{task="notify"}')).toBe(
-      Date.parse('2026-01-02T03:04:05.000Z') / 1000,
-    );
+  });
+
+  it('reports the last success per task, read at start and kept by each run that succeeds', async () => {
+    const last = (task: string) =>
+      sample(core.metrics.render(), `oa_task_last_success_timestamp_seconds{task="${task}"}`);
+    expect(core.metrics.render()).not.toContain('oa_task_last_success_timestamp_seconds{');
+    const done = event();
+    core.store.runs.insertQueued({
+      id: 'run_done',
+      task: 'notify',
+      event_id: done,
+      correlation_id: done,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    core.store.runs.setStatus('run_done', 'succeeded', {
+      finished_at: '2026-01-02T03:04:05.000Z',
+    });
+    // A scrape reads no runs: a row written behind the executor shows only after a restart.
+    expect(last('notify')).toBeUndefined();
+    await core.stop();
+    const succeed: ActionRunner = () => Promise.resolve({ ok: true });
+    core = createCore({
+      tasksFiles: [join(dir, 'tasks.yaml')],
+      dbPath: join(dir, 'state.db'),
+      log: createLogger({ sink: () => undefined }),
+      runners: { ...hangAll, shell: succeed },
+      secrets: staticSecrets(SECRETS),
+    });
+    await core.start();
+    expect(last('notify')).toBe(Date.parse('2026-01-02T03:04:05.000Z') / 1000);
+
+    const before = Date.now() / 1000;
+    core.runTask('publish_site');
+    await expect.poll(() => last('publish_site')).toBeGreaterThanOrEqual(before);
   });
 
   it('reports the write-ahead log and the free disk space next to the database size', () => {
