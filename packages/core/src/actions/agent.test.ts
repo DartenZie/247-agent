@@ -594,6 +594,126 @@ describe('runAgent', () => {
     expect(transcript.at(-1)).toMatchObject({ kind: 'stop', data: { stop_reason: 'cancelled' } });
   });
 
+  it('counts tool calls the agent asks about or updates without announcing them', async () => {
+    const agents = fakeAgents(async function* (env) {
+      for (let i = 0; i < 10 && !env.cancelled(); i++) {
+        const id = `c${String(i)}`;
+        if (i % 2 === 0) {
+          // A permission request for a call that no `tool_call` notification announced.
+          env.ask({
+            toolCall: { id, title: 'read', toolKind: 'read', command: undefined, locations: [] },
+            options: [],
+          });
+        } else {
+          yield {
+            kind: 'tool_call_update',
+            id,
+            status: 'completed',
+            toolKind: 'read',
+            command: undefined,
+            locations: undefined,
+          };
+        }
+        await sleep(1);
+      }
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent({ ...action, max_tool_calls: 3 }, ctx(agents)).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(String(err)).toMatch(/max_tool_calls \(3\)/);
+    expect(agents.cancels).toBe(1);
+    expect(lines.filter((l) => l.msg === 'agent.tool_call').map((l) => l.n)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('answers cancelled to the permission request that passes max_tool_calls', async () => {
+    const answers: string[] = [];
+    const agents = fakeAgents(async function* (env) {
+      for (let i = 0; i < 4; i++) {
+        answers.push(
+          env.ask({
+            toolCall: {
+              id: `c${String(i)}`,
+              title: 'Read a.txt',
+              toolKind: 'read',
+              command: undefined,
+              locations: [],
+            },
+            options: [
+              { optionId: 'allow', kind: 'allow_once' },
+              { optionId: 'reject', kind: 'reject_once' },
+            ],
+          }),
+        );
+      }
+      await sleep(5);
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent({ ...action, max_tool_calls: 3 }, ctx(agents)).catch(
+      (e: unknown) => e,
+    );
+    expect(String(err)).toMatch(/max_tool_calls \(3\)/);
+    expect(answers).toEqual(['allow', 'allow', 'allow', 'cancelled']);
+    expect(lines.find((l) => l.msg === 'agent.tool_call')).toMatchObject({
+      id: 'c0',
+      tool_kind: 'read',
+      title: 'Read a.txt',
+    });
+    expect(transcript.filter((e) => e.kind === 'permission').at(-1)).toMatchObject({
+      data: { id: 'c3', allowed: false, option_id: 'cancelled', reason: 'session cancelled' },
+    });
+  });
+
+  it('judges a call it never announced on what its update reports', async () => {
+    const agents = fakeAgents(async function* (env) {
+      yield {
+        kind: 'tool_call_update',
+        id: 'c1',
+        status: 'completed',
+        toolKind: 'execute',
+        command: 'curl http://x',
+        locations: undefined,
+      };
+      await sleep(5);
+      return stop({ stopReason: env.cancelled() ? 'cancelled' : 'end_turn' });
+    }, workDir);
+    const err = await runAgent(action, ctx(agents)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(String(err)).toMatch(/outside the policy without asking \(command is not in bash_allow/);
+  });
+
+  it('counts a call once across its announcement, permission request and updates', async () => {
+    const agents = fakeAgents(async function* (env) {
+      for (let i = 0; i < 3; i++) {
+        const call = {
+          id: `c${String(i)}`,
+          title: 'read',
+          toolKind: 'read' as const,
+          locations: [],
+        };
+        // Asked first, then announced and updated: still one call.
+        env.ask({ toolCall: { ...call, command: undefined }, options: [] });
+        yield { kind: 'tool_call', ...call, status: 'pending', command: undefined };
+        yield {
+          kind: 'tool_call_update',
+          id: call.id,
+          status: 'completed',
+          toolKind: undefined,
+          command: undefined,
+          locations: undefined,
+        };
+      }
+      writeResult(env.cwd, { status: 'done', summary: 'ok' });
+      return stop();
+    }, workDir);
+    await expect(runAgent({ ...action, max_tool_calls: 3 }, ctx(agents))).resolves.toMatchObject({
+      status: 'done',
+    });
+    expect(agents.cancels).toBe(0);
+    expect(lines.filter((l) => l.msg === 'agent.tool_call').map((l) => l.n)).toEqual([1, 2, 3]);
+  });
+
   it('fails the run when the agent runs a tool call outside the policy without asking', async () => {
     const agents = fakeAgents(async function* (env) {
       // A shell tool ran with no permission request: judged from what the update reports.
