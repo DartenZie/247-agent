@@ -12,6 +12,7 @@ import { parseDuration } from './config/duration.js';
 import { startDaemon, type Daemon } from './daemon.js';
 import { findHome, homeEnv } from './home.js';
 import { createLogger, type LogLevel } from './log.js';
+import { listenForReload } from './reload-signal.js';
 import { systemdNotifier } from './systemd.js';
 import { VERSION } from './version.js';
 
@@ -71,7 +72,15 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // Before the daemon reads the environment, so no child inherits NOTIFY_SOCKET.
-  const systemd = systemdNotifier(process.env, { log: createLogger({ level: level ?? 'info' }) });
+  const early = createLogger({ level: level ?? 'info' });
+  const systemd = systemdNotifier(process.env, { log: early });
+  // Before startup, which can take a while (store, socket, the bwrap probe): a SIGHUP
+  // meanwhile would otherwise end the process. It reloads once the daemon is up.
+  const hup = listenForReload(process, {
+    onDeferred: () => {
+      early.info('daemon.signal', { signal: 'SIGHUP', deferred: true });
+    },
+  });
 
   let daemon: Daemon;
   try {
@@ -80,6 +89,7 @@ async function main(argv: string[]): Promise<number> {
       ...(level === undefined ? {} : { logLevel: level }),
     });
   } catch (err) {
+    hup.cancel();
     process.stderr.write(`247-agent-core: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
@@ -121,7 +131,7 @@ async function main(argv: string[]): Promise<number> {
     process.once('SIGINT', () => {
       shutdown('SIGINT');
     });
-    process.on('SIGHUP', () => {
+    hup.start(() => {
       log.info('daemon.signal', { signal: 'SIGHUP' });
       void daemon.reload();
     });

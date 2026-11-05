@@ -348,7 +348,7 @@ removed with a `api.stale_socket_removed` warning. The socket is created with mo
 
 | Signal | Effect |
 |---|---|
-| `SIGHUP` | reload: the same as `oa reload`, outcome in the log (`daemon.reloaded`, `daemon.reload_invalid`, `core.config_invalid`, `daemon.reload_needs_restart`) |
+| `SIGHUP` | reload: the same as `oa reload`, outcome in the log (`daemon.reloaded`, `daemon.reload_invalid`, `core.config_invalid`, `daemon.reload_needs_restart`). A `SIGHUP` that arrives while the daemon is still starting is logged as `daemon.signal` with `deferred: true` and applied once, as soon as the daemon is up |
 | `SIGTERM`, `SIGINT` | stop: no new runs start, runs in flight get `shutdown.grace` to finish, the rest are aborted and run again on the next start; exit 0, or 1 if the stop is not done 10 s after the grace window |
 
 Under a systemd unit with `Type=notify` (`NOTIFY_SOCKET` set), the daemon reports
