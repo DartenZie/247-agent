@@ -20,6 +20,7 @@ import { compileConfig, type CompiledConfig } from './bus/matcher.js';
 import { systemClock, type Clock } from './clock.js';
 import type { ConnectorConfig } from './config/connector.js';
 import {
+  agentToolWarnings,
   checkAgentTools,
   checkConnectorActions,
   checkLlmTasks,
@@ -543,7 +544,11 @@ export function createCore(opts: CoreOptions): Core {
       if (!f.ok) {
         continue;
       }
-      for (const w of f.locate(lintIssues(f.config.tasks, result.config.tasks))) {
+      const warnings = [
+        ...lintIssues(f.config.tasks, result.config.tasks),
+        ...agentToolWarnings(f.config.tasks, manifests),
+      ];
+      for (const w of f.locate(warnings)) {
         log.warn('core.config_warning', {
           task: w.task,
           file: f.file,

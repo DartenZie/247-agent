@@ -69,7 +69,7 @@ Existing MCP servers (GitHub, filesystem, …) are connectors as-is with
 
 | Symptom | Cause and fix |
 |---|---|
-| run fails "op … not allowed" | The op is not in the manifest's `ops`. Add it, or use `ops: []` for any. |
+| run fails "op … not allowed" | The op is not in the manifest's `ops`. Add it, or use `ops: []` for any. `oa validate` then warns about each agent granted the connector without ops of its own. |
 | run fails with the tool's error text, no retry | The handler threw or returned `isError` without the transient mark. Fix the handler, or mark the error transient when a later call can succeed. |
 | run fails "connector … is down", retried | The process is not up. Check `connector.output` lines in the daemon log; look for a crash loop with growing backoff. |
 | connector restarts every few seconds | It exits or crashes at start. Run it by hand with `OA_CORE_SOCKET`, `OA_CONNECTOR_NAME` and `OA_CONFIG_JSON` set and read stderr. |

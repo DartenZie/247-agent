@@ -8,6 +8,7 @@ import { PricingError, resolvePricing } from '../llm/pricing.js';
 import { parseAgent, protectedPaths } from './agent.js';
 import { loadManifestFile, looksLikeManifest } from './connector.js';
 import {
+  agentToolWarnings,
   checkAgentTools,
   checkConnectorActions,
   checkLlmTasks,
@@ -21,8 +22,8 @@ import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.
 export type FileKind = 'tasks' | 'agent' | 'connector' | 'unknown';
 
 /**
- * One validated file, as `oa validate` reports it. `warnings` (`config/lint.ts`) never
- * fail the file.
+ * One validated file, as `oa validate` reports it. `warnings` (`config/lint.ts`, and for
+ * a tasks file checked through agent.yaml `agentToolWarnings`) never fail the file.
  */
 export type FileCheck =
   | { ok: true; file: string; kind: FileKind; summary: string; warnings?: ConfigIssue[] }
@@ -141,6 +142,10 @@ export function checkConfigFile(path: string): FileCheck[] {
       issues.push(...checkAgentTools(f.config.tasks, sandboxes.manifests));
       issues.push(...checkConnectorActions(f.config.tasks, sandboxes.manifests));
     }
+    const warnings = lintIssues(f.config.tasks, allTasks);
+    if (connectors.ok) {
+      warnings.push(...agentToolWarnings(f.config.tasks, sandboxes.manifests));
+    }
     out.push({
       ...(issues.length === 0
         ? {
@@ -150,7 +155,7 @@ export function checkConfigFile(path: string): FileCheck[] {
             summary: `${String(f.config.tasks.length)} tasks`,
           }
         : fail(f.file, 'tasks', f.locate(issues))),
-      warnings: f.locate(lintIssues(f.config.tasks, allTasks)),
+      warnings: f.locate(warnings),
     });
   }
   for (const f of connectors.files) {

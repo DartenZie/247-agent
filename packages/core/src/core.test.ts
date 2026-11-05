@@ -252,6 +252,57 @@ describe('createCore with the reference workflow', () => {
     ]);
   });
 
+  it('logs a warning for an agent granted a connector whose manifest has no ops', async () => {
+    const file = join(dir, 'agent-tasks.yaml');
+    writeFileSync(
+      file,
+      [
+        'tasks:',
+        '  - name: edit',
+        '    trigger: { kind: manual }',
+        '    action:',
+        '      kind: agent',
+        '      workspace: { kind: temp }',
+        '      tools: [read]',
+        '      prompt: x',
+        '      mcp_servers: [github]',
+      ].join('\n'),
+    );
+    const github = parseManifest(
+      { name: 'github', exec: ['node', '-e', 'setInterval(() => undefined, 60000)'] },
+      '/x/connectors.d/github.yaml',
+    );
+    if (!github.ok) {
+      throw new Error(JSON.stringify(github.issues));
+    }
+    const out: Record<string, unknown>[] = [];
+    const c = createCore({
+      tasksFiles: [file],
+      dbPath: join(dir, 'agent.db'),
+      socketPath: join(dir, 'a.sock'),
+      connectors: [github.config],
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => out.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      runners: hangAll,
+    });
+    await c.start();
+    await c.stop();
+    expect(out.filter((l) => l.msg === 'core.config_warning')).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        task: 'edit',
+        file,
+        path: 'tasks[0].action.mcp_servers[0]',
+        line: 9,
+        warning: expect.stringMatching(
+          /^connector "github" \(\/x\/connectors\.d\/github\.yaml\) has no ops in its manifest/,
+        ) as string,
+      }),
+    ]);
+  });
+
   it('dispatches a backlog left from before a restart', async () => {
     core.bus.publish({
       type: 'site.change_pushed',
