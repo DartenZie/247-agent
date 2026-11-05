@@ -208,10 +208,11 @@ retryable. Before the first gate, `WorkspaceHandle.assertIntact()` fails the run
 non-retryably when a `git-worktree` workspace's `.git` is no longer the pointer file
 the worktree was created with (the agent replaced it with a repository of its own).
 Every gate's `env` starts from `gitNoProgramsEnv()`, `GIT_CONFIG_*` entries that set
-`core.hooksPath=/dev/null` and `core.fsmonitor=false`, with the gate's own `post[i].env`
-merged over it (a key there wins), so git in a gate runs no hook or
-program from the base repository's config or the workspace. `blocked`: the gates are skipped and the run **succeeds** with the document
-as its result, so `emit … when: "result.status == 'blocked'"` routes it. The run result
+`core.hooksPath=/dev/null` and `core.fsmonitor=false`, so git in a gate runs no hook or
+program from the base repository's config or the workspace. The gate's own
+`post[i].env` is merged over these entries and a key there wins, so a gate that sets
+`GIT_CONFIG_*` itself replaces them. `blocked`: the gates are skipped and the run
+**succeeds** with the document as its result, so `emit … when: "result.status == 'blocked'"` routes it. The run result
 is the `RESULT.json` document in both cases.
 
 ## Retries
