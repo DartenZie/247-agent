@@ -613,9 +613,66 @@ describe('sync loop', () => {
     mx.syncs.push({ next_batch: 'n0' }, batch('n1', [msg('new')]));
     await bot.pollOnce();
     const syncs = mx.of('GET', '/sync');
-    expect(syncs.slice(1).map((c) => c.query.since)).toEqual([undefined, 'n0']);
+    // The 400, a probe without the token, then the first-start skip and the next sync.
+    expect(syncs.slice(1).map((c) => c.query.since)).toEqual([undefined, undefined, 'n0']);
     expect(core.state.get(STATE_SINCE)).toBe('n1');
     expect(core.ofType('chat.message')).toHaveLength(1);
+  });
+
+  it('keeps since on a 400 that a sync without the token gets too', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const bad = { status: 400, body: { errcode: 'M_INVALID_PARAM', error: 'Bad filter' } };
+    mx.syncs.push(bad, bad);
+    await expect(bot.pollOnce()).rejects.toThrow(/Bad filter/);
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    expect(logs.some((l) => l.includes('rejected the sync token'))).toBe(false);
+    mx.syncs.push(batch('s1', []));
+    await bot.pollOnce();
+    expect(mx.of('GET', '/sync').at(-1)?.query.since).toBe('s0');
+  });
+
+  it('skips a gap that keeps failing, so the other rooms are not held up', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const limited: MxSync = {
+      next_batch: 's1',
+      rooms: {
+        join: {
+          [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } },
+          [OTHER]: { timeline: { events: [msg('other')] } },
+        },
+      },
+    };
+    mx.syncs.push(limited, limited, limited);
+    mx.pages.push({ status: 502, body: {} }, { status: 502, body: {} }, { status: 502, body: {} });
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    await bot.pollOnce();
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'd',
+      'other',
+    ]);
+    expect(logs.some((l) => l.includes('after 3 attempts') && l.includes('skipped'))).toBe(true);
+  });
+
+  it('pages on past an empty chunk that still has an end', async () => {
+    const { bot, mx, core } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    mx.syncs.push({
+      next_batch: 's1',
+      rooms: {
+        join: { [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } } },
+      },
+    });
+    mx.pages.push({ chunk: [], end: 'p1' }, { chunk: [msg('a')] });
+    await bot.pollOnce();
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'a',
+      'd',
+    ]);
   });
 
   it('keeps since on other sync failures', async () => {

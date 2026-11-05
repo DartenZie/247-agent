@@ -100,6 +100,8 @@ export class MatrixBot {
   /** Events of the batch being handled, so a retried batch does not handle one twice. */
   private readonly handled = new Set<string>();
   private failing: { event_id: string; attempts: number } | undefined;
+  /** The gap whose fetch keeps failing (room and `since`), and how often it failed. */
+  private gapFailing: { key: string; attempts: number } | undefined;
   private readonly names = new Map<string, string>();
   private readonly warnedEncrypted = new Set<string>();
   /** Serialises read-modify-write of `pending` between `ask` and the sync loop. */
@@ -237,15 +239,13 @@ export class MatrixBot {
         timeoutMs: this.config.timeout + this.config.poll_timeout * 1000,
       });
     } catch (err) {
-      // A 400 on a sync with a token is the homeserver rejecting the token (M_UNKNOWN_POS
-      // and the like, after a reset or a purge): retrying it can never succeed.
-      if (since !== undefined && err instanceof MatrixError && err.status === 400) {
-        await this.core.putState(STATE_SINCE, null);
-        this.since = undefined;
-        this.sinceLoaded = false;
+      if (since !== undefined && (await this.tokenRejected(err))) {
         this.log(
           `chat: the homeserver rejected the sync token: ${errorText(err)}; syncing again as on a first start`,
         );
+        this.since = undefined;
+        this.sinceLoaded = false;
+        await this.core.putState(STATE_SINCE, null);
       }
       throw err;
     }
@@ -291,6 +291,7 @@ export class MatrixBot {
     }
     await this.setSince(sync.next_batch);
     this.handled.clear();
+    this.gapFailing = undefined;
     return count;
   }
 
@@ -338,16 +339,48 @@ export class MatrixBot {
           skipped(errorText(err));
           break;
         }
+        // A rate limit is waited out, not counted; another failure holds up every room,
+        // so the gap is given up after MAX_EVENT_ATTEMPTS rounds.
+        if (!(err instanceof MatrixError && err.retryAfterMs !== undefined)) {
+          const key = `${roomId} ${since}`;
+          const attempts = this.gapFailing?.key === key ? this.gapFailing.attempts + 1 : 1;
+          this.gapFailing = { key, attempts };
+          if (attempts >= MAX_EVENT_ATTEMPTS) {
+            skipped(`${errorText(err)}, after ${String(attempts)} attempts`);
+            break;
+          }
+        }
         throw err;
       }
       const chunk = res.chunk ?? [];
       newestFirst.push(...chunk);
-      if (chunk.length === 0 || res.end === undefined || res.end === from) {
+      // An empty chunk may only mean the server filtered a page out; `end` says whether
+      // more follows.
+      if (res.end === undefined || res.end === from) {
         break;
       }
       from = res.end;
     }
     return newestFirst.reverse();
+  }
+
+  /**
+   * Whether a failed sync with a token failed because of the token: a 400 that a sync
+   * without the token does not get. A 400 the probe gets too (a bad filter, a broken
+   * server) keeps the token.
+   */
+  private async tokenRejected(err: unknown): Promise<boolean> {
+    if (!(err instanceof MatrixError) || err.status !== 400) {
+      return false;
+    }
+    try {
+      await this.api.call<MxSync>('GET', '/sync', {
+        query: { timeout: 0, filter: this.filter(1) },
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Routes one timeline event; exported for tests and for the sync loop. */

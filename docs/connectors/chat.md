@@ -295,9 +295,12 @@ for 24 hours. Poll failures back off from 1 s to 30 s, or wait as long as the se
 asks on a rate limit.
 
 A Matrix room with more than 50 new events between two syncs, after downtime or in a busy
-room, has the rest fetched with `/rooms/{room}/messages` before the batch is handled, so
-no reply is lost. Only a gap of more than 2000 events, or one the homeserver refuses to
-page through, loses its older events, with a log line that they were skipped. When the
-homeserver rejects the stored `since` token (a `400`, for example after a homeserver
-reset), the connector logs it, sets `since` to `null` and syncs again as on a first
-start, so `initial` decides whether the backlog is delivered.
+room, has the rest fetched with `/rooms/{room}/messages` and handled first, oldest first. A
+failed fetch is retried with the batch. Older events are skipped, with a log line, when
+the gap holds more than 2000 events, when the homeserver refuses to page through it, or
+when the fetch fails three times in a row, so that one room does not hold up the others.
+
+When a sync with the stored `since` token gets a `400` and a sync without it does not,
+for example after a homeserver reset, the homeserver rejected the token. The connector
+logs it, sets `since` to `null` and syncs again as on a first start, so `initial`
+decides whether the backlog is delivered.
