@@ -24,5 +24,5 @@ exec: ["npx", "-y", "@agentclientprotocol/codex-acp"]
 transport: acp
 env:
   OPENAI_API_KEY: "${secrets.openai_api_key}"
-  CODEX_CONFIG: '{"model":"gpt-5.6-sol","approval_policy":"on-request","model_reasoning_effort":"medium"}'
+  CODEX_CONFIG: '{"model":"gpt-5.6-terra","approval_policy":"on-request","model_reasoning_effort":"medium"}'
 restart: { base: 1s, max: 60s }
