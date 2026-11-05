@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   mkdtempSync,
   rmSync,
   statSync,
@@ -177,9 +178,70 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(existsSync(dirname(prefix))).toBe(false);
   });
 
+  it('lets a glibc Linux host past the musl check, even with a musl loader installed', () => {
+    // Debian's musl package puts /lib/ld-musl-*.so.1 next to glibc; that host is supported.
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    writeFileSync(
+      join(shims, 'uname'),
+      '#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo x86_64 ;; *) echo Linux ;; esac\n',
+    );
+    writeFileSync(join(shims, 'ldd'), '#!/bin/sh\necho "ldd (Debian GLIBC 2.36-9) 2.36"\n');
+    writeFileSync(join(shims, 'getconf'), '#!/bin/sh\necho "glibc 2.36"\n');
+    for (const name of ['uname', 'ldd', 'getconf']) {
+      chmodSync(join(shims, name), 0o755);
+    }
+    const missing = join(root, 'none.tar.gz');
+    const run = spawnSync(
+      'sh',
+      [script, '--from', missing, '--prefix', join(root, 'opt', '247-agent'), '--no-service'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    // It gets as far as reading the tarball.
+    expect(run.stderr).toBe(`install.sh: no such file: ${missing}\n`);
+  });
+
+  it('refuses an installer symlink whose files a package later took over', () => {
+    // install.sh first, then the .deb: dpkg records the files under the symlink, and moving
+    // the symlink would take them away from it (issue #115).
+    const prefix = join(root, 'opt', '247-agent');
+    const install = (version: string, path: string) =>
+      spawnSync(
+        'sh',
+        [
+          script,
+          '--from',
+          fakeRelease(version),
+          '--prefix',
+          prefix,
+          '--bin-dir',
+          join(root, 'bin'),
+          '--no-service',
+        ],
+        { encoding: 'utf8', env: { ...process.env, PATH: path } },
+      );
+    expect(install('9.9.8', process.env.PATH ?? '').status).toBe(0);
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    writeFileSync(
+      join(shims, 'dpkg'),
+      '#!/bin/sh\n[ "$1" = -S ] && echo "247-agent: $2" && exit 0\nexit 1\n',
+    );
+    chmodSync(join(shims, 'dpkg'), 0o755);
+    const run = install('9.9.9', `${shims}:${process.env.PATH ?? ''}`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`${prefix} belongs to the installed package 247-agent;`);
+    expect(readlinkSync(prefix)).toBe(`${prefix}-9.9.8`);
+    expect(existsSync(`${prefix}-9.9.9`)).toBe(false);
+  });
+
   it.each([
     ['dpkg', '#!/bin/sh\n[ "$1" = -S ] && echo "247-agent: $2" && exit 0\nexit 1\n', 'apt'],
-    ['rpm', '#!/bin/sh\n[ "$1" = -qf ] && echo 247-agent && exit 0\nexit 1\n', 'dnf'],
+    [
+      'rpm',
+      '#!/bin/sh\n[ "$1" = -qf ] || exit 1\n[ "$2" = --qf ] && echo 247-agent && exit 0\necho 247-agent-9.9.8-1.x86_64\n',
+      'dnf',
+    ],
   ])('refuses a prefix that belongs to a %s package and leaves it alone', (tool, shim, pm) => {
     // The .deb/.rpm and the installer both own /opt/247-agent; moving a package's tree
     // aside breaks the package (issue #115).
@@ -206,7 +268,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
     );
     expect(run.status).toBe(1);
-    expect(run.stderr).toContain(`${prefix} belongs to the installed package 247-agent`);
+    expect(run.stderr).toContain(`${prefix} belongs to the installed package 247-agent;`);
     expect(run.stderr).toContain(pm);
     expect(statSync(prefix).isDirectory()).toBe(true);
     expect(readFileSync(join(prefix, 'VERSION'), 'utf8')).toContain('version=9.9.8');

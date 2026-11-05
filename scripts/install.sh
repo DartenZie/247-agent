@@ -77,15 +77,18 @@ case $(uname -m) in
 esac
 target=$os-$arch
 # The release bundles a glibc build of Node.js and of the SQLite addon; on musl (Alpine)
-# they fail to load with a bare "not found".
-if [ $os = linux ] && { ldd --version 2>&1 | grep -qi musl || ls /lib/ld-musl-* > /dev/null 2>&1; }; then
-  die "musl libc (Alpine and similar) is not supported; the release runs on Linux with glibc and on macOS, on x64 or arm64"
+# they fail to load with a bare "not found". A musl loader alone is no sign: Debian's
+# musl package installs one next to glibc. Without glibc, getconf has no GNU_LIBC_VERSION.
+if [ $os = linux ] && { ldd --version 2>&1 | grep -qi musl \
+  || { ! getconf GNU_LIBC_VERSION > /dev/null 2>&1 && ls /lib/ld-musl-* > /dev/null 2>&1; }; }; then
+  die "musl libc (Alpine and similar) is not supported; releases are for Linux with glibc, on x64 or arm64"
 fi
 
 # --- a package owns the prefix -------------------------------------------------------
 # The .deb and the .rpm install the same tree as a directory at /opt/247-agent. Moving it
-# aside would leave the package manager with files that are gone. A symlink is ours.
-if [ -e "$prefix" ] && [ ! -L "$prefix" ]; then
+# aside, or moving the symlink of a tarball install the package was later installed
+# over, would leave the package manager with files that are gone.
+if [ -e "$prefix/bin/247-agent-core" ]; then
   owner=
   pm=
   if command -v dpkg > /dev/null 2>&1 && out=$(dpkg -S "$prefix/bin/247-agent-core" 2> /dev/null); then
