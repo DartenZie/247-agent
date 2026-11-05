@@ -6,9 +6,9 @@ description: "Run, inspect and debug a 247-agent daemon and its workflows, local
 # Operate a 247-agent daemon
 
 Everything the daemon knows is in SQLite and reachable over one Unix socket: events,
-runs (status, input event, result, error, attempts), state, health. Debugging is
-therefore always the same loop: reproduce with `oa run`/`oa emit`, read the run, read
-the log lines that share its `run_id`, fix, validate, repeat.
+runs (status, `event_id` of the input event, result, error, attempt), state, health.
+Debugging is therefore always the same loop: reproduce with `oa run`/`oa emit`, read
+the run, read the log lines that share its `run_id`, fix, validate, repeat.
 
 ## Binaries and paths
 
@@ -88,7 +88,9 @@ example of both and is the pattern for a new integration test.
 
 1. `oa-api.mjs runs --status failed` → pick the run, note `run_id`, `task`, `error`,
    `attempt`, `event_id`.
-2. `oa-api.mjs run <run_id>` → the input event and the result/error in full.
+2. `oa-api.mjs run <run_id>` → the result/error in full and the `event_id`.
+   `oa-api.mjs event <event_id>` (`GET /v1/events/{event_id}`) → the input event.
+   `oa runs show <run_id>` does both.
 3. Log lines: `grep '<run_id>'` on the daemon output, or on a server
    `journalctl -u 247-agent -o cat | grep <run_id>`. Every line about a run carries
    `run_id`, `task`, `correlation_id`; `correlation_id` links every task the same
