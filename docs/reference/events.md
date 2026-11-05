@@ -241,7 +241,7 @@ The names worth searching for:
 | `daemon.reloaded`, `daemon.reload_needs_restart` | info, warn | a reload applied, or changed a key that needs a restart |
 | `daemon.reload_invalid` | error | a reload was refused because `agent.yaml` or a connector manifest is invalid; one line per issue (`file`, `path`, `issue`); the previous config stays |
 | `core.config_invalid` | error | a reload was refused because a tasks file is invalid or fails a cross-check against `agent.yaml` or a manifest, such as a sandbox bind; one line per issue (`file`, `path`, `issue`, and `task` and `line` when the issue is in a task); the previous config stays |
-| `core.reload_failed` | error | a valid config could not be applied because a connector change failed (`error`); the previous connectors are put back and the previous config stays |
+| `core.reload_failed` | error | a valid config could not be applied because switching the connector set threw (`error`); the previous connectors are put back and the previous config stays. A connector that only fails to start logs `connector.failed` instead and does not fail the reload |
 | `core.reload_undo_failed` | error | after `core.reload_failed`, putting the previous connectors back failed too (`error`); check `oa connector list` and restart the daemon |
 | `daemon.signal`, `daemon.stopped`, `daemon.crashed` | info, info, error | a signal arrived; the daemon stopped; an uncaught error stopped it |
 | `daemon.stop_timeout` | error | a stop took longer than `after_ms`: `shutdown.grace` plus 10 s after a signal, 10 s after an uncaught error; the daemon exits 1 without waiting for it |

@@ -212,8 +212,11 @@ the manifests and the tasks files and applies them together or not at all:
    starts and no retry takes a worker), the steps that wait on processes run first
    (`supervisor.configure`, `supervisor.apply`, the pollers), then every other seam and
    the tasks and cron jobs switch in one synchronous step (`switchTo`), and the hold is
-   released (`core.config_reloaded`). Runs queued meanwhile start under the new config. A
-   throw in the process steps puts the previous agent defaults, connectors and pollers
+   released before the bwrap probe (`core.config_reloaded`). Runs queued meanwhile start
+   under the new config; the hold lasts as long as `apply` waits for kills and spawns
+   (up to the ACP `initialize` timeout or the MCP connect timeout for one that hangs).
+   A connector that fails to spawn does not throw (the supervisor marks it `down` and
+   retries), so the reload applies. A throw in the process steps puts the previous agent defaults, connectors and pollers
    back (`core.reload_undo_failed` if that throws too), logs `core.reload_failed`,
    counts `result="failed"` and returns `ok: false` with `error`; nothing else was
    touched (#77). After a reload that applied, the log level is re-applied (`--log-level` keeps

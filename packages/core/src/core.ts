@@ -568,12 +568,14 @@ export function createCore(opts: CoreOptions): Core {
       }
     }
     await Promise.all(stopping);
+    // Tracked from here on, so a throw below leaves `pollers` listing exactly what runs and
+    // an undo starts the stopped ones again instead of keeping them by key.
+    pollers = kept;
     for (const manifest of keep.values()) {
       const poller = makePoller(manifest);
-      kept.push({ manifest, poller });
       poller.start();
+      kept.push({ manifest, poller });
     }
-    pollers = kept;
   };
 
   let reloading: Promise<unknown> = Promise.resolve();
@@ -600,8 +602,8 @@ export function createCore(opts: CoreOptions): Core {
     // of it. The steps that take time or can fail (connectors respawning) go first and are
     // undone on failure; everything else then switches in one synchronous step.
     const release = executor.hold();
+    let applied: ApplyResult | undefined;
     try {
-      let applied: ApplyResult | undefined;
       try {
         applied = await applyConnectors(next);
       } catch (err) {
@@ -611,18 +613,19 @@ export function createCore(opts: CoreOptions): Core {
         return { ...result, ok: false, error };
       }
       switchTo(next, files, nextSandbox, result);
-      await checkBwrap();
-      metrics.configReloads.inc({ result: 'ok' });
-      log.info('core.config_reloaded', {
-        tasks: compiled.tasks.length,
-        connectors_added: joined(applied?.added),
-        connectors_removed: joined(applied?.removed),
-        connectors_changed: joined(applied?.changed),
-      });
-      return applied === undefined ? result : { ...result, connectors: applied };
     } finally {
+      // Before the bwrap probe: the config is consistent from here on.
       release();
     }
+    await checkBwrap();
+    metrics.configReloads.inc({ result: 'ok' });
+    log.info('core.config_reloaded', {
+      tasks: compiled.tasks.length,
+      connectors_added: joined(applied?.added),
+      connectors_removed: joined(applied?.removed),
+      connectors_changed: joined(applied?.changed),
+    });
+    return applied === undefined ? result : { ...result, connectors: applied };
   };
 
   /**
