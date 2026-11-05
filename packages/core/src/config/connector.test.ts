@@ -202,6 +202,19 @@ describe('loadConnectors with pollers', () => {
       },
     ]);
 
+    // An acp connector runs agent sessions; it serves no ops either (#118).
+    const acp = loadConnectors([
+      write(
+        'github.yaml',
+        'name: github\nexec: [npx, -y, "@agentclientprotocol/claude-agent-acp"]\ntransport: acp\n',
+      ),
+      poller(),
+    ]);
+    expect(acp.files[1]).toMatchObject({
+      ok: false,
+      issues: [{ path: 'config.connector', message: 'connector "github" serves no ops' }],
+    });
+
     // Polling another poller is refused too (it serves no ops).
     const chained = loadConnectors([
       github('[]'),

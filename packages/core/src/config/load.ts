@@ -259,7 +259,7 @@ export function loadConnectors(
   return ok ? { ok, files, connectors: all.map((c) => c.config) } : { ok, files };
 }
 
-/** A poller's `config.connector`/`op` must resolve to a process connector that serves the op. */
+/** A poller's `config.connector`/`op` must resolve to a process connector (not built-in, `none` or `acp`) that serves the op. */
 function checkPollerTarget(
   c: ConnectorConfig,
   all: readonly { config: ConnectorConfig }[],
@@ -272,7 +272,7 @@ function checkPollerTarget(
   if (target === undefined) {
     return { path: 'config.connector', message: `unknown connector "${connector}"` };
   }
-  if (target.builtin !== undefined || target.transport === 'none') {
+  if (target.builtin !== undefined || target.transport === 'none' || target.transport === 'acp') {
     return { path: 'config.connector', message: `connector "${connector}" serves no ops` };
   }
   if (target.ops.length > 0 && !target.ops.includes(op)) {
