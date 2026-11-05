@@ -25,8 +25,30 @@ export const processIo: Io = {
   },
 };
 
-/** Exit codes: 0 ok, 1 the daemon or the run reported a failure, 2 usage. */
-export const EXIT = { ok: 0, failed: 1, usage: 2 } as const;
+/**
+ * Ends the process quietly, with the SIGPIPE status 141, when the reader of stdout or stderr goes away (`oa … | head`),
+ * as other command-line tools do, instead of crashing on the unhandled EPIPE. Other
+ * stream errors are rethrown.
+ */
+export function exitOnClosedPipe(
+  streams: readonly NodeJS.EventEmitter[],
+  exit: (code: number) => void,
+): void {
+  for (const stream of streams) {
+    stream.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE') {
+        throw err;
+      }
+      exit(EXIT.closedPipe);
+    });
+  }
+}
+
+/**
+ * Exit codes: 0 ok, 1 the daemon or the run reported a failure, 2 usage, 141 the reader
+ * closed the output pipe (128 + SIGPIPE, as a shell reports a process killed by it).
+ */
+export const EXIT = { ok: 0, failed: 1, usage: 2, closedPipe: 141 } as const;
 
 /** A usage error: message on stderr, exit 2. */
 export class UsageError extends Error {}

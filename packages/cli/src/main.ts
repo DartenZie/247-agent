@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { main } from './cli.js';
-import { EXIT } from './io.js';
+import { EXIT, exitOnClosedPipe } from './io.js';
+
+exitOnClosedPipe([process.stdout, process.stderr], (code) => process.exit(code));
 
 main(process.argv.slice(2)).then(
   (code) => {
