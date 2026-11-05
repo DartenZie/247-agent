@@ -97,7 +97,8 @@ new version and you no longer want to roll back:
 sudo rm -rf /opt/247-agent-<old version>
 ```
 
-With `--no-restart`, the running daemon still uses the old tree until you restart it.
+If the installer did not restart the daemon (with `--no-restart`, with `--no-service`,
+or without systemd), the running daemon still uses the old tree until you restart it.
 If you remove the tree before the restart, the daemon cannot start new child processes,
 and you lose the rollback.
 

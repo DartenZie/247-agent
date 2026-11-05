@@ -319,9 +319,9 @@ if [ -n "$current" ] && [ "$current" != "$version" ]; then
   say "rollback: ln -sfn $previous $prefix && systemctl reset-failed 247-agent; systemctl restart 247-agent"
   say "  (if $version migrated state.db, $current refuses it: stop it, then restore the state.db.schema-<n>.bak copy next to state.db)"
   say "remove an old version only after 247-agent runs on $version and you no longer want to roll back to it:"
-  say "  rm -rf $prefix-<version>"
+  say "  rm -rf $previous"
   if [ $restarted = 0 ]; then
-    say "  (247-agent was not restarted: a daemon still running $current uses $previous; keep it until the restart)"
+    say "  (247-agent was not restarted: if a daemon still runs $current, it uses $previous; keep it until the restart)"
   fi
 else
   say "installed 247-agent $version ($prefix -> $tree)"

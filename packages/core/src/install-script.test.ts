@@ -133,8 +133,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(run.stdout).toContain(
       'remove an old version only after 247-agent runs on 9.9.9 and you no longer want to roll back to it',
     );
+    expect(run.stdout).toContain(`  rm -rf ${prefix}-9.9.8\n`);
     expect(run.stdout).toContain(
-      `247-agent was not restarted: a daemon still running 9.9.8 uses ${prefix}-9.9.8; keep it until the restart`,
+      `247-agent was not restarted: if a daemon still runs 9.9.8, it uses ${prefix}-9.9.8; keep it until the restart`,
     );
   });
 
