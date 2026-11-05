@@ -79,7 +79,7 @@ describe('oa validate', () => {
   it('fails on a bad file and on no file', async () => {
     writeFileSync(join(dir, 'bad.yaml'), 'tasks: []\n');
     expect(await main(['validate', join(dir, 'bad.yaml')], io)).toBe(1);
-    expect(err[0]).toMatch(/bad\.yaml: tasks:/);
+    expect(err[0]).toMatch(/bad\.yaml:1: tasks: /);
     expect(await main(['validate'], io)).toBe(2);
   });
 
