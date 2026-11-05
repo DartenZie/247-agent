@@ -13,7 +13,10 @@ import { createApiServer, type ApiServer } from './server.js';
 let dir: string;
 let server: ApiServer;
 
+let lines: string[];
+
 beforeEach(async () => {
+  lines = [];
   dir = mkdtempSync(join(tmpdir(), 'oa-api-'));
   server = createApiServer({
     // The oversized-body path answers before routing, so only the metrics are touched.
@@ -21,7 +24,7 @@ beforeEach(async () => {
     clock: { now: () => new Date() },
     startedAt: new Date(),
     configFile: 'agent.yaml',
-    log: createLogger({ level: 'error', sink: () => undefined }),
+    log: createLogger({ level: 'debug', sink: (l) => lines.push(l) }),
     socketPath: join(dir, 's.sock'),
     maxBodyBytes: 1024,
   });
@@ -51,7 +54,16 @@ function post(body: string): Promise<{ status: number; text: string }> {
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', (err: Error) => {
+      // Says how far the body got and what the server logged, so a failure shows its cause.
+      const detail = {
+        bodyBytes: Buffer.byteLength(body),
+        written: req.socket?.bytesWritten,
+        response: result,
+        server: lines,
+      };
+      reject(new Error(`${err.message}: ${JSON.stringify(detail)}`, { cause: err }));
+    });
     req.on('close', () => {
       if (result === undefined) {
         reject(new Error('the connection closed without a complete response'));
@@ -66,7 +78,7 @@ function post(body: string): Promise<{ status: number; text: string }> {
 describe('api server', () => {
   it('answers 413 naming the limit when the body is too large (#76)', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: { data: 'a'.repeat(2 * 1024 * 1024) } });
-    await expect(post(big)).resolves.toEqual({
+    expect(await post(big)).toEqual({
       status: 413,
       text: '{"error":"request body exceeds 1024 bytes"}',
     });
@@ -74,7 +86,7 @@ describe('api server', () => {
 
   it('reads a body of exactly the limit, and refuses one byte more', async () => {
     // Not JSON, so the server answers 400 after reading it and never reaches a route.
-    await expect(post('a'.repeat(1024))).resolves.toMatchObject({ status: 400 });
-    await expect(post('a'.repeat(1025))).resolves.toMatchObject({ status: 413 });
+    expect(await post('a'.repeat(1024))).toMatchObject({ status: 400 });
+    expect(await post('a'.repeat(1025))).toMatchObject({ status: 413 });
   });
 });
