@@ -180,8 +180,8 @@ export class LlmService implements LlmPort, BatchSource {
           effort: req.effort,
           signal: cctx.signal,
         }),
-      // `error` says why a billed response is unusable (#162); it is the adapter's
-      // message, never the prompt or the response text.
+      // `error` says why a billed response is unusable (#162): the adapter's message. A
+      // parse failure never quotes the response; an OpenRouter upstream message is passed on.
       (res) => ({
         stop_reason: res.stopReason,
         ...(res.error === undefined ? {} : { error: res.error }),
@@ -464,7 +464,11 @@ export class LlmService implements LlmPort, BatchSource {
             this.o.store.ledger.sumForRun(run.id),
             this.o.clock.now(),
             { run, task: row.task, signal: new AbortController().signal, log },
-            { batch_id: row.batch_id, stop_reason: res.stopReason },
+            {
+              batch_id: row.batch_id,
+              stop_reason: res.stopReason,
+              ...(outcome.error === undefined ? {} : { error: outcome.error }),
+            },
           );
           billed = { usd: settled.usd, priced_by: settled.pricedBy, ledger_id: settled.ledgerId };
         }

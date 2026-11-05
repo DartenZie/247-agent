@@ -157,7 +157,7 @@ describe('LlmService.call', () => {
       output: null,
       usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 },
       stopReason: 'end',
-      error: 'anthropic: failed to parse the structured output: Unexpected token',
+      error: 'anthropic: failed to parse the structured output as JSON: Unexpected token "h"',
     });
     const r = run();
     const res = await call(service(), {}, r);
@@ -165,7 +165,7 @@ describe('LlmService.call', () => {
     expect(env.store.ledger.listByRun(r.id)).toHaveLength(1);
     const line = env.lines.find((l) => l.msg === 'llm.call');
     expect(line).toMatchObject({
-      error: 'anthropic: failed to parse the structured output: Unexpected token',
+      error: 'anthropic: failed to parse the structured output as JSON: Unexpected token "h"',
       stop_reason: 'end',
     });
     expect(JSON.stringify(line)).not.toContain('classify this');
@@ -1048,6 +1048,7 @@ describe('LlmService batches', () => {
       error: 'not JSON',
       retryable: true,
     });
+    expect(env.lines.find((l) => l.msg === 'llm.call')).toMatchObject({ error: 'not JSON' });
   });
 
   it('keeps polling after a failed poll and abandons a batch after a week', async () => {

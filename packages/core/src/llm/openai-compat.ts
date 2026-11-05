@@ -75,6 +75,14 @@ export function cacheTokensOf(
 }
 
 /**
+ * V8 quotes the input in `Unexpected token 'h', "hello" is not valid JSON`, shortened with
+ * `...` on either side when the input is long. Keep only `Unexpected token 'h'`.
+ */
+function withoutSnippet(why: string): string {
+  return why.replace(/^(Unexpected token .+?), (?:\.\.\.)?".*is not valid JSON$/s, '$1');
+}
+
+/**
  * The structured output of a completed response, or why it is unusable. Never throws: the
  * response is billed, so it goes back to the service to be ledgered either way. The reason
  * reaches the run error and the `llm.call` log line, so it never quotes the response:
@@ -90,7 +98,7 @@ export function parseStructured(
   try {
     return { output: JSON.parse(text) as JsonValue };
   } catch (err) {
-    const why = errorMessage(err).replace(/, ".*" is not valid JSON$/s, '');
+    const why = withoutSnippet(errorMessage(err));
     return {
       output: null,
       error: `${prefix}: failed to parse the structured output as JSON: ${why}`,
