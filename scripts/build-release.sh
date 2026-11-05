@@ -116,12 +116,6 @@ if [ "$target" = "$(node -p 'process.platform + "-" + process.arch')" ]; then
   "$stage/bin/oa" validate "$stage/share/examples/agent.yaml" > /dev/null
 fi
 
-# 7. Pack.
-# bsdtar (macOS) would otherwise record Apple xattrs that GNU tar warns about on Linux.
-tar_flags=
-if tar --version 2> /dev/null | grep -q bsdtar; then tar_flags="--no-xattrs --no-mac-metadata"; fi
-export COPYFILE_DISABLE=1
-# shellcheck disable=SC2086
-tar $tar_flags -C "$out" -czf "$out/$name.tar.gz" "$name"
-(cd "$out" && sha256 "$name.tar.gz" > "$name.tar.gz.sha256" && sed -i.bak "s|\$| $name.tar.gz|" "$name.tar.gz.sha256" && rm -f "$name.tar.gz.sha256.bak")
+# 7. Pack, with root as the owner of every entry.
+scripts/pack-release.sh "$out" "$name"
 echo "wrote $out/$name.tar.gz ($(du -h "$out/$name.tar.gz" | cut -f1))"
