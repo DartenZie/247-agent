@@ -150,6 +150,7 @@ The release tree, under `/opt/247-agent` or wherever you unpacked it:
 | `lib/`, `node/`, `node_modules/` | the bundled code, the vendored Node.js (with `npm` and `npx`), the SQLite addon |
 | `share/doc/` | this documentation |
 | `share/examples/` | the example configuration, including the reference workflow |
+| `share/connectors/<name>/examples/` | example task files for the `email`, `ftp` and `webhook` connectors |
 | `share/skills/` | the agent skills, for an agent that configures the daemon it runs under |
 | `share/systemd/` | the two unit files |
 | `share/etc/` | the starter configuration |

@@ -39,8 +39,9 @@ bin/            the launchers
 lib/            one bundled .mjs per program
 node/           a vendored Node (bin/node, npm, npx) pinned by .node-version, verified against nodejs.org's SHASUMS256.txt, cached in .cache/
 node_modules/   better-sqlite3 with the target's prebuilt addon
-share/doc/      README.md and the user docs (docs/ without internal/ and examples/)
+share/doc/      the user docs (docs/ without internal/ and examples/); doc/examples links to ../examples
 share/examples/ docs/examples
+share/connectors/<name>/examples/  connectors/<name>/examples
 share/skills/   skills/
 share/systemd/  247-agent.service, 247-agent-connector@.service
 share/etc/      the starter config (packaging/etc)
@@ -54,6 +55,15 @@ When the target is the build machine it smoke-tests the stage: `oa --version` an
 `u+rwX,go+rX,go-w` before it packs, so a build host's umask or a checkout made under
 077 cannot record a tree closed to the service user. The tarball and its `.sha256` land
 in `dist-release/`.
+
+`scripts/stage-share.sh <stage>` fills `share/`. The layout keeps every relative link in
+the shipped docs working as in a checkout: `share/doc/examples` is a link to
+`../examples`, and the connector example task files sit where `../../connectors/<name>/examples/`
+lands from `share/doc/`. The README (the repository's front page, whose links point into
+the repository) and the connector READMEs (development notes; `docs/connectors/<name>.md`
+is the reference) stay out. `release-docs.test.ts` stages `share/` and runs
+`check-docs.mjs --links-only` over `share/doc` and `share/skills`.
+
 `npm run release` is the same script for this machine; `--target` cross-builds, which
 only needs the Node download for the target.
 

@@ -102,16 +102,7 @@ ln -s ../lib/node_modules/npm/bin/npx-cli.js "$stage/node/bin/npx"
 
 # 4. Launchers, docs, examples, skills, the unit file.
 cp -R bin "$stage/bin"
-mkdir -p "$stage/share/doc" "$stage/share/systemd"
-cp README.md "$stage/share/doc/"
-# The user documentation (docs/ without internal/, which is for contributors, and
-# examples/, shipped under share/examples).
-tar -C docs --exclude=./internal --exclude=./examples -cf - . | tar -C "$stage/share/doc" -xf -
-cp -R docs/examples "$stage/share/examples"
-cp -R skills "$stage/share/skills"
-cp packaging/247-agent.service packaging/247-agent-connector@.service "$stage/share/systemd/"
-cp scripts/install.sh scripts/uninstall.sh scripts/check-service.sh "$stage/share/"
-cp -R packaging/etc "$stage/share/etc"
+scripts/stage-share.sh "$stage"
 cp LICENSE "$stage/LICENSE"
 printf 'version=%s\ntarget=%s\nnode=%s\n' "$version" "$target" "$node_version" > "$stage/VERSION"
 
