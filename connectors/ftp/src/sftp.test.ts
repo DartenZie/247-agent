@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   connectSftp,
@@ -14,7 +13,9 @@ import {
   type SftpFileStats,
   type SftpLib,
 } from './sftp.js';
-import { ftpConfig } from './test-helpers.js';
+import { ftpConfig, removeTempDirs, tempDir } from './test-helpers.js';
+
+afterEach(removeTempDirs);
 
 interface FakeSftp {
   lib: SftpLib;
@@ -249,7 +250,7 @@ describe('SftpFileClient', () => {
 
 describe('upload', () => {
   it('hands the library a stream of the local file', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'sftp-up-'));
+    const dir = tempDir('sftp-up-');
     const file = join(dir, 'f.bin');
     writeFileSync(file, 'streamed');
     const fake = fakeSftp();

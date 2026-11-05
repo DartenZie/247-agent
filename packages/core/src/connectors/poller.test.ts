@@ -389,14 +389,18 @@ describe('Poller', () => {
 
 describe('Poller through the daemon', () => {
   let dir: string;
-  let daemon: Daemon;
+  let daemon: Daemon | undefined;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'oa-poller-'));
   });
   afterEach(async () => {
-    await daemon.stop();
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      await daemon?.stop();
+    } finally {
+      daemon = undefined;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('polls a supervised connector on its cron and emits events tasks can react to', async () => {

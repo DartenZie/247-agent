@@ -1,12 +1,14 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { FileOps } from './ops.js';
-import { ftpConfig, MemoryFileClient } from './test-helpers.js';
+import { ftpConfig, MemoryFileClient, removeTempDirs, tempDir } from './test-helpers.js';
 import { FtpOpError } from './types.js';
+
+afterEach(removeTempDirs);
 
 /**
  * A memory client that also resolves paths the way a server does: relative paths from the
@@ -92,7 +94,7 @@ describe('symlinks on the server', () => {
   });
 
   it('refuses a sync into a remote directory that links outside', async () => {
-    const local = mkdtempSync(join(tmpdir(), 'confine-'));
+    const local = tempDir('confine-');
     writeFileSync(join(local, 'a.txt'), 'a');
     const { ops, client } = setup(OUT, OUT_REAL);
     expect((await refusal(ops.sync({ local, remote: 'out' }))).code).toBe('path');
@@ -100,7 +102,7 @@ describe('symlinks on the server', () => {
   });
 
   it('lets sync prune and rename move a link that points outside, never its target', async () => {
-    const local = mkdtempSync(join(tmpdir(), 'confine-'));
+    const local = tempDir('confine-');
     writeFileSync(join(local, 'notes.txt'), 'new');
     const { ops, client } = setup({ ...OUT, '/srv/x/stats': '/usr/share/stats' }, [
       ...OUT_REAL,

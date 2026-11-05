@@ -52,6 +52,21 @@ function manifest(over: Record<string, unknown> = {}): ConnectorConfig {
 
 let sup: ConnectorSupervisor | undefined;
 let lines: Record<string, unknown>[];
+const tempDirs: string[] = [];
+
+/** A new directory under tmpdir(), deleted after the test, also when the test fails. */
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/** Each test's agent work_dir, so no test writes into the shared default under tmpdir(). */
+let agentWork: string;
+
+beforeEach(() => {
+  agentWork = tempDir('oa-sup-work-');
+});
 
 function make(
   manifests: ConnectorConfig[],
@@ -67,13 +82,20 @@ function make(
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
     }),
     env: { PATH: process.env.PATH ?? '', FAKE_EXTRA: 'from-base' },
+    agents: { defaults: AgentDefaults.parse({}), workDir: agentWork },
   });
   return sup;
 }
 
 afterEach(async () => {
-  await sup?.stop();
-  sup = undefined;
+  try {
+    await sup?.stop();
+  } finally {
+    sup = undefined;
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 const signal = (): AbortSignal => new AbortController().signal;
@@ -330,7 +352,7 @@ describe('ConnectorSupervisor', () => {
   });
 
   it('restart() during initialize stops the starting process before spawning another', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const pidFile = join(dir, 'pids');
     const s = make([manifest({ exec: HANGS_IN_INIT, env: { PID_FILE: pidFile } })]);
     void s.start();
@@ -346,7 +368,7 @@ describe('ConnectorSupervisor', () => {
   });
 
   it('stop() during initialize returns once the transport closes, though a grandchild holds stdout', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const pidFile = join(dir, 'pids');
     const inner = `${HANGS_IN_INIT[2] ?? ''} setInterval(() => undefined, 60000);`;
     const s = make([
@@ -367,7 +389,7 @@ describe('ConnectorSupervisor', () => {
   // The program outlives its closed stdin, so the restart and the stop each wait out the
   // transport's 2 s grace before the group SIGTERM: 4 s before any spawn, too close to 5 s (#208).
   it('stops every process a wrapper started, on restart and on stop (#196)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = wrapped(dir, `${FIXTURES}fake-mcp.ts`);
     const s = make([manifest({ exec, env: { PID_FILE: pidFile } })]);
     await expectNoLeftovers(s, 'fake', pidFile);
@@ -375,7 +397,7 @@ describe('ConnectorSupervisor', () => {
   }, 20_000);
 
   it('stops every process a wrapper started for a transport: none connector (#196)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = wrapped(dir, '-e 0');
     const s = make([
       manifest({ name: 'plain', transport: 'none', exec, env: { PID_FILE: pidFile } }),
@@ -385,7 +407,7 @@ describe('ConnectorSupervisor', () => {
   });
 
   it('stops a helper that holds none of the pipes once the program exits on stop', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const pidFile = join(dir, 'pids');
     const s = make([
       manifest({
@@ -459,7 +481,7 @@ describe('ConnectorSupervisor', () => {
   }, 60_000);
 
   it('restarts a crashed connector whose helper still holds its output (#198)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withHelper(dir, `node ${FIXTURES}fake-mcp.ts`);
     try {
       const s = make([manifest({ exec })]);
@@ -483,7 +505,7 @@ describe('ConnectorSupervisor', () => {
   }, 30_000);
 
   it('restarts a crashed connector whose helper in another session holds its output (#200)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withSessionHelper(dir, `node ${FIXTURES}fake-mcp.ts`);
     try {
       const s = make([manifest({ exec })]);
@@ -506,7 +528,7 @@ describe('ConnectorSupervisor', () => {
   }, 30_000);
 
   it('notices a transport: none program exit while a helper in another session holds the output (#200)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withSessionHelper(
       dir,
       'node -e "setTimeout(() => process.exit(3), 200)"',
@@ -525,7 +547,7 @@ describe('ConnectorSupervisor', () => {
   }, 30_000);
 
   it('notices a transport: none program exit while its helper holds the output (#198)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withHelper(dir, 'node -e "setTimeout(() => process.exit(3), 200)"');
     try {
       const s = make([manifest({ name: 'plain', transport: 'none', exec })]);
@@ -542,7 +564,7 @@ describe('ConnectorSupervisor', () => {
   }, 30_000);
 
   it('retries a transport: none connector whose spawn fails at once', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const file = join(dir, 'not-a-dir');
     writeFileSync(file, '');
     try {
@@ -697,7 +719,7 @@ describe('ConnectorSupervisor with an acp connector', () => {
   });
 
   it('restart() during initialize stops the starting agent before spawning another', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const pidFile = join(dir, 'pids');
     const s = make([acp({ exec: HANGS_IN_INIT, env: { PID_FILE: pidFile } })]);
     void s.start();
@@ -712,7 +734,7 @@ describe('ConnectorSupervisor with an acp connector', () => {
   });
 
   it('stops every process a wrapper started for an unsandboxed agent (#196)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = wrapped(dir, `${FIXTURES}fake-acp.ts`);
     const s = make([acp({ exec, env: { PID_FILE: pidFile } })]);
     await expectNoLeftovers(s, 'claude', pidFile);
@@ -746,7 +768,7 @@ describe('ConnectorSupervisor with an acp connector', () => {
   });
 
   it('restarts a crashed agent whose helper still holds its output (#198)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withHelper(dir, `node ${FIXTURES}fake-acp.ts`);
     try {
       const s = make([acp({ exec })]);
@@ -773,7 +795,7 @@ describe('ConnectorSupervisor with an acp connector', () => {
   }, 30_000);
 
   it('restarts a crashed agent whose helper in another session holds its output (#200)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'oa-sup-'));
+    const dir = tempDir('oa-sup-');
     const { exec, pidFile } = withSessionHelper(dir, `node ${FIXTURES}fake-acp.ts`);
     try {
       const s = make([acp({ exec })]);

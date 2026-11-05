@@ -68,8 +68,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await daemon.stop();
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    await daemon.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 async function settled(id: string) {
