@@ -175,7 +175,8 @@ events, the ones that ended the run's earlier waits. One event therefore never e
 waits of a run, even when their filters are the same, and an event that arrived while
 an earlier wait was armed can still end a later one. The result is the matched event (minus
 `seq`); on timeout `on_timeout: succeed` returns `{timed_out: true}`, else
-`WaitTimeoutError` (non-retryable). A wait without `timeout` waits forever. The
+`WaitTimeoutError` (non-retryable). An event ends the wait when it was stored before the
+deadline, even if the dispatcher reaches it later. A wait without `timeout` waits forever. The
 attempt timer is cleared on suspend and set again on resume, so waiting time never
 counts against the task `timeout`. An event the dispatcher drops (past
 `limits.max_event_depth` or `limits.max_runs_per_chain`) starts no run but still ends a

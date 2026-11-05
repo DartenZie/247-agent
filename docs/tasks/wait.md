@@ -77,6 +77,9 @@ too, so a reply that races the question is not lost.
   published, so your notify task hears about it.
 - `succeed`: the run continues with `{ timed_out: true }` as the result.
 
+An event that arrived before the timeout passed resumes the run, even if the daemon
+handles it later, for example after a restart.
+
 The task's own `timeout` bounds active work only; time spent waiting does not count
 against it.
 

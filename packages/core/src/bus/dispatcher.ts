@@ -53,6 +53,11 @@ interface CompiledWait {
   readonly filter: Filter | undefined;
 }
 
+/** Whether the wait's deadline had passed when the event was stored. */
+function expiredBy(w: CompiledWait, event: EventRecord): boolean {
+  return w.wait.expires_at !== null && w.wait.expires_at <= event.ts;
+}
+
 /** The event as wait filters see it: everything but the internal `seq`. */
 function filterView(event: EventRecord): Omit<EventRecord, 'seq'> {
   const { seq: _seq, ...rest } = event;
@@ -203,7 +208,7 @@ export class Dispatcher {
     const waitingRuns = dispatched
       ? []
       : this.compileWaits(true)
-          .filter((w) => this.waitMatches(w, event, true))
+          .filter((w) => !expiredBy(w, event) && this.waitMatches(w, event, true))
           .map((w) => w.wait.run_id);
     return { event_id: event.id, dispatched, runs, tasks, waiting_runs: waitingRuns };
   }
@@ -304,10 +309,14 @@ export class Dispatcher {
     return undefined;
   }
 
-  /** Runs whose waits are past `expires_at`, re-queued. */
-  private expireWaits(): RunRecord[] {
+  /**
+   * Runs whose waits are past `expires_at` at `atIso`, re-queued. Called with the clock only
+   * once the backlog is dispatched: an event stored before a deadline but dispatched after it
+   * still ends the wait (#100).
+   */
+  private expireWaits(atIso: string): RunRecord[] {
     const out: RunRecord[] = [];
-    for (const wait of this.store.waits.listExpired(this.clock.now().toISOString())) {
+    for (const wait of this.store.waits.listExpired(atIso)) {
       const run = this.endWait(wait, 'timeout', undefined);
       if (run !== undefined) {
         out.push(run);
@@ -373,13 +382,13 @@ export class Dispatcher {
     // A batch that rolls back takes its `loop.detected` with it; its replay publishes again.
     this.batchReported = new Set();
     const result = this.store.transaction((): DispatchResult => {
-      const queued: RunRecord[] = this.expireWaits();
       const cursor = this.store.cursors.get('dispatch');
       const events = this.store.events.listAfter(cursor, this.batchSize);
       const last = events[events.length - 1];
       if (last === undefined) {
-        return { scanned: 0, queued };
+        return { scanned: 0, queued: this.expireWaits(this.clock.now().toISOString()) };
       }
+      const queued: RunRecord[] = [];
       let waits = this.compileWaits();
       const paused = new Set(this.store.pauses.list().map((p) => p.task));
       // Runs per chain root, read once per batch and counted up as runs are inserted.
@@ -393,6 +402,14 @@ export class Dispatcher {
         if (waits.length > 0) {
           const still: CompiledWait[] = [];
           for (const w of waits) {
+            if (expiredBy(w, event)) {
+              // The deadline passed before the event was stored: it is too late for this wait.
+              const run = this.endWait(w.wait, 'timeout', undefined);
+              if (run !== undefined) {
+                queued.push(run);
+              }
+              continue;
+            }
             if (!this.waitMatches(w, event)) {
               still.push(w);
               continue;
@@ -477,6 +494,10 @@ export class Dispatcher {
         }
       }
       this.store.cursors.set('dispatch', last.seq);
+      if (events.length < this.batchSize) {
+        // Caught up: no event stored before now is left that could still end a wait.
+        queued.push(...this.expireWaits(this.clock.now().toISOString()));
+      }
       return { scanned: events.length, queued };
     });
     if (this.reported.size + this.batchReported.size > 1000) {
