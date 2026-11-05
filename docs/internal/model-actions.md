@@ -94,7 +94,11 @@ the model's context window; shorten the input or ask for less") and a refusal; t
 parsed object with `output_schema`, else `{text}`. A response the adapter returned
 with `error` (billed, but no usable structured output), or a structured call that
 stopped for another reason (`other`), fails retryably; its row is already in the
-ledger, so the retry spends from the same cap.
+ledger, so the retry spends from the same cap. The `llm.call` line of such a response
+carries the adapter's `error` as `error` (#162), for a batch result too. A parse
+failure never quotes the response: `parseStructured()` drops the snippet that V8's
+`Unexpected token` message carries, whole or shortened with `...`. OpenRouter's
+upstream message on a billed 200 is passed on as the upstream wrote it.
 
 ## An aborted call
 

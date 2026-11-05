@@ -1,9 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import { NonRetryableError } from '../actions/types.js';
-import { errorMessage } from '../errors.js';
-import type { JsonValue } from '../store/types.js';
 import { supportsEffort } from './models.js';
+import { parseStructured } from './openai-compat.js';
 import type {
   BatchPollRequest,
   BatchStatus,
@@ -119,25 +118,7 @@ function responseOf(msg: Anthropic.Message, structured: boolean): LlmResponse {
   if (stopReason !== 'end') {
     return { output: null, usage, stopReason };
   }
-  if (text === '') {
-    return {
-      output: null,
-      usage,
-      stopReason,
-      error: 'anthropic: the response ended without a structured output',
-    };
-  }
-  try {
-    return { output: JSON.parse(text) as JsonValue, usage, stopReason };
-  } catch (err) {
-    const why = errorMessage(err);
-    return {
-      output: null,
-      usage,
-      stopReason,
-      error: `anthropic: failed to parse the structured output as JSON: ${why}`,
-    };
-  }
+  return { ...parseStructured('anthropic', text), usage, stopReason };
 }
 
 /** `custom_id`s and batch ids go into URLs and a wait filter: nothing but these characters. */
