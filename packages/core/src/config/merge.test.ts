@@ -209,6 +209,45 @@ describe('checkConfigFile with directories and manifests', () => {
     });
   });
 
+  it('warns, without failing, about an agent granted a connector whose manifest has no ops', () => {
+    mkdirSync(join(dir, 'connectors.d'));
+    writeFileSync(join(dir, 'connectors.d', 'github.yaml'), 'name: github\nexec: [gh-mcp]\n');
+    writeFileSync(join(dir, 'connectors.d', 'files.yaml'), 'name: files\nexec: [fs-mcp]\n');
+    writeFileSync(
+      join(dir, 'connectors.d', 'email.yaml'),
+      'name: email\nexec: [mail-mcp]\nops: [fetch_new]\n',
+    );
+    writeFileSync(join(dir, 'agent.yaml'), 'tasks: [tasks.yaml]\nconnectors: connectors.d\n');
+    writeFileSync(
+      join(dir, 'tasks.yaml'),
+      [
+        'tasks:', // 1
+        '  - name: edit', // 2
+        '    trigger: { kind: manual }', // 3
+        '    action:', // 4
+        '      kind: agent', // 5
+        '      workspace: { kind: temp }', // 6
+        '      tools: [read]', // 7
+        '      prompt: x', // 8
+        '      mcp_servers:', // 9
+        '        - github', // 10
+        '        - email', // 11
+        '        - { connector: files, ops: [read_file] }', // 12
+        '',
+      ].join('\n'),
+    );
+    const check = checkConfigFile(join(dir, 'agent.yaml')).find(
+      (c) => c.file === join(dir, 'tasks.yaml'),
+    );
+    expect(check).toMatchObject({ ok: true });
+    expect(check === undefined ? [] : formatWarnings(check)).toEqual([
+      `${join(dir, 'tasks.yaml')}:10: tasks[0].action.mcp_servers[0]: warning: task "edit": ` +
+        `connector "github" (${join(dir, 'connectors.d', 'github.yaml')}) has no ops in its ` +
+        'manifest, so the agent can call every tool the connector exposes, including ones ' +
+        'that change things; list the ops in the manifest or in this grant',
+    ]);
+  });
+
   it('names the task and the line of a cross-check issue and of a warning in a tasks.d file', () => {
     writeFileSync(join(dir, 'agent.yaml'), 'tasks: [tasks.yaml, tasks.d]\n');
     writeFileSync(

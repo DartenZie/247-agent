@@ -134,6 +134,11 @@ parsed tasks file and prints them with `formatWarnings` as
 `<file>:<line>: <path>: warning: task "<name>": <message>` without changing the exit code; the
 core runs the same lint in `activate()` (`core.ts`), so at start and on every reload,
 and logs each as `core.config_warning` (`task`, `file`, `path`, `line`, `warning`).
+`oa validate agent.yaml` adds one cross-check warning with the manifests at hand,
+`agentToolWarnings` (`crosscheck.ts`): an `agent` grant in `mcp_servers` with no `ops`
+of its own on a stdio connector whose manifest `ops` is empty, which leaves every tool
+the server lists reachable. Grants `checkAgentTools` refuses get no warning. The core
+does not log it.
 
 What is linted, both for suspect comparisons and for roots the position does not
 provide: every trigger `filter`, `emit` `when`, sequence step `when` and post gate

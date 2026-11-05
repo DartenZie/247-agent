@@ -8,6 +8,7 @@ import { MAX_SOCKET_PATH } from '../api/socket-path.js';
 import { resolvePricing } from '../llm/pricing.js';
 import { parseManifest } from './connector.js';
 import {
+  agentToolWarnings,
   checkAgentTools,
   checkConnectorActions,
   checkLlmTasks,
@@ -202,20 +203,20 @@ const manifests = [
   }),
 ];
 
-describe('checkAgentTools', () => {
-  const agent = (mcp_servers: unknown[]) =>
-    Task.parse({
-      name: 'edit',
-      trigger: { kind: 'manual' },
-      action: {
-        kind: 'agent',
-        workspace: { kind: 'temp' },
-        tools: ['other'],
-        prompt: 'x',
-        mcp_servers,
-      },
-    });
+const agent = (mcp_servers: unknown[]) =>
+  Task.parse({
+    name: 'edit',
+    trigger: { kind: 'manual' },
+    action: {
+      kind: 'agent',
+      workspace: { kind: 'temp' },
+      tools: ['other'],
+      prompt: 'x',
+      mcp_servers,
+    },
+  });
 
+describe('checkAgentTools', () => {
   it('accepts stdio connectors and ops their manifests allow', () => {
     expect(
       checkAgentTools([agent(['github', { connector: 'email', ops: ['send'] }]), shell], manifests),
@@ -257,6 +258,30 @@ describe('checkAgentTools', () => {
           'not in the ops of connector "email" (/etc/247-agent/connectors.d/email.yaml): delete',
       },
     ]);
+  });
+});
+
+describe('agentToolWarnings', () => {
+  it('warns when a grant without ops names a connector whose manifest has no ops', () => {
+    expect(agentToolWarnings([shell, agent(['email', 'github'])], manifests)).toEqual([
+      {
+        path: 'tasks[1].action.mcp_servers[1]',
+        task: 'edit',
+        message:
+          'connector "github" (/etc/247-agent/connectors.d/github.yaml) has no ops in its ' +
+          'manifest, so the agent can call every tool the connector exposes, including ' +
+          'ones that change things; list the ops in the manifest or in this grant',
+      },
+    ]);
+  });
+
+  it('does not warn about a grant that lists its own ops, or a connector with ops', () => {
+    expect(
+      agentToolWarnings(
+        [agent([{ connector: 'github', ops: ['list'] }, 'email', 'nope', 'claude'])],
+        manifests,
+      ),
+    ).toEqual([]);
   });
 });
 

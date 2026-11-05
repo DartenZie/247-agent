@@ -184,6 +184,45 @@ export function checkAgentTools(
 }
 
 /**
+ * Warnings, not errors: an `agent` task's `mcp_servers` grant that lists no ops of its
+ * own and names a stdio connector whose manifest has none either. `ops: []` means every
+ * tool the server lists, so nothing narrows what the agent may call. Grants that
+ * `checkAgentTools` refuses are left to it. Run by `oa validate agent.yaml`.
+ */
+export function agentToolWarnings(
+  tasks: readonly TaskConfig[],
+  manifests: readonly ConnectorConfig[],
+): ConfigIssue[] {
+  const out: ConfigIssue[] = [];
+  tasks.forEach((task, i) => {
+    const a = task.action;
+    if (a.kind !== 'agent') {
+      return;
+    }
+    a.mcp_servers.forEach((grant, j) => {
+      const m = manifests.find((x) => x.name === grant.connector);
+      if (
+        m?.transport !== 'stdio' ||
+        m.builtin !== undefined ||
+        m.ops.length > 0 ||
+        grant.ops.length > 0
+      ) {
+        return;
+      }
+      out.push({
+        path: `tasks[${String(i)}].action.mcp_servers[${String(j)}]`,
+        task: task.name,
+        message:
+          `connector "${m.name}" (${m.file}) has no ops in its manifest, so the agent can ` +
+          'call every tool the connector exposes, including ones that change things; list ' +
+          'the ops in the manifest or in this grant',
+      });
+    });
+  });
+  return out;
+}
+
+/**
  * Every `connector` action (a task's own or a sequence step) names a process connector
  * that serves ops (`transport: stdio`), and an op in the manifest's own `ops` when it has
  * some: the supervisor calls nothing else, and the run would fail without retry. Run with

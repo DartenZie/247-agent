@@ -150,6 +150,13 @@ A `wait`'s `for.filter` gets one more warning. `oa validate` parses the filter w
 each template replaced by a value. If the filter is not valid JMESPath even then, the
 wait would never match.
 
+Given `agent.yaml`, `oa validate` also warns about an `mcp_servers` entry that lists no
+`ops` and names a connector whose manifest has `ops: []`. The empty list means every
+tool the connector exposes, including ones that send, create or delete, so the agent can
+call all of them. The warning names the task and the connector. To clear it, list the
+ops in the manifest or in the entry, as in `{ connector: email, ops: [fetch_new] }`. The
+daemon does not log this warning.
+
 A comparison such as `payload.zip == '01234'` gets no warning: equality with a quoted
 string is right when the field holds a string. A bare number such as
 `payload.amount > 100` is an error, not a warning; the message suggests the backticks,
