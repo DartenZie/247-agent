@@ -298,6 +298,20 @@ describe('stopServer', () => {
     await expect(pending).rejects.toThrow();
     core.release();
   });
+
+  it('closes an idle keep-alive connection at once instead of waiting out the grace', async () => {
+    const base = await start(new FakeCore());
+    const [server] = servers;
+    if (server === undefined) {
+      throw new Error('no server');
+    }
+    const res = await fetch(`${base}/healthz`);
+    expect(res.headers.get('connection')).toBe('keep-alive');
+    await res.text();
+    const started = Date.now();
+    await stopServer(server, 10_000);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
 
 describe('parseBody', () => {

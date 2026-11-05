@@ -82,6 +82,13 @@ export function createHandler(
   const routes = new Map(opts.config.routes.map((r) => [r.path, r]));
   const now = opts.now ?? (() => new Date());
   return (req, res) => {
+    // A response sent keep-alive just before the drain began: close its connection once it
+    // is written, so the stop does not wait out the grace.
+    res.once('finish', () => {
+      if (drain.draining) {
+        req.socket.end();
+      }
+    });
     const send = (
       status: number,
       body: Record<string, JsonValue>,
