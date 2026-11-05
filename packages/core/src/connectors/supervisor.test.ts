@@ -600,15 +600,17 @@ describe('ConnectorSupervisor', () => {
       metrics,
     });
     await sup.start();
-    await until(() => lines.some((l) => l.msg === 'connector.output_dropped'));
+    // Each stream reports its own drops when it ends, in no fixed order: wait for both.
+    const droppedSoFar = () =>
+      lines
+        .filter((l) => l.msg === 'connector.output_dropped')
+        .reduce((n, l) => n + Number(l.lines), 0);
+    await until(() => droppedSoFar() >= 201);
     const out = lines.filter((l) => l.msg === 'connector.output');
     expect(out).toHaveLength(100);
     expect(out.every((l) => l.connector === 'flood')).toBe(true);
     expect(out.every((l) => String(l.line).length <= 2000)).toBe(true);
-    const dropped = lines
-      .filter((l) => l.msg === 'connector.output_dropped')
-      .reduce((n, l) => n + Number(l.lines), 0);
-    expect(dropped).toBe(201);
+    expect(droppedSoFar()).toBe(201);
     expect(lines.find((l) => l.msg === 'connector.output_dropped')).toMatchObject({
       level: 'warn',
       connector: 'flood',

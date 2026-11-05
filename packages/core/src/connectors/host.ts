@@ -24,6 +24,7 @@ import { loadAgentFile } from '../config/agent.js';
 import { unitSocket, type ConnectorConfig } from '../config/connector.js';
 import { loadConnectors, type ConfigIssue } from '../config/load.js';
 import type { Logger } from '../log.js';
+import { releasePipes } from '../process-group.js';
 import { createSecretsBackend } from '../secrets/secrets.js';
 import { connectorBaseEnv, connectorChildEnv } from './child-env.js';
 import { OutputLimiter, pipeLines } from './output.js';
@@ -190,10 +191,13 @@ function runOnce(launch: Launch, opts: ConnectorHostOptions): ConnectorHost {
   });
   opts.log.info('connector_host.started', { pid: child.pid ?? null, ops: false });
   let stopping = false;
-  const done = exitOf(child).then((code) => {
+  // Once the process exits, let go of its pipes: a helper that inherited them would keep the host alive,
+  // and systemd would never restart the unit (#91; the supervisor does the same, #200).
+  const done = exitOf(child).then(async (code) => {
     if (!stopping) {
       opts.log.warn('connector_host.exited', { code });
     }
+    await releasePipes(child);
     return stopping ? 0 : code === 0 ? 1 : code;
   });
   return {
@@ -282,6 +286,7 @@ async function serveSocket(first: Launch, opts: ConnectorHostOptions): Promise<C
       void exitOf(child).then((code) => {
         opts.log.info('connector_host.exited', { code });
         socket.end();
+        void releasePipes(child);
       });
     })();
   };

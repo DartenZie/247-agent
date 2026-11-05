@@ -177,7 +177,10 @@ or `OA_SECRET_*`), builds the child environment with the same `connectorChildEnv
 
 The host logs JSON on stderr at `info` with `connector` on every line, the
 connector's own stderr included (as `connector.output`, bounded as above), so the
-journal holds no free text from it. The unit is
+journal holds no free text from it. The host has no metrics, so its drops show only as
+`connector.output_dropped` in the journal. Once the process exits, the host gives its
+pipes one second and then destroys them (`releasePipes`), so a helper that holds them
+cannot keep the unit up. The unit is
 `PartOf=247-agent.service` and keeps `Group=247-agent`, which is how it reads
 `/etc/247-agent` and reaches the core socket. The daemon never resolves such a
 connector's secrets.

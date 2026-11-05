@@ -53,6 +53,13 @@ describe('pipeLines', () => {
     expect(outputs()[1]?.truncated).toBeUndefined();
   });
 
+  it('does not mark a line of exactly the cut, ended by CRLF, as truncated', async () => {
+    await feed(['a'.repeat(MAX_LINE_CHARS) + '\r', '\n']);
+    expect(outputs()).toHaveLength(1);
+    expect(String(outputs()[0]?.line)).toHaveLength(MAX_LINE_CHARS);
+    expect(outputs()[0]?.truncated).toBeUndefined();
+  });
+
   it('keeps no more than the cut of an unterminated line, however much arrives', () => {
     const got: { line: string; chars: number }[] = [];
     const reader = new LineReader(MAX_LINE_CHARS, (line, chars) => got.push({ line, chars }));

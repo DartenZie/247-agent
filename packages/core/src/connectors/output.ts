@@ -20,6 +20,8 @@ export const OUTPUT_WINDOW_MS = 10_000;
 export class LineReader {
   private buf = '';
   private chars = 0;
+  /** Whether the last character taken was `\r`, which a following `\n` drops. */
+  private cr = false;
 
   constructor(
     private readonly max: number,
@@ -53,6 +55,9 @@ export class LineReader {
   }
 
   private take(part: string): void {
+    if (part.length > 0) {
+      this.cr = part.endsWith('\r');
+    }
     this.chars += part.length;
     if (this.buf.length < this.max) {
       this.buf += part.slice(0, this.max - this.buf.length);
@@ -62,12 +67,13 @@ export class LineReader {
   private flush(): void {
     let line = this.buf;
     let chars = this.chars;
-    if (chars <= this.max && line.endsWith('\r')) {
-      line = line.slice(0, -1);
+    if (this.cr) {
       chars--;
+      line = line.slice(0, chars); // the `\r` is kept only when the line fit
     }
     this.buf = '';
     this.chars = 0;
+    this.cr = false;
     this.onLine(line, chars);
   }
 }

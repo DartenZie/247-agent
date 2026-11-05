@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -49,6 +50,10 @@ connectors:
     restart: { base: 20ms, max: 100ms }
   - name: plain
     exec: [node, ${FIXTURES}fake-plain.ts]
+    transport: none
+    managed_by: systemd
+  - name: held
+    exec: [sh, -c, "sleep 6 & exit 3"]
     transport: none
     managed_by: systemd
   - name: child
@@ -289,6 +294,21 @@ describe('a unit without ops', () => {
       stream: 'stderr',
       line: 'fake-plain plain up',
     });
+  });
+
+  it('exits when the process dies even if a helper still holds its output (#91)', () => {
+    // The helper (sleep) keeps the piped stdout and stderr open after sh exits; the host
+    // must let go of them, or Node waits on them and systemd never restarts the unit.
+    const main = new URL('../../dist/host-main.js', import.meta.url).pathname;
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [main, '--config', configFile, 'held'], {
+      env,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(r.signal, r.stderr).toBeNull();
+    expect(r.status, r.stderr).toBe(3);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('exits non-zero when the process dies, so systemd restarts the unit', async () => {
