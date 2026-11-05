@@ -287,6 +287,12 @@ export class Metrics {
     'Runs a stop or a crash cut short, counted when the next start finds them running, by task',
     ['task'],
   );
+
+  readonly runsAdopted = this.registry.counter(
+    'oa_runs_adopted_total',
+    'Queued runs the executor never received, found in the store by its sweep, by task',
+    ['task'],
+  );
   readonly taskLastSuccess = this.registry.gauge(
     'oa_task_last_success_timestamp_seconds',
     'Unix time the newest succeeded run finished, by task',

@@ -8,6 +8,7 @@ import { type CompiledConfig, taskSource } from '../bus/matcher.js';
 import { config, shell, testEnv, type TestEnv } from '../bus/testing.js';
 import { runShell } from '../actions/shell.js';
 import { parseManifest } from '../config/connector.js';
+import { Metrics } from '../metrics.js';
 import { ConnectorSupervisor } from '../connectors/supervisor.js';
 import { createSecretsBackend, SecretsConfig, staticSecrets } from '../secrets/secrets.js';
 import type { EventRecord } from '../store/types.js';
@@ -573,7 +574,8 @@ describe('Executor', () => {
     }
 
     it('is adopted from the store and run without a restart', async () => {
-      const ex = make({ shell: runShell }, 4, { adoptIntervalMs: 20 });
+      const metrics = new Metrics();
+      const ex = make({ shell: runShell }, 4, { adoptIntervalMs: 20, metrics });
       ex.start();
       const e = queueBehindItsBack('x.go');
       expect(env.store.runs.getByTaskAndEvent('echo', e.id)?.status).toBe('queued');
@@ -582,6 +584,7 @@ describe('Executor', () => {
       expect(env.lines.filter((l) => l.msg === 'run.adopted')).toMatchObject([
         { task: 'echo', run_id: env.store.runs.getByTaskAndEvent('echo', e.id)?.id },
       ]);
+      expect(metrics.render()).toContain('oa_runs_adopted_total{task="echo"} 1');
     });
 
     it('does not adopt a run it already holds a second time', async () => {
@@ -600,6 +603,7 @@ describe('Executor', () => {
       d.finish('ok');
       await ex.idle();
       expect(d.calls).toBe(2);
+      // enqueue() refuses a known run anyway; the log pins that adopt() skips it first.
       expect(env.lines.some((l) => l.msg === 'run.adopted')).toBe(false);
     });
 

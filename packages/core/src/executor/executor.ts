@@ -478,7 +478,7 @@ export class Executor {
    * Safety net for a hand-off that never arrived (#104): takes over the `queued` runs in the
    * store that the executor does not hold, oldest first. A hand-off happens after the
    * dispatcher commits, so a run committed while the executor was not subscribed, or one a
-   * store failure left `queued`, would otherwise wait for the next start. A store failure
+   * store failure left `queued` before its first status change, would otherwise wait for the next start. A store failure
    * here is logged; the next sweep tries again.
    */
   private adopt(): void {
@@ -496,6 +496,7 @@ export class Executor {
     }
     for (const run of orphans) {
       this.log.child(runFields(run)).warn('run.adopted');
+      this.metrics.runsAdopted.inc({ task: run.task });
     }
     this.enqueue(orphans);
   }

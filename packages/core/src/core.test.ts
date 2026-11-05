@@ -392,6 +392,7 @@ describe('createCore exposes health metrics (#90)', () => {
       expect(sample(text, `oa_runs_queued_total{task="${task}"}`)).toBe(0);
       expect(sample(text, `oa_run_attempts_total{task="${task}"}`)).toBe(0);
       expect(sample(text, `oa_runs_interrupted_total{task="${task}"}`)).toBe(0);
+      expect(sample(text, `oa_runs_adopted_total{task="${task}"}`)).toBe(0);
     }
   });
 

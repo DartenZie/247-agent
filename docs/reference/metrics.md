@@ -63,6 +63,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_run_attempts_total` | counter | `task` | attempts started, retries included |
 | `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`, `cancelled`) | runs that reached a terminal status |
 | `oa_runs_interrupted_total` | counter | `task` | runs that a stop or a crash cut short, counted when the next start finds them still running; the run then retries or fails. The count is made before the first scrape of the new process, so `increase()` can miss it when the previous process ended at the same count |
+| `oa_runs_adopted_total` | counter | `task` | `queued` runs that the executor did not receive, found in the store by the sweep that runs every 10 s and run without a restart. A value above 0 points to a lost hand-off or a store failure; the log has `run.adopted` |
 | `oa_task_last_success_timestamp_seconds` | gauge, at scrape | `task` | Unix time the newest succeeded run of the task finished. At start the daemon reads it from the newest succeeded run still stored; absent when there is none |
 | `oa_run_duration_seconds` | histogram | `task` | seconds from a run being queued to its terminal status |
 | `oa_waits_ended_total` | counter | `task`, `outcome` (`matched`, `timeout`) | waits that ended |
