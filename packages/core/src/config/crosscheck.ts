@@ -187,7 +187,8 @@ export function checkAgentTools(
  * Warnings, not errors: an `agent` task's `mcp_servers` grant that lists no ops of its
  * own and names a stdio connector whose manifest has none either. `ops: []` means every
  * tool the server lists, so nothing narrows what the agent may call. Grants that
- * `checkAgentTools` refuses are left to it. Run by `oa validate agent.yaml`.
+ * `checkAgentTools` refuses are left to it. Run by `oa validate agent.yaml` and logged by
+ * the core in `activate()`.
  */
 export function agentToolWarnings(
   tasks: readonly TaskConfig[],

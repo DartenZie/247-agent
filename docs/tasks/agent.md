@@ -187,7 +187,7 @@ logged and counts toward `max_tool_calls`.
 > or deploys; the agent never publishes.
 
 A connector whose manifest has `ops: []` serves every tool it lists, so a bare name
-grants all of them. `oa validate agent.yaml` warns about such a grant. List the ops in
+grants all of them. `oa validate agent.yaml` and the daemon warn about such a grant. List the ops in
 the grant or in the manifest.
 
 An operation that takes an argument named `command` is judged against `bash_allow`
