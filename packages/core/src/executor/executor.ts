@@ -525,12 +525,13 @@ export class Executor {
     const slot = this.inFlight.get(id);
     if (slot === undefined) {
       // Queued (in the pool or not), waiting, or left `running` by a stop: nothing executes it.
+      // Forget it only once the cancel committed, so a store failure leaves it to run (#87).
+      this.finishCancelled(run, this.log.child(runFields(run)));
       const i = this.pending.findIndex((r) => r.id === id);
       if (i >= 0) {
         this.pending.splice(i, 1);
       }
       this.known.delete(id);
-      this.finishCancelled(run, this.log.child(runFields(run)));
       this.notifyIdle();
       return this.store.runs.getById(id);
     }

@@ -149,6 +149,27 @@ describe('Executor.cancel', () => {
     ).toEqual(['queued', 'running']);
   });
 
+  it('keeps a queued run when its cancel cannot be stored, and still runs it (#87)', async () => {
+    const ex = make(hanging, 1);
+    const first = trigger('x.work', 'work');
+    const second = trigger('x.work', 'work');
+    await until(() => status(first.id) === 'running');
+    const insert = env.store.events.insert.bind(env.store.events);
+    env.store.events.insert = (event, rootId) => {
+      if (event.type === 'task.work.cancelled') {
+        throw new Error('SQLITE_FULL: database or disk is full');
+      }
+      return insert(event, rootId);
+    };
+
+    await expect(ex.cancel(second.id)).rejects.toThrow(/SQLITE_FULL/);
+    expect(status(second.id)).toBe('queued');
+    expect(ex.stats().pending).toBe(1);
+    env.store.events.insert = insert;
+    await ex.cancel(first.id);
+    await until(() => status(second.id) === 'running');
+  });
+
   it('ends a waiting run: its wait is gone and a matching event no longer resumes it', async () => {
     const ex = make(hanging);
     const run = trigger('x.gate', 'gate');
