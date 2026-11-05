@@ -225,11 +225,15 @@ reload and a restart. Pausing a paused task keeps its `paused_at`.
 ```json
 { "since": "2026-10-03T08:00:00.000Z", "by": "task",
   "rows": [{ "key": "classify_email", "calls": 12, "in_tok": 9000, "out_tok": 600,
-             "cache_read": 8000, "cache_write": 1000, "usd": 0.0123 }],
+             "cache_read": 8000, "cache_write": 1000, "usd": 0.0123,
+             "priced_by": { "table": 11, "provider": 0, "estimate": 0, "unpriced": 1 } }],
   "total_usd": 0.0123 }
 ```
 
-Rows are ordered by cost, highest first. An unparseable `since` is 400 with the issue
+Rows are ordered by cost, highest first. `priced_by` counts the row's calls by how
+their price was determined: from the price table, as the provider reported it, as an
+estimate for a call cut off mid-answer, or `unpriced`. An `unpriced` call adds $0 to
+`usd`. An unparseable `since` is 400 with the issue
 `a duration like 7d or an ISO timestamp`.
 
 ### `GET /v1/state/{ns}`

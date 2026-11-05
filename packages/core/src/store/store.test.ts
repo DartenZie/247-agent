@@ -534,6 +534,7 @@ describe('LedgerStore', () => {
         cache_read: 0,
         cache_write: 0,
         usd: 0.5,
+        priced_by: { table: 1, provider: 0, estimate: 0, unpriced: 0 },
       },
       {
         key: 'classify',
@@ -543,6 +544,7 @@ describe('LedgerStore', () => {
         cache_read: 0,
         cache_write: 0,
         usd: expect.closeTo(0.2515, 6) as number,
+        priced_by: { table: 2, provider: 0, estimate: 0, unpriced: 0 },
       },
     ]);
     expect(store.ledger.summary({ since, by: 'model' }).map((r) => r.key)).toEqual([
@@ -555,6 +557,22 @@ describe('LedgerStore', () => {
       ['2026-09-20', 1],
     ]);
     expect(store.ledger.summary({ since: '2026-09-20T00:00:00.000Z', by: 'day' })).toHaveLength(1);
+  });
+
+  it('sums cache writes and counts the calls of each pricing source per group (#129)', () => {
+    store.ledger.insert(row({ cache_read: 300, cache_write: 700 }));
+    store.ledger.insert(row({ cache_write: 50, usd: 0, priced_by: 'unpriced' }));
+    store.ledger.insert(row({ priced_by: 'provider' }));
+    store.ledger.insert(row({ run_id: 'run_2', priced_by: 'estimate' }));
+    expect(store.ledger.summary({ since: '2026-09-01T00:00:00.000Z', by: 'task' })).toEqual([
+      expect.objectContaining({
+        key: 'classify',
+        calls: 4,
+        cache_read: 300,
+        cache_write: 750,
+        priced_by: { table: 1, provider: 1, estimate: 1, unpriced: 1 },
+      }),
+    ]);
   });
 });
 

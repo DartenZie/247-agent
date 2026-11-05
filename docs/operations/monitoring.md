@@ -102,11 +102,16 @@ oa cost --by day --since 30d --json
 ```
 
 ```
-task               calls     in_tok    out_tok   cache_rd        usd
-classify_email        41      18234       1927      16100     0.0319
-update_event_list      3     120414       8860      98210     0.4120
+task               calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by
+update_event_list      3     120414       8860      98210      14300     0.4120  table
+classify_email        41      18234       1927      16100       2100     0.0319  table:40,unpriced:1
 total since 2026-10-03T19:00:00.000Z: $0.4439
+1 unpriced call counts as $0: the daemon could not price it
 ```
+
+`priced_by` shows how each group's calls were priced. A low `usd` next to `unpriced`
+is not a cheap call: the daemon had no price for it and counted $0. Add the model to
+`pricing` in `agent.yaml`, or use a provider that reports cost.
 
 `--since` takes a duration (`7d`, `24h`) or a timestamp. `oa runs show <id>` prints the
 rows of one run with their total, and `GET /v1/runs/<id>/ledger` returns them as JSON.

@@ -318,6 +318,77 @@ describe('oa runs', () => {
   });
 });
 
+describe('oa cost (#129)', () => {
+  const ledgerRow = (runId: string, over: Record<string, unknown>) => ({
+    run_id: runId,
+    task: 'ok',
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    in_tok: 100,
+    out_tok: 20,
+    cache_read: 10,
+    cache_write: 0,
+    usd: 0.01,
+    priced_by: 'table' as const,
+    ts: new Date().toISOString(),
+    ...over,
+  });
+
+  it('shows cache writes and the pricing source of each group, and flags unpriced calls', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    expect(await oa('run', 'bad', '--wait')).toBe(1);
+    const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    const badId = /^failed (run_\w+)/.exec(out[2] ?? '')?.[1] ?? '';
+    const ledger = daemon.core.store.ledger;
+    ledger.insert(ledgerRow(okId, { cache_write: 400 }));
+    ledger.insert(ledgerRow(okId, { cache_write: 30, usd: 0, priced_by: 'unpriced' }));
+    ledger.insert(ledgerRow(badId, { task: 'bad', usd: 0.5, priced_by: 'provider' }));
+    out = [];
+
+    expect(await oa('cost')).toBe(0);
+    expect(out[0]).toBe(
+      'task   calls     in_tok    out_tok   cache_rd   cache_wr        usd  priced_by',
+    );
+    expect(out[1]).toBe(
+      'bad        1        100         20         10          0     0.5000  provider',
+    );
+    expect(out[2]).toBe(
+      'ok         2        200         40         20        430     0.0100  table:1,unpriced:1',
+    );
+    expect(out[3]).toMatch(/^total since \S+: \$0\.5100$/);
+    expect(out[4]).toBe('1 unpriced call counts as $0: the daemon could not price it');
+    expect(out).toHaveLength(5);
+
+    out = [];
+    expect(await oa('cost', '--json')).toBe(0);
+    const body = JSON.parse(out[0] ?? '') as { rows: unknown[] };
+    expect(body.rows).toEqual([
+      expect.objectContaining({
+        key: 'bad',
+        cache_write: 0,
+        priced_by: { table: 0, provider: 1, estimate: 0, unpriced: 0 },
+      }),
+      expect.objectContaining({
+        key: 'ok',
+        cache_write: 430,
+        priced_by: { table: 1, provider: 0, estimate: 0, unpriced: 1 },
+      }),
+    ]);
+  });
+
+  it('prints no unpriced note when every call was priced', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    daemon.core.store.ledger.insert(ledgerRow(okId, {}));
+    daemon.core.store.ledger.insert(ledgerRow(okId, {}));
+    out = [];
+    expect(await oa('cost')).toBe(0);
+    expect(out[1]).toMatch(/ {2}table$/);
+    expect(out).toHaveLength(3);
+    expect(out[2]).toMatch(/^total since /);
+  });
+});
+
 describe('the attempts and output of a run (#89)', () => {
   /** Runs `ok`, then gives it two attempts as a retried shell run would leave them. */
   async function retried(): Promise<string> {
