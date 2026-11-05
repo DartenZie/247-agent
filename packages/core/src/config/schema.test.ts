@@ -32,8 +32,17 @@ describe('TasksFile schema', () => {
         kind: 'cron',
         schedule: '*/5 * * * *',
         overlap: 'skip',
+        missed: 'skip',
       });
     }
+  });
+
+  it('accepts missed: skip | run_once on a cron trigger and nothing else (#99)', () => {
+    const cron = (missed: unknown) =>
+      issues(withTask({ trigger: { kind: 'cron', schedule: '0 3 * * *', missed } }));
+    expect(cron('run_once')).toEqual([]);
+    expect(cron('skip')).toEqual([]);
+    expect(cron('all').map((i) => i.path)).toEqual(['tasks.0.trigger.missed']);
   });
 
   it('accepts declared manual params and rejects bad names, defaults and enums', () => {

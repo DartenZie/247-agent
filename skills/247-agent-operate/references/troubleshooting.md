@@ -7,7 +7,7 @@
 | socket path error on macOS | Path longer than 104 bytes | Use a short dir like `/tmp/247-agent` |
 | cron task never runs | A run is still queued/running/waiting and `overlap: skip` | `GET /v1/runs?task=<name>`; wait, `oa runs cancel <id>` the stuck run, or `overlap: allow` |
 | a task starts no runs at all | It is paused (`task.skipped_paused` in the log) | `oa tasks ls`; `oa tasks resume <name>` |
-| cron task ran nothing while the daemon was down | Missed ticks are not replayed | `oa run <task>` once |
+| cron task ran nothing while the daemon was down | Missed ticks are not replayed; each outage publishes `cron.missed` | `oa run <task>` once, or `missed: run_once` on the trigger |
 | event task never runs | Filter false or throws, type mismatch, or the event's `source` is the task's own runs | `oa events show <event id>` gives the reason per task; `oa emit <type> payload.json` warns when no task would run; check the filter with backtick literals for numbers/booleans; remember `*` is one segment |
 | `secret "x" is not set` | Backend has no value | `env` backend: `<prefix><X>` upper-cased; `file`: key in the YAML/JSON map; systemd: `LoadCredential=x:…` |
 | `cannot run decide actions` / `decide needs an openrouter provider` | A `decide` task points at a non-OpenRouter provider | Only OpenRouter serves the Decisions API; set `provider:` or `defaults.decide.provider` to an `openrouter` one |

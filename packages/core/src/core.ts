@@ -307,7 +307,7 @@ export function createCore(opts: CoreOptions): Core {
     ...(opts.maxEventDepth === undefined ? {} : { maxDepth: opts.maxEventDepth }),
     ...(opts.maxChainRuns === undefined ? {} : { maxChainRuns: opts.maxChainRuns }),
   });
-  const scheduler = new CronScheduler({ bus, log, metrics });
+  const scheduler = new CronScheduler({ bus, log, metrics, cursors: store.cursors });
   const taskInfo: TaskInfo = { store, nextFire: (task) => scheduler.nextRun(task) };
   let compiled: CompiledConfig = { tasks: [], byName: new Map() };
   let tasksFiles = opts.tasksFiles;
@@ -784,7 +784,7 @@ export function createCore(opts: CoreOptions): Core {
         resumed_runs: recovered.resumed,
         waiting_runs: recovered.waiting,
       });
-      scheduler.start(compiled);
+      scheduler.start(compiled, { checkMissed: true });
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
       await checkBwrap();
       // Not awaited: a connector hanging in setup must not hold up the API or the jobs

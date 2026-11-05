@@ -98,6 +98,7 @@ export {
   compileConfig,
   compileTask,
   taskSource,
+  CRON_MISSED,
   CRON_TICK,
   MANUAL_RUN,
   LLM_BATCH_ENDED,

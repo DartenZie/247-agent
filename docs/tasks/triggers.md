@@ -29,9 +29,32 @@ Each tick publishes a `cron.tick` event with `payload: { task, scheduled_at }` a
 `overlap: skip`, the default, a tick is dropped while a run of the task is still queued,
 running or waiting; `overlap: allow` starts another run anyway.
 
-> [!NOTE]
-> Ticks missed while the daemon was down are not replayed. If a nightly job must not
-> be skipped, run it once by hand after a long outage: `oa run <task>`.
+### Ticks missed while the daemon was down
+
+A tick that falls while the daemon is stopped, for example during an upgrade or after a
+crash, does not run. When the daemon starts again, it publishes one `cron.missed` event
+for each cron task that missed at least one tick, and logs a `cron.missed` warning:
+
+```json
+{ "task": "backup", "missed": 1, "first_missed": "2026-10-04T03:00:00.000Z",
+  "last_missed": "2026-10-04T03:00:00.000Z", "run": false }
+```
+
+To make a task run once at startup after it missed ticks, set `missed: run_once`:
+
+```yaml
+trigger: { kind: cron, schedule: "0 3 * * *", missed: run_once }
+```
+
+The task then gets one `cron.tick` for the last missed tick, with `catch_up: true` in
+the payload, however many ticks it missed. `overlap` applies to this tick as to any
+other. The default, `missed: skip`, runs nothing. To be told about a skipped tick, give
+another task an event trigger on `cron.missed`. You can also run the task by hand with
+`oa run <task>`.
+
+The daemon counts missed ticks from the last tick it published, or from when it last
+loaded the task. On the first start after an upgrade, and for a task that is new to
+the daemon, nothing is reported.
 
 ## `event`: when something happens
 

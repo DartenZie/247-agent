@@ -30,6 +30,8 @@ export const CronTrigger = z
     schedule: z.string().min(1),
     /** `skip` (default): no new run while one for this task is queued, running or waiting. */
     overlap: z.enum(['skip', 'allow']).default('skip'),
+    /** Ticks missed while the daemon was down: `skip` (default) or `run_once` at startup. */
+    missed: z.enum(['skip', 'run_once']).default('skip'),
     tz: z.string().optional(),
   })
   .superRefine((t, ctx) => {

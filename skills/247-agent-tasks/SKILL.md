@@ -61,7 +61,8 @@ never invent a way for one task to reference another by name.
   segment (`task.*.failed`). A task never matches its own `task.<name>.*` events nor
   events whose `source` is `task:<name>`.
 - `cron` trigger: one run per tick; a tick is skipped while a run of the task is
-  queued, running or waiting unless `overlap: allow`. Missed ticks are not replayed.
+  queued, running or waiting unless `overlap: allow`. Missed ticks are announced as `cron.missed` and replayed once at
+  startup only with `missed: run_once`.
 - `shell` steps that run untrusted code (a build or test of something an agent edited)
   get `sandbox: bwrap`; publishing steps holding secrets stay `sandbox: none`.
 - `shell.cmd` is argv, no shell. Use `["bash", "-c", "…"]` when you need pipes or `&&`,

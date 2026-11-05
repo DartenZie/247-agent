@@ -321,6 +321,11 @@ export class Metrics {
     'Cron ticks published, by task',
     ['task'],
   );
+  readonly cronMissedTicks = this.registry.counter(
+    'oa_cron_missed_ticks_total',
+    'Cron ticks that fell while the daemon was down, by task; at most 1000 per outage',
+    ['task'],
+  );
   readonly cronNextRun = this.registry.gauge(
     'oa_cron_next_run_timestamp_seconds',
     'Unix time of the next tick, by task',
