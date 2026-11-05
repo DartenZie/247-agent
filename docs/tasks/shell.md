@@ -42,12 +42,23 @@ cmd: ["bash", "-c", "git pull --ff-only && npm run build"]
 | `result` | The result | A non-zero exit |
 |---|---|---|
 | `text_stdout` (default) | standard output as text, one trailing newline removed | fails the run; the error carries the last 1024 characters of stderr |
-| `json_stdout` | standard output parsed as JSON | fails the run; so does output that is not JSON |
+| `json_stdout` | standard output parsed as JSON | fails the run; the error carries the last 1024 characters of stderr. Output that is not JSON also fails the run |
 | `exit_code` | the exit code as a number | is a result, not a failure |
 
 Use `exit_code` for checks whose answer is the status (`curl --fail`, `test -f`). With
 `json_stdout`, print only JSON on stdout and send diagnostics to stderr. The daemon
 keeps up to 8 MiB of each stream.
+
+The daemon keeps no separate record of the output. Standard output becomes the result
+that `result` selects. Standard error is used only when an attempt fails on its exit
+code, a signal, or a start error: its last 1024 characters go into the run's error.
+`oa runs show <run id>` prints that error, and the `task.<name>.failed` event carries
+it. A timeout gives no stderr in the error.
+
+For each attempt, the daemon's log gets one `shell.exited` line. The line has the exit
+code, the signal, the duration, and the size in bytes of each stream. It does not have
+the text of either stream. To keep a script's full output, make the script write it to
+a file.
 
 `stdin` sends data to the command: a string as it is, anything else encoded as JSON.
 `stdin: ${event.payload}` is how you hand a script the whole event payload.
