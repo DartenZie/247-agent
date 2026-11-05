@@ -139,6 +139,81 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     );
   });
 
+  it('prints the usage for --help when it is piped into sh', () => {
+    // `curl … | sh -s -- --help` has no script file to read the usage from (issue #115).
+    const run = spawnSync('sh', ['-s', '--', '--help'], {
+      encoding: 'utf8',
+      input: readFileSync(script),
+    });
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('curl -fsSL');
+    expect(run.stdout).toContain('--prefix <dir>');
+    expect(run.stdout).toContain('--no-restart');
+  });
+
+  it('refuses a musl host before it downloads or installs anything', () => {
+    // The release bundles a glibc Node and SQLite addon; on Alpine they fail with
+    // "not found" (issue #115). Shims make this host look like Alpine.
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    writeFileSync(
+      join(shims, 'uname'),
+      '#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo x86_64 ;; *) echo Linux ;; esac\n',
+    );
+    writeFileSync(join(shims, 'ldd'), '#!/bin/sh\necho "musl libc (x86_64)" >&2\nexit 1\n');
+    chmodSync(join(shims, 'uname'), 0o755);
+    chmodSync(join(shims, 'ldd'), 0o755);
+    const prefix = join(root, 'opt', '247-agent');
+    const run = spawnSync(
+      'sh',
+      [script, '--from', join(root, 'none.tar.gz'), '--prefix', prefix, '--no-service'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('musl');
+    expect(run.stderr).toContain('glibc');
+    expect(run.stdout).toBe('');
+    expect(existsSync(dirname(prefix))).toBe(false);
+  });
+
+  it.each([
+    ['dpkg', '#!/bin/sh\n[ "$1" = -S ] && echo "247-agent: $2" && exit 0\nexit 1\n', 'apt'],
+    ['rpm', '#!/bin/sh\n[ "$1" = -qf ] && echo 247-agent && exit 0\nexit 1\n', 'dnf'],
+  ])('refuses a prefix that belongs to a %s package and leaves it alone', (tool, shim, pm) => {
+    // The .deb/.rpm and the installer both own /opt/247-agent; moving a package's tree
+    // aside breaks the package (issue #115).
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    writeFileSync(join(shims, tool), shim);
+    chmodSync(join(shims, tool), 0o755);
+    const prefix = join(root, 'opt', '247-agent');
+    mkdirSync(join(prefix, 'bin'), { recursive: true });
+    writeFileSync(join(prefix, 'VERSION'), `version=9.9.8\ntarget=${target}\n`);
+    writeFileSync(join(prefix, 'bin', '247-agent-core'), '#!/bin/sh\n');
+    const run = spawnSync(
+      'sh',
+      [
+        script,
+        '--from',
+        fakeRelease(),
+        '--prefix',
+        prefix,
+        '--bin-dir',
+        join(root, 'bin'),
+        '--no-service',
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`${prefix} belongs to the installed package 247-agent`);
+    expect(run.stderr).toContain(pm);
+    expect(statSync(prefix).isDirectory()).toBe(true);
+    expect(readFileSync(join(prefix, 'VERSION'), 'utf8')).toContain('version=9.9.8');
+    expect(existsSync(`${prefix}-9.9.9`)).toBe(false);
+    expect(existsSync(`${prefix}-9.9.9.new`)).toBe(false);
+  });
+
   it.each([
     ['INT', 130],
     ['TERM', 143],

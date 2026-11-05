@@ -135,7 +135,13 @@ migrated `state.db`. Options: `--version`, `--from <tarball>`, `--prefix`,
 put there and keeps config, state, drop-ins and the user unless `--purge`.
 
 The package and the installer both own `/opt/247-agent`; the user docs say not to mix
-them on one machine.
+them on one machine. The installer enforces it: when the prefix is a directory (not its
+own symlink) and `dpkg -S` or `rpm -qf` names a package that owns
+`<prefix>/bin/247-agent-core`, it exits 1 before it downloads anything and names the
+package manager. It also exits 1 on a musl host (`ldd --version` says musl, or
+`/lib/ld-musl-*` exists), because the bundled Node.js and SQLite addon are glibc
+builds. The usage text is a string in the script, not its header comment read from
+`$0`, so `--help` works when the script is piped into `sh -s --`.
 
 ## The service check
 

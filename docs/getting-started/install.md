@@ -6,7 +6,9 @@ tree and the same systemd unit.
 
 Every release is self-contained: the bundled programs, a pinned Node.js, the SQLite
 addon, the documentation, the examples and the agent skills. Nothing else has to be
-installed. The one optional extra is the `bubblewrap` package, which you need only when
+installed. Releases are for Linux with glibc (Debian, Ubuntu, Fedora and most others)
+and for macOS, on x64 or arm64. Linux distributions with musl, such as Alpine, are not
+supported, and the installer stops on them. The one optional extra is the `bubblewrap` package, which you need only when
 you sandbox shell steps or agent programs (see [Security](../concepts/security.md)).
 
 ## The package: Debian, Ubuntu, Fedora
@@ -118,6 +120,14 @@ the configuration, state, drop-ins and user; add `--purge` to remove those too.
 
 > [!WARNING]
 > Do not mix the installer with the package on one machine. Both own `/opt/247-agent`.
+> When the package is installed, the installer stops and tells you to use the package
+> manager instead.
+
+To print the options from the piped form, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh -s -- --help
+```
 
 If you prefer to do it by hand, the tarball unpacks to one directory and `bin/` is the
 whole interface:

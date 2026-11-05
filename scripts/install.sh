@@ -1,34 +1,37 @@
 #!/bin/sh
-# 247-agent installer and upgrader. Installs a release tarball as /opt/247-agent, links
-# `oa` into /usr/local/bin and, on Linux, sets up the 247-agent user, /etc/247-agent
-# and the systemd unit. Running it again upgrades in place (or re-installs the same
-# version). One line, as root or a sudoer:
-#
-#   curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh -s -- --version 0.2.0
-#
-# Options (each also as an environment variable):
-#   --version <v>        release to install (default: the latest GitHub release)       OA_VERSION
-#   --from <file|url>    install this tarball instead of a release download (local     OA_FROM
-#                        builds from `npm run release`); a .sha256 next to it is checked
-#   --repo <owner/name>  GitHub repository (default DartenZie/247-agent)               OA_REPO
-#   --prefix <dir>       the install root, a symlink (default /opt/247-agent); each     OA_PREFIX
-#                        version lives in <prefix>-<version>, so rollback is `ln -sfn`
-#   --bin-dir <dir>      where the `oa` symlink goes (default /usr/local/bin)           OA_BIN_DIR
-#   --no-service         only the tree and the symlinks: no user, no /etc, no unit
-#   --no-restart         do not restart a running daemon after an upgrade
-#   -h, --help
-#
-# Layout after `install.sh` (docs/operations/production.md):
-#   /opt/247-agent -> /opt/247-agent-<version>   bin/ lib/ node/ node_modules/ share/
-#   /usr/local/bin/oa -> /opt/247-agent/bin/oa
-#   /etc/247-agent/{agent.yaml,tasks.d,connectors.d}   created once, never overwritten
-#   /etc/systemd/system/247-agent.service              replaced on upgrade; local
-#                                                       changes go in `systemctl edit`
-#   /etc/systemd/system/247-agent-connector@.service   the same; one instance per connector
-#                                                       with `managed_by: systemd`, enabled by hand
-#   /var/lib/247-agent, /run/247-agent                 by systemd (StateDirectory, RuntimeDirectory)
+# 247-agent installer and upgrader. The usage text below (`install.sh --help`, or
+# `curl ... | sh -s -- --help`) says what it does, its options and the layout it leaves.
 set -eu
+# In the script, not read from $0: a piped `sh -s -- --help` has no file to read.
+usage='247-agent installer and upgrader. Installs a release tarball as /opt/247-agent, links
+`oa` into /usr/local/bin and, on Linux, sets up the 247-agent user, /etc/247-agent
+and the systemd unit. Running it again upgrades in place (or re-installs the same
+version). One line, as root or a sudoer:
+
+  curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/DartenZie/247-agent/main/scripts/install.sh | sh -s -- --version 0.2.0
+
+Options (each also as an environment variable):
+  --version <v>        release to install (default: the latest GitHub release)       OA_VERSION
+  --from <file|url>    install this tarball instead of a release download (local     OA_FROM
+                       builds from `npm run release`); a .sha256 next to it is checked
+  --repo <owner/name>  GitHub repository (default DartenZie/247-agent)               OA_REPO
+  --prefix <dir>       the install root, a symlink (default /opt/247-agent); each     OA_PREFIX
+                       version lives in <prefix>-<version>, so rollback is `ln -sfn`
+  --bin-dir <dir>      where the `oa` symlink goes (default /usr/local/bin)           OA_BIN_DIR
+  --no-service         only the tree and the symlinks: no user, no /etc, no unit
+  --no-restart         do not restart a running daemon after an upgrade
+  -h, --help
+
+Layout after `install.sh` (docs/operations/production.md):
+  /opt/247-agent -> /opt/247-agent-<version>   bin/ lib/ node/ node_modules/ share/
+  /usr/local/bin/oa -> /opt/247-agent/bin/oa
+  /etc/247-agent/{agent.yaml,tasks.d,connectors.d}   created once, never overwritten
+  /etc/systemd/system/247-agent.service              replaced on upgrade; local
+                                                      changes go in `systemctl edit`
+  /etc/systemd/system/247-agent-connector@.service   the same; one instance per connector
+                                                      with `managed_by: systemd`, enabled by hand
+  /var/lib/247-agent, /run/247-agent                 by systemd (StateDirectory, RuntimeDirectory)'
 # The service user must be able to read and run the tree, and a caller's 027 or 077 would
 # close it to that user. sudo can impose its own umask (`Defaults umask=0077`), so what
 # goes through `root` sets its modes explicitly as well; what must stay closed
@@ -51,7 +54,7 @@ while [ $# -gt 0 ]; do
     --bin-dir) bin_dir=$2; shift 2 ;;
     --no-service) service=0; shift ;;
     --no-restart) restart=0; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) printf '%s\n' "$usage"; exit 0 ;;
     *) echo "install.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -73,6 +76,29 @@ case $(uname -m) in
   *) die "unsupported architecture: $(uname -m)" ;;
 esac
 target=$os-$arch
+# The release bundles a glibc build of Node.js and of the SQLite addon; on musl (Alpine)
+# they fail to load with a bare "not found".
+if [ $os = linux ] && { ldd --version 2>&1 | grep -qi musl || ls /lib/ld-musl-* > /dev/null 2>&1; }; then
+  die "musl libc (Alpine and similar) is not supported; the release runs on Linux with glibc and on macOS, on x64 or arm64"
+fi
+
+# --- a package owns the prefix -------------------------------------------------------
+# The .deb and the .rpm install the same tree as a directory at /opt/247-agent. Moving it
+# aside would leave the package manager with files that are gone. A symlink is ours.
+if [ -e "$prefix" ] && [ ! -L "$prefix" ]; then
+  owner=
+  pm=
+  if command -v dpkg > /dev/null 2>&1 && out=$(dpkg -S "$prefix/bin/247-agent-core" 2> /dev/null); then
+    owner=$(printf '%s\n' "$out" | sed -n '1s/:.*//p')
+    pm=apt
+  elif command -v rpm > /dev/null 2>&1 && out=$(rpm -qf --qf '%{NAME}\n' "$prefix/bin/247-agent-core" 2> /dev/null); then
+    owner=$(printf '%s\n' "$out" | head -n 1)
+    pm=dnf
+  fi
+  if [ -n "$owner" ]; then
+    die "$prefix belongs to the installed package $owner; upgrade it with $pm, or remove the package before you use install.sh"
+  fi
+fi
 if [ "$os" != linux ] && [ $service = 1 ]; then
   say "note: no systemd on $os, installing the tree and the symlinks only (--no-service)"
   service=0
