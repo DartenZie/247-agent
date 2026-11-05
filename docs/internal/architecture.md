@@ -60,7 +60,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 | Component | Where | Responsibility | Invariant |
 |---|---|---|---|
 | Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file or a failed connector change on reload changes nothing, and no run starts while one applies; `db`, `socket`, `secrets` are fixed for the process |
-| Scheduler | `scheduler/cron.ts` | One croner job per cron task and poller; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Missed ticks are never replayed; a duplicate boundary is dropped by the key |
+| Scheduler | `scheduler/cron.ts`, `scheduler/schedule.ts` | One schedule timer per cron task and poller; croner computes the run times, and `Schedule` adds the second pass of the repeated autumn hour for patterns whose hour field is `*`; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Missed ticks are never replayed; a duplicate boundary is dropped by the key |
 | Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
 | Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events and events of a chain past its run cap (publishing `loop.detected`), matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |
 | Matcher | `bus/matcher.ts` | Trigger matching and the labelled event-type set for metrics | A throwing filter is a non-match (`trigger.filter_error`) |
@@ -278,7 +278,7 @@ packages/core/src/
   config/            zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), load.ts, validators.ts, crosscheck.ts, check.ts, lint.ts, walk.ts
   store/             better-sqlite3: db.ts, migrations.ts, events, runs, waits, state, ledger, transcripts, attempts, batches, cursors, retention.ts (the SQL)
   bus/               publish.ts, matcher.ts, dispatcher.ts, manual.ts, bus.ts
-  scheduler/cron.ts  croner jobs → cron.tick
+  scheduler/         cron.ts (schedule timers → cron.tick), schedule.ts (run times, DST)
   executor/          executor.ts: the worker pool and run lifecycle
   actions/           one runner per kind, agent-*.ts helpers, sandbox.ts, sandbox-net.ts, types.ts (ActionContext, the ports)
   llm/               service.ts (the ctx.llm port), config.ts, pricing.ts, models.ts, batches.ts, errors.ts, one adapter per provider type

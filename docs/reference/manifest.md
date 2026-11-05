@@ -112,7 +112,7 @@ config:
 | Key | Meaning | Default |
 |---|---|---|
 | `schedule` | A cron schedule, like a cron trigger's. The first poll happens at the next scheduled time. | required |
-| `tz` | The schedule's time zone. | the daemon's |
+| `tz` | The schedule's time zone. Daylight saving time works as for a [cron trigger](../tasks/triggers.md#cron-on-a-schedule). | the daemon's |
 | `connector` | The process connector that serves the op. It must exist, serve ops, and list the op (or list `[]`). | required |
 | `op` | The op to call. | required |
 | `args` | The op's arguments. Values may use `${secrets.<name>}` and `${env.<VAR>}`; they are rendered fresh on every poll. | `{}` |

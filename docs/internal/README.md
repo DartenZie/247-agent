@@ -35,7 +35,7 @@ packages/core/src/         the daemon
   config/                  zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), loader, validators, cross-checks
   store/                   better-sqlite3: events, runs, waits, state, ledger, transcripts, llm_batches; migrations; retention SQL
   bus/                     publish, matcher, dispatch loop, manual runs
-  scheduler/               croner jobs → cron.tick events
+  scheduler/               schedule timers → cron.tick events
   executor/                worker pool: concurrency, timeouts, retries, secrets, emit and state routing, wait suspend and resume, recovery
   actions/                 one runner per kind; agent-*.ts (policy, workspace, result, session config, transcript); sandbox.ts, sandbox-net.ts
   llm/                     the ctx.llm port (service.ts), pricing, batches, one adapter per provider type

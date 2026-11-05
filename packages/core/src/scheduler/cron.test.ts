@@ -86,6 +86,21 @@ describe('CronScheduler', () => {
     expect(env.store.events.listAfter(0, 10)).toHaveLength(1);
   });
 
+  it('ticks every 30 minutes through the hour that repeats when clocks go back (#98)', () => {
+    vi.setSystemTime(new Date('2026-10-24T23:50:00.000Z'));
+    const tasks = config([every('poll', '*/30 * * * *', { tz: 'Europe/Prague' })]);
+    scheduler.start(tasks);
+    vi.advanceTimersByTime(2 * 60 * 60_000);
+    expect(env.store.events.listAfter(0, 10).map((e) => e.payload)).toEqual(
+      [
+        '2026-10-25T00:00:00.000Z',
+        '2026-10-25T00:30:00.000Z',
+        '2026-10-25T01:00:00.000Z',
+        '2026-10-25T01:30:00.000Z',
+      ].map((scheduled_at) => ({ task: 'poll', scheduled_at })),
+    );
+  });
+
   it('reload replaces changed schedules and stop leaves no timers', () => {
     scheduler.start(config([every('a', '* * * * *'), every('b', '0 * * * *')]));
     expect(scheduler.list().map((j) => j.task)).toEqual(['a', 'b']);

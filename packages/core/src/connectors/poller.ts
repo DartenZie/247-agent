@@ -1,4 +1,3 @@
-import { Cron, type CronOptions } from 'croner';
 import { search } from 'jmespath';
 import { z } from 'zod';
 
@@ -15,6 +14,7 @@ import {
 } from '../config/validators.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
+import { armSchedule, Schedule, type ScheduleTimer } from '../scheduler/schedule.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
 import type { JsonValue } from '../store/types.js';
@@ -166,7 +166,7 @@ export class Poller {
   private readonly callTimeoutMs: number;
   /** Validated, unrendered: secrets are rendered into `args` at each poll and never kept. */
   private readonly config: PollerConfigValues;
-  private job: Cron | undefined;
+  private job: ScheduleTimer | undefined;
   private inFlight: Promise<PollResult> | undefined;
   private abort: AbortController | undefined;
   private lastPoll: string | null = null;
@@ -204,15 +204,13 @@ export class Poller {
   /** Arms the cron job. The first poll happens at the next boundary, not now. */
   start(): void {
     this.stopJob();
-    const options: CronOptions = {
-      name: `poller:${this.name}`,
-      catch: (err: unknown) => {
+    this.job = armSchedule(new Schedule(this.config.schedule, this.config.tz), {
+      onTick: () => {
+        void this.poll();
+      },
+      onError: (err: unknown) => {
         this.log.error('poller.tick_failed', { error: errorMessage(err) });
       },
-      ...(this.config.tz === undefined ? {} : { timezone: this.config.tz }),
-    };
-    this.job = new Cron(this.config.schedule, options, () => {
-      void this.poll();
     });
     this.log.info('poller.armed', {
       connector: this.config.connector,
