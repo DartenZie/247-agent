@@ -144,11 +144,17 @@ the first fetch skip mail already in the box. Full reference: `docs/connectors/e
 
 Files inside one remote directory over `sftp` (password or `private_key`, optional
 `host_key_fingerprint`), `ftp` or `ftps` (`tls: explicit|implicit`). Ops `list`, `stat`,
-`read`, `write`, `delete`, `rename`, `mkdir`; every path is relative to `root` and confined
-to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans `list` out with
-`each: "${result.entries[?type == 'file']}"` and a `dedup_key` on path, size and mtime
-(`connectors/ftp/examples/inbox-import.yaml`). Give agents a manifest copy with
-`ops: [list, stat, read]`. Full reference: `docs/connectors/ftp.md`.
+`read`, `write`, `delete`, `rename`, `mkdir`, `sync`; every remote path is relative to
+`root` and confined to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans
+`list` out with `each: "${result.entries[?type == 'file']}"` and a `dedup_key` on path,
+size and mtime (`connectors/ftp/examples/inbox-import.yaml`).
+
+`sync` (`{local, remote?, prune?}` → `{local, remote, uploaded, bytes, pruned}`) uploads a
+whole local directory, such as a built site, and with `prune: true` removes remote files
+the local tree lacks. It is the one op that reads the local disk, and only under the
+absolute directories listed in `local_roots`; the default `[]` disables it. Give agents
+a manifest copy with `ops: [list, stat, read]` and `local_roots: []`. Full reference:
+`docs/connectors/ftp.md`.
 
 ## The chat connector (`connectors/chat`)
 
