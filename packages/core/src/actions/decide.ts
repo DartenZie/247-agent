@@ -207,7 +207,7 @@ function checkSpread(
     }
     if (!isProbability(value)) {
       throw new Error(
-        `question "${id}": probability ${String(value)} for "${key}" is outside 0..1`,
+        `question "${id}": probability ${String(value)} for "${key}" is not a number in 0..1`,
       );
     }
   }

@@ -188,6 +188,21 @@ describe('runDecide', () => {
     expect(llm.decides[1]?.req.state).toBe('Subject: S');
   });
 
+  it('accepts probabilities for a subset of the criteria, including none', async () => {
+    const partial: Record<string, DecideAnswer> = {
+      ...answers,
+      kind: { ...answers.kind, probabilities: { update: 1 } } as DecideAnswer,
+      anger: { ...answers.anger, probabilities: {} } as DecideAnswer,
+    };
+    const llm = fakeLlmPort({
+      decideDefaults: { provider: 'r' },
+      respondDecide: () => result({ answers: partial }),
+    });
+    await expect(
+      runDecide(action, testContext({ llm, scope: { event: { payload: {} } } })),
+    ).resolves.toEqual(partial);
+  });
+
   it('keeps only the configured questions in the result', async () => {
     const llm = fakeLlmPort({
       decideDefaults: { provider: 'r' },
@@ -273,6 +288,21 @@ describe('runDecide', () => {
       /question "anger": confidence -1 is not a number in 0..1/,
     ],
     [
+      'a non-finite noul',
+      { ...answers, urgent: { type: 'noul', noul: Number.NaN } },
+      /question "urgent": noul NaN is outside 0..1/,
+    ],
+    [
+      'an infinite confidence',
+      { ...answers, kind: { ...answers.kind, confidence: Number.POSITIVE_INFINITY } },
+      /question "kind": confidence Infinity is not a number in 0..1/,
+    ],
+    [
+      'null probabilities',
+      { ...answers, kind: { ...answers.kind, probabilities: null } },
+      /question "kind": probabilities is not a map of criteria to numbers/,
+    ],
+    [
       'a choice without probabilities',
       { ...answers, kind: { ...answers.kind, probabilities: undefined } },
       /question "kind": probabilities is not a map of criteria to numbers/,
@@ -290,12 +320,12 @@ describe('runDecide', () => {
     [
       'a choice probability above 1',
       { ...answers, kind: { ...answers.kind, probabilities: { update: 1.4 } } },
-      /question "kind": probability 1.4 for "update" is outside 0..1/,
+      /question "kind": probability 1.4 for "update" is not a number in 0..1/,
     ],
     [
       'a non-numeric choice probability',
       { ...answers, kind: { ...answers.kind, probabilities: { update: '0.9' } } },
-      /question "kind": probability 0.9 for "update" is outside 0..1/,
+      /question "kind": probability 0.9 for "update" is not a number in 0..1/,
     ],
     [
       'a score without probabilities',
