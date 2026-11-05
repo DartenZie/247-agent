@@ -138,6 +138,7 @@ describe('247-agent-core', () => {
       child.kill('SIGTERM');
       await until(() => exited !== undefined, 'the daemon to stop');
       const log = out.join('');
+      expect(exited, log).toEqual({ code: 0, signal: null });
       expect(log).not.toContain('daemon.signal');
       expect(log).not.toContain('STOPPING=1');
     } finally {
