@@ -50,6 +50,16 @@ describe('parseConfig', () => {
     }
   });
 
+  it('takes approvers as Telegram user ids, normalised to strings (#97)', () => {
+    const c = parseConfig({ token: 't', chat_id: 1, approvers: [7, ' 8 '] });
+    expect(c.approvers).toEqual(['7', '8']);
+    expect(parseConfig({ token: 't', chat_id: 1 }).approvers).toBeUndefined();
+    expect(() => parseConfig({ token: 't', chat_id: 1, approvers: ['@miro'] })).toThrow(
+      /approvers\.0: must be a numeric Telegram user id/,
+    );
+    expect(() => parseConfig({ token: 't', chat_id: 1, approvers: [] })).toThrow(/approvers/);
+  });
+
   it('rejects unknown backends', () => {
     expect(() => parseConfig({ backend: 'irc', token: 't', chat_id: 1 })).toThrow(/backend/);
   });
@@ -76,6 +86,14 @@ describe('parseConfig, matrix', () => {
       pending_limit: 200,
       timeout: 30_000,
     });
+  });
+
+  it('takes approvers as Matrix user ids (#97)', () => {
+    const c = parseConfig({ ...base, chat_id: '!a:b', approvers: ['@miro:example.org'] });
+    expect(c.approvers).toEqual(['@miro:example.org']);
+    expect(() => parseConfig({ ...base, chat_id: '!a:b', approvers: ['miro'] })).toThrow(
+      /approvers\.0: must be a Matrix user id/,
+    );
   });
 
   it('refuses Telegram-style ids, more than 10 options and a missing homeserver', () => {

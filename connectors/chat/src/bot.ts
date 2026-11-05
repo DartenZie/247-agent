@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { EmitInput, EmitResult, JsonValue } from '@247-agent/connector-sdk';
 
-import { allowedChats, type TelegramConfig } from './config.js';
+import { allowedChats, mayAnswer, type TelegramConfig } from './config.js';
 import { TelegramError, type TelegramApi } from './telegram.js';
 import type { ChatMessagePayload, ChatReplyPayload, From, TgUpdate, TgUser } from './types.js';
 import { classifyUpdate, decodeCallback, inlineKeyboard, matchOption } from './updates.js';
@@ -52,6 +52,9 @@ interface Pending {
 }
 
 type PendingMap = Record<string, Pending>;
+
+/** What answering a question returns for a user who is not in `approvers`. */
+const REFUSED = Symbol('refused');
 
 export const STATE_OFFSET = 'offset';
 export const STATE_PENDING = 'pending';
@@ -231,11 +234,16 @@ export class ChatBot {
     // A reply to an open question that names no option leaves the question open and is
     // relayed with the question's correlation id, so a `wait` can take it as feedback.
     let replyToQuestion: string | null = null;
-    if (incoming.reply_to !== null) {
-      const key = pendingKey(incoming.chat_id, incoming.reply_to);
+    const questionId = incoming.reply_to;
+    if (questionId !== null) {
+      const key = pendingKey(incoming.chat_id, questionId);
       const answered = await this.withPending(async (pending) => {
         const question = pending[key];
         if (question === undefined) {
+          return false;
+        }
+        if (!mayAnswer(this.config, incoming.from.id)) {
+          this.logRefused(questionId, incoming.from.id);
           return false;
         }
         const choice = matchOption(incoming.text, question.options);
@@ -280,6 +288,10 @@ export class ChatBot {
       if (question === undefined || chosen === undefined) {
         return undefined;
       }
+      if (!mayAnswer(this.config, incoming.from.id)) {
+        this.logRefused(incoming.message_id, incoming.from.id);
+        return REFUSED;
+      }
       await this.answer(pending, key, question, chosen, {
         text: chosen,
         from: incoming.from,
@@ -289,6 +301,10 @@ export class ChatBot {
     });
     if (choice === undefined) {
       await this.ack(incoming.query_id, 'This question has already been answered.');
+      return;
+    }
+    if (choice === REFUSED) {
+      await this.ack(incoming.query_id, 'You may not answer this question.');
       return;
     }
     await this.ack(incoming.query_id, `Recorded: ${choice}`);
@@ -333,6 +349,12 @@ export class ChatBot {
     delete pending[key];
     await this.savePending(pending);
     this.log(`chat: question ${String(messageId)} answered: ${choice}`);
+  }
+
+  private logRefused(questionId: number, userId: number | string | null): void {
+    this.log(
+      `chat: ignoring an answer to question ${String(questionId)} from user ${String(userId)} (not in approvers)`,
+    );
   }
 
   private async ack(queryId: string, text: string): Promise<void> {

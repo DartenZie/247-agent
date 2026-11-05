@@ -319,6 +319,37 @@ describe('ask → chat.reply', () => {
     expect(core.ofType('chat.message')).toHaveLength(0);
   });
 
+  it('lets only approvers answer when approvers is set (#97)', async () => {
+    const { bot, core, logs } = await setup({ approvers: ['@miro:example.org'] });
+    const message_id = String(
+      (await bot.ask({ text: 'Deploy?', correlation_id: 'cor_a' })).message_id,
+    );
+    await bot.handleEvent(ROOM, reaction(message_id, '1️⃣', '@eve:example.org'));
+    await bot.handleEvent(
+      ROOM,
+      msg(
+        'approve',
+        { 'm.relates_to': { 'm.in_reply_to': { event_id: message_id } } },
+        '@eve:example.org',
+      ),
+    );
+    expect(core.ofType('chat.reply')).toHaveLength(0);
+    expect(core.ofType('chat.message')[0]?.payload).toMatchObject({
+      text: 'approve',
+      reply_to: message_id,
+      reply_to_question: null,
+    });
+    expect(Object.keys(core.state.get(STATE_PENDING) as object)).toEqual([message_id]);
+    const ignored = `chat: ignoring an answer to question ${message_id} from user @eve:example.org (not in approvers)`;
+    expect(logs.filter((l) => l.includes('ignoring an answer'))).toEqual([ignored, ignored]);
+
+    await bot.handleEvent(ROOM, reaction(message_id, '1️⃣'));
+    expect(core.ofType('chat.reply')[0]?.payload).toMatchObject({
+      approved: true,
+      from: { id: '@miro:example.org' },
+    });
+  });
+
   it('relays a reply naming no option as a message, with the question still open', async () => {
     const { bot, core } = await setup();
     const { message_id } = await bot.ask({ text: 'Q', correlation_id: 'cor_f' });

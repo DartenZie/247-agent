@@ -65,7 +65,8 @@ export interface ChatMessagePayload {
   reply_to: number | string | null;
   /**
    * The `correlation_id` of the open question this message replies to without naming
-   * one of its options; `null` otherwise, and when the question has no `correlation_id`.
+   * one of its options; `null` otherwise, when the question has no `correlation_id`, and
+   * when the sender is not in `approvers`.
    * The question stays open.
    */
   reply_to_question: string | null;

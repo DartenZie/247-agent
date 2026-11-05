@@ -18,6 +18,7 @@ config:
   chat_id: "${secrets.chat_id}"         # the one chat the bot listens to and posts in
   # backend: telegram                   # the default; matrix: see above
   # allowed_chat_ids: []                # more chats to relay; send/ask may target them with chat_id
+  # approvers: [987654321]             # Telegram user ids allowed to answer ask; unset: anyone in the chat
   # poll_timeout: 30                    # getUpdates long-poll seconds (0..50)
   # initial: none                       # first start: skip the backlog, or `all`
   # ask_options: [Approve, Reject]      # default buttons; the first one means approved

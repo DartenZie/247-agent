@@ -19,6 +19,18 @@ const matrixRoom = z
   .trim()
   .regex(/^[!#][^:\s]+:\S+$/, 'must be a room id (!abc:example.org) or alias (#ops:example.org)');
 
+/** A Telegram user id (`from.id`): an integer, as a number or a string. Usernames can change hands. */
+const telegramUserId = z
+  .union([z.string().trim().min(1), z.number().int()])
+  .transform((v) => String(v))
+  .refine((v) => /^\d+$/.test(v), { message: 'must be a numeric Telegram user id' });
+
+/** A Matrix user id (`@localpart:server`). */
+const matrixUserId = z
+  .string()
+  .trim()
+  .regex(/^@[^:\s]+:\S+$/, 'must be a Matrix user id (@miro:example.org)');
+
 /** Keys both backends share, with the same meaning and defaults. */
 const common = {
   /** The bot's credential (`${secrets.<name>}`): a Bot API token, or a Matrix access token. */
@@ -38,6 +50,8 @@ const telegram = z.object({
   chat_id: telegramChatId,
   /** More chats whose messages are relayed (and that `send`/`ask` may target with `chat_id`). */
   allowed_chat_ids: z.array(telegramChatId).default([]),
+  /** The users whose answer resolves an `ask`; unset, anyone in an allowed chat may answer. */
+  approvers: z.array(telegramUserId).min(1).optional(),
   /** Long-poll wait in seconds for `getUpdates` (0 = short polling; Telegram caps it at 50). */
   poll_timeout: z.number().int().min(0).max(50).default(30),
   /** Buttons an `ask` shows when the op passes no `options`; the first one means "approved". */
@@ -58,6 +72,8 @@ const matrix = z.object({
   chat_id: matrixRoom,
   /** More rooms whose messages are relayed (and that `send`/`ask` may target with `chat_id`). */
   allowed_chat_ids: z.array(matrixRoom).default([]),
+  /** The users whose answer resolves an `ask`; unset, anyone in an allowed room may answer. */
+  approvers: z.array(matrixUserId).min(1).optional(),
   /** Long-poll wait in seconds for `/sync` (0 = short polling). */
   poll_timeout: z.number().int().min(0).max(120).default(30),
   /** Options an `ask` lists when the op passes none (reactions 1️⃣…🔟, so at most 10). */
@@ -91,4 +107,11 @@ export function parseConfig(raw: unknown): ChatConfig {
 /** The chats the connector listens to and may post to. */
 export function allowedChats(config: ChatConfig): Set<string> {
   return new Set([config.chat_id, ...config.allowed_chat_ids]);
+}
+
+/** Whether `userId` may answer a question: anyone when `approvers` is unset. */
+export function mayAnswer(config: ChatConfig, userId: number | string | null): boolean {
+  return (
+    config.approvers === undefined || (userId !== null && config.approvers.includes(String(userId)))
+  );
 }
