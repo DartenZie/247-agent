@@ -210,6 +210,28 @@ describe('ops', () => {
     await expect(ops.searchIssues({ query: 'repo:evil/x bug' })).rejects.toThrow(/must not name/);
   });
 
+  it('refuses a scope qualifier wherever it appears in the query', async () => {
+    const gh = new FakeGitHub().on('GET /search/issues', () => ({
+      body: { total_count: 0, items: [] },
+    }));
+    const ops = gh.ops();
+    for (const query of [
+      'x (repo:other/private)',
+      'x ((org:other))',
+      'x "repo:other/private"',
+      'x -repo:acme/site',
+      'x NOT user:other',
+      'x\towner:other',
+      'x OR(REPO:other/private)',
+      'label:bug,repo:other/x',
+    ]) {
+      await expect(ops.searchIssues({ query }), query).rejects.toThrow(/must not name/);
+    }
+    expect(gh.calls).toEqual([]);
+    await ops.searchIssues({ query: 'label:my_repo:x reporter:me' });
+    expect(gh.calls).toHaveLength(1);
+  });
+
   it('lists workflow runs of one workflow', async () => {
     const gh = new FakeGitHub().on('GET /repos/acme/site/actions/workflows/ci.yml/runs', () => ({
       body: {

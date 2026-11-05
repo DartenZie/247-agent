@@ -54,7 +54,8 @@ config:
   nothing means the first of `repos`. A repository not in `repos` fails before any
   request is made.
 - `search_issues` always appends `repo:<owner/name>` to the query and refuses a query
-  that names `repo:`, `org:`, `user:` or `owner:` itself.
+  that names `repo:`, `org:`, `user:` or `owner:` itself, wherever it appears: inside
+  parentheses or quotes, negated with `-`, or after a comma.
 - The manifest's `ops` list is the second boundary: give an agent a copy of the
   manifest with the read ops only, and keep the write ops for tasks.
 
