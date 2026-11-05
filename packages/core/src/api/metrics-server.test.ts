@@ -96,6 +96,36 @@ describe('createMetricsServer (#59)', () => {
     expect(lines.map((l) => l.msg)).toContain('metrics.closed');
   });
 
+  it('stays closed after close(), even for a configure queued behind it', async () => {
+    await server.configure(LOOPBACK);
+    const closing = server.close();
+    const late = server.configure(LOOPBACK);
+    await closing;
+    await late;
+    expect(server.address()).toBeUndefined();
+    await server.configure(LOOPBACK);
+    expect(server.address()).toBeUndefined();
+  });
+
+  it('moves to another host on the same port', async () => {
+    await server.configure(LOOPBACK);
+    const port = server.address()?.port;
+    await server.configure({ host: '0.0.0.0', port: port ?? 0 });
+    expect(server.address()).toEqual({ host: '0.0.0.0', port });
+    expect((await fetch(url('/metrics'))).status).toBe(200);
+  });
+
+  it('keeps the old listener when a host on the same port cannot be bound', async () => {
+    await server.configure(LOOPBACK);
+    const before = server.address();
+    // TEST-NET-1: never a local address, so the bind fails with EADDRNOTAVAIL.
+    await expect(server.configure({ host: '192.0.2.55', port: before?.port ?? 0 })).rejects.toThrow(
+      /cannot listen for metrics on 192\.0\.2\.55/,
+    );
+    expect(server.address()).toEqual(before);
+    expect(lines.map((l) => l.msg)).not.toContain('metrics.closed');
+  });
+
   it('rejects an address in use and keeps serving on the previous one', async () => {
     await server.configure(LOOPBACK);
     const before = server.address();

@@ -400,7 +400,20 @@ describe('metrics in agent.yaml (#59)', () => {
     expect(v6.ok && v6.config.metrics.listen).toEqual({ host: '::1', port: 9100 });
     const name = parseAgent('metrics: { listen: "localhost:9100" }\n', '/x/agent.yaml');
     expect(name.ok && name.config.metrics.listen).toEqual({ host: 'localhost', port: 9100 });
-    for (const bad of ['"x"', '"1.2.3.4:"', '"1.2.3.4:70000"', '"::1:9100"', '-1', '""', '1.5']) {
+    for (const bad of [
+      '"x"',
+      '"1.2.3.4:"',
+      '"1.2.3.4:70000"',
+      '"::1:9100"',
+      '-1',
+      '""',
+      '1.5',
+      '"a/b:1"',
+      '"*:9464"',
+      '"[:]:80"',
+      '"[1.2.3.4]:80"',
+      '"1.2.3.999:80"',
+    ]) {
       const r = parseAgent(`metrics: { listen: ${bad} }\n`, '/x/agent.yaml');
       expect(!r.ok && r.issues.map((i) => i.path), bad).toEqual(['metrics.listen']);
     }

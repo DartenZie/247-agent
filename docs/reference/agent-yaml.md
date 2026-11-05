@@ -57,7 +57,7 @@ Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`. `shutdo
 
 | Key | Meaning | Default |
 |---|---|---|
-| `metrics.listen` | A TCP address where the daemon also serves `GET /metrics` (and `HEAD`) over plain HTTP, the same text as on the socket. Every other path answers 404. A bare port such as `9464` or `":9464"` binds `127.0.0.1`; `host:port` binds that host, with an IPv6 address in brackets (`[::1]:9464`); `0.0.0.0:9464` binds every interface. | none: no TCP endpoint |
+| `metrics.listen` | A TCP address where the daemon also serves `GET /metrics` (and `HEAD`) over plain HTTP, the same text as on the socket. Every other path answers 404. A bare port such as `9464` or `":9464"` binds `127.0.0.1`; `host:port` binds that host, with an IPv6 address in brackets (`[::1]:9464`); `0.0.0.0:9464` binds every interface. A host name binds only the first address it resolves to, so prefer an IP address. | none: no TCP endpoint |
 
 The endpoint has no authentication. Anything that can reach the address reads the
 metrics: task and connector names, run counts and model spend. It cannot change

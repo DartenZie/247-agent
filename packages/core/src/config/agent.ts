@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isIPv4, isIPv6 } from 'node:net';
 import { dirname, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
@@ -33,6 +34,10 @@ export interface ListenAddress {
   port: number;
 }
 
+/** A DNS name whose last label is not all digits, so `1.2.3.999` is not taken for one. */
+const HOSTNAME =
+  /^(?=.*[A-Za-z][A-Za-z0-9-]*$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+
 const LISTEN_HINT = 'listen looks like 9464 (loopback), 127.0.0.1:9464, [::1]:9464 or 0.0.0.0:9464';
 
 /** `9464`, `":9464"` and `"9464"` bind the loopback interface; `host:port` and `[v6]:port` name one. */
@@ -43,7 +48,14 @@ export function parseListen(value: string | number): ListenAddress | undefined {
   if (m === null || port > 65535) {
     return undefined;
   }
-  return { host: m[1] ?? m[2] ?? '127.0.0.1', port };
+  const [, v6, name] = m;
+  if (v6 !== undefined && !isIPv6(v6)) {
+    return undefined;
+  }
+  if (name !== undefined && !isIPv4(name) && !HOSTNAME.test(name)) {
+    return undefined;
+  }
+  return { host: v6 ?? name ?? '127.0.0.1', port };
 }
 
 const Listen = z.union([z.string(), z.number()]).transform((v, ctx) => {

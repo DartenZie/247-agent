@@ -21,9 +21,12 @@ export interface MetricsServer {
   /**
    * Listens on `listen`, or stops for undefined. The same address keeps the listener; a
    * new one is bound before the old one closes, and a bind that fails rejects and leaves
-   * the old listener serving.
+   * the old listener serving. Only when the new host is refused because the old listener
+   * holds the same port does the old one close first, and it comes back if the bind
+   * still fails.
    */
   configure(listen: ListenAddress | undefined): Promise<void>;
+  /** Stops listening for good: a later `configure` opens nothing. */
   close(): Promise<void>;
 }
 
@@ -113,9 +116,11 @@ export function createMetricsServer(opts: MetricsServerOptions): MetricsServer {
     try {
       server = await bind(listen);
     } catch (err) {
-      // Same port, new host (127.0.0.1:9464 → 0.0.0.0:9464): the old listener is in the
-      // way, so it goes first and comes back if the new address still cannot be bound.
-      if (old?.bound.port !== listen.port) {
+      // Same port, new host (127.0.0.1:9464 → 0.0.0.0:9464 on Linux): the old listener is
+      // in the way, so it goes first and comes back on its own port if the new address
+      // still cannot be bound.
+      const code = ((err as Error).cause as NodeJS.ErrnoException | undefined)?.code;
+      if (old?.bound.port !== listen.port || code !== 'EADDRINUSE') {
         throw err;
       }
       current = undefined;
@@ -123,7 +128,15 @@ export function createMetricsServer(opts: MetricsServerOptions): MetricsServer {
       try {
         server = await bind(listen);
       } catch (retryErr) {
-        await apply(old.wanted).catch(() => undefined);
+        try {
+          current = { wanted: old.wanted, server: await bind(old.bound), bound: old.bound };
+          log.info('metrics.listening', { listen: formatListen(old.bound) });
+        } catch (restoreErr) {
+          log.error('metrics.restore_failed', {
+            listen: formatListen(old.bound),
+            error: errorMessage(restoreErr),
+          });
+        }
         throw retryErr;
       }
       current = { wanted: listen, server, bound: listen };
@@ -146,9 +159,14 @@ export function createMetricsServer(opts: MetricsServerOptions): MetricsServer {
     return next;
   };
 
+  // Once closed, a configure still in flight (a reload racing a stop) opens nothing.
+  let closed = false;
   return {
     address: () => (current === undefined ? undefined : { ...current.bound }),
-    configure: (listen) => serialised(() => apply(listen)),
-    close: () => serialised(() => apply(undefined)),
+    configure: (listen) => serialised(() => apply(closed ? undefined : listen)),
+    close: () => {
+      closed = true;
+      return serialised(() => apply(undefined));
+    },
   };
 }
