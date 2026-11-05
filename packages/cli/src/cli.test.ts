@@ -504,6 +504,87 @@ describe('oa events', () => {
   });
 });
 
+describe('oa run with declared params (#93)', () => {
+  const GREET = `${TASKS}  - name: greet
+    trigger:
+      kind: manual
+      params:
+        name: { type: string }
+        age: { type: integer, required: false }
+    action: { kind: shell, cmd: ["echo", "\${event.payload.name}"] }
+`;
+  const payloadOf = (eventId: string) => daemon.core.store.events.getById(eventId)?.payload;
+
+  beforeEach(async () => {
+    writeFileSync(join(dir, 'tasks.yaml'), GREET);
+    expect(await oa('reload')).toBe(0);
+    out = [];
+  });
+
+  it('passes -p params, converted by the daemon to the declared type', async () => {
+    expect(await oa('run', 'greet', '-p', 'name=Ada', '--param', 'age=36', '--json')).toBe(0);
+    const { event_id } = JSON.parse(out[0] ?? '') as { event_id: string };
+    expect(payloadOf(event_id)).toEqual({
+      task: 'greet',
+      event: { type: 'manual.input', payload: { name: 'Ada', age: 36 } },
+    });
+  });
+
+  it('reads a bare payload from a file or stdin, with -p merged over it', async () => {
+    writeFileSync(join(dir, 'p.json'), '{"name": "Bob", "age": 1}');
+    expect(
+      await oa('run', 'greet', '--payload', join(dir, 'p.json'), '-p', 'age=2', '--json'),
+    ).toBe(0);
+    const { event_id } = JSON.parse(out[0] ?? '') as { event_id: string };
+    expect(payloadOf(event_id)).toMatchObject({ event: { payload: { name: 'Bob', age: 2 } } });
+
+    stdin = '{"name": "Cy"}';
+    expect(await oa('run', 'greet', '--payload', '-', '--wait')).toBe(0);
+    expect(out.at(-1)).toBe('"Cy"');
+  });
+
+  it('refuses missing, misspelled and invalid params, naming each, and queues nothing', async () => {
+    expect(await oa('run', 'greet', '--wait')).toBe(2);
+    expect(err).toEqual([
+      'daemon: invalid params for task "greet"',
+      '  name: required parameter is missing',
+    ]);
+    err = [];
+    expect(await oa('run', 'greet', '-p', 'nmae=Ada', '-p', 'age=old')).toBe(2);
+    expect(err).toEqual([
+      'daemon: invalid params for task "greet"',
+      '  name: required parameter is missing',
+      '  age: expected integer, got string "old"',
+      '  nmae: unknown parameter; declared: name, age',
+    ]);
+    expect(daemon.core.store.runs.list({ task: 'greet' })).toEqual([]);
+  });
+
+  it('merges -p over the payload of an --event file, which must be an object', async () => {
+    writeFileSync(join(dir, 'ev.json'), '{"type": "x.y", "payload": {"name": "Bob"}}');
+    expect(await oa('run', 'greet', '--event', join(dir, 'ev.json'), '-p', 'age=3', '--json')).toBe(
+      0,
+    );
+    const { event_id } = JSON.parse(out[0] ?? '') as { event_id: string };
+    expect(payloadOf(event_id)).toMatchObject({
+      event: { type: 'x.y', payload: { name: 'Bob', age: 3 } },
+    });
+    writeFileSync(join(dir, 'ev.json'), '{"payload": "text"}');
+    expect(await oa('run', 'greet', '--event', join(dir, 'ev.json'), '-p', 'a=b')).toBe(2);
+    expect(err.at(-2)).toBe(`${join(dir, 'ev.json')}: -p needs the payload to be an object`);
+  });
+
+  it('rejects malformed -p and --payload input before calling the daemon', async () => {
+    expect(await oa('run', 'greet', '-p', 'noequals')).toBe(2);
+    expect(err.at(-2)).toMatch(/-p noequals: expected key=value/);
+    expect(await oa('run', 'greet', '--payload', '-', '--event', '-')).toBe(2);
+    expect(err.at(-2)).toMatch(/--payload and --event cannot be combined/);
+    stdin = '[1]';
+    expect(await oa('run', 'greet', '--payload', '-', '-p', 'a=b')).toBe(2);
+    expect(err.at(-2)).toMatch(/stdin: -p needs the payload to be an object/);
+  });
+});
+
 describe('why a task did or did not run (#92)', () => {
   const WATCH = `${TASKS}  - name: watch
     trigger: { kind: event, type: order.received, filter: "payload.total > \`10\`" }

@@ -129,7 +129,11 @@ Starts a task by hand. Body:
 
 201 `{"event_id": "<the manual.run event>", "run": <RunRecord>}`; the run is already
 `queued`. Filters and cron overlap do not apply; `concurrency` and `workers` do. 404
-`unknown task "<task>"`. 409 `task "<task>" is paused: …` for a paused task.
+`unknown task "<task>"`. 409 `task "<task>" is paused: …` for a paused task. For a
+manual task that declares `params`, the payload is checked against them: defaults are
+filled in, strings are converted to the declared type, and a payload that does not fit
+is 400 `invalid params for task "<task>"` with one `issues` entry per param (`path` is
+the param name, empty for a payload that is not an object).
 
 ### `GET /v1/runs`
 

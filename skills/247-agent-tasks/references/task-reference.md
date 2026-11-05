@@ -28,7 +28,7 @@ Defaults for `timeout` and `retry` come from `defaults:` in `agent.yaml`
 |---|---|---|
 | `cron` | `schedule` (cron with 5, 6 or 7 fields: optional seconds first, optional year last; 6 and 7 fields fire on seconds), `tz` (IANA name, optional), `overlap: skip\|allow` (default `skip`) | Each tick publishes `cron.tick` with `payload: {task, scheduled_at}` and `dedup_key: cron:<task>:<scheduled_at>`. One run per tick; skipped while a run is queued/running/waiting unless `overlap: allow`. Missed ticks while the daemon was down are not replayed. |
 | `event` | exactly one of `type` or `type_any: [...]`; optional `filter` (JMESPath over the whole event) | One run per matching event. `*` in a type pattern matches exactly one dot-separated segment. A filter that throws counts as no match and is logged. |
-| `manual` | none | Only `oa run <task>`. |
+| `manual` | optional `params`: a map from name to `{type, required, default, enum, description}`; `type` is `string` (default), `number`, `integer`, `boolean`, `object` or `array` | Only `oa run <task>`. With `params`, the daemon refuses a run whose payload misses a required param, has a wrong type or value, or has an undeclared key; it fills defaults and converts strings (`oa run t -p age=36`). |
 
 Any task, whatever its trigger, can be started with `oa run <task>`; that publishes a
 `manual.run` event and bypasses filters and cron overlap.

@@ -207,7 +207,11 @@ an `overlap: skip` task starts a run. Recovery never sees it.
 
 A pause (`bus/pause.ts`) is a `task_pauses` row. The dispatcher starts no run of a paused
 task from any event, and `runTaskManually` throws `TaskPausedError` (409) before it
-publishes `manual.run`, so a refused `oa run` leaves no event behind. Events skipped while
+publishes `manual.run`, so a refused `oa run` leaves no event behind. The same holds for
+`InvalidParamsError` (400): a manual trigger's `params` (`config/params.ts`) are checked
+and their defaults filled in before the event is published. The check lives on this path
+only: a `manual.run` published through `POST /v1/events` starts the task unchecked, like
+any other trusted publisher's event. Events skipped while
 paused are not replayed on resume: the cursor has moved past them. Runs already queued,
 running or waiting are untouched; `oa runs cancel` ends them.
 

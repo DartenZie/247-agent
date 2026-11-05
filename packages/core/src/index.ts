@@ -109,6 +109,7 @@ export {
 export { Dispatcher, type DispatchResult, type QueuedListener } from './bus/dispatcher.js';
 export {
   runTaskManually,
+  InvalidParamsError,
   TaskPausedError,
   UnknownTaskError,
   type ManualInput,

@@ -36,6 +36,38 @@ describe('TasksFile schema', () => {
     }
   });
 
+  it('accepts declared manual params and rejects bad names, defaults and enums', () => {
+    expect(
+      issues(
+        withTask({
+          trigger: {
+            kind: 'manual',
+            params: {
+              name: { type: 'string', description: 'who to greet' },
+              age: { type: 'integer', required: false },
+              env: { enum: ['staging', 'prod'], default: 'staging' },
+            },
+          },
+        }),
+      ),
+    ).toEqual([]);
+    const bad = (params: unknown) => issues(withTask({ trigger: { kind: 'manual', params } }));
+    expect(bad({ 'Bad-Name': {} })[0]?.path).toBe('tasks.0.trigger.params.Bad-Name');
+    expect(bad({ n: { type: 'integer', default: 'x' } })).toEqual([
+      { path: 'tasks.0.trigger.params.n.default', message: 'expected integer, got string "x"' },
+    ]);
+    expect(bad({ n: { enum: ['a'], default: 'b' } })).toEqual([
+      { path: 'tasks.0.trigger.params.n.default', message: 'expected one of "a", got "b"' },
+    ]);
+    expect(bad({ n: { type: 'integer', enum: ['a'] } })).toEqual([
+      { path: 'tasks.0.trigger.params.n.enum.0', message: 'expected integer, got string "a"' },
+    ]);
+    expect(bad({ n: { required: true, default: 'x' } })[0]?.message).toMatch(
+      /a param with a default is not required/,
+    );
+    expect(bad({ n: { type: 'date' } })[0]?.path).toBe('tasks.0.trigger.params.n.type');
+  });
+
   it('rejects invalid cron expressions, never-firing schedules and unknown time zones', () => {
     expect(issues(withTask({ trigger: { kind: 'cron', schedule: '61 * * * *' } }))).toEqual([
       {

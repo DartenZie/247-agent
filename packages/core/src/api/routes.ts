@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { z } from 'zod';
 
-import { TaskPausedError, UnknownTaskError } from '../bus/manual.js';
+import { InvalidParamsError, TaskPausedError, UnknownTaskError } from '../bus/manual.js';
 import type { EventExplanation, TaskMatch } from '../bus/explain.js';
 import type { TaskEntry } from '../bus/pause.js';
 import { InvalidEventError, type PublishResult } from '../bus/publish.js';
@@ -299,6 +299,9 @@ function runTask(ctx: RouteContext, body: unknown): ApiResponse {
     }
     if (err instanceof TaskPausedError) {
       throw new ApiError(409, err.message);
+    }
+    if (err instanceof InvalidParamsError) {
+      throw new ApiError(400, err.message, err.issues);
     }
     throw err;
   }

@@ -123,6 +123,21 @@ op must carry the id into the reply payload.
   action: { kind: shell, cwd: /var/lib/247-agent/repos/site, cmd: ["npm", "run", "build"] }
 ```
 
+A manual task that takes inputs declares them, so `oa run` refuses a forgotten or
+misspelled one instead of rendering an empty string:
+
+```yaml
+- name: deploy
+  trigger:
+    kind: manual
+    params:
+      ref: { type: string }
+      env: { enum: [staging, prod], default: staging }
+  action: { kind: shell, cmd: ["./deploy.sh", "${event.payload.env}", "${event.payload.ref}"] }
+```
+
+Run it with `oa run deploy -p ref=v1.2.0 -p env=prod --wait`.
+
 Run with `oa run rebuild_site --wait`.
 
 ## Stand-in for a model step (to keep a test offline)
