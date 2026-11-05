@@ -69,5 +69,5 @@ payload (see `packages/core/test/fixtures/fake-chat.ts`).
 
 One npm workspace per connector under `connectors/<name>/` with its own
 `package.json`, `dist/main.js` as the manifest's `exec` target, and the SDK as a
-dependency. Keep network clients (imapflow, nodemailer, grammy, …) inside the connector;
+dependency. Keep network clients (imapflow, nodemailer, basic-ftp, …) inside the connector;
 the core never depends on them. Add a fake next to it for the core's integration tests.
