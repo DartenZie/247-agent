@@ -316,8 +316,14 @@ export class GitHubOps {
   /** GitHub's issue search, always restricted to one configured repository. */
   async searchIssues(args: ListArgs & { query: string }): Promise<Json> {
     const repo = this.resolveRepo(args);
-    if (/(^|\s)(repo|org|user|owner):/i.test(args.query)) {
+    // Any non-word character can open a qualifier: `(repo:x)`, `"repo:x"`, `-repo:x`,
+    // `,repo:x`. Refusing on all of them confines results to the configured repositories.
+    if (/(^|[^a-z0-9_])(repo|org|user|owner):/i.test(args.query)) {
       throw new Error('the query must not name repo:, org:, user: or owner: (the op scopes it)');
+    }
+    // AND binds tighter than OR, so in `a OR b repo:x` the `a` side is unscoped.
+    if (/(^|[^A-Za-z0-9_])OR($|[^A-Za-z0-9_])/.test(args.query)) {
+      throw new Error('the query must not use OR (the appended repo: would scope one side only)');
     }
     const items = await this.paged<GhIssue>(
       '/search/issues',
