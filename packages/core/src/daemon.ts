@@ -64,6 +64,8 @@ export interface ReloadReport {
   connectors?: ApplyResult | undefined;
   /** Tasks in the active config after the reload. */
   tasks: number;
+  /** Why a valid config could not be applied; the previous config stays fully active. */
+  error?: string | undefined;
 }
 
 export interface Daemon {
@@ -295,6 +297,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       restart_required: restartRequired,
       connectors: result.connectors,
       tasks: tasks(),
+      ...(result.error === undefined ? {} : { error: result.error }),
     };
   };
 

@@ -53,7 +53,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_uptime_seconds` | gauge, at scrape | | seconds since the daemon started |
 | `oa_config_tasks` | gauge, at scrape | | tasks in the active configuration |
 | `oa_tasks_paused` | gauge, at scrape | | tasks in the active configuration that `oa tasks pause` paused |
-| `oa_config_reloads_total` | counter | `result` (`ok`, `invalid`) | reloads by outcome |
+| `oa_config_reloads_total` | counter | `result` (`ok`, `invalid`, `failed`) | reloads by outcome |
 | `oa_events_published_total` | counter | `type`, `result` (`inserted`, `duplicate`) | events published, and whether they were stored or dropped as duplicates |
 | `oa_events_dropped_total` | counter | `reason` (`depth`, `chain_runs`) | events that started no run: past `limits.max_event_depth`, or in a chain that reached `limits.max_runs_per_chain` |
 | `oa_dispatch_failures_total` | counter | none | dispatcher passes that failed, for example on a database error; events wait until a pass succeeds |

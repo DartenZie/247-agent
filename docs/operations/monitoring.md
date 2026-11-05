@@ -50,7 +50,7 @@ Every metric starts with `oa_`. The ones that matter first:
 | `oa_sandbox_net_requests_total{connector,result}` | what sandboxed agents asked their network allowlist for: `allowed`, `denied`, `failed`, `dropped` |
 | `oa_events_published_total{type,result}` | events inserted or dropped as duplicates; `type` is `other` unless a task names the type exactly |
 | `oa_retention_last_success_timestamp_seconds` | when the last retention pass completed |
-| `oa_config_reloads_total{result}` | reloads, `ok` or `invalid` |
+| `oa_config_reloads_total{result}` | reloads, `ok`, `invalid` or `failed` (the connector set could not be switched) |
 
 Counters reset when the daemon restarts; `oa_build_info{version}` and
 `oa_uptime_seconds` tell you when that happened. The [metrics reference](../reference/metrics.md)

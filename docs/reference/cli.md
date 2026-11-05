@@ -211,7 +211,9 @@ is a 400, exit 2; otherwise exit 0.
 Asks the daemon to re-read `agent.yaml`, the connector manifests and the tasks files and
 apply them together, like `systemctl reload 247-agent`. Output: `ok <file>` per file, or
 the issues on stderr followed by `reload refused: the previous config stays active`
-(exit 1). On success `reloaded: <n> tasks`, with `; connectors: added …; removed …;
+(exit 1). When the files are valid but the connector set cannot be switched,
+`reload failed: <error>` comes first and the same refusal follows (exit 1). A connector
+that does not start does not fail the reload: it shows as `down` and is retried. On success `reloaded: <n> tasks`, with `; connectors: added …; removed …;
 respawned …` when connectors changed, and `restart required for: db, socket, secrets`
 on stderr when one of those three changed (still exit 0). Flags: `--json`, `--socket`.
 

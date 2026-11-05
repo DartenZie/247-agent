@@ -8,7 +8,8 @@ export const RELOAD_USAGE = `usage: oa reload [options]
 
 Asks the daemon to re-read agent.yaml, the connector manifests and the tasks files and
 apply them together, exactly like SIGHUP (systemctl reload 247-agent). Nothing changes
-when any file is invalid; the issues are printed and the exit code is 1. Changes to db,
+when any file is invalid or the connector set cannot be switched; the issues or the
+error are printed and the exit code is 1. Changes to db,
 socket or secrets are reported and need a restart. Runs in flight finish under the
 config they started with.
 
@@ -46,6 +47,9 @@ export async function reload(args: string[], io: Io): Promise<number> {
       }
     }
     if (!r.ok) {
+      if (r.error !== undefined) {
+        io.err(`reload failed: ${r.error}`);
+      }
       io.err('reload refused: the previous config stays active');
       return EXIT.failed;
     }

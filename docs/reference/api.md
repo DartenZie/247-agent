@@ -219,7 +219,7 @@ in the unit.
 ### `POST /v1/reload`
 
 Re-reads `agent.yaml`, the manifests and the tasks files and applies them together.
-Always 200 with a `ReloadReport`; `"ok": false` means nothing changed.
+Always 200 with a `ReloadReport`; `"ok": false` means the previous config stays active.
 
 ### `POST /v1/backup`
 
@@ -330,3 +330,5 @@ A built-in poller has no `health` key:
 `files` lists `agent.yaml`, then the manifests, then the tasks files. `restart_required`
 names the fixed keys (`db`, `socket`, `secrets`) whose value changed and stays in force
 only after a restart. `connectors` is present only when the connector set was applied.
+`error` is present only with `"ok": false` when every file is valid but the connector
+set could not be switched; the previous connectors are put back.

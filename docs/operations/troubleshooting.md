@@ -85,6 +85,8 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | Symptom | Cause | Fix |
 |---|---|---|
 | `reload refused: the previous config stays active`, exit 1 | a file is invalid; the issues are printed above it | fix them; `oa validate` shows the same |
+| `reload failed: <error>`, then `reload refused: the previous config stays active`, exit 1 | the files are valid, but the daemon could not switch the connector set; the journal has `core.reload_failed` | read the error and the connector log lines around it, fix the cause, then reload again |
+| after a successful reload, a connector shows as `down` in `oa connector list` | its new manifest or program does not start; a reload does not fail on that, the connector is retried | read its `connector.failed` lines, fix the manifest, then reload again |
 | `restart required for: db, socket` on stderr after a successful reload | those keys only apply at start | `systemctl restart 247-agent` |
 | a changed manifest of a connector in its own unit did nothing; the log says `connector.unit_restart_needed` | the daemon does not run that process | `systemctl restart 247-agent-connector@<name>` |
 | `oa connector restart` answers `connector "x" is built in: it re-reads its secrets on every poll, nothing to restart` | a poller re-reads its secrets on every poll | nothing with the `file` backend; `systemctl restart 247-agent` with `env` or `systemd-credentials` from `LoadCredential=` |
