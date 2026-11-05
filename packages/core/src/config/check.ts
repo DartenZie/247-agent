@@ -14,6 +14,7 @@ import {
   checkSandboxes,
   type SandboxCheckContext,
 } from './crosscheck.js';
+import { formatIssue } from './format.js';
 import { lintIssues } from './lint.js';
 import { loadConnectors, loadTasks, parseTasks, type ConfigIssue } from './load.js';
 
@@ -63,7 +64,7 @@ export function checkConfigFile(path: string): FileCheck[] {
             file: path,
             kind: 'tasks',
             summary: `${String(r.config.tasks.length)} tasks`,
-            warnings: lintIssues(r.config.tasks),
+            warnings: r.locate(lintIssues(r.config.tasks)),
           }
         : fail(path, 'tasks', r.issues),
     ];
@@ -148,8 +149,8 @@ export function checkConfigFile(path: string): FileCheck[] {
             kind: 'tasks',
             summary: `${String(f.config.tasks.length)} tasks`,
           }
-        : fail(f.file, 'tasks', issues)),
-      warnings: lintIssues(f.config.tasks, allTasks),
+        : fail(f.file, 'tasks', f.locate(issues))),
+      warnings: f.locate(lintIssues(f.config.tasks, allTasks)),
     });
   }
   for (const f of connectors.files) {
@@ -181,21 +182,15 @@ function fail(file: string, kind: FileKind, issues: ConfigIssue[]): FileCheck {
   return { ok: false, file, kind, issues };
 }
 
-/** One line per issue: `<file>: <path>: <message>`, or a single `ok` line. */
+/** One line per issue (`formatIssue`), or a single `ok` line. */
 export function formatCheck(check: FileCheck): string[] {
   if (check.ok) {
     return [`ok ${check.file} (${check.summary})`];
   }
-  return check.issues.map((i) => formatIssue(check.file, i, ''));
+  return check.issues.map((i) => formatIssue(check.file, i));
 }
 
-/** One line per warning: `<file>: <path>: warning: <message>`. */
+/** One line per warning: `<file>[:<line>]: <path>: warning: task "<name>": <message>`. */
 export function formatWarnings(check: FileCheck): string[] {
   return (check.warnings ?? []).map((w) => formatIssue(check.file, w, 'warning: '));
-}
-
-function formatIssue(file: string, i: ConfigIssue, prefix: string): string {
-  return i.path === ''
-    ? `${file}: ${prefix}${i.message}`
-    : `${file}: ${i.path}: ${prefix}${i.message}`;
 }

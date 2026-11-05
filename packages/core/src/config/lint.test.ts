@@ -50,9 +50,11 @@ describe('lintTasks', () => {
       ['steps', 'tasks[1].action.steps[1].when'],
       ['fix', 'tasks[2].action.post[0].when'],
     ]);
-    expect(lintIssues(tasks)[0]?.message).toBe(
-      'task "publish": payload.ok == true: true here is a field named "true", not the literal; write `true`',
-    );
+    expect(lintIssues(tasks)[0]).toMatchObject({
+      task: 'publish',
+      message:
+        'payload.ok == true: true here is a field named "true", not the literal; write `true`',
+    });
   });
 
   it('lints the expression inside every ${…} template, with the path of its string', () => {
@@ -299,8 +301,9 @@ describe('eventCycles', () => {
     expect(lintIssues(tasks).filter((i) => i.path.endsWith('.trigger'))).toEqual([
       {
         path: 'tasks[1].trigger',
+        task: 'ping',
         message:
-          'task "ping": event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; ' +
+          'event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; ' +
           'each run can start the next until limits.max_event_depth or ' +
           'limits.max_runs_per_chain drops the chain, unless a trigger filter ends it',
       },

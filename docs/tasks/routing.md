@@ -116,7 +116,7 @@ Two tasks that each trigger on what the other emits form a loop. `oa validate` w
 about such a cycle at the trigger of its first task:
 
 ```
-tasks.yaml: tasks[0].trigger: warning: task "ping": event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; …
+tasks.yaml:3: tasks[0].trigger: warning: task "ping": event cycle: ping emits "x.pong" to pong, pong emits "x.ping" to ping; …
 ```
 
 The check ignores filters, so a cycle that a trigger filter ends is reported too. If the

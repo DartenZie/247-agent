@@ -55,11 +55,23 @@ event, not a policy on the failing task.
 ## What `oa validate` checks
 
 `packages/cli/src/commands/validate.ts` runs `checkConfigFile` (`config/check.ts`) on
-every argument and prints `ok <file> (<summary>)` or `<file>: <path>: <message>` per
-issue; exit 1 when any file failed. The daemon does not need to run. File kind: a
+every argument and prints `ok <file> (<summary>)` or one `formatIssue` line
+(`config/format.ts`) per issue, `<file>[:<line>]: [<path>: ][task "<name>": ]<message>`;
+exit 1 when any file failed. The daemon does not need to run. File kind: a
 top-level `tasks` list of objects is a tasks file; `name` plus `exec` or `builtin` is a
 manifest; anything else is an `agent.yaml`, whose tasks files and manifests are then
 checked as well.
+
+Every issue on a tasks file carries `task` (the entry's `name`, when it is a string) and
+`line` (1-based) when the file holds its path (`ConfigIssue`, #63). `locateIssues`
+(`config/locate.ts`) walks the path through the YAML document of the file's text: the
+line is that of the deepest key the text holds, or of the list item for an index, so a
+missing key points at the task entry that lacks it. `parseTasks` locates the schema
+issues; an ok `LoadResult` keeps `locate` for what is found after the load (duplicate
+names in `loadTasks`, the cross-checks in `check.ts` and the core's `crossCheck`, the
+lint), each issue on its own file's index. `oa reload`, `ConfigLoadError` and
+`logConfigIssues` (`task`, `line` fields) use the same issues. Issues on `agent.yaml`
+and manifests carry neither.
 
 Checks, by where they live. The message texts are literal in the code; the user page
 `docs/reference/task.md` lists them in user terms.
@@ -119,9 +131,9 @@ lines name the tasks files and manifests an `agent.yaml` pulls in.
 **Warnings** (`config/lint.ts`, `lintTasks`): valid but almost certainly wrong, never
 failing a file or a load. `oa validate` carries them in `FileCheck.warnings` of every
 parsed tasks file and prints them with `formatWarnings` as
-`<file>: <path>: warning: task "<name>": <message>` without changing the exit code; the
+`<file>:<line>: <path>: warning: task "<name>": <message>` without changing the exit code; the
 core runs the same lint in `activate()` (`core.ts`), so at start and on every reload,
-and logs each as `core.config_warning` (`task`, `file`, `path`, `warning`).
+and logs each as `core.config_warning` (`task`, `file`, `path`, `line`, `warning`).
 
 What is linted, both for suspect comparisons and for roots the position does not
 provide: every trigger `filter`, `emit` `when`, sequence step `when` and post gate

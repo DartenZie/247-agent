@@ -79,7 +79,7 @@ describe('oa validate', () => {
   it('fails on a bad file and on no file', async () => {
     writeFileSync(join(dir, 'bad.yaml'), 'tasks: []\n');
     expect(await main(['validate', join(dir, 'bad.yaml')], io)).toBe(1);
-    expect(err[0]).toMatch(/bad\.yaml: tasks:/);
+    expect(err[0]).toMatch(/bad\.yaml:1: tasks: /);
     expect(await main(['validate'], io)).toBe(2);
   });
 
@@ -97,7 +97,7 @@ describe('oa validate', () => {
     expect(await main(['validate', file], io)).toBe(0);
     expect(out).toEqual([`ok ${file} (1 tasks)`]);
     expect(err).toEqual([
-      `${file}: tasks[0].trigger.filter: warning: task "gate": payload.approved == true: true here is a field named "true", not the literal; write \`true\``,
+      `${file}:3: tasks[0].trigger.filter: warning: task "gate": payload.approved == true: true here is a field named "true", not the literal; write \`true\``,
     ]);
   });
 });
@@ -452,6 +452,10 @@ describe('oa reload', () => {
     expect(await oa('reload')).toBe(1);
     expect(err[0]).toMatch(/tasks\.yaml: .*YAML/);
     expect(err.at(-1)).toMatch(/previous config stays active/);
+    err = [];
+    writeFileSync(join(dir, 'tasks.yaml'), TASKS.replace('cmd: ["false"]', 'cmd: []'));
+    expect(await oa('reload')).toBe(1);
+    expect(err[0]).toMatch(/tasks\.yaml:7: tasks\[1\]\.action\.cmd: task "bad": /);
     err = [];
     out = [];
     writeFileSync(join(dir, 'tasks.yaml'), TASKS);

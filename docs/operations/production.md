@@ -157,13 +157,15 @@ ok /etc/247-agent/tasks.d/website.yaml
 reloaded: 9 tasks; connectors: respawned email
 ```
 
-When a file is invalid, nothing changes: the issues are printed as `<file>: <path>:
-<message>`, then `reload refused: the previous config stays active`, and the exit code is
-1. When one of the three fixed keys changed, the reload still succeeds and prints
+When a file is invalid, nothing changes: the issues are printed as in
+[`oa validate`](../reference/cli.md#oa-validate-file), with the line and the task of an
+issue in a tasks file, then `reload refused: the previous config stays active`, and the
+exit code is 1. When one of the three fixed keys changed, the reload still succeeds and prints
 `restart required for: db` on stderr; `systemctl restart 247-agent` applies it. With
 `systemctl reload` the same outcome is in the journal as `daemon.reloaded` or
 `daemon.reload_needs_restart`. `systemctl reload` exits 0 even when the reload is refused;
-the journal then has one error line per issue, with `file`, `path` and `issue`:
+the journal then has one error line per issue, with `file`, `path` and `issue`, and
+`task` and `line` for an issue in a tasks file:
 `daemon.reload_invalid` for `agent.yaml` or a manifest that is invalid on its own,
 `core.config_invalid` for a tasks file or a failed cross-check between the files.
 

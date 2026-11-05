@@ -35,9 +35,15 @@ Output, one line per file or referenced file:
 ok <file> (<n> tasks)
 ok <file> (connector <name>)
 ok <file> (tasks <path>; connectors <path>)
-<file>: <path>: <message>          # a problem, on stderr
-<file>: <path>: warning: <message> # valid, but almost certainly not what you meant, on stderr
+<file>:<line>: <path>: task "<name>": <message>          # a problem, on stderr
+<file>:<line>: <path>: warning: task "<name>": <message> # valid, but almost certainly not what you meant, on stderr
 ```
+
+In a tasks file, `<line>` is the line of the key that has the problem. For a missing key,
+it is the line of the task that lacks it. `task "<name>"` names the task that holds the
+key, when its `name` is a string. A problem in `agent.yaml` or a connector manifest has
+neither, and a problem with the whole file, such as a YAML syntax error, has no `<path>`
+either.
 
 Exit 1 when any file has a problem, 2 with no arguments. Warnings do not change the
 exit code; [Tasks reference](task.md#what-oa-validate-checks-on-a-tasks-file) lists what they flag.
