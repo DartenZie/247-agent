@@ -71,6 +71,8 @@ export interface ReloadReport {
 export interface Daemon {
   /** The active agent config; a successful reload replaces it. */
   readonly config: AgentConfig;
+  /** The daemon's logger; a reload applies a changed `log.level` to it. */
+  readonly log: Logger;
   readonly core: Core;
   readonly api: ApiServer;
   /** The TCP scrape endpoint of `metrics.listen`; listens on nothing when it is unset. */
@@ -328,6 +330,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     get config() {
       return config;
     },
+    log,
     core,
     api,
     metricsServer,

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -82,6 +83,66 @@ describe('247-agent-core', () => {
         await until(() => exited !== undefined, 'the daemon to stop').catch(() => {
           child.kill('SIGKILL');
         });
+      }
+    }
+  }, 30_000);
+
+  it('logs signals at the level a reload set (#107)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'oa-'));
+    const d = dir;
+    const agentYaml = join(d, 'agent.yaml');
+    // A systemd-notify that always fails: STOPPING=1 at the SIGTERM logs systemd.notify_failed.
+    mkdirSync(join(d, 'bin'));
+    writeFileSync(join(d, 'bin', 'systemd-notify'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(d, 'bin', 'systemd-notify'), 0o755);
+    writeFileSync(agentYaml, 'db: s.db\nsocket: s\ntasks: tasks.yaml\nlog: { level: info }\n');
+    writeFileSync(
+      join(d, 'tasks.yaml'),
+      'tasks:\n  - { name: hello, trigger: { kind: manual }, action: { kind: shell, cmd: ["true"] } }\n',
+    );
+    const out: string[] = [];
+    const child = spawn(process.execPath, [MAIN, '--config', agentYaml], {
+      env: { ...process.env, OA_HOME: d, NOTIFY_SOCKET: join(d, 'notify') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', (b: Buffer) => out.push(b.toString()));
+    child.stderr.on('data', (b: Buffer) => out.push(b.toString()));
+    let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    child.on('exit', (code, signal) => {
+      exited = { code, signal };
+    });
+    try {
+      await until(
+        () => out.join('').includes('READY=1') || exited !== undefined,
+        'the daemon to start',
+      );
+      expect(exited, out.join('')).toBeUndefined();
+      writeFileSync(agentYaml, 'db: s.db\nsocket: s\ntasks: tasks.yaml\nlog: { level: error }\n');
+      // `oa reload`: returns once the new level is applied.
+      const report = await new Promise<string>((resolve, reject) => {
+        const req = request(
+          { socketPath: join(d, 's'), method: 'POST', path: '/v1/reload' },
+          (res) => {
+            let body = '';
+            res.on('data', (c: Buffer) => (body += c.toString()));
+            res.on('end', () => {
+              resolve(body);
+            });
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+      expect(JSON.parse(report)).toMatchObject({ ok: true });
+      child.kill('SIGHUP');
+      child.kill('SIGTERM');
+      await until(() => exited !== undefined, 'the daemon to stop');
+      const log = out.join('');
+      expect(log).not.toContain('daemon.signal');
+      expect(log).not.toContain('STOPPING=1');
+    } finally {
+      if (exited === undefined) {
+        child.kill('SIGKILL');
       }
     }
   }, 30_000);
