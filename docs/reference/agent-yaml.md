@@ -72,7 +72,7 @@ shows `metrics.listen_failed`.
 | Key | Meaning | Default |
 |---|---|---|
 | `defaults.timeout` | Wall-clock limit per attempt of active work, for tasks without `timeout`. Time spent `waiting` does not count. | `15m` |
-| `defaults.retry` | Retry policy for tasks without `retry`: `attempts` (1 to 100), `backoff` (`fixed` or `exponential`), `base`, `max`. | `{ attempts: 1, backoff: exponential, base: 30s, max: 1h }` |
+| `defaults.retry` | Retry policy for tasks without `retry`: `attempts` (1 to 100), `backoff` (`fixed` or `exponential`), `base`, `max`. A task with its own `retry` does not inherit any of these fields; see [Task](task.md). | `{ attempts: 1, backoff: exponential, base: 30s, max: 1h }` |
 | `defaults.sandbox` | Sandbox for `shell` actions, and for agent `post` gates, that have no `sandbox` of their own: `none`, `bwrap`, or `{ backend: bwrap, ro_binds: [], rw_binds: [], extra_args: [] }`. A bind may not expose the database, the socket, this file or the secrets file. | `none` |
 | `defaults.llm.provider` | The provider for `llm` actions without `provider`. | none |
 | `defaults.llm.model` | The model for `llm` actions without `model`. | none |
