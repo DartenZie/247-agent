@@ -26,6 +26,8 @@ import type {
 
 /** The slice of `ImapFlow` this module uses, so tests can substitute a fake. */
 export interface ImapClient {
+  /** imapflow emits 'error' on a socket failure; with no listener that ends the process. */
+  on(event: 'error', listener: (err: Error) => void): void;
   connect(): Promise<void>;
   logout(): Promise<void>;
   close(): void;
@@ -37,9 +39,9 @@ export interface ImapClient {
   ): Promise<number[] | false | undefined>;
   fetchAll(
     range: number[],
-    query: { uid: true; source: true },
+    query: { uid: true; size: true; source: { start: number; maxLength: number } },
     options: { uid: true },
-  ): Promise<{ uid: number; source?: Buffer | undefined }[]>;
+  ): Promise<{ uid: number; size?: number | undefined; source?: Buffer | undefined }[]>;
   messageFlagsAdd(range: number[], flags: string[], options: { uid: true }): Promise<boolean>;
 }
 
@@ -109,20 +111,35 @@ export class ImapMailbox implements Mailbox {
         .slice(0, limit);
       const emails: EmailMessage[] = [];
       if (uids.length > 0) {
-        const messages = await client.fetchAll(uids, { uid: true, source: true }, { uid: true });
+        // A partial fetch (BODY.PEEK[]<0.n>) keeps a huge attachment off the wire and out of memory.
+        const maxBytes = this.config.max_message_bytes;
+        const messages = await client.fetchAll(
+          uids,
+          { uid: true, size: true, source: { start: 0, maxLength: maxBytes } },
+          { uid: true },
+        );
         messages.sort((a, b) => a.uid - b.uid);
         for (const m of messages) {
           if (m.source === undefined) {
             this.log(`imap: uid ${String(m.uid)} came back without a body, skipping`);
             continue;
           }
-          emails.push(
-            await parseMessage(m.source, {
-              uid: m.uid,
-              maxBodyChars: this.config.max_body_chars,
-              authservIds: this.config.authserv_id,
-            }),
-          );
+          const cut = m.size === undefined ? m.source.length >= maxBytes : m.size > maxBytes;
+          if (cut) {
+            this.log(
+              `imap: uid ${String(m.uid)} is ${String(m.size ?? `at least ${String(maxBytes)}`)} bytes, parsing the first ${String(maxBytes)}`,
+            );
+          }
+          const email = await parseMessage(m.source, {
+            uid: m.uid,
+            maxBodyChars: this.config.max_body_chars,
+            authservIds: this.config.authserv_id,
+            sourceTruncated: cut,
+          });
+          if (email.parse_error !== undefined) {
+            this.log(`imap: uid ${String(m.uid)} could not be parsed: ${email.parse_error}`);
+          }
+          emails.push(email);
         }
       }
       const last = uids.at(-1) ?? since;
@@ -187,6 +204,11 @@ export class ImapMailbox implements Mailbox {
     fn: (client: ImapClient, mailbox: { uidValidity: bigint; uidNext: number }) => Promise<T>,
   ): Promise<T> {
     const client = this.clientFactory(this.config);
+    // A dropped connection or a socket timeout after login arrives as an 'error' event;
+    // the pending command is rejected as well, so logging it is all that is left to do.
+    client.on('error', (err) => {
+      this.log(`imap: connection error: ${err.message}`);
+    });
     try {
       await client.connect();
     } catch (err) {

@@ -11,11 +11,43 @@ export interface ParseOptions {
   maxBodyChars: number;
   /** The receiving server's authserv-ids; `Authentication-Results` from anyone else are ignored. */
   authservIds: string[];
+  /** The source is only the start of the message (a size limit cut it); `truncated` says so. */
+  sourceTruncated?: boolean;
 }
 
+/**
+ * Never rejects: a message mailparser cannot read becomes a stub with `parse_error`, so one
+ * bad message does not fail a whole fetch and block the cursor behind it.
+ */
 export async function parseMessage(source: Buffer, opts: ParseOptions): Promise<EmailMessage> {
-  const mail = await simpleParser(source, { skipHtmlToText: false, skipImageLinks: true });
-  return toEmailMessage(mail, source, opts);
+  try {
+    const mail = await simpleParser(source, { skipHtmlToText: false, skipImageLinks: true });
+    return toEmailMessage(mail, source, opts);
+  } catch (err) {
+    return unparsedMessage(source, opts, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** The stand-in for a message that could not be parsed: its uid, a stable id and the reason. */
+function unparsedMessage(source: Buffer, opts: ParseOptions, reason: string): EmailMessage {
+  return {
+    uid: opts.uid,
+    message_id: fallbackMessageId(source),
+    from: '',
+    from_name: '',
+    to: [],
+    cc: [],
+    reply_to: null,
+    subject: '',
+    date: null,
+    body: '',
+    truncated: opts.sourceTruncated === true,
+    in_reply_to: null,
+    references: [],
+    auth: senderAuth([], opts.authservIds, ''),
+    attachments: [],
+    parse_error: reason,
+  };
 }
 
 export function toEmailMessage(mail: ParsedMail, source: Buffer, opts: ParseOptions): EmailMessage {
@@ -42,7 +74,7 @@ export function toEmailMessage(mail: ParsedMail, source: Buffer, opts: ParseOpti
     date:
       mail.date === undefined || Number.isNaN(mail.date.getTime()) ? null : mail.date.toISOString(),
     body,
-    truncated: body.length < text.length,
+    truncated: body.length < text.length || opts.sourceTruncated === true,
     in_reply_to: mail.inReplyTo ?? null,
     references:
       mail.references === undefined

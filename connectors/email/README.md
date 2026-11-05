@@ -12,9 +12,9 @@ configure and use it, every `config` key, op and state key:
 connectors/email/src/
   config.ts   zod schema: top-level user/password, incoming (imap | pop3) and outgoing (smtp) endpoints, port and TLS defaults
   types.ts    EmailMessage, the op shapes
-  parse.ts    mailparser → EmailMessage: bare lower-cased addresses, body cut at max_body_chars, hashed Message-ID fallback
+  parse.ts    mailparser → EmailMessage: bare lower-cased addresses, body cut at max_body_chars, hashed Message-ID fallback, a parse_error stub for mail it cannot read
   auth.ts     Authentication-Results (RFC 8601) → auth: the topmost header from a configured authserv_id only
-  imap.ts     imapflow: UID cursor owned by the caller, UIDVALIDITY tracking, initial: none | all, mark_read
+  imap.ts     imapflow: UID cursor owned by the caller, UIDVALIDITY tracking, initial: none | all, partial fetch up to max_message_bytes, mark_read
   pop3.ts     own POP3 client: UIDL-based "seen" list (max 20 000), a pending batch confirmed by since_uid, STLS, delete_after_fetch
   send.ts     nodemailer: footer and footer_html, in_reply_to → References, attachments from content
   main.ts     runConnector: the three ops; no network call at start

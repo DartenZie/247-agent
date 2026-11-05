@@ -37,6 +37,11 @@ const incomingSchema = z.object({
   /** The `body` field is cut to this many characters. */
   max_body_chars: z.number().int().min(1).default(100_000),
   /**
+   * IMAP only: the most bytes of one message that are fetched, attachments included. A
+   * larger message is cut, parsed from what arrived and marked `truncated`.
+   */
+  max_message_bytes: z.number().int().min(1024).default(10_000_000),
+  /**
    * The authserv-id(s) the receiving server writes into `Authentication-Results`. Only
    * those headers fill a message's `auth`; unset, every result is `none`.
    */
