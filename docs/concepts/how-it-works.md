@@ -105,13 +105,15 @@ their policy allows and failed as interrupted otherwise; waiting runs keep waiti
 
 An operating-system crash or a power loss is different. The database reports a commit
 as done before the operating system has written it to disk, so the most recent events,
-runs and state changes can be lost. The effect depends on how the event got in:
+runs and state changes can be lost. A run that had finished can run again when the
+daemon starts. The effect on events depends on how the event got in:
 
 - When the daemon reads from a source and keeps its place in state, such as the
   `last_uid` of an email task, the place is lost together with the event. The next
-  poll reads the same messages again, as long as the source still has them.
+  poll reads the same messages again, as long as the source still has them, and the
+  tasks they start run again.
 - When the source was told that the event arrived, or the event was removed from the
-  source, the event is lost. Examples are a webhook that already answered 200, a
+  source, the event is lost. Examples are a webhook that already answered 202, a
   Telegram update that the next poll confirmed, and mail that the POP3 connector
   deleted with `delete_after_fetch`.
 

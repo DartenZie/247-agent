@@ -250,17 +250,15 @@ database runs in WAL mode with `synchronous = NORMAL` (`store/db.ts`): a commit 
 the WAL when it returns, but the WAL is fsynced only at a checkpoint, so the most recent
 commits can roll back after the OS goes down. `POST /v1/events` answers 201 after the
 commit, not after an fsync. A cursor kept in the same database (an email task's
-`last_uid`, the chat connector's `offset` and `since`) rolls back with its events, so
-a pull source is read again. An acknowledgement already sent upstream (a webhook 200,
-a Telegram offset confirmed by the next `getUpdates`, a POP3 `delete_after_fetch`) is
-not undone, so that event is lost. No setting changes this; `synchronous = FULL` would
-buy the guarantee with one fsync per commit.
-The user-facing statement is in
-[How it works](../concepts/how-it-works.md#what-survives-and-what-does-not); keep both
-in step with `store/db.ts`.
+`last_uid`, the Matrix backend's `since`) rolls back with its events, so a pull source
+is read again. An acknowledgement already sent upstream is not undone, so that event
+is lost. A finished run can also roll back to `running` or `queued` and run again at
+start. The guarantee is fixed by `store/db.ts`; `synchronous = FULL` would buy it with
+one fsync per commit. The effect per source is stated once, in
+[How it works](../concepts/how-it-works.md#what-survives-and-what-does-not); keep that
+page in step with `store/db.ts`.
 
-On
-`core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
+On `core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
 
 1. Every `running` run whose task is still configured and whose `attempt <
    retry.attempts` (of its pinned definition) is re-enqueued (`run.recovered`) and runs as the next attempt;
