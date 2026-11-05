@@ -260,7 +260,8 @@ straight from TypeScript source; the test fixtures depend on that. The contract:
   headers, then the request's, JSON-encodes `body`, sets `AbortSignal.timeout`, and
   resolves `{status, ok, headers, text, json, body}` for every status (`body` `null` when
   empty, `undefined` when not JSON). It rejects only with `HttpTransportError`: the
-  message of `fetch`'s innermost `cause` with the secrets redacted, the original error as
+  message of the `cause` of what `fetch` or the body read threw (or of the error itself
+  when it has no `cause`), with the secrets redacted, the original error as
   `cause`, so `isTransientHttpError` still sees its code. A caller builds its own error
   from the response and passes any server text through `redact`, because a server can
   echo a credential back. `redact(text, secrets, placeholder?)` skips empty secrets.

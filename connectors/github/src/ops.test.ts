@@ -332,6 +332,22 @@ describe('ops', () => {
     );
   });
 
+  it('returns null for a 204 and fails a 2xx that is not JSON', async () => {
+    const api = createGitHubApi({
+      token: TOKEN,
+      apiBase: 'https://api.github.com',
+      timeoutMs: 1000,
+      fetch: (url) =>
+        Promise.resolve(
+          url.endsWith('/none')
+            ? new Response(null, { status: 204 })
+            : new Response('<html>', { status: 200 }),
+        ),
+    });
+    await expect(api.request('DELETE', '/none')).resolves.toBeNull();
+    await expect(api.request('GET', '/html')).rejects.toThrow('GET /html: non-JSON response (200)');
+  });
+
   it('marks rate limits, failures of reads and refused connections transient (#32)', async () => {
     const answers: Record<string, { status: number; headers?: Record<string, string> }> = {
       '/repos/acme/site/issues/1': { status: 502 },

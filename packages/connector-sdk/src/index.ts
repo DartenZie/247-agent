@@ -343,7 +343,7 @@ export interface JsonRequest {
   url: string;
   /** Appended to `url`; `undefined` values are left out. */
   query?: Record<string, string | number | boolean | undefined> | undefined;
-  /** Added to the client's headers, overriding them. */
+  /** Added to the client's headers, overriding them whatever the case of the name. */
   headers?: Record<string, string> | undefined;
   /** Sent as JSON with `content-type: application/json`; no body when `undefined`. */
   body?: unknown;
@@ -362,7 +362,10 @@ export interface JsonResponse {
   body: unknown;
 }
 
-/** A request that got no response. The message is redacted; `cause` is what `fetch` threw. */
+/**
+ * A request that got no full response: `fetch` failed, or the body read broke off. The
+ * message is redacted; `cause` is the original error.
+ */
 export class HttpTransportError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -374,7 +377,7 @@ export interface JsonClient {
   /**
    * Sends one request and reads the whole body. Resolves for every HTTP status, so the
    * caller builds its own error from `status` and `body`, passing any text from the body
-   * through `redact`. Rejects only with `HttpTransportError` when no response came.
+   * through `redact`. Rejects only with `HttpTransportError` when no full response came.
    */
   request(req: JsonRequest): Promise<JsonResponse>;
   /** Replaces the client's secrets in `text`. */
@@ -405,26 +408,33 @@ export function createJsonClient(opts: {
           url.searchParams.set(k, String(v));
         }
       }
+      const headers = new Headers({ accept: 'application/json' });
+      for (const [k, v] of [
+        ...Object.entries(opts.headers ?? {}),
+        ...Object.entries(req.headers ?? {}),
+      ]) {
+        headers.set(k, v);
+      }
+      if (req.body !== undefined) {
+        headers.set('content-type', 'application/json');
+      }
       let res: Response;
+      let text: string;
       try {
         res = await doFetch(url.toString(), {
           method: req.method,
-          headers: {
-            accept: 'application/json',
-            ...opts.headers,
-            ...req.headers,
-            ...(req.body === undefined ? {} : { 'content-type': 'application/json' }),
-          },
+          headers: Object.fromEntries(headers),
           ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
           signal: AbortSignal.timeout(req.timeoutMs),
         });
+        // A timeout or a reset can also cut the body off once the headers are in.
+        text = await res.text();
       } catch (err) {
         const cause = err instanceof Error ? (err.cause ?? err) : err;
         throw new HttpTransportError(hide(cause instanceof Error ? cause.message : String(cause)), {
           cause: err,
         });
       }
-      const text = await res.text();
       let body: unknown = null;
       let json = true;
       if (text !== '') {

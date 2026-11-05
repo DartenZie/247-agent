@@ -305,15 +305,12 @@ describe('createJsonClient', () => {
     expect(res).toMatchObject({ status: 201, ok: true, json: true, body: { a: 1 } });
     expect(res.text).toBe('{"a":1}');
     expect(calls[0]?.url).toBe('https://api.example/v1/things?page=2&all=true');
-    expect(calls[0]?.init).toMatchObject({
-      method: 'POST',
-      body: '{"name":"x"}',
-      headers: {
-        accept: 'application/json',
-        'user-agent': '247-agent',
-        authorization: `Bearer ${SECRET}`,
-        'content-type': 'application/json',
-      },
+    expect(calls[0]?.init).toMatchObject({ method: 'POST', body: '{"name":"x"}' });
+    expect(Object.fromEntries(new Headers(calls[0]?.init.headers))).toEqual({
+      accept: 'application/json',
+      'user-agent': '247-agent',
+      authorization: `Bearer ${SECRET}`,
+      'content-type': 'application/json',
     });
     expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
   });
@@ -344,6 +341,34 @@ describe('createJsonClient', () => {
     expect(err).toBeInstanceOf(HttpTransportError);
     expect((err as Error).message).toBe('connect ECONNREFUSED x/bot<token>');
     expect(isTransientHttpError({ status: 0, idempotent: false, cause: err })).toBe(true);
+  });
+
+  it('treats a body that breaks off mid-read as a transport failure', async () => {
+    const broken = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.error(new TypeError(`terminated at bot${SECRET}`));
+      },
+    });
+    const http = client(() => Promise.resolve(new Response(broken, { status: 200 })));
+    const err = await http
+      .request({ method: 'GET', url: 'https://x/', timeoutMs: 1000 })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpTransportError);
+    expect((err as Error).message).toBe('terminated at bot<token>');
+  });
+
+  it('lets a request header override a client header whatever its case', async () => {
+    const calls: Call[] = [];
+    const http = client(() => Promise.resolve(Response.json({})), calls);
+    await http.request({
+      method: 'GET',
+      url: 'https://x/',
+      headers: { Accept: 'text/plain', 'User-Agent': 'other' },
+      timeoutMs: 1000,
+    });
+    const sent = new Headers(calls[0]?.init.headers);
+    expect(sent.get('accept')).toBe('text/plain');
+    expect(sent.get('user-agent')).toBe('other');
   });
 
   it('redacts every secret, and ignores empty ones', () => {
