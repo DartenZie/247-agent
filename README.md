@@ -86,6 +86,7 @@ Node.js 22, npm workspaces, TypeScript.
 npm install
 npm run build
 npm test
+npm run test:coverage    # optional; the report goes to coverage/
 npm run lint
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 ```
