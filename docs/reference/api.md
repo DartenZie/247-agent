@@ -72,6 +72,9 @@ Publishes an event. Body:
 | `parent_id` | string | an existing event; the new one gets its depth + 1 and, without `correlation_id`, its correlation id |
 | `correlation_id` | string | the correlation id; wins over the parent's; without either, a new id is minted |
 
+The core assigns `id`, `seq`, `ts` and `depth`. A body with one of these keys, or with
+any other key that is not in the table, gets a 400.
+
 201 `{"status": "inserted", "event": <EventRecord>}` or 200
 `{"status": "duplicate", "dedup_key": "<key>"}`. An invalid type or an unknown parent is
 a 400.

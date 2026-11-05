@@ -11,8 +11,11 @@ the agent session on top of an `acp` connector is in [`agent-action.md`](agent-a
 A connector is any executable with a manifest. It may do one or both halves:
 
 - **Events out**: `POST /v1/events` on the core socket with `{type, source, payload?,
-  dedup_key?, parent_id?, correlation_id?}`; 201 inserted, 200 duplicate. `source` is
-  whatever the connector sends; the SDK sends its manifest name. Push-style connectors
+  dedup_key?, parent_id?, correlation_id?}`; 201 inserted, 200 duplicate. The body is a
+  strict schema (`EmitBody` in `api/routes.ts`): any other key is a 400, including the
+  keys the core assigns (`id`, `seq`, `ts`, `depth`), so a connector cannot post a
+  whole event record. `source` is whatever the connector sends, `api` when it sends
+  none; the SDK sends its manifest name. Push-style connectors
   (a chat bot, a webhook receiver) use this. Poll-style ones do not: a cron task calls
   their op and fans the result out with `emit … each`, which keeps polling, dedup and
   routing in the core where they are observable.

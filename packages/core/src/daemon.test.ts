@@ -522,6 +522,19 @@ describe('POST /v1/events', () => {
       raw('POST', '/v1/events', JSON.stringify({ type: 'x.y', extra: 1 })),
     ).resolves.toMatchObject({ status: 400 });
   });
+
+  it('rejects the core-assigned keys of an event record and defaults source to api (#69)', async () => {
+    for (const key of ['id', 'ts', 'depth', 'seq']) {
+      const value = key === 'id' ? 'evt_x' : key === 'ts' ? '2026-01-01T00:00:00Z' : 1;
+      await expect(
+        raw('POST', '/v1/events', JSON.stringify({ type: 'x.y', [key]: value })),
+        key,
+      ).resolves.toMatchObject({ status: 400 });
+    }
+    await expect(raw('POST', '/v1/events', JSON.stringify({ type: 'x.y' }))).resolves.toMatchObject(
+      { status: 201, body: { event: { source: 'api' } } },
+    );
+  });
 });
 
 describe('GET /v1/events', () => {
