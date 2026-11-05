@@ -118,7 +118,7 @@ run unsandboxed and keep the secret in `env`, not argv.
 
 `sandbox` on an `acp` manifest (and only there: every other connector needs the core
 socket the sandbox hides) wraps the long-lived program once
-(`connectors/supervisor.ts`, `spawnSandboxed`): the OS and the install read-only,
+(`connectors/launchers/acp.ts`, `AcpLauncher`): the OS and the install read-only,
 `defaults.agent.work_dir` the one writable path, holding every run's workspace and
 the program's home `<work_dir>/home/<name>` (`HOME`; npm and Claude Code caches live
 there, the retention sweep ignores it), the manifest's `ro_binds`/`rw_binds` (the

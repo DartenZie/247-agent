@@ -39,7 +39,7 @@ packages/core/src/         the daemon
   executor/                worker pool: concurrency, timeouts, retries, secrets, emit and state routing, wait suspend and resume, recovery
   actions/                 one runner per kind; agent-*.ts (policy, workspace, result, session config, transcript); sandbox.ts, sandbox-net.ts
   llm/                     the ctx.llm port (service.ts), pricing, batches, one adapter per provider type
-  connectors/              supervisor, acp client, mcp-bridge, net-proxy, poller, host + socket-transport (managed_by: systemd), child-env
+  connectors/              supervisor, launchers per transport, acp client, mcp-bridge, net-proxy, poller, host + socket-transport (managed_by: systemd), child-env
   secrets/                 env, file, systemd-credentials backends
   api/                     routes (transport-free), server (node:http on the socket), client (for the CLI and TS connectors)
   expr/                    type globs, JMESPath filters, ${…} templating
