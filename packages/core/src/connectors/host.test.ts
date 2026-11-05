@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -49,6 +50,10 @@ connectors:
     restart: { base: 20ms, max: 100ms }
   - name: plain
     exec: [node, ${FIXTURES}fake-plain.ts]
+    transport: none
+    managed_by: systemd
+  - name: held
+    exec: [sh, -c, "sleep 6 & exit 3"]
     transport: none
     managed_by: systemd
   - name: child
@@ -276,6 +281,34 @@ describe('a unit without ops', () => {
     expect(JSON.parse(events[0] ?? '{}')).toMatchObject({ type: 'plain.started', source: 'plain' });
     await h.stop();
     await expect(h.done).resolves.toBe(0);
+  });
+
+  it('logs the process output as JSON connector.output lines, not raw text (#91)', async () => {
+    const h = await host('plain');
+    await h.done;
+    await until(() => hostLogs.some((l) => l.includes('fake-plain plain up')));
+    const line = hostLogs.find((l) => l.includes('fake-plain plain up')) ?? '';
+    expect(JSON.parse(line)).toMatchObject({
+      level: 'info',
+      msg: 'connector.output',
+      stream: 'stderr',
+      line: 'fake-plain plain up',
+    });
+  });
+
+  it('exits when the process dies even if a helper still holds its output (#91)', () => {
+    // The helper (sleep) keeps the piped stdout and stderr open after sh exits; the host
+    // must let go of them, or Node waits on them and systemd never restarts the unit.
+    const main = new URL('../../dist/host-main.js', import.meta.url).pathname;
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [main, '--config', configFile, 'held'], {
+      env,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(r.signal, r.stderr).toBeNull();
+    expect(r.status, r.stderr).toBe(3);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('exits non-zero when the process dies, so systemd restarts the unit', async () => {

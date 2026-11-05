@@ -29,7 +29,8 @@ These hold in every language, and the daemon relies on them:
 - **Keep state in the daemon**, not on disk: a cursor, a last-seen id, open questions.
   `GET` and `PUT /v1/state/<your name>/<key>` on the daemon's socket. Expect to be
   restarted at any time.
-- **Log to standard error.** The daemon records it as `connector.output`. With
+- **Log to standard error.** The daemon records it as `connector.output`: up to 2000
+  characters of a line and 100 lines in 10 seconds; it drops the rest. With
   `transport: stdio`, standard output is the protocol channel and a stray print breaks it.
 - **Return JSON-serialisable results** from ops. Throw, or return an MCP error, to signal
   an op failure; the calling run fails without retry, on purpose. Mark the failure

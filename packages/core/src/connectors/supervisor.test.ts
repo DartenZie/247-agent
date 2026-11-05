@@ -431,11 +431,12 @@ describe('ConnectorSupervisor', () => {
 
   it('keeps a transport: none connector running past 100 MB of output', async () => {
     // execa's default maxBuffer is 100 MB per stream; the output is logged, not kept.
+    // 50 lines, so that the last one fits in the output rate limit (#91).
     const script = [
-      "const mb = 'x'.repeat(1024 * 1024) + '\\n';",
+      "const mb = 'x'.repeat(2.2 * 1024 * 1024) + '\\n';",
       'let n = 0;',
       'const write = () => {',
-      '  while (n < 110) { n++; if (!process.stderr.write(mb)) { process.stderr.once("drain", write); return; } }',
+      '  while (n < 50) { n++; if (!process.stderr.write(mb)) { process.stderr.once("drain", write); return; } }',
       '  process.stderr.write("all written\\n");',
       '};',
       'write();',
@@ -571,6 +572,52 @@ describe('ConnectorSupervisor', () => {
     );
     await s.stop();
     expect(s.status()[0]?.state).toBe('stopped');
+  });
+
+  it('limits the output a connector process logs, across its streams, and counts the drop (#91)', async () => {
+    const metrics = new Metrics();
+    lines = [];
+    sup = new ConnectorSupervisor({
+      manifests: [
+        manifest({
+          name: 'flood',
+          transport: 'none',
+          exec: [
+            'node',
+            '-e',
+            'for (let i = 0; i < 150; i++) { process.stdout.write("o" + i + "\\n"); process.stderr.write("e" + i + "\\n"); } process.stderr.write("z".repeat(100000), () => process.exit(0));',
+          ],
+          restart: { base: '1h', max: '1h' },
+        }),
+      ],
+      socketPath: '/tmp/oa-test.sock',
+      secrets: staticSecrets({}),
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      env: { PATH: process.env.PATH ?? '' },
+      metrics,
+    });
+    await sup.start();
+    // Each stream reports its own drops when it ends, in no fixed order: wait for both.
+    const droppedSoFar = () =>
+      lines
+        .filter((l) => l.msg === 'connector.output_dropped')
+        .reduce((n, l) => n + Number(l.lines), 0);
+    await until(() => droppedSoFar() >= 201);
+    const out = lines.filter((l) => l.msg === 'connector.output');
+    expect(out).toHaveLength(100);
+    expect(out.every((l) => l.connector === 'flood')).toBe(true);
+    expect(out.every((l) => String(l.line).length <= 2000)).toBe(true);
+    expect(droppedSoFar()).toBe(201);
+    expect(lines.find((l) => l.msg === 'connector.output_dropped')).toMatchObject({
+      level: 'warn',
+      connector: 'flood',
+    });
+    expect(
+      metrics.registry.value('oa_connector_output_dropped_total', { connector: 'flood' }),
+    ).toBe(201);
   });
 });
 

@@ -380,6 +380,11 @@ export class Metrics {
     'Connector respawns scheduled after a crash or a failed start, by connector',
     ['connector'],
   );
+  readonly connectorOutputDropped = this.registry.counter(
+    'oa_connector_output_dropped_total',
+    'Lines of connector output not logged because the process was past its output rate limit, by connector',
+    ['connector'],
+  );
   readonly connectorOps = this.registry.counter(
     'oa_connector_ops_total',
     'Connector ops called, by connector, op and result (ok, error)',

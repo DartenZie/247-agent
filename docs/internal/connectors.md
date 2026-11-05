@@ -82,8 +82,16 @@ one started with `setsid`, survives the SIGKILL, so the pipes get one second to 
 and then the core destroys its ends of them (`releasePipes`). If the daemon exits
 without stopping a connector, such as a crash stop past its deadline or a second
 SIGTERM, `signal-exit` SIGKILLs every group still running. Stderr lines
-(and stdout of a `none` process) are logged as `connector.output`, cut at 2000
-characters. Spawn happens at start, after a crash, on `oa connector restart`, and on a
+(and stdout of a `none` process) are logged as `connector.output` by `pipeLines`
+(`connectors/output.ts`), bounded so that a chatty or broken connector cannot flood the
+log or the core's memory (#91): a line keeps its first 2000 characters, and a longer one
+gets `truncated: true` and its full length in `chars`, so an unterminated line holds
+no more than that in memory; and every process gets one `OutputLimiter`, shared by its
+streams, that logs 100 lines per 10-second window and drops the rest. The dropped count
+goes to `oa_connector_output_dropped_total` at once and to the log as one `warn`
+`connector.output_dropped` (`lines`, `limit`, `window_ms`) before the next line
+that fits, at the end of the window, or when the stream ends. The lines carry the
+connector's name and no run id: a connector process is not part of a run. Spawn happens at start, after a crash, on `oa connector restart`, and on a
 reload that changed the manifest. `core.start()` does not wait for the spawns: a
 connector that hangs in setup shows as `starting` while the API, pollers, retention and
 batch polling run (#195).
@@ -153,8 +161,8 @@ refuses a connector not marked `managed_by: systemd` (so nothing runs twice), re
 the connector's secrets from its own process environment (the unit's `LoadCredential=`
 or `OA_SECRET_*`), builds the child environment with the same `connectorChildEnv`, and:
 
-- `transport: none`: runs the process for the life of the unit with stdout and stderr
-  inherited (journald), exits with the child's code when it dies on its own, turning a
+- `transport: none`: runs the process for the life of the unit, its stdout and stderr
+  logged as JSON `connector.output` lines with the supervisor's bounds, exits with the child's code when it dies on its own, turning a
   0 into 1 so `Restart=always` restarts it. The supervisor lists it as `external` and
   watches nothing.
 - `transport: stdio`: listens on the manifest's `socket` (mode `0660`, the stale file
@@ -167,7 +175,12 @@ or `OA_SECRET_*`), builds the child environment with the same `connectorChildEnv
   buffer drops that connection: the ops in flight fail, the supervisor reconnects, and
   the daemon keeps running.
 
-The host logs JSON on stderr at `info` with `connector` on every line. The unit is
+The host logs JSON on stderr at `info` with `connector` on every line, the
+connector's own stderr included (as `connector.output`, bounded as above), so the
+journal holds no free text from it. The host has no metrics, so its drops show only as
+`connector.output_dropped` in the journal. Once the process exits, the host gives its
+pipes one second and then destroys them (`releasePipes`), so a helper that holds them
+cannot keep the unit up. The unit is
 `PartOf=247-agent.service` and keeps `Group=247-agent`, which is how it reads
 `/etc/247-agent` and reaches the core socket. The daemon never resolves such a
 connector's secrets.
