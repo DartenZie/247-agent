@@ -63,8 +63,9 @@ export async function events(args: string[], io: Io): Promise<number> {
           return EXIT.ok;
         }
         // Nothing matched yet: start from the newest event of any type.
-        let after = first.at(-1)?.seq ?? (await api.listEvents({ limit: 1 })).at(-1)?.seq ?? 0;
         const call = reconnecting(io);
+        let after =
+          first.at(-1)?.seq ?? (await call(() => api.listEvents({ limit: 1 }))).at(-1)?.seq ?? 0;
         for (;;) {
           await sleep(POLL_MS);
           const page = await call(() => api.listEvents({ type: values.type, after, limit: 1000 }));

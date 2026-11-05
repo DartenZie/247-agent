@@ -31,8 +31,8 @@ With `--follow` (`runs logs`, `events tail`), a daemon that goes away after the 
 answer is not an error. `oa` prints `lost the daemon (<code>); waiting for it to come
 back (Ctrl-C to stop)` on stderr, tries again every second, and prints `reconnected to
 the daemon` when the daemon answers. It continues after the last entry or event it
-printed, so a restart causes no duplicates and no gaps. A permission error or an error
-that the daemon answers still ends the command.
+printed, so a restart causes no duplicates and no gaps. A permission error, an error
+that the daemon answers, or a request that times out still ends the command.
 
 ### `oa validate <file>...`
 

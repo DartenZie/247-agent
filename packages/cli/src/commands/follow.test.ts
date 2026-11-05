@@ -10,7 +10,8 @@ import type * as IoModule from '../io.js';
 import type { Io } from '../io.js';
 
 // The follow loops poll every second; the fake daemon below answers at once.
-vi.mock('node:timers/promises', () => ({ setTimeout: () => Promise.resolve() }));
+const sleep = vi.hoisted(() => vi.fn((_ms: number) => Promise.resolve()));
+vi.mock('node:timers/promises', () => ({ setTimeout: sleep }));
 
 /** One scripted answer per call: a value, or an error to throw. */
 type Step = { ok: unknown } | { fail: Error };
@@ -87,6 +88,7 @@ const io: Io = {
 beforeEach(() => {
   out = [];
   err = [];
+  sleep.mockClear();
   script.clear();
   calls.clear();
 });
@@ -102,6 +104,9 @@ describe('oa events tail --follow across a daemon restart (#112)', () => {
     ]);
 
     await expect(events(['tail', '--follow'], io)).rejects.toThrow('stop');
+
+    // Two polls, and a pause of a second after each of the 3 failures.
+    expect(sleep.mock.calls).toEqual(Array.from({ length: 5 }, () => [1000]));
 
     expect(out).toEqual([eventLine(event(1)), eventLine(event(2)), eventLine(event(3))]);
     expect(calls.get('listEvents')?.slice(1)).toEqual([
