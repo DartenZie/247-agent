@@ -24,7 +24,15 @@ describe('probeBwrap', () => {
     });
     expect(result).toEqual({ ok: true });
     expect(seen).toEqual([[...BWRAP_PROBE_ARGV]]);
-    expect(BWRAP_PROBE_ARGV).toEqual(['bwrap', '--unshare-all', '--ro-bind', '/', '/', 'true']);
+    expect(BWRAP_PROBE_ARGV).toEqual([
+      'bwrap',
+      '--unshare-pid',
+      '--unshare-ipc',
+      '--ro-bind',
+      '/',
+      '/',
+      'true',
+    ]);
   });
 
   it('names a missing bwrap', async () => {
@@ -50,6 +58,16 @@ describe('probeBwrap', () => {
     expect(!result.ok && result.cause).toMatch(/setting up uid map: Permission denied/);
   });
 
+  it('does not blame AppArmor for a failure that is not about user namespaces', async () => {
+    const result = await probeBwrap({
+      run: failing('bwrap: Unexpected capabilities but not setuid, old file caps config?'),
+      readSysctl: (name) =>
+        name === 'kernel.apparmor_restrict_unprivileged_userns' ? '1' : undefined,
+    });
+    expect(!result.ok && result.cause).not.toMatch(/AppArmor/);
+    expect(!result.ok && result.cause).toMatch(/check by hand/);
+  });
+
   it('names the Debian unprivileged_userns_clone switch', async () => {
     const result = await probeBwrap({
       run: failing('bwrap: No permissions to creating new namespace'),
@@ -69,7 +87,9 @@ describe('probeBwrap', () => {
   it("falls back to bwrap's own message and the manual check", async () => {
     const result = await probeBwrap({ run: failing('bwrap: something odd'), readSysctl: noSysctl });
     expect(!result.ok && result.cause).toMatch(/bwrap: something odd/);
-    expect(!result.ok && result.cause).toMatch(/bwrap --unshare-all --ro-bind \/ \/ true/);
+    expect(!result.ok && result.cause).toMatch(
+      /bwrap --unshare-pid --unshare-ipc --ro-bind \/ \/ true/,
+    );
   });
 });
 

@@ -7,7 +7,8 @@ import { taskActions } from '../config/walk.js';
 import type { SandboxConfig } from './sandbox.js';
 
 /**
- * Whether bubblewrap can start a sandbox on this host, as the daemon's own user
+ * Whether bubblewrap can start a sandbox on this host, as the daemon's own user, with
+ * the namespaces every sandbox gets (`buildSandboxArgv`)
  * (docs/internal/security.md). The daemon runs it at start and on reload when anything is
  * configured with `sandbox: bwrap`, and logs `core.sandbox_unavailable` with the cause, so
  * an operator learns about a missing package or a host policy on user namespaces before
@@ -15,7 +16,8 @@ import type { SandboxConfig } from './sandbox.js';
  */
 export const BWRAP_PROBE_ARGV: readonly string[] = [
   'bwrap',
-  '--unshare-all',
+  '--unshare-pid',
+  '--unshare-ipc',
   '--ro-bind',
   '/',
   '/',
@@ -54,9 +56,12 @@ const defaultRun: ProbeRun = (argv) =>
           resolve({ error: e });
           return;
         }
+        const killed = (e as { killed?: boolean }).killed === true;
         resolve({
           status: typeof e.code === 'number' ? e.code : null,
-          stderr: stderr || e.message,
+          stderr: killed
+            ? `timed out after ${String(PROBE_TIMEOUT_MS / 1000)} s`
+            : stderr || e.message,
         });
       },
     );
@@ -91,7 +96,13 @@ export async function probeBwrap(opts: BwrapProbeOptions = {}): Promise<BwrapPro
   }
   const said = (r.stderr ?? '').trim() || `exit status ${String(r.status)}`;
   let why: string;
-  if (sysctl('kernel.apparmor_restrict_unprivileged_userns') === '1') {
+  // Only a failure to create the user namespace points at the host's userns policy.
+  const userns = /uid map|No permissions to creat|Operation not permitted|Permission denied/.test(
+    said,
+  );
+  if (!userns) {
+    why = MANUAL;
+  } else if (sysctl('kernel.apparmor_restrict_unprivileged_userns') === '1') {
     why =
       'AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1, the Ubuntu 23.10+ default): add an AppArmor profile for bwrap that allows userns';
   } else if (sysctl('kernel.unprivileged_userns_clone') === '0') {

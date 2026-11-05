@@ -629,8 +629,8 @@ export function createCore(opts: CoreOptions): Core {
       retention?.configure(next.retention, agents?.workDir);
     }
     activate(result);
-    await checkBwrap();
     scheduler.reload(compiled);
+    await checkBwrap();
     metrics.configReloads.inc({ result: 'ok' });
     log.info('core.config_reloaded', {
       tasks: compiled.tasks.length,
@@ -664,7 +664,6 @@ export function createCore(opts: CoreOptions): Core {
         throw new ConfigLoadError(result);
       }
       activate(result);
-      await checkBwrap();
       startedAt = clock.now();
       log.info('core.config_loaded', {
         files: result.files.map((f) => f.file).join(', '),
@@ -681,6 +680,7 @@ export function createCore(opts: CoreOptions): Core {
       });
       scheduler.start(compiled);
       bus.dispatcher.start(opts.dispatchIntervalMs ?? 1000);
+      await checkBwrap();
       // Not awaited: a connector hanging in setup must not hold up the API or the jobs
       // below. The supervisor logs and retries a failed spawn; the catch is a backstop.
       supervisor?.start().catch((err: unknown) => {
