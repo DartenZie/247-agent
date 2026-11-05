@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -275,6 +275,28 @@ describe('checkConfigFile', () => {
       }),
     ]);
     expect(checkConfigFile(join(EXAMPLES, 'agent.yaml')).every((c) => c.ok)).toBe(true);
+  });
+
+  it('validates the example codex manifest with a task that names its model and no pricing', () => {
+    const manifest = readFileSync(join(EXAMPLES, 'connectors.d', 'codex.yaml'), 'utf8');
+    const model = /"model":"([^"]+)"/.exec(manifest)?.[1] ?? '';
+    expect(model).not.toBe('');
+    mkdirSync(join(dir, 'connectors.d'));
+    writeFileSync(join(dir, 'connectors.d', 'codex.yaml'), manifest);
+    writeFileSync(
+      join(dir, 't.yaml'),
+      [
+        'tasks:',
+        '  - name: a',
+        '    trigger: { kind: manual }',
+        `    action: { kind: agent, connector: codex, model: ${model}, workspace: { kind: temp }, tools: [read], prompt: hi }`,
+      ].join('\n'),
+    );
+    const agent = join(dir, 'agent.yaml');
+    writeFileSync(agent, 'tasks: t.yaml\nconnectors: connectors.d\n');
+    const checks = checkConfigFile(agent);
+    expect(checks.flatMap((c) => (c.ok ? [] : c.issues))).toEqual([]);
+    expect(checks.every((c) => c.ok)).toBe(true);
   });
 
   it('cross-checks decide tasks: the provider must be an openrouter one', () => {
