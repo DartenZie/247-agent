@@ -114,7 +114,9 @@ tasks:
     if (!report.ok) {
       return;
     }
-    expect(report.result).toMatchObject({ steps: ['web-1.2', { id: 'm1' }, {}] });
+    expect(report.result).toEqual({
+      steps: ['web-1.2', { id: 'm1' }, { type: 'chat.reply', payload: { text: 'ok' } }],
+    });
     expect(report.emitted).toEqual([{ type: 'notify.done', payload: { sent: 'm1', reply: 'ok' } }]);
   });
 
@@ -187,6 +189,89 @@ tasks:
       env: { PATH: process.env.PATH ?? '', OA_SECRET_API_TOKEN: 'real' },
     });
     expect(report).toMatchObject({ ok: true, result: '<secret api_token>' });
+  });
+
+  it('skips a step whose when is false, stub or not', async () => {
+    const t = task(`
+tasks:
+  - name: gate
+    trigger: { kind: manual }
+    action:
+      kind: sequence
+      steps:
+        - kind: wait
+          for: { type: chat.reply }
+        - kind: connector
+          when: "steps[0].payload.approved"
+          connector: chat
+          op: send
+          args: {}
+`);
+    const report = await dryRun({
+      task: t,
+      stubs: parseStubs({ results: { 'action.steps[0]': { payload: { approved: false } } } }),
+    });
+    expect(report).toMatchObject({
+      ok: true,
+      result: { steps: [{ payload: { approved: false } }, null] },
+    });
+  });
+
+  it('gives a cron task without an event a cron.tick, as the scheduler does', async () => {
+    const t = task(`
+tasks:
+  - name: nightly
+    trigger: { kind: cron, schedule: "0 3 * * *" }
+    action: { kind: shell, cmd: ["true"] }
+    state_updates:
+      nightly.last: \${event.payload.scheduled_at}
+`);
+    const report = await dryRun({ task: t, stubs: parseStubs({}) });
+    expect(report.ok).toBe(true);
+    const update = report.ok ? report.state_updates[0] : undefined;
+    expect(update?.value).toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+
+  it("applies a manual task's params and refuses input that does not fit them", async () => {
+    const t = task(`
+tasks:
+  - name: greet
+    trigger:
+      kind: manual
+      params:
+        name: { type: string }
+        times: { type: integer, default: 2 }
+    action: { kind: shell, cmd: ["echo", "\${event.payload.name}x\${event.payload.times}"] }
+`);
+    expect(
+      await dryRun({ task: t, event: { payload: { name: 'ann' } }, stubs: parseStubs({}) }),
+    ).toMatchObject({
+      ok: true,
+      result: 'annx2',
+    });
+    expect(await dryRun({ task: t, event: { payload: {} }, stubs: parseStubs({}) })).toEqual({
+      ok: false,
+      error: 'invalid params for task "greet": name: required parameter is missing',
+    });
+  });
+
+  it('needs an event type for an event trigger', async () => {
+    expect(await dryRun({ task: TRIAGE, stubs: parseStubs({}) })).toEqual({
+      ok: false,
+      error: 'task "triage" has an event trigger: the event file needs a "type"',
+    });
+  });
+
+  it('stops a step that runs past the timeout', async () => {
+    const t = task(`
+tasks:
+  - name: slow
+    trigger: { kind: manual }
+    timeout: 1s
+    action: { kind: shell, cmd: ["sleep", "5"] }
+`);
+    const report = await dryRun({ task: t, stubs: parseStubs({}) });
+    expect(report).toEqual({ ok: false, error: 'timed out after 1s' });
   });
 
   it('refuses a stub file that is not an object of results and state', () => {

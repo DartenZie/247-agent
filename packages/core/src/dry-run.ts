@@ -15,6 +15,7 @@ import { taskActions, type TaskAction } from './config/walk.js';
 import { contextEvent, renderEmits, renderStateUpdates } from './executor/executor.js';
 import type { TemplateScope } from './expr/template.js';
 import { nullLogger, type Logger } from './log.js';
+import { makeTickEvent } from './scheduler/cron.js';
 import { scrubEnv } from './secrets/secrets.js';
 import type { StateSnapshot } from './store/state.js';
 import type { EventRecord, JsonValue, RunRecord } from './store/types.js';
@@ -110,6 +111,8 @@ const NEEDS_STUB: ReadonlySet<StepAction['kind']> = new Set([
   'wait',
 ]);
 
+/** `defaults.timeout` when agent.yaml does not set it; a dry run does not read agent.yaml. */
+const DEFAULT_TIMEOUT = '15m';
 const RUN_ID = 'run_dryrun';
 const EVENT_ID = 'evt_dryrun';
 const CORRELATION_ID = 'cor_dryrun';
@@ -138,8 +141,8 @@ function noMatch(task: string, verdict: Exclude<MatchVerdict, { matched: true }>
 
 /**
  * The trigger event the run sees, as the dispatcher would hand it over: the sample event
- * itself for an `event` trigger (which it must match), else a `manual.run` carrying it, as
- * `oa run <task> --payload` does.
+ * itself for an `event` trigger (which it must match), a `cron.tick` for a cron task
+ * without one, else a `manual.run` carrying it, as `oa run <task> --event` does.
  */
 function triggerEvent(task: TaskConfig, sample: DryRunEvent | undefined): EventRecord | string {
   const base = {
@@ -164,6 +167,11 @@ function triggerEvent(task: TaskConfig, sample: DryRunEvent | undefined): EventR
     };
     const verdict = compileTask(task).explain(event);
     return verdict.matched ? event : noMatch(task.name, verdict);
+  }
+  if (trigger.kind === 'cron' && sample === undefined) {
+    // What the scheduler publishes, so `${event.payload.scheduled_at}` renders as in a run.
+    const tick = makeTickEvent(task.name, new Date());
+    return { ...base, type: tick.type, source: tick.source, payload: tick.payload ?? null };
   }
   let inner: { type: string; payload: JsonValue } | null =
     sample === undefined
@@ -261,12 +269,10 @@ export async function dryRun(input: DryRunInput): Promise<DryRunReport> {
       : (_: unknown, ctx: ActionContext) => step('action', action, ctx);
 
   const controller = new AbortController();
-  const timer =
-    task.timeout === undefined
-      ? undefined
-      : setTimeout(() => {
-          controller.abort(new Error(`timed out after ${task.timeout ?? ''}`));
-        }, parseDuration(task.timeout));
+  const timeout = task.timeout ?? DEFAULT_TIMEOUT;
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`timed out after ${timeout}`));
+  }, parseDuration(timeout));
   const base: ActionContext = {
     run,
     event,

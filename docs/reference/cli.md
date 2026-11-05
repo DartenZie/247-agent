@@ -106,7 +106,11 @@ Runs one task offline against a sample event, to test its trigger filter, templa
 task definition is not changed. Its `llm`, `decide`, `agent`, `connector` and `wait`
 steps return results from a stub file. The daemon does not need to run. A dry run needs
 no credentials, makes no model or connector call, and writes no ledger entry, event or
-state. `shell` steps run for real, unless they have a stub.
+state. `shell` steps run for real, unless they have a stub. They run without a sandbox,
+with the environment of the shell that runs `oa`, minus the `OA_SECRET_` variables. The
+dry run does not read `agent.yaml`, so it does not apply `defaults.sandbox` or another
+secrets prefix. A step stops after the task's `timeout`, or after 15 minutes when the task
+sets none.
 
 | Flag | Meaning | Default |
 |---|---|---|
@@ -117,7 +121,9 @@ state. `shell` steps run for real, unless they have a stub.
 For a task with an `event` trigger, `--event` is required and must have a `type`. The
 event must match the trigger, including its filter. For a `manual` or `cron` task, the
 event is the run's input, as with `oa run --event`: its `type` defaults to
-`manual.input`, and its `payload` is checked against the task's `params`.
+`manual.input`, and its `payload` is checked against the task's `params`. A `cron` task
+without `--event` gets a `cron.tick` event for the current time, as the scheduler
+publishes it. The event file accepts only the keys `type`, `source` and `payload`.
 
 The stub file has two keys, both optional:
 
@@ -149,7 +155,7 @@ Output, on success, is JSON on stdout. Nothing in it is published or written:
 `emitted` lists each event the `emit` rules would publish, with `dedup_key` when the rule
 has one. `state_updates` lists each value the run would write.
 
-A failure prints one line on stderr and exits 1. These are the failures:
+A failure prints one line on stderr and exits 1. Some examples:
 
 ```
 dry-run: action.steps[1] (connector chat.send) has no stub: add results."action.steps[1]" to the stub file

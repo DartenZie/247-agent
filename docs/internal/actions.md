@@ -235,8 +235,10 @@ event, run, state or ledger row. It reuses the pieces of the daemon path that de
 what a run does:
 
 - The trigger: an `event` trigger gets the sample event and must match it
-  (`CompiledTask.explain`, so the same type patterns and filter); a `manual` or `cron`
-  task gets a `manual.run` that carries it, with `params` applied, as `oa run` does.
+  (`CompiledTask.explain`, so the same type patterns and filter); a `cron` task with no
+  sample gets `makeTickEvent`, as the scheduler publishes it; otherwise a `manual` or
+  `cron` task gets a `manual.run` that carries the sample, with `params` applied, as
+  `oa run` does.
   `contextEvent` then gives the action its `event`.
 - The action: `llm`, `decide`, `agent`, `connector` and `wait` steps return the result
   the stub file gives for their path (`action`, or `action.steps[<k>]` from
@@ -249,7 +251,9 @@ what a run does:
   rendered events and updates are returned and never applied.
 
 `state` is the stub file's `state`, `env` is the CLI's environment scrubbed with the
-default secrets config, and each `${secrets.<name>}` renders as `<secret <name>>`. A
+default secrets config (the dry run never reads `agent.yaml`, so a configured prefix,
+`defaults.sandbox` and `defaults.timeout` do not apply; the timeout is the task's or
+15 minutes), and each `${secrets.<name>}` renders as `<secret <name>>`. A
 stub for a path the task does not have is refused, so a renamed step cannot leave a
 stub that silently answers nothing.
 

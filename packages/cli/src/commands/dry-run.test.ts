@@ -107,6 +107,12 @@ describe('oa dry-run', () => {
     const stubs = file('stubs.yaml', 'result: {}\n');
     expect(await main(['dry-run', 'triage', '--tasks', tasks, '--stubs', stubs], io)).toBe(2);
     expect(err[0]).toMatch(/^dry-run: invalid stub file: .*result/);
+    err = [];
+    const typo = file('typo.yaml', 'type: email.received\npaylaod: {}\n');
+    expect(await main(['dry-run', 'triage', '--tasks', tasks, '--event', typo], io)).toBe(2);
+    expect(err[0]).toBe(
+      `dry-run: ${typo}: unknown key "paylaod"; an event has type, source and payload`,
+    );
   });
 
   it('needs a task name and --tasks', async () => {
