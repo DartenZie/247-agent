@@ -150,13 +150,14 @@ const secondInChainRuns = (c: Core): number => {
   return c.bus.dispatcher.drain().length;
 };
 
-/** The model the next `ask` run sends to the provider. */
+/** The model the next `ask` run sends to the provider; waits until the run frees its worker. */
 const askedModel = async (c: Core): Promise<string | undefined> => {
   const before = fake.requests.length;
-  c.runTask('ask');
+  const id = c.runTask('ask').run.id;
   await vi.waitFor(() => {
-    expect(fake.requests.length).toBe(before + 1);
+    expect(status(c, id)).toBe('succeeded');
   });
+  expect(fake.requests.length).toBe(before + 1);
   return fake.requests.at(-1)?.req.model;
 };
 
@@ -221,8 +222,9 @@ describe('a reload changes the running components (#135)', () => {
 });
 
 describe('a reload that fails after validation applies none of its settings (#135)', () => {
-  it('keeps the workers, limits, llm defaults and retention when a connector change fails', async () => {
-    const c = await startCore({ socketPath: join(dir, 'c.sock'), connectors: [idle()] });
+  /** A core with a supervised connector, then a reload of every setting whose connector change throws. */
+  const failedReload = async (over: Partial<CoreOptions> = {}): Promise<Core> => {
+    const c = await startCore({ socketPath: join(dir, 'c.sock'), connectors: [idle()], ...over });
     const supervisor = c.supervisor;
     if (supervisor === undefined) {
       throw new Error('no supervisor');
@@ -241,12 +243,21 @@ describe('a reload that fails after validation applies none of its settings (#13
       connectors: [],
     });
     expect(result).toMatchObject({ ok: false, error: 'spawn failed' });
+    return c;
+  };
 
+  it('keeps the workers, max_event_depth, llm defaults and retention', async () => {
+    const c = await failedReload();
     expect(childPingRuns(c)).toBe(0);
     expect(await purgesOldEvent(c)).toBe(false);
-    // `ask` and `on_ping` hold no worker: the llm run has finished, nothing pinged.
     expect(await askedModel(c)).toBe('claude-haiku-4-5');
+    // Last: the blocking runs hold the only worker.
     expect(twoRunAtOnce(c)).toBe(false);
+  });
+
+  it('keeps max_runs_per_chain', async () => {
+    // A depth limit that passes the child event, so only the chain cap can stop it.
+    const c = await failedReload({ maxEventDepth: 5 });
     expect(secondInChainRuns(c)).toBe(0);
   });
 });
