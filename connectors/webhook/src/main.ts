@@ -5,7 +5,7 @@
  */
 import { connectorEnv, CoreClient } from '@247-agent/connector-sdk';
 
-import { parseConfig } from './config.js';
+import { parseConfig, startupWarnings } from './config.js';
 import { startServer, stopServer } from './server.js';
 
 /**
@@ -26,10 +26,8 @@ const { server, address } = await startServer({ config, core, name: env.name, lo
 log(
   `webhook: listening on ${address}, routes ${config.routes.map((r) => `${r.path} (${r.verify.kind})`).join(', ')}`,
 );
-for (const r of config.routes) {
-  if (r.verify.kind === 'none') {
-    log(`webhook: route ${r.path} accepts unauthenticated requests (verify: none)`);
-  }
+for (const line of startupWarnings(config)) {
+  log(line);
 }
 
 const shutdown = (): void => {

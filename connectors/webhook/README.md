@@ -11,13 +11,15 @@ Example manifest: [`docs/examples/connectors.d/webhook.yaml`](../../docs/example
 
 ```
 connectors/webhook/src/
-  config.ts   zod schema: listener (TCP or Unix socket), routes, verify kinds and their defaults, route name slugs
+  config.ts   zod schema: listener (TCP or Unix socket), routes, verify kinds and their defaults, route name slugs;
+              startupWarnings: one line per route with verify: none, and one per route without
+              dedup_header (sender retries then create duplicate events)
   verify.ts   token and HMAC checks, constant-time: checkHeaders settles what the headers can
               (token, signature format, timestamp window) before the body is read;
               verifyRequest runs the HMAC over the raw body (with the timestamp layout)
   server.ts   routing, the early header check (401 with Connection: close, body unread),
               max_connections, body limit and parsing, the event payload, status codes (202/200/400/401/404/405/413/422/503/500)
-  main.ts     connectorEnv + CoreClient; listens, logs the routes; on SIGTERM and SIGINT drains requests in flight for 4 s, then exits
+  main.ts     connectorEnv + CoreClient; listens, logs the routes and the startup warnings; on SIGTERM and SIGINT drains requests in flight for 4 s, then exits
 ```
 
 Tests run without the network beyond loopback: `server.test.ts` starts the server on a

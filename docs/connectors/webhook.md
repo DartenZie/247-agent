@@ -76,7 +76,7 @@ Per route:
 | `name` | the path, slugged (`hooks-github`) | appears in logs, the payload and the dedup key |
 | `event` | required | the event type emitted, or its prefix when `type_header` is set |
 | `type_header` | none | appends `.<header value>` to `event`, folded into one lower-case segment (`Pull Request` becomes `pull_request`, cut at 64 characters); a request without the header gets 400 |
-| `dedup_header` | none | the delivery id header; the event gets `dedup_key: <connector>:<route>:<value>` and a repeat is answered `200 {"ok":true,"duplicate":true}` |
+| `dedup_header` | none | the delivery id header; the event gets `dedup_key: <connector>:<route>:<value>` and a repeat is answered `200 {"ok":true,"duplicate":true}`; a route without it logs a warning at start, because each sender retry becomes a new event |
 | `methods` | `[POST]` | anything else gets 405 with an `Allow` header |
 | `verify` | required | how the request proves it is genuine, below |
 
