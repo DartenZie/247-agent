@@ -155,6 +155,11 @@ function resultOf(res: LlmCallResult, cfg: LlmActionConfig, maxTokens: number): 
       `output truncated at max_tokens ${String(maxTokens)}; raise it or shorten the task`,
     );
   }
+  if (res.stopReason === 'context_window') {
+    throw new NonRetryableError(
+      "output truncated: the input and max_tokens exceed the model's context window; shorten the input or lower max_tokens",
+    );
+  }
   if (res.stopReason === 'refusal') {
     throw new NonRetryableError('the model refused the request');
   }

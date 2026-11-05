@@ -32,7 +32,7 @@ export interface LlmUsage {
   reportedUsd?: number | undefined;
 }
 
-export type StopReason = 'end' | 'max_tokens' | 'refusal' | 'other';
+export type StopReason = 'end' | 'max_tokens' | 'context_window' | 'refusal' | 'other';
 
 export interface LlmResponse {
   /** The parsed structured output, or `null` when the request had no schema. */

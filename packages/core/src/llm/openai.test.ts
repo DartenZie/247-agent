@@ -261,6 +261,7 @@ describe('openai adapter: errors', () => {
     [403, 'unsupported_country', 'invalid_request_error', 'not available'],
     [404, 'model_not_found', 'invalid_request_error', 'The model gpt-nope does not exist'],
     [422, 'unprocessable', 'invalid_request_error', 'unprocessable'],
+    [413, 'request_too_large', 'invalid_request_error', 'request too large'],
   ])('%s is not retryable', async (status, code, type, text) => {
     const { err } = await failure(apiError(code, type, text), status);
     expect(err).toBeInstanceOf(NonRetryableError);

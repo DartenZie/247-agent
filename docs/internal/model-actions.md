@@ -81,7 +81,9 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    `BudgetExceededError('task')`, non-retryable, the row kept.
 
 Back in the runner: a `max_tokens` stop fails non-retryably ("output truncated at
-max_tokens N; raise it or shorten the task"), so does a refusal; the result is the
+max_tokens N; raise it or shorten the task"), so do a stop because the input and
+`max_tokens` exceed the model's context window (`context_window`, Anthropic's
+`model_context_window_exceeded`) and a refusal; the result is the
 parsed object with `output_schema`, else `{text}`. A response the adapter returned
 with `error` (billed, but no usable structured output), or a structured call that
 stopped for another reason (`other`), fails retryably; its row is already in the
@@ -141,12 +143,13 @@ a run that is still `queued`, `running` or `waiting` are never swept by retentio
 One client per call (`maxRetries: 0`, HTTP timeout 1 h, base URL always explicit so
 environment variables such as `OPENAI_BASE_URL` are ignored); the task `timeout` is
 the real bound. Error classes are shared (`anthropic.ts`, `openai-compat.ts`): 400,
-401, 403, 404 and 422 are `NonRetryableError`; every other API error (429, 5xx, 409),
+401, 403, 404, 413 (the same request can never fit) and 422 are `NonRetryableError`;
+every other API error (429, 5xx, 409),
 connection and SDK errors are plain `Error`, retried by the task's policy; an abort is
 rethrown as is. A completed response is billed, so the adapter returns it rather
 than throwing: one whose structured output is missing or not JSON comes back with
 `output: null` and `error` set. The service ledgers it like any other, and the runner
-then fails the attempt with a retryable `Error`, after its `max_tokens` and refusal
+then fails the attempt with a retryable `Error`, after its truncation and refusal
 checks (the adapters do not parse a truncated or refused response). Keys never appear
 in an error message.
 
@@ -239,7 +242,7 @@ like a wait:
    `ledger_id` when `succeeded`, else `error` and `retryable`. A batch whose run is
    gone is still settled (`llm.batch_orphaned`): the provider bills it anyway.
 3. The event ends the wait; `ctx.llm.batchResult()` reads the payload and applies the
-   post-hoc checks; the result, `max_tokens` and refusal handling are the synchronous
+   post-hoc checks; the result, truncation and refusal handling are the synchronous
    call's, and `emit` routes as usual.
 
 Failures: `errored` (other than `invalid_request_error`), `expired`, `canceled`, or a

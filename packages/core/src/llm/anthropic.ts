@@ -240,6 +240,8 @@ function stopOf(msg: Anthropic.Message): StopReason {
       return 'end';
     case 'max_tokens':
       return 'max_tokens';
+    case 'model_context_window_exceeded':
+      return 'context_window';
     case 'refusal':
       return 'refusal';
     default:
@@ -260,7 +262,9 @@ function mapError(err: unknown): Error {
     err instanceof Anthropic.PermissionDeniedError ||
     err instanceof Anthropic.NotFoundError ||
     err instanceof Anthropic.BadRequestError ||
-    err instanceof Anthropic.UnprocessableEntityError
+    err instanceof Anthropic.UnprocessableEntityError ||
+    // 413: the same request can never fit, so trying it again cannot help.
+    (err instanceof Anthropic.APIError && err.status === 413)
   ) {
     return new NonRetryableError(describe(err), { cause: err });
   }

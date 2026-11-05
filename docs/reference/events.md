@@ -110,7 +110,7 @@ refused after it. Route it to the task that tells you.
 ```
 
 `status` is `succeeded`, `errored`, `expired` or `canceled`. A succeeded batch carries
-`stop_reason` (`end`, `max_tokens`, `refusal`, `other`), `output` or `text`, `usage`,
+`stop_reason` (`end`, `max_tokens`, `context_window`, `refusal`, `other`), `output` or `text`, `usage`,
 `usd`, `priced_by` and `ledger_id`; a failed one carries `error` and `retryable`. The
 event resumes the waiting run, and any other task may trigger on it.
 

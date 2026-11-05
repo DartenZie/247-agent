@@ -110,7 +110,9 @@ export function mapError(prefix: string, err: unknown): Error {
     err instanceof OpenAI.PermissionDeniedError ||
     err instanceof OpenAI.NotFoundError ||
     err instanceof OpenAI.BadRequestError ||
-    err instanceof OpenAI.UnprocessableEntityError
+    err instanceof OpenAI.UnprocessableEntityError ||
+    // 413: the same request can never fit, so trying it again cannot help.
+    (err instanceof OpenAI.APIError && err.status === 413)
   ) {
     return new NonRetryableError(describe(prefix, err), { cause: err });
   }

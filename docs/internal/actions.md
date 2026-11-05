@@ -243,7 +243,7 @@ The executor is a worker pool bounded by `workers` globally and `concurrency` pe
   missing or invalid RESULT.json are retried; a wait timeout, a connector op that got no answer, a missing secret, an
   unknown connector, an `isError` op
   result without the transient mark, an op outside `ops`, an unrenderable emit rule, a budget or price failure, a
-  `max_tokens` or refusal stop, an agent policy violation or tool-call cap, and a
+  `max_tokens`, `context_window` or refusal stop, an agent policy violation or tool-call cap, and a
   missing task or runner are not.
 - `budget.max_usd` is checked against the ledger sum of the whole run, so retries
   share one cap ([`model-actions.md`](model-actions.md)).
