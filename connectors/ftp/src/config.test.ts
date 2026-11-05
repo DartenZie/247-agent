@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseConfig } from './config.js';
+import { configWarnings, parseConfig } from './config.js';
 
 describe('parseConfig', () => {
   it('fills defaults for sftp', () => {
@@ -67,5 +67,20 @@ describe('parseConfig', () => {
     for (const path of ['protocol', 'port', 'host', 'max_bytes']) {
       expect(message).toContain(`\n  ${path}: `);
     }
+  });
+});
+
+describe('configWarnings', () => {
+  it('warns when an sftp config pins no host key', () => {
+    const [warning, ...rest] = configWarnings(parseConfig({ host: 'h', user: 'u', password: 'p' }));
+    expect(rest).toEqual([]);
+    expect(warning).toMatch(/host_key_fingerprint.*any host key/);
+  });
+
+  it('is silent with a pinned key and for ftp and ftps', () => {
+    const pinned = { host: 'h', user: 'u', password: 'p', host_key_fingerprint: 'SHA256:x' };
+    expect(configWarnings(parseConfig(pinned))).toEqual([]);
+    expect(configWarnings(parseConfig({ protocol: 'ftp', host: 'h' }))).toEqual([]);
+    expect(configWarnings(parseConfig({ protocol: 'ftps', host: 'h' }))).toEqual([]);
   });
 });

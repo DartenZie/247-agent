@@ -146,7 +146,8 @@ the first fetch skip mail already in the box. Full reference: `docs/connectors/e
 Files inside one remote directory over `sftp` (password or `private_key`, optional
 `host_key_fingerprint`), `ftp` or `ftps` (`tls: explicit|implicit`). Ops `list`, `stat`,
 `read`, `write`, `delete`, `rename`, `mkdir`, `sync`; every remote path is relative to
-`root` and confined to it, `read`/`write` are capped by `max_bytes`. Ops-only: a task fans
+`root` and confined to it (on SFTP also through symlinks, resolved on the server; an
+unpinned host key logs a warning at start), `read`/`write` are capped by `max_bytes`. Ops-only: a task fans
 `list` out with `each: "${result.entries[?type == 'file']}"` and a `dedup_key` on path,
 size and mtime (`connectors/ftp/examples/inbox-import.yaml`).
 

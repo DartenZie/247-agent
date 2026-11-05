@@ -53,6 +53,7 @@ export interface SftpLib {
   rename(from: string, to: string): Promise<unknown>;
   posixRename(from: string, to: string): Promise<unknown>;
   mkdir(path: string, recursive?: boolean): Promise<unknown>;
+  realPath(path: string): Promise<string>;
   end(): Promise<unknown>;
 }
 
@@ -104,7 +105,7 @@ function entryType(type: string): RawEntry['type'] {
 
 function describe(op: string, path: string, err: unknown): Error {
   const message = `sftp ${op} ${path}: ${err instanceof Error ? err.message : String(err)}`;
-  const repeatable = ['connect', 'list', 'stat', 'get', 'download'].includes(op);
+  const repeatable = ['connect', 'list', 'stat', 'realpath', 'get', 'download'].includes(op);
   return isTransientFileError(err, { repeatable })
     ? new TransientError(message, { cause: err })
     : new Error(message, { cause: err });
@@ -225,6 +226,19 @@ export class SftpFileClient implements FileClient {
       await this.lib.mkdir(path, true);
     } catch (err) {
       throw describe('mkdir', path, err);
+    }
+  }
+
+  async realpath(path: string): Promise<string | null> {
+    try {
+      // The library resolves '' for a missing path; other servers may reject with ENOENT.
+      const real = await this.lib.realPath(path);
+      return real === '' ? null : real;
+    } catch (err) {
+      if (isNotFound(err)) {
+        return null;
+      }
+      throw describe('realpath', path, err);
     }
   }
 

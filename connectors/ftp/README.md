@@ -10,17 +10,18 @@ and op: [`docs/connectors/ftp.md`](../../docs/connectors/ftp.md). Example manife
 
 ```
 connectors/ftp/src/
-  config.ts   zod schema, port defaults per protocol, root normalisation, local_roots
-  paths.ts    confinement: resolveRemote(root, input) is the only place a remote path is interpreted
+  config.ts   zod schema, port defaults per protocol, root normalisation, local_roots, start-up warnings
+  paths.ts    confinement of the path text: resolveRemote(root, input) is the only place a remote path is interpreted
+  confine.ts  confinement on the server: wraps a client that has realpath (SFTP) and refuses a path whose real location is outside the real root
   ops.ts      the eight ops on the FileClient interface; one connection per call; sync uploads to staging names, then renames
-  sftp.ts     ssh2-sftp-client adapter behind a narrow SftpLib interface; host key pinning
+  sftp.ts     ssh2-sftp-client adapter behind a narrow SftpLib interface; host key pinning, realpath
   ftp.ts      basic-ftp adapter behind a narrow FtpLib interface (FTP and FTPS)
   types.ts    FileClient, FileEntry, FtpOpError and its codes (not_found, too_large, exists, path), op shapes
   main.ts     runConnector: the op definitions (zod inputs); no connection at start
 ```
 
 Tests run without the network: `ops.test.ts` drives every op against an in-memory
-`FileClient`; `sftp.test.ts` and `ftp.test.ts` inject fake library objects through the
+`FileClient`; `confine.test.ts` adds server-side symlinks to it; `sftp.test.ts` and `ftp.test.ts` inject fake library objects through the
 factories and assert the calls, option mapping and error handling. The wire is covered by
 the smoke rig against real servers (atmoz/sftp built at a pinned commit, vsftpd in plain
 FTP and in forced FTPS):

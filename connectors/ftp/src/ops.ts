@@ -8,6 +8,7 @@ import { readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, posix, sep } from 'node:path';
 
 import type { FtpConfig } from './config.js';
+import { confine } from './confine.js';
 import { childPath, parentPath, resolveRemote } from './paths.js';
 import {
   FtpOpError,
@@ -116,7 +117,7 @@ export class FileOps {
   }
 
   private async withClient<T>(fn: (client: FileClient) => Promise<T>): Promise<T> {
-    const client = await this.factory(this.config);
+    const client = confine(await this.factory(this.config), this.config.root);
     try {
       return await fn(client);
     } finally {
