@@ -30,19 +30,19 @@ afterEach(() => {
  * A release tarball with only what install.sh reads: VERSION and the two launchers. Its
  * entries are closed to other users, as a release built under umask 077 records them.
  */
-function fakeRelease(): string {
-  const tree = join(root, 'src', '247-agent-9.9.9');
+function fakeRelease(version = '9.9.9'): string {
+  const tree = join(root, 'src', `247-agent-${version}`);
   mkdirSync(join(tree, 'bin'), { recursive: true });
-  writeFileSync(join(tree, 'VERSION'), `version=9.9.9\ntarget=${target}\nnode=22\n`);
+  writeFileSync(join(tree, 'VERSION'), `version=${version}\ntarget=${target}\nnode=22\n`);
   chmodSync(tree, 0o700);
   chmodSync(join(tree, 'bin'), 0o700);
   chmodSync(join(tree, 'VERSION'), 0o600);
   for (const name of ['247-agent-core', 'oa']) {
-    writeFileSync(join(tree, 'bin', name), '#!/bin/sh\necho 9.9.9\n');
+    writeFileSync(join(tree, 'bin', name), `#!/bin/sh\necho ${version}\n`);
     chmodSync(join(tree, 'bin', name), 0o700);
   }
-  const tarball = join(root, 'release.tar.gz');
-  const tar = spawnSync('tar', ['-czf', tarball, '-C', join(root, 'src'), '247-agent-9.9.9']);
+  const tarball = join(root, `release-${version}.tar.gz`);
+  const tar = spawnSync('tar', ['-czf', tarball, '-C', join(root, 'src'), `247-agent-${version}`]);
   expect(tar.status).toBe(0);
   return tarball;
 }
@@ -105,6 +105,38 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(run.stderr).toBe('');
     expect(run.status).toBe(0);
     expect(existsSync(log) ? readFileSync(log, 'utf8') : '').toBe(`-R 0:0 ${prefix}-9.9.9.new\n`);
+  });
+
+  it('tells an upgrade without a restart to keep the old tree the daemon still runs from', () => {
+    // Removing the old tree while the daemon still runs from it breaks the daemon, and the
+    // rollback needs it too (issue #114).
+    const prefix = join(root, 'opt', '247-agent');
+    const install = (version: string) =>
+      spawnSync(
+        'sh',
+        [
+          script,
+          '--from',
+          fakeRelease(version),
+          '--prefix',
+          prefix,
+          '--bin-dir',
+          join(root, 'bin'),
+          '--no-service',
+        ],
+        { encoding: 'utf8' },
+      );
+    expect(install('9.9.8').status).toBe(0);
+    const run = install('9.9.9');
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(
+      'remove an old version only after 247-agent runs on 9.9.9 and you no longer want to roll back to it',
+    );
+    expect(run.stdout).toContain(`  rm -rf ${prefix}-9.9.8\n`);
+    expect(run.stdout).toContain(
+      `247-agent was not restarted: if a daemon still runs 9.9.8, it uses ${prefix}-9.9.8; keep it until the restart`,
+    );
   });
 
   it.each([

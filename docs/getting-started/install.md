@@ -90,6 +90,18 @@ If the new version migrated the database, the old one refuses to start on it. Re
 `/var/lib/247-agent/state.db.schema-<n>.bak`, the copy the daemon took before the
 migration ([backups](../operations/production.md#backups)).
 
+The installer keeps the old tree. Remove it only after the service has restarted on the
+new version and you no longer want to roll back:
+
+```sh
+sudo rm -rf /opt/247-agent-<old version>
+```
+
+If the installer did not restart the daemon (with `--no-restart`, with `--no-service`,
+or without systemd), the running daemon still uses the old tree until you restart it.
+If you remove the tree before the restart, the daemon cannot start new child processes,
+and you lose the rollback.
+
 Options, passed after `sh -s --`:
 
 | Option | Effect |
