@@ -2,12 +2,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BwrapProbeResult } from './actions/bwrap-probe.js';
 import type { SandboxConfig } from './actions/sandbox.js';
 import type { ActionRunner, ActionRunners } from './actions/types.js';
 import { taskSource } from './bus/matcher.js';
+import { parseManifest, type ConnectorConfig } from './config/connector.js';
 import { ConfigLoadError, createCore, type Core } from './core.js';
 import { createLogger } from './log.js';
 import { staticSecrets } from './secrets/secrets.js';
@@ -513,6 +514,105 @@ describe('createCore checks bubblewrap when something is sandboxed', () => {
       expect((await c.reload()).ok).toBe(true);
       expect(probes()).toBe(1);
       expect(unavailable(out)).toEqual([expect.objectContaining({ used_by: 'task boxed' })]);
+    } finally {
+      await c.stop();
+    }
+  });
+});
+
+describe('createCore applies a reload all at once (#77)', () => {
+  const task = (name: string) =>
+    `  - name: ${name}\n    trigger: { kind: manual }\n    action: { kind: shell, cmd: ["true"] }\n`;
+  const idle = (): ConnectorConfig => {
+    const r = parseManifest(
+      { name: 'x', transport: 'none', exec: ['node', '-e', 'setInterval(() => undefined, 60000)'] },
+      '/x/connectors.d/x.yaml',
+    );
+    if (!r.ok) {
+      throw new Error(JSON.stringify(r.issues));
+    }
+    return r.config;
+  };
+
+  /** One worker, connector `x` supervised, manual tasks `a` and `b`. */
+  const startWith = async () => {
+    const file = join(dir, 'staged.yaml');
+    writeFileSync(file, `tasks:\n${task('a')}${task('b')}`);
+    const out: Record<string, unknown>[] = [];
+    const c = createCore({
+      tasksFiles: [file],
+      dbPath: join(dir, 'staged.db'),
+      socketPath: join(dir, 'c.sock'),
+      connectors: [idle()],
+      workers: 1,
+      log: createLogger({
+        level: 'debug',
+        sink: (l) => out.push(JSON.parse(l) as Record<string, unknown>),
+      }),
+      runners: hangAll,
+    });
+    await c.start();
+    const supervisor = c.supervisor;
+    if (supervisor === undefined) {
+      throw new Error('no supervisor');
+    }
+    const real = supervisor.apply.bind(supervisor);
+    // The new tasks file: `a`, `b` and a new `c`, applied with two workers and no connector.
+    writeFileSync(file, `tasks:\n${task('a')}${task('b')}${task('c')}`);
+    return { c, out, supervisor, real };
+  };
+  const status = (c: Core, id: string) => c.store.runs.getById(id)?.status;
+
+  it('starts no run while connector changes apply, then starts them under the new config', async () => {
+    const { c, supervisor, real } = await startWith();
+    try {
+      let open = (): void => undefined;
+      const gate = new Promise<void>((r) => {
+        open = r;
+      });
+      const apply = vi.spyOn(supervisor, 'apply').mockImplementation(async (m) => {
+        const applied = real(m);
+        await gate;
+        return applied;
+      });
+      const reloading = c.reload({ workers: 2, connectors: [] });
+      await vi.waitFor(() => {
+        expect(apply).toHaveBeenCalled();
+      });
+
+      const a = c.runTask('a').run.id;
+      const b = c.runTask('b').run.id;
+      expect([status(c, a), status(c, b)]).toEqual(['queued', 'queued']);
+      expect(c.config().tasks.map((t) => t.name)).toEqual(['a', 'b']);
+
+      open();
+      expect((await reloading).ok).toBe(true);
+      expect(c.config().tasks.map((t) => t.name)).toEqual(['a', 'b', 'c']);
+      expect([status(c, a), status(c, b)]).toEqual(['running', 'running']);
+    } finally {
+      await c.stop();
+    }
+  });
+
+  it('leaves the previous config fully in place when applying connectors fails', async () => {
+    const { c, out, supervisor, real } = await startWith();
+    try {
+      vi.spyOn(supervisor, 'apply').mockImplementationOnce(async (m) => {
+        await real(m);
+        throw new Error('spawn failed');
+      });
+      const result = await c.reload({ workers: 2, connectors: [] });
+      expect(result).toMatchObject({ ok: false, error: 'spawn failed' });
+      expect(out.filter((l) => l.msg === 'core.reload_failed')).toEqual([
+        expect.objectContaining({ level: 'error', error: 'spawn failed' }),
+      ]);
+      expect(c.config().tasks.map((t) => t.name)).toEqual(['a', 'b']);
+      expect(supervisor.names()).toEqual(['x']);
+
+      // Still one worker: the second run waits.
+      const a = c.runTask('a').run.id;
+      const b = c.runTask('b').run.id;
+      expect([status(c, a), status(c, b)]).toEqual(['running', 'queued']);
     } finally {
       await c.stop();
     }

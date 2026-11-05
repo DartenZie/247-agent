@@ -335,6 +335,8 @@ export class Executor {
   private readonly idleWaiters: (() => void)[] = [];
   private unsubscribe: (() => void) | undefined;
   private stopping = false;
+  /** Open `hold()`s; while any is open, `pump` starts nothing. */
+  private holds = 0;
 
   constructor(opts: ExecutorOptions) {
     this.store = opts.store;
@@ -548,8 +550,26 @@ export class Executor {
     return task?.config.retry ?? this.defaultRetry;
   }
 
+  /**
+   * Starts no run, and hands no backed-off retry a worker, until the returned release is
+   * called: a reload holds runs while it applies, so none starts under half the new config
+   * (#77). Queued runs stay queued. Holds nest; releasing twice is harmless.
+   */
+  hold(): () => void {
+    this.holds += 1;
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.holds -= 1;
+      this.pump();
+    };
+  }
+
   private pump(): void {
-    if (this.stopping) {
+    if (this.stopping || this.holds > 0) {
       return;
     }
     // A retry waits for a free worker like a new run, but goes first.

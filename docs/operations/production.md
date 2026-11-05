@@ -172,7 +172,9 @@ Everything in `agent.yaml`, the tasks files and the manifests is re-read and app
 together by `oa reload` or `systemctl reload 247-agent`. Workers, defaults, providers,
 prices, budgets, retention, the log level, limits and the tasks take effect at once.
 Connectors whose manifest changed are respawned with freshly resolved secrets, new ones
-are started, removed ones stopped. A run already in flight finishes under the task
+are started, removed ones stopped. No run starts while a reload applies: runs triggered
+meanwhile wait in the queue and start under the new configuration. If a connector change
+fails, the previous connectors are put back and the whole previous configuration stays. A run already in flight finishes under the task
 definition it started with, also when it waits for a reply, retries or outlives a
 restart. A run whose task you removed fails.
 

@@ -208,8 +208,15 @@ the manifests and the tasks files and applies them together or not at all:
 3. Manifests invalid: `ok: false` with every file listed, nothing changes
    (`daemon.reload_invalid`, per issue).
 4. `core.reload()` loads and cross-checks the tasks files; invalid → `core.config_invalid`
-   per issue and nothing changes; valid → every component is reconfigured and the tasks activated
-   (`core.config_reloaded`), then the log level is re-applied (`--log-level` keeps
+   per issue and nothing changes; valid → the executor is held (`Executor.hold()`, no run
+   starts and no retry takes a worker), the steps that wait on processes run first
+   (`supervisor.configure`, `supervisor.apply`, the pollers), then every other seam and
+   the tasks and cron jobs switch in one synchronous step (`switchTo`), and the hold is
+   released (`core.config_reloaded`). Runs queued meanwhile start under the new config. A
+   throw in the process steps puts the previous agent defaults, connectors and pollers
+   back (`core.reload_undo_failed` if that throws too), logs `core.reload_failed`,
+   counts `result="failed"` and returns `ok: false` with `error`; nothing else was
+   touched (#77). After a reload that applied, the log level is re-applied (`--log-level` keeps
    winning over the file), the metrics endpoint is moved to `metrics.listen` and
    `daemon.reloaded` logged.
 

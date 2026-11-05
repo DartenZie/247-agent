@@ -163,6 +163,11 @@ export interface CoreReloadOptions {
 export interface ReloadResult extends TasksLoadResult {
   /** What happened to the supervised connectors, when the reload changed them. */
   connectors?: ApplyResult | undefined;
+  /**
+   * Why a valid config could not be applied (a connector change failed); with `ok: false`,
+   * and the previous config still fully active.
+   */
+  error?: string | undefined;
 }
 
 export interface Core {
@@ -188,8 +193,10 @@ export interface Core {
   start(): Promise<void>;
   /**
    * Re-reads the tasks files and applies `next` (new agent.yaml settings). All or nothing:
-   * an invalid tasks file is logged, nothing changes and the previous config stays active.
-   * Runs in flight finish under the settings they started with.
+   * an invalid tasks file is logged, nothing changes and the previous config stays active;
+   * a connector change that fails is undone and reported as `ok: false` with `error`. No
+   * run starts while a reload applies; runs in flight finish under the settings they
+   * started with.
    */
   reload(next?: CoreReloadOptions): Promise<ReloadResult>;
   /** `oa run <task>`: queue a run for any task, with an optional input event. */
@@ -589,6 +596,81 @@ export function createCore(opts: CoreOptions): Core {
       logConfigIssues(log, 'core.config_invalid', result.files);
       return result;
     }
+    // All or nothing (#77): no run starts until the reload is through, so none sees half
+    // of it. The steps that take time or can fail (connectors respawning) go first and are
+    // undone on failure; everything else then switches in one synchronous step.
+    const release = executor.hold();
+    try {
+      let applied: ApplyResult | undefined;
+      try {
+        applied = await applyConnectors(next);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        metrics.configReloads.inc({ result: 'failed' });
+        log.error('core.reload_failed', { error });
+        return { ...result, ok: false, error };
+      }
+      switchTo(next, files, nextSandbox, result);
+      await checkBwrap();
+      metrics.configReloads.inc({ result: 'ok' });
+      log.info('core.config_reloaded', {
+        tasks: compiled.tasks.length,
+        connectors_added: joined(applied?.added),
+        connectors_removed: joined(applied?.removed),
+        connectors_changed: joined(applied?.changed),
+      });
+      return applied === undefined ? result : { ...result, connectors: applied };
+    } finally {
+      release();
+    }
+  };
+
+  /**
+   * The part of a reload that waits on processes: agent defaults, the supervised connector
+   * set and the pollers. When a step throws, the previous set is put back before the error
+   * is passed on, so the reload changes nothing.
+   */
+  const applyConnectors = async (next: CoreReloadOptions): Promise<ApplyResult | undefined> => {
+    if (supervisor === undefined) {
+      return undefined;
+    }
+    const sup = supervisor;
+    const before = {
+      agents: { defaults: sup.defaults, workDir: sup.workDir },
+      manifests,
+    };
+    try {
+      if (next.agents !== undefined) {
+        await sup.configure(next.agents);
+      }
+      if (next.connectors === undefined) {
+        return undefined;
+      }
+      const applied = await sup.apply(next.connectors.filter((m) => m.builtin === undefined));
+      await applyPollers(next.connectors);
+      manifests = next.connectors;
+      return applied;
+    } catch (err) {
+      try {
+        await sup.configure(before.agents);
+        await sup.apply(before.manifests.filter((m) => m.builtin === undefined));
+        await applyPollers(before.manifests);
+      } catch (undo) {
+        log.error('core.reload_undo_failed', {
+          error: undo instanceof Error ? undo.message : String(undo),
+        });
+      }
+      throw err;
+    }
+  };
+
+  /** The rest of a reload, synchronous so that no run can start in between. */
+  const switchTo = (
+    next: CoreReloadOptions,
+    files: string[],
+    nextSandbox: SandboxConfig | undefined,
+    result: TasksLoadResult,
+  ): void => {
     tasksFiles = files;
     defaultSandbox = nextSandbox;
     if (next.llm !== undefined && llm !== undefined) {
@@ -616,29 +698,11 @@ export function createCore(opts: CoreOptions): Core {
         ...(next.maxChainRuns === undefined ? {} : { maxChainRuns: next.maxChainRuns }),
       });
     }
-    if (next.agents !== undefined) {
-      await supervisor?.configure(next.agents);
-    }
-    let applied: ApplyResult | undefined;
-    if (next.connectors !== undefined && supervisor !== undefined) {
-      manifests = next.connectors;
-      applied = await supervisor.apply(manifests.filter((m) => m.builtin === undefined));
-      await applyPollers(manifests);
-    }
     if (next.retention !== undefined) {
       retention?.configure(next.retention, agents?.workDir);
     }
     activate(result);
     scheduler.reload(compiled);
-    await checkBwrap();
-    metrics.configReloads.inc({ result: 'ok' });
-    log.info('core.config_reloaded', {
-      tasks: compiled.tasks.length,
-      connectors_added: joined(applied?.added),
-      connectors_removed: joined(applied?.removed),
-      connectors_changed: joined(applied?.changed),
-    });
-    return applied === undefined ? result : { ...result, connectors: applied };
   };
 
   return {

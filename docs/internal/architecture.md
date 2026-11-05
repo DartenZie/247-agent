@@ -59,7 +59,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 
 | Component | Where | Responsibility | Invariant |
 |---|---|---|---|
-| Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file on reload changes nothing; `db`, `socket`, `secrets` are fixed for the process |
+| Config loader | `config/` | Reads `agent.yaml`, the tasks files and the manifests, validates and cross-checks them, applies them all or nothing on SIGHUP or `POST /v1/reload` | An invalid file or a failed connector change on reload changes nothing, and no run starts while one applies; `db`, `socket`, `secrets` are fixed for the process |
 | Scheduler | `scheduler/cron.ts` | One croner job per cron task and poller; each tick publishes `cron.tick` with `dedup_key: cron:<task>:<boundary>` | Missed ticks are never replayed; a duplicate boundary is dropped by the key |
 | Event store and bus | `store/events.ts`, `bus/publish.ts`, `bus/bus.ts` | Append-only `events`; publish validates the type (no wildcards) and the parent, assigns ids and depth, inserts in `BEGIN IMMEDIATE`, wakes the dispatcher | An event is committed before anything acts on it |
 | Dispatcher | `bus/dispatcher.ts` | Reads events past the `dispatch` cursor, ends waits, drops too-deep events and events of a chain past its run cap (publishing `loop.detected`), matches tasks, skips paused ones, inserts `queued` runs, advances the cursor, all in one transaction per batch | `UNIQUE(task, event_id)` makes a replay after a crash a no-op |

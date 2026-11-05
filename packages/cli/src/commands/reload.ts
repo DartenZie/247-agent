@@ -46,6 +46,9 @@ export async function reload(args: string[], io: Io): Promise<number> {
       }
     }
     if (!r.ok) {
+      if (r.error !== undefined) {
+        io.err(`reload failed: ${r.error}`);
+      }
       io.err('reload refused: the previous config stays active');
       return EXIT.failed;
     }
