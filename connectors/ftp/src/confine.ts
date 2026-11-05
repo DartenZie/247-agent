@@ -31,7 +31,8 @@ class ConfinedClient implements FileClient {
   /**
    * Where `path` leads on the server. A path that does not exist yet (a file about to be
    * written, a directory about to be made) is its nearest existing ancestor, resolved, with
-   * the missing names appended; nothing below that ancestor can be a link yet.
+   * the missing names appended. A dangling symlink is not missing: OpenSSH resolves it to
+   * its target, so a link to a place outside the root that does not exist yet is refused.
    */
   private async resolve(path: string): Promise<string> {
     const missing: string[] = [];
@@ -64,6 +65,18 @@ class ConfinedClient implements FileClient {
     }
   }
 
+  /**
+   * For calls that act on the entry itself, never on a link target (unlink, rename): the
+   * real location of the parent directory, plus the name.
+   */
+  private async checkEntry(path: string): Promise<void> {
+    const parent = posix.dirname(path);
+    if (path === this.root || parent === path) {
+      return this.check(path);
+    }
+    await this.check(parent);
+  }
+
   async list(dir: string): Promise<RawEntry[]> {
     await this.check(dir);
     return this.inner.list(dir);
@@ -90,7 +103,7 @@ class ConfinedClient implements FileClient {
   }
 
   async remove(path: string): Promise<void> {
-    await this.check(path);
+    await this.checkEntry(path);
     return this.inner.remove(path);
   }
 
@@ -100,14 +113,14 @@ class ConfinedClient implements FileClient {
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await this.check(from);
-    await this.check(to);
+    await this.checkEntry(from);
+    await this.checkEntry(to);
     return this.inner.rename(from, to);
   }
 
   async replace(from: string, to: string): Promise<void> {
-    await this.check(from);
-    await this.check(to);
+    await this.checkEntry(from);
+    await this.checkEntry(to);
     return this.inner.replace(from, to);
   }
 

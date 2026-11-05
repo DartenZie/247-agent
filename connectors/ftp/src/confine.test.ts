@@ -84,7 +84,6 @@ describe('symlinks on the server', () => {
       () => ops.mkdir({ path: 'out/a/b' }),
       () => ops.delete({ path: 'out', recursive: true }),
       () => ops.rename({ from: 'notes.txt', to: 'out/notes.txt' }),
-      () => ops.rename({ from: 'out', to: 'old-link' }),
       () => ops.delete({ path: 'out' }),
     ]) {
       expect((await refusal(op())).code).toBe('path');
@@ -98,6 +97,25 @@ describe('symlinks on the server', () => {
     const { ops, client } = setup(OUT, OUT_REAL);
     expect((await refusal(ops.sync({ local, remote: 'out' }))).code).toBe('path');
     expect(client.calls.some((c) => c.startsWith('upload'))).toBe(false);
+  });
+
+  it('lets sync prune and rename move a link that points outside, never its target', async () => {
+    const local = mkdtempSync(join(tmpdir(), 'confine-'));
+    writeFileSync(join(local, 'notes.txt'), 'new');
+    const { ops, client } = setup({ ...OUT, '/srv/x/stats': '/usr/share/stats' }, [
+      ...OUT_REAL,
+      '/usr/share/stats',
+    ]);
+    client.seed('/srv/x/out', 'link');
+    client.seed('/srv/x/stats', 'link');
+    await ops.rename({ from: 'out', to: 'old-link' });
+    expect(client.calls).toContain('rename /srv/x/out /srv/x/old-link');
+    const r = await ops.sync({ local, prune: true });
+    expect(r.pruned).toEqual(['old-link', 'site/index.html', 'stats', 'site']);
+    expect(client.calls).toContain('remove /srv/x/stats');
+    expect(client.calls.some((c) => c.includes('/usr/share') && !c.startsWith('realpath'))).toBe(
+      false,
+    );
   });
 
   it('allows paths that resolve inside the root, also when the root itself is a link', async () => {

@@ -133,9 +133,13 @@ correct when the remote was edited by hand. `sync` is not capped by `max_bytes`.
 - `root` is enforced by the connector in two steps. Before any connection, a path that
   is absolute or uses `..` to leave the root is refused. On SFTP, the connector then asks
   the server where each path really leads. If a symlink under the root takes the path
-  outside the root, the op fails with a `path` error that names the real location. This
-  also applies to an op on such a symlink itself, for example `delete`. A symlink that
-  stays inside the root works as usual.
+  outside the root, the op fails with a `path` error that names the real location.
+  `stat`, `read` and `delete` on such a symlink are refused too. `rename` and the
+  `prune` step of `sync` act on the symlink itself, so they move or remove it and never
+  touch its target. A symlink that stays inside the root works as usual.
+- This check relies on the server resolving symlinks when it answers the SFTP `realpath`
+  request, as OpenSSH does. The check and the op are separate requests, so another
+  account that changes a symlink between them can still get past the check.
 - FTP and FTPS cannot ask the server to resolve a path, so on those protocols only the
   first step applies and a symlink on the server can lead outside `root`. A chrooted
   account is the stronger guarantee on every protocol. Use both.
