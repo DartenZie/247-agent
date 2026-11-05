@@ -152,7 +152,9 @@ configured when it next runs, or as interrupted when a restart comes first. The 
 Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* → `succeeded`,
 `failed` or `cancelled`; any of the three active statuses can go straight to
 `cancelled`. `attempt` is 0 while queued; the first attempt is 1; a resume after a wait
-keeps the attempt; a retry increments it.
+keeps the attempt; a retry increments it. `started_at` is the first attempt's start and
+stays through retries, resumes and recovery, so `finished_at − started_at` covers them all;
+a run that succeeds has `error` cleared, whatever an earlier attempt failed with (#88).
 
 Retry policy is `task.retry ?? defaults.retry` (`attempts` 1, `exponential`, `base`
 30s, `max` 1h): a task's `retry` replaces `defaults.retry` whole, and the fields it

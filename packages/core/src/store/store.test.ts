@@ -344,6 +344,16 @@ describe('RunStore', () => {
     expect(store.runs.listByStatus('queued')).toEqual([]);
     expect(store.runs.listByStatus('succeeded').map((r) => r.id)).toEqual(['run_1']);
   });
+
+  it('keeps the first started_at and clears the error only on an explicit null (#88)', () => {
+    store.runs.insertQueued(run('run_1'));
+    store.runs.setStatus('run_1', 'running', { started_at: 't1', attempt: 1 });
+    store.runs.setStatus('run_1', 'running', { error: 'boom' });
+    store.runs.setStatus('run_1', 'running', { started_at: 't2', attempt: 2 });
+    expect(store.runs.getById('run_1')).toMatchObject({ started_at: 't1', error: 'boom' });
+    store.runs.setStatus('run_1', 'succeeded', { finished_at: 't3', error: null });
+    expect(store.runs.getById('run_1')).toMatchObject({ started_at: 't1', error: null });
+  });
 });
 
 describe('transaction', () => {

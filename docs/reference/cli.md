@@ -111,7 +111,8 @@ unknown parent is a 400 from the daemon, exit 2.
 | `--socket <path>` | all | the daemon socket | see above |
 
 `ls` prints the newest runs, one per line: id, task, status, created time, duration
-(`-` while unfinished, `12.3s`, `2m05s`) and the first line of the error when there is
+from the first attempt's start to the end, retries included (`-` while unfinished,
+`12.3s`, `2m05s`) and the first line of the error when there is
 one. `no runs` when nothing matches. Exit 0.
 
 `show` prints one run as `key  value` rows: `run`, `task`, `status` (with `(attempt N)`

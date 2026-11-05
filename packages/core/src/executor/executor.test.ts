@@ -345,6 +345,23 @@ describe('Executor', () => {
         attempt: 2,
       });
     });
+
+    it('succeeds without the earlier error and is timed from its first attempt (#88)', async () => {
+      const { ex, d, failFlaky } = setup('10ms');
+      ex.start();
+      const flaky = await failWhileUrgentQueued(failFlaky);
+      await until(() => d.active() === 1);
+      env.clock.set('2026-09-19T10:00:02.000Z');
+      d.finish('done');
+      await ex.idle();
+      expect(env.store.runs.getByTaskAndEvent('flaky', flaky.id)).toMatchObject({
+        status: 'succeeded',
+        attempt: 2,
+        error: null,
+        started_at: '2026-09-19T10:00:00.000Z',
+        finished_at: '2026-09-19T10:00:02.000Z',
+      });
+    });
   });
 
   it('times out a run by the task timeout and kills the process', async () => {
