@@ -64,7 +64,7 @@ describe.skipIf(process.platform === 'win32')('pack-release.sh', () => {
     writeFileSync(join(tree, 'bin', 'oa'), '#!/bin/sh\n');
     symlinkSync('oa', join(tree, 'bin', 'link'));
 
-    const run = spawnSync('sh', [script, root, '247-agent-9.9.9'], { encoding: 'utf8' });
+    const run = spawnSync('bash', [script, root, '247-agent-9.9.9'], { encoding: 'utf8' });
     expect(run.stderr).toBe('');
     expect(run.status).toBe(0);
 
