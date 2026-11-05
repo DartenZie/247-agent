@@ -784,6 +784,21 @@ describe('oa help', () => {
     expect(await main(['validate', '--', '--help'], io)).toBe(1);
     expect(err).toHaveLength(1);
     expect(err[0]).toMatch(/^--help: cannot read file/);
+    out = [];
+    err = [];
+    const tasks = join(EXAMPLES, 'website-updates.yaml');
+    expect(await main(['validate', tasks, '--', '-h'], io)).toBe(1);
+    expect(out).toEqual([`ok ${tasks} (9 tasks)`]);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toMatch(/^-h: cannot read file/);
+  });
+
+  it('prints the usage for a help flag after a positional argument', async () => {
+    expect(await main(['backup', 'out.db', '--help'], io)).toBe(0);
+    expect(await main(['validate', 'a.yaml', '-h'], io)).toBe(0);
+    expect(err).toEqual([]);
+    expect(out[0]).toMatch(/^usage: oa backup/);
+    expect(out[1]).toMatch(/^usage: oa validate/);
   });
 
   it('says which secrets backends a connector restart picks up a rotation from', async () => {
