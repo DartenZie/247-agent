@@ -43,7 +43,9 @@ for the dispatcher, cron and poller schedules, and a manual `setTimer` (`SetTime
 `packages/core/src/clock.ts`) for the supervisor's restart and health timers. Calling
 `poll()` directly gives the same result without waiting for a cron tick. A test that waits
 for something to happen polls for it (`vi.waitFor`, or an `until` helper) and does not
-sleep for a fixed time.
+sleep for a fixed time. The exception is a wait for the operating system, such as a
+child process that dies after a burst of output. No timer controls such a wait, so the
+test sleeps and says why.
 
 Integration tests (`packages/core/src/integration.test.ts`,
 `integration.agent.test.ts`, `core.*.test.ts`, `daemon.test.ts`) start a real daemon on

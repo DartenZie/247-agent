@@ -527,6 +527,7 @@ describe('ConnectorSupervisor', () => {
         ),
       30_000,
     );
+    // A process the output limit killed exits on its own time; no timer seam covers that.
     await new Promise((r) => setTimeout(r, 200));
     expect(lines.filter((l) => l.msg === 'connector.exited')).toEqual([]);
     expect(s.status()[0]).toMatchObject({ name: 'loud', state: 'up', restarts: 0 });
