@@ -237,6 +237,7 @@ The names worth searching for:
 | `daemon.started`, `daemon.home` | info | the daemon is up; its version and install root |
 | `core.connectors_start_failed` | error | starting the connectors threw (`error`); the daemon keeps running |
 | `core.config_warning` | warn | at start and on every reload, one line per expression `oa validate` warns about (`task`, `file`, `path`, `line`, `warning`); the config still loads |
+| `core.sandbox_unavailable` | warn | at start and on every reload, when a task or an agent connector uses `sandbox: bwrap` and bubblewrap cannot start a sandbox as the service user (`cause`, `used_by`); the config still loads, but the sandboxed runs and connectors fail |
 | `daemon.reloaded`, `daemon.reload_needs_restart` | info, warn | a reload applied, or changed a key that needs a restart |
 | `daemon.reload_invalid` | error | a reload was refused because `agent.yaml` or a connector manifest is invalid; one line per issue (`file`, `path`, `issue`); the previous config stays |
 | `core.config_invalid` | error | a reload was refused because a tasks file is invalid or fails a cross-check against `agent.yaml` or a manifest, such as a sandbox bind; one line per issue (`file`, `path`, `issue`, and `task` and `line` when the issue is in a task); the previous config stays |

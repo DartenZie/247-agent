@@ -30,7 +30,12 @@ The units add the OS layer: `User=247-agent`, `ProtectSystem=strict`, `PrivateTm
 `NoNewPrivileges`, `RuntimeDirectory` for the socket, `StateDirectory` with
 `StateDirectoryMode=0750` for the database and workspaces, which no other local user
 reads. A setuid `bwrap` does not work under `NoNewPrivileges=yes`, and the unit must
-not set `RestrictNamespaces=`: sandboxing needs unprivileged user namespaces. Paths a sandboxed step writes to still need `ReadWritePaths=`, because
+not set `RestrictNamespaces=`: sandboxing needs unprivileged user namespaces, which
+Ubuntu 23.10+ restricts through AppArmor (`kernel.apparmor_restrict_unprivileged_userns`).
+When anything active is in bwrap, the core runs `bwrap --unshare-all --ro-bind / / true`
+at start and on reload (`actions/bwrap-probe.ts`) and logs `core.sandbox_unavailable`
+with the likely cause; it warns rather than fails, since the rest of the config still
+works. Paths a sandboxed step writes to still need `ReadWritePaths=`, because
 the sandbox lives inside the unit's mount namespace.
 
 ## Secrets

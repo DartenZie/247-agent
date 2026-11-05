@@ -3,6 +3,7 @@ import type { AgentDefaultsConfig } from './actions/agent-config.js';
 import { runConnector } from './actions/connector.js';
 import { runDecide } from './actions/decide.js';
 import { runLlm } from './actions/llm.js';
+import { bwrapUsers, probeBwrap, type BwrapProbeResult } from './actions/bwrap-probe.js';
 import { netProxyDir } from './actions/sandbox-net.js';
 import { runSequence } from './actions/sequence.js';
 import type { SandboxConfig, SandboxHost } from './actions/sandbox.js';
@@ -80,6 +81,11 @@ export interface CoreOptions {
   stopGrace?: string;
   /** What every sandbox (shell or agent program) hides and shows on this host; fixed for the process. */
   sandboxHost?: SandboxHost;
+  /**
+   * Whether bwrap can start a sandbox here, run at start and on reload when anything is in
+   * bwrap; defaults to `probeBwrap()` (tests pass a stub).
+   */
+  bwrapProbe?: () => Promise<BwrapProbeResult>;
   /** The agent.yaml the settings came from, named in issues about it; defaults to none. */
   configFile?: string;
   /** Action runners by kind; defaults to the built-in ones. */
@@ -522,6 +528,25 @@ export function createCore(opts: CoreOptions): Core {
     }
   };
 
+  /**
+   * Warns, without failing, when something active runs in bwrap and bwrap cannot start a
+   * sandbox on this host (missing package, user namespaces restricted).
+   */
+  const checkBwrap = async (): Promise<void> => {
+    const users = bwrapUsers(
+      compiled.tasks.map((t) => t.config),
+      defaultSandbox,
+      manifests,
+    );
+    if (users.length === 0) {
+      return;
+    }
+    const probe = await (opts.bwrapProbe ?? probeBwrap)();
+    if (!probe.ok) {
+      log.warn('core.sandbox_unavailable', { cause: probe.cause, used_by: users.join(', ') });
+    }
+  };
+
   /** Swaps the built-in pollers to match `next`; unchanged ones keep running. */
   const applyPollers = async (next: readonly ConnectorConfig[]): Promise<void> => {
     const wanted = next.filter((m) => m.builtin !== undefined);
@@ -604,6 +629,7 @@ export function createCore(opts: CoreOptions): Core {
       retention?.configure(next.retention, agents?.workDir);
     }
     activate(result);
+    await checkBwrap();
     scheduler.reload(compiled);
     metrics.configReloads.inc({ result: 'ok' });
     log.info('core.config_reloaded', {
@@ -628,7 +654,6 @@ export function createCore(opts: CoreOptions): Core {
     retention,
     batchPoller,
     config: () => compiled,
-    // eslint-disable-next-line @typescript-eslint/require-await -- async so a config error rejects
     start: async () => {
       const result = load(
         tasksFiles,
@@ -639,6 +664,7 @@ export function createCore(opts: CoreOptions): Core {
         throw new ConfigLoadError(result);
       }
       activate(result);
+      await checkBwrap();
       startedAt = clock.now();
       log.info('core.config_loaded', {
         files: result.files.map((f) => f.file).join(', '),
