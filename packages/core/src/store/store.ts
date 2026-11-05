@@ -2,7 +2,7 @@ import type { Database } from 'better-sqlite3';
 
 import { BatchStore } from './batches.js';
 import { CursorStore } from './cursors.js';
-import { openDatabase } from './db.js';
+import { backupDatabase, openDatabase } from './db.js';
 import { EventStore } from './events.js';
 import { LedgerStore } from './ledger.js';
 import { PauseStore } from './pauses.js';
@@ -32,6 +32,11 @@ export interface Store {
    * keeps a lock held elsewhere from stalling the event loop on every health poll.
    */
   probeWrite(at: number): void;
+  /**
+   * Writes a consistent copy of the database to `dest`, a new 0600 file, while writes go
+   * on (`oa backup`). Rejects when `dest` exists.
+   */
+  backup(dest: string): Promise<void>;
   close(): void;
 }
 
@@ -61,6 +66,7 @@ export function openStore(path: string): Store {
         db.pragma(`busy_timeout = ${String(busy)}`);
       }
     },
+    backup: (dest) => backupDatabase(db, dest),
     close: () => {
       db.close();
     },

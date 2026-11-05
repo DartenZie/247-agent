@@ -1,5 +1,6 @@
 import { VERSION } from '@247-agent/core';
 
+import { backup, BACKUP_USAGE } from './commands/backup.js';
 import { connector, CONNECTOR_USAGE } from './commands/connector.js';
 import { cost, COST_USAGE } from './commands/cost.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
@@ -28,6 +29,7 @@ commands:
   reload                             re-read agent.yaml, manifests and tasks files (like SIGHUP)
   health                             ok, degraded or failing, per check; exit 0 only when ok
   metrics                            print the daemon's Prometheus metrics
+  backup <file>                      write a consistent copy of the running database (--force)
   help [command]
   version                            print the version
 
@@ -46,6 +48,7 @@ const COMMAND_USAGE: Record<string, string> = {
   reload: RELOAD_USAGE,
   health: HEALTH_USAGE,
   metrics: METRICS_USAGE,
+  backup: BACKUP_USAGE,
 };
 
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
@@ -74,6 +77,8 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return await health(rest, io);
       case 'metrics':
         return await metrics(rest, io);
+      case 'backup':
+        return await backup(rest, io);
       case 'version':
       case '--version':
       case '-V':

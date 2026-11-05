@@ -30,6 +30,16 @@ migrates. A file that cannot be copied, for example on a full disk, is not migra
 open throws and the daemon exits 1. The copy needs as much free disk as the database,
 once per upgrade that adds a migration.
 
+`store.backup(dest)` (`backupDatabase` in `db.ts`, behind `POST /v1/backup` and `oa
+backup`) uses SQLite's online backup API, not `VACUUM INTO`: better-sqlite3 copies the
+pages in steps and yields to the event loop between them, so a large database does not
+stall dispatch, and writes the daemon makes during the copy are carried into it. `dest`
+must not exist; it is created 0600 and fsynced. The route writes it next to the database,
+the one directory the unit lets the daemon write, as `.backup-<random>.db`. The server
+streams it as the body and deletes it when the response ends or the client goes away. The
+client writes to a hidden `.partial` file beside the target and links or renames it into
+place only when the byte count matches `content-length`.
+
 The file holds every payload, result and transcript, so `openDatabase` creates it 0640
 whatever the umask. It also clears the other-user bits of an existing file, `-wal` or
 `-shm` that the daemon owns (`private-fs.ts`). SQLite gives the `-wal` and `-shm` it

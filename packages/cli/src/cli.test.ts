@@ -1,8 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createLogger, startDaemon, type Daemon } from '@247-agent/core';
+import { ApiClient, createLogger, startDaemon, type Daemon } from '@247-agent/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { main } from './cli.js';
@@ -490,5 +500,88 @@ describe('oa metrics', () => {
     expect(out).toContain('oa_runs_finished_total{task="ok",status="succeeded"} 1');
     expect(out.at(-1)).not.toBe('');
     expect(await oa('metrics', 'x')).toBe(2);
+  });
+});
+
+describe('oa backup', () => {
+  it('writes a copy of the running database that a daemon can start on', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    await new ApiClient({ socketPath: daemon.config.socket }).putState('ns', 'cursor', 42);
+    out = [];
+    const file = join(dir, 'backup.db');
+    expect(await oa('backup', file)).toBe(0);
+    expect(out).toEqual([`wrote ${file}`]);
+    expect(err).toEqual([]);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(existsSync(`${file}-wal`)).toBe(false);
+    // The daemon's own copy next to state.db goes once it is sent.
+    await vi.waitFor(() => {
+      expect(readdirSync(dir).filter((f) => f.startsWith('.'))).toEqual([]);
+    });
+
+    const restoredDir = mkdtempSync(join(tmpdir(), 'oa-rs-'));
+    try {
+      copyFileSync(file, join(restoredDir, 'state.db'));
+      writeFileSync(join(restoredDir, 'tasks.yaml'), TASKS);
+      writeFileSync(join(restoredDir, 'agent.yaml'), 'db: state.db\nsocket: core.sock\n');
+      const restored = await startDaemon({
+        configFile: join(restoredDir, 'agent.yaml'),
+        log: createLogger({ sink: () => undefined }),
+      });
+      try {
+        const api = new ApiClient({ socketPath: restored.config.socket });
+        expect(await api.listRuns({ task: 'ok' })).toMatchObject([{ status: 'succeeded' }]);
+        expect(await api.getState('ns', 'cursor')).toMatchObject({ value: 42 });
+      } finally {
+        await restored.stop();
+      }
+    } finally {
+      rmSync(restoredDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to overwrite a file unless --force', async () => {
+    const file = join(dir, 'backup.db');
+    writeFileSync(file, 'old');
+    expect(await oa('backup', file)).toBe(1);
+    expect(err[0]).toMatch(/already exists; use --force/);
+    expect(readFileSync(file, 'utf8')).toBe('old');
+    err = [];
+    expect(await oa('backup', file, '--force')).toBe(0);
+    expect(readFileSync(file).subarray(0, 15).toString()).toBe('SQLite format 3');
+  });
+
+  it('leaves no file behind when the daemon cannot be reached', async () => {
+    const file = join(dir, 'backup.db');
+    expect(await main(['backup', file, '--socket', join(dir, 'nope.sock')], io)).toBe(1);
+    expect(err[0]).toMatch(/cannot connect to the daemon/);
+    expect(readdirSync(dir).filter((f) => f.startsWith('backup'))).toEqual([]);
+  });
+
+  it('survives a client that hangs up during the copy and removes its own copy', async () => {
+    const store = daemon.core.store;
+    const real = store.backup.bind(store);
+    let copied!: () => void;
+    const done = new Promise<void>((r) => (copied = r));
+    vi.spyOn(store, 'backup').mockImplementation(async (dest) => {
+      await new Promise((r) => setTimeout(r, 200));
+      await real(dest);
+      copied();
+    });
+    const req = request({ socketPath: daemon.config.socket, method: 'POST', path: '/v1/backup' });
+    req.on('error', () => undefined);
+    req.end();
+    setTimeout(() => req.destroy(), 50);
+    await done;
+    await vi.waitFor(() => {
+      expect(readdirSync(dir).filter((f) => f.startsWith('.'))).toEqual([]);
+    });
+    vi.restoreAllMocks();
+    expect(await oa('health')).toBe(0);
+  });
+
+  it('needs exactly one file', async () => {
+    expect(await oa('backup')).toBe(2);
+    expect(await oa('backup', 'a.db', 'b.db')).toBe(2);
   });
 });

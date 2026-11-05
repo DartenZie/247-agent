@@ -1,4 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import { link, open, rename, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { basename, dirname, join } from 'node:path';
+import type { Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import type { ManualInput } from '../bus/manual.js';
 import type { TaskEntry } from '../bus/pause.js';
@@ -251,6 +256,92 @@ export class ApiClient {
       throw new ApiError(status, `HTTP ${String(status)}`);
     }
     return text;
+  }
+
+  /**
+   * Writes a consistent copy of the daemon's database to `dest`, a new 0600 file, while the
+   * daemon runs. The copy lands in a hidden file next to `dest` first, so `dest` is either
+   * the whole copy or untouched. An existing `dest` is replaced only with `replace`; else
+   * the call rejects with `EEXIST`. No request timeout: a large database takes a while.
+   */
+  async backup(dest: string, opts: { replace?: boolean } = {}): Promise<void> {
+    const partial = join(
+      dirname(dest),
+      `.${basename(dest)}.${randomBytes(4).toString('hex')}.partial`,
+    );
+    const out = await open(partial, 'wx', 0o600);
+    try {
+      // The stream closes `out` once the body is written.
+      await this.download('POST', '/v1/backup', out.createWriteStream());
+      const written = await open(partial, 'r+');
+      try {
+        await written.sync();
+      } finally {
+        await written.close();
+      }
+      if (opts.replace === true) {
+        await rename(partial, dest);
+      } else {
+        await link(partial, dest);
+        // `dest` is complete now; a stale `.partial` is not worth failing the backup for.
+        await rm(partial, { force: true }).catch(() => undefined);
+      }
+    } catch (err) {
+      await out.close().catch(() => undefined);
+      await rm(partial, { force: true });
+      throw err;
+    }
+  }
+
+  /** Streams a 200 body into `sink`, checking it against `content-length`. */
+  private download(method: 'POST', path: string, sink: Writable): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(
+        {
+          socketPath: this.socketPath,
+          method,
+          path,
+          headers: { accept: '*/*', connection: 'close' },
+        },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          if (status !== 200) {
+            const chunks: Buffer[] = [];
+            res.on('data', (c: Buffer) => chunks.push(c));
+            res.on('error', reject);
+            res.on('end', () => {
+              try {
+                this.parse(status, Buffer.concat(chunks).toString('utf8'));
+                reject(new ApiError(status, `HTTP ${String(status)}`));
+              } catch (err) {
+                reject(err instanceof Error ? err : new Error(String(err)));
+              }
+            });
+            return;
+          }
+          const expected = Number(res.headers['content-length']);
+          let received = 0;
+          res.on('data', (c: Buffer) => {
+            received += c.length;
+          });
+          pipeline(res, sink).then(() => {
+            if (Number.isFinite(expected) && received !== expected) {
+              reject(new Error(`the daemon sent ${String(received)} of ${String(expected)} bytes`));
+            } else {
+              resolve();
+            }
+          }, reject);
+        },
+      );
+      req.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT' || err.code === 'ECONNREFUSED' || err.code === 'EACCES') {
+          reject(new ApiConnectionError(this.socketPath, err.code));
+        } else {
+          reject(err);
+        }
+      });
+      req.end();
+    });
   }
 
   private async request<T>(

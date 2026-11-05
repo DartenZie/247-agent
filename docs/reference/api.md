@@ -217,6 +217,14 @@ in the unit.
 Re-reads `agent.yaml`, the manifests and the tasks files and applies them together.
 Always 200 with a `ReloadReport`; `"ok": false` means nothing changed.
 
+### `POST /v1/backup`
+
+Copies the database with SQLite's online backup API to a temporary file next to it, and
+answers 200 with that file as the body (`application/vnd.sqlite3`, with
+`content-length`). The copy is consistent; runs and writes continue while it is made.
+The daemon deletes the temporary file once it is sent or the client disconnects. `oa
+backup` is the client.
+
 ## Records
 
 ### EventRecord

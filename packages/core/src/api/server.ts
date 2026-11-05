@@ -1,6 +1,8 @@
+import { createReadStream, statSync } from 'node:fs';
 import { chmod, rm } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
+import { pipeline } from 'node:stream';
 
 import type { Logger } from '../log.js';
 import { ApiError, route, type ApiResponse, type RouteContext } from './routes.js';
@@ -111,7 +113,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
     }
     log.debug('api.request', { method, path: url.pathname, status: response.status });
     opts.core.metrics.apiRequests.inc({ method, status: String(response.status) });
-    send(res, response);
+    send(res, response, log);
   };
 
   const server = createServer((req, res) => {
@@ -164,11 +166,61 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
   };
 }
 
-function send(res: ServerResponse, response: ApiResponse): void {
+function send(res: ServerResponse, response: ApiResponse, log: Logger): void {
+  if ('file' in response) {
+    sendFile(res, response, log);
+    return;
+  }
   const text = 'text' in response ? response.text : JSON.stringify(response.body);
   res.writeHead(response.status, {
     'content-type': 'text' in response ? response.contentType : 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(text),
   });
   res.end(text);
+}
+
+/** Streams the file as the body and deletes it once sent, or once the client goes away. */
+function sendFile(
+  res: ServerResponse,
+  response: { status: number; file: string; contentType: string },
+  log: Logger,
+): void {
+  const { file } = response;
+  const remove = (): void => {
+    rm(file, { force: true }).catch((err: unknown) => {
+      log.warn('api.file_remove_failed', { file, error: errorMessage(err) });
+    });
+  };
+  // The client may have hung up while the file was being made; pipe() to a destroyed
+  // stream throws on newer Node instead of calling back.
+  if (res.destroyed || res.writableEnded) {
+    log.warn('api.file_send_failed', { file, error: 'the client disconnected' });
+    remove();
+    return;
+  }
+  let size: number;
+  try {
+    size = statSync(file).size;
+  } catch (err) {
+    log.error('api.file_send_failed', { file, error: errorMessage(err) });
+    remove();
+    res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'internal error' }));
+    return;
+  }
+  res.writeHead(response.status, { 'content-type': response.contentType, 'content-length': size });
+  const source = createReadStream(file);
+  try {
+    pipeline(source, res, (err) => {
+      if (err) {
+        log.warn('api.file_send_failed', { file, error: errorMessage(err) });
+      }
+      remove();
+    });
+  } catch (err) {
+    log.warn('api.file_send_failed', { file, error: errorMessage(err) });
+    source.destroy();
+    res.destroy();
+    remove();
+  }
 }

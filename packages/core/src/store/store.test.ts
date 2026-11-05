@@ -189,6 +189,35 @@ describe('Store.probeWrite', () => {
   });
 });
 
+describe('Store.backup', () => {
+  it('copies a consistent database while other writes go on, as a 0600 file', async () => {
+    for (let i = 0; i < 2000; i++) {
+      store.cursors.set(`c${String(i)}`, i);
+    }
+    const copy = join(dir, 'copy.db');
+    const done = store.backup(copy);
+    store.cursors.set('during', 1);
+    await done;
+    expect(statSync(copy).mode & 0o777).toBe(0o600);
+    const db = new Database(copy, { readonly: true });
+    try {
+      expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
+      expect(db.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
+      expect(
+        (db.prepare('SELECT count(*) AS n FROM cursors').get() as { n: number }).n,
+      ).toBeGreaterThanOrEqual(2000);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('refuses a file that exists', async () => {
+    const copy = join(dir, 'copy.db');
+    writeFileSync(copy, 'old');
+    await expect(store.backup(copy)).rejects.toThrow(/EEXIST/);
+  });
+});
+
 describe('EventStore', () => {
   it('inserts, reads back with parsed payload and lists in seq order', () => {
     const a = store.events.insert(event({ id: 'evt_a' }));

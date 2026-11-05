@@ -1,3 +1,7 @@
+import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
 import { z } from 'zod';
 
 import { TaskPausedError, UnknownTaskError } from '../bus/manual.js';
@@ -42,7 +46,9 @@ export interface ApiRequest {
 export type ApiResponse =
   | { status: number; body: JsonValue }
   /** A non-JSON body (`/metrics`). */
-  | { status: number; text: string; contentType: string };
+  | { status: number; text: string; contentType: string }
+  /** A file the server streams as the body, then deletes (`/v1/backup`). */
+  | { status: number; file: string; contentType: string };
 
 export interface RouteContext {
   core: Core;
@@ -444,6 +450,21 @@ async function restartConnector(ctx: RouteContext, name: string): Promise<ApiRes
   }
 }
 
+/** The media type of a SQLite database file. */
+export const SQLITE_CONTENT_TYPE = 'application/vnd.sqlite3';
+
+/**
+ * Copies the database next to itself, where the daemon can always write, for the server
+ * to stream and delete. The copy is consistent while runs go on (`oa backup`).
+ */
+async function backup(ctx: RouteContext): Promise<ApiResponse> {
+  const db = ctx.core.store.db.name;
+  const dir = db === ':memory:' || db === '' ? tmpdir() : dirname(db);
+  const file = join(dir, `.backup-${randomBytes(6).toString('hex')}.db`);
+  await ctx.core.store.backup(file);
+  return { status: 200, file, contentType: SQLITE_CONTENT_TYPE };
+}
+
 async function reload(ctx: RouteContext): Promise<ApiResponse> {
   if (ctx.reload === undefined) {
     throw new ApiError(404, 'this core has no config to reload');
@@ -483,6 +504,12 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
       throw new ApiError(405, `method ${method} not allowed; use POST`);
     }
     return reload(ctx);
+  }
+  if (path === '/v1/backup') {
+    if (method !== 'POST') {
+      throw new ApiError(405, `method ${method} not allowed; use POST`);
+    }
+    return backup(ctx);
   }
   if (path === '/v1/connectors') {
     return only(method, 'GET', () => listConnectors(ctx));

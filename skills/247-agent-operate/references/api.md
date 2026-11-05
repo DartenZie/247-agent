@@ -25,6 +25,7 @@ Plain JSON over `node:http`. Errors are `{error, issues?}` with status 400 (inva
 | `GET /v1/connectors` | Connectors with `state`, `pid`, `restarts`, `error`, `health` (`{ok, checked_at, failures}` or null) |
 | `POST /v1/connectors/{name}/restart` | Kill, re-resolve secrets, respawn (409 for a built-in) |
 | `POST /v1/reload` | Re-read and apply agent.yaml, manifests and tasks together → `{ok, files, restart_required, connectors?, tasks}` (200 even when refused; `ok: false` = nothing changed) |
+| `POST /v1/backup` | A consistent copy of the running database as the body (`application/vnd.sqlite3`); `oa backup <file>` writes it |
 | `GET /metrics` | Prometheus text exposition (`oa_*`) |
 
 curl form:
