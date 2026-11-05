@@ -63,6 +63,8 @@ function labelText(labels: Labels, extra?: [string, string]): string {
 
 export interface Counter {
   inc(labels?: Labels, by?: number): void;
+  /** Creates the series at 0 if it has none yet, so `rate()` and `absent()` see it before the first increment. */
+  init(labels?: Labels): void;
 }
 
 export interface Gauge {
@@ -87,12 +89,18 @@ export class Registry {
 
   counter(name: string, help: string, labelNames: readonly string[] = []): Counter {
     const m = this.define(name, 'counter', help, labelNames, []);
+    if (labelNames.length === 0) {
+      this.series(m, undefined);
+    }
     return {
       inc: (labels, by = 1) => {
         if (by < 0) {
           throw new Error(`counter ${name} cannot decrease`);
         }
         this.series(m, labels).value += by;
+      },
+      init: (labels) => {
+        this.series(m, labels);
       },
     };
   }
@@ -274,6 +282,16 @@ export class Metrics {
     'Runs that reached succeeded, failed or cancelled, by task and status',
     ['task', 'status'],
   );
+  readonly runsInterrupted = this.registry.counter(
+    'oa_runs_interrupted_total',
+    'Runs a stop or a crash cut short, counted when the next start finds them running, by task',
+    ['task'],
+  );
+  readonly taskLastSuccess = this.registry.gauge(
+    'oa_task_last_success_timestamp_seconds',
+    'Unix time the newest succeeded run finished, by task',
+    ['task'],
+  );
   readonly runDuration = this.registry.histogram(
     'oa_run_duration_seconds',
     'Seconds from a run being queued to its terminal status, by task',
@@ -285,6 +303,14 @@ export class Metrics {
     ['task', 'outcome'],
   );
   readonly runsPending = this.registry.gauge('oa_runs_pending', 'Runs queued for a worker');
+  readonly oldestPendingAge = this.registry.gauge(
+    'oa_runs_oldest_pending_age_seconds',
+    'Seconds since the oldest queued run was created; 0 when none is queued',
+  );
+  readonly eventsUndispatched = this.registry.gauge(
+    'oa_events_undispatched',
+    'Events stored past the dispatch cursor',
+  );
   readonly runsInFlight = this.registry.gauge('oa_runs_in_flight', 'Runs executing now');
   readonly runsWaiting = this.registry.gauge(
     'oa_runs_waiting',
@@ -324,6 +350,11 @@ export class Metrics {
   readonly llmBatchesPending = this.registry.gauge(
     'oa_llm_batches_pending',
     'Message Batches requests submitted and not settled yet',
+  );
+  readonly modelCallsUnpriced = this.registry.counter(
+    'oa_model_calls_unpriced_total',
+    'Model calls ledgered at $0 because neither the price table nor the provider gave a cost, by provider, model and task',
+    ['provider', 'model', 'task'],
   );
   readonly budgetExceeded = this.registry.counter(
     'oa_budget_exceeded_total',
@@ -389,13 +420,41 @@ export class Metrics {
     'Unix time of the last completed retention pass',
   );
 
-  readonly dbSize = this.registry.gauge('oa_db_size_bytes', 'Size of the SQLite database');
+  readonly dbSize = this.registry.gauge(
+    'oa_db_size_bytes',
+    'Size of the SQLite database, without its write-ahead log',
+  );
+  readonly dbWalSize = this.registry.gauge(
+    'oa_db_wal_size_bytes',
+    'Size of the SQLite write-ahead log (the -wal file)',
+  );
+  readonly dbDiskFree = this.registry.gauge(
+    'oa_db_disk_free_bytes',
+    'Bytes available to the daemon on the file system that holds the database',
+  );
 
   readonly apiRequests = this.registry.counter(
     'oa_api_requests_total',
     'API requests, by method and status',
     ['method', 'status'],
   );
+
+  /**
+   * Unix seconds of the newest success per task, for `taskLastSuccess`. The core seeds it
+   * from the database at start and the executor updates it, so a scrape reads no runs.
+   */
+  readonly lastSuccess = new Map<string, number>();
+
+  /** Records a success of `task` that finished at `seconds`; an older one changes nothing. */
+  recordSuccess(task: string, seconds: number): void {
+    if (Number.isNaN(seconds)) {
+      return;
+    }
+    const prev = this.lastSuccess.get(task);
+    if (prev === undefined || seconds > prev) {
+      this.lastSuccess.set(task, seconds);
+    }
+  }
 
   /** Registers a scrape-time collector; see `Registry.collect`. */
   collect(fn: () => void): void {

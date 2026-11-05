@@ -40,7 +40,9 @@ directly. Three ways in:
   ```
 
 Counters live in memory and reset when the daemon restarts; use `rate()` or
-`increase()`. Gauges marked "at scrape" are computed when `/metrics` is read.
+`increase()`. A counter without labels, and the run counters for every configured task
+and status, are present at 0 from startup, so `rate()` and `absent()` work before the
+first increment. Gauges marked "at scrape" are computed when `/metrics` is read.
 
 ## Metrics
 
@@ -60,9 +62,13 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_runs_queued_total` | counter | `task` | runs created |
 | `oa_run_attempts_total` | counter | `task` | attempts started, retries included |
 | `oa_runs_finished_total` | counter | `task`, `status` (`succeeded`, `failed`, `cancelled`) | runs that reached a terminal status |
+| `oa_runs_interrupted_total` | counter | `task` | runs that a stop or a crash cut short, counted when the next start finds them still running; the run then retries or fails. The count is made before the first scrape of the new process, so `increase()` can miss it when the previous process ended at the same count |
+| `oa_task_last_success_timestamp_seconds` | gauge, at scrape | `task` | Unix time the newest succeeded run of the task finished. At start the daemon reads it from the newest succeeded run still stored; absent when there is none |
 | `oa_run_duration_seconds` | histogram | `task` | seconds from a run being queued to its terminal status |
 | `oa_waits_ended_total` | counter | `task`, `outcome` (`matched`, `timeout`) | waits that ended |
 | `oa_runs_pending` | gauge, at scrape | | runs queued for a worker |
+| `oa_runs_oldest_pending_age_seconds` | gauge, at scrape | | seconds since the oldest queued run was created, including time it spent in a wait or behind its task's `concurrency`; 0 when no run is queued |
+| `oa_events_undispatched` | gauge, at scrape | | events stored that the dispatcher has not processed yet |
 | `oa_runs_in_flight` | gauge, at scrape | | runs executing now |
 | `oa_runs_waiting` | gauge, at scrape | | runs parked in a wait |
 | `oa_cron_ticks_total` | counter | `task` | cron ticks published |
@@ -70,6 +76,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_model_calls_total` | counter | `provider`, `model`, `task` | model calls ledgered: `llm`, `decide` and agent turns |
 | `oa_model_tokens_total` | counter | `provider`, `model`, `direction` (`input`, `output`, `cache_read`, `cache_write`) | tokens ledgered |
 | `oa_model_cost_usd_total` | counter | `provider`, `model`, `task` | dollars ledgered |
+| `oa_model_calls_unpriced_total` | counter | `provider`, `model`, `task` | model calls ledgered at $0 because neither the price table nor the provider gave a cost; they count as $0 against the daily cap |
 | `oa_model_spend_today_usd` | gauge, at scrape | | dollars ledgered since 00:00 UTC |
 | `oa_model_daily_budget_usd` | gauge, at scrape | | `budgets.daily_usd`; absent when unset |
 | `oa_budget_exceeded_total` | counter | `scope` (`daily`, `task`) | calls refused or runs failed over a budget |
@@ -85,7 +92,9 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_retention_runs_total` | counter | `result` (`ok`, `failed`) | retention passes |
 | `oa_retention_workspaces_kept` | gauge | | workspaces past `retention.workspaces` that the last retention pass kept because they hold commits not pushed yet |
 | `oa_retention_last_success_timestamp_seconds` | gauge | | Unix time of the last completed retention pass |
-| `oa_db_size_bytes` | gauge, at scrape | | size of the SQLite database |
+| `oa_db_size_bytes` | gauge, at scrape | | size of the SQLite database, without its write-ahead log |
+| `oa_db_wal_size_bytes` | gauge, at scrape | | size of the database's write-ahead log (the `-wal` file); 0 when there is none |
+| `oa_db_disk_free_bytes` | gauge, at scrape | | bytes available to the daemon on the file system that holds the database |
 | `oa_api_requests_total` | counter | `method`, `status` | API requests |
 
 ## Label cardinality
@@ -96,10 +105,23 @@ the daemon's own types (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch
 `retention.workspace_kept`, every `task.<name>.succeeded`, `.failed` and `.cancelled`), every exact type in a trigger's `type` or
 `type_any`, in a `wait`'s `for.type` and in an `emit` rule. Anything else, including
 types matched only through a wildcard, is counted as `other`. The set is rebuilt on every
-reload. `oa_connector_up` and `oa_cron_next_run_timestamp_seconds` are reset on every
-scrape, so removed connectors and tasks disappear.
+reload. `oa_connector_up`, `oa_cron_next_run_timestamp_seconds` and
+`oa_task_last_success_timestamp_seconds` are reset on every scrape, so removed connectors
+and tasks disappear.
 
 ## Examples
+
+A task that has not succeeded in 24 hours:
+
+```promql
+time() - oa_task_last_success_timestamp_seconds > 86400
+```
+
+A dispatcher that fails, or a queued run created more than ten minutes ago:
+
+```promql
+increase(oa_dispatch_failures_total[5m]) > 0 or oa_runs_oldest_pending_age_seconds > 600
+```
 
 Spend against the daily cap, as a fraction:
 

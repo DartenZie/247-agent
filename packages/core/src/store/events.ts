@@ -37,6 +37,7 @@ export class EventStore {
   private readonly insertStmt: Statement;
   private readonly byIdStmt: Statement;
   private readonly afterStmt: Statement;
+  private readonly countAfterStmt: Statement;
   private readonly purgeStmt: Statement;
   private readonly rootStmt: Statement;
   private readonly chainRunsStmt: Statement;
@@ -55,6 +56,7 @@ export class EventStore {
     );
     this.byIdStmt = db.prepare('SELECT * FROM events WHERE id = ?');
     this.afterStmt = db.prepare('SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?');
+    this.countAfterStmt = db.prepare('SELECT COUNT(*) AS n FROM events WHERE seq > ?');
     this.rootStmt = db.prepare('SELECT COALESCE(root_id, id) AS root FROM events WHERE id = ?');
     this.chainRunsStmt = db.prepare(
       `SELECT COUNT(*) AS n FROM runs r JOIN events e ON e.id = r.event_id
@@ -69,6 +71,11 @@ export class EventStore {
            AND NOT EXISTS (SELECT 1 FROM waits w WHERE w.event_id = e.id)
          ORDER BY e.seq LIMIT @limit)`,
     );
+  }
+
+  /** Events with `seq > after`: those the dispatcher has not passed when `after` is its cursor. */
+  countAfter(after: number): number {
+    return (this.countAfterStmt.get(after) as { n: number }).n;
   }
 
   /**
