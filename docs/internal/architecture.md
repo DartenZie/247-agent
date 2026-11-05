@@ -97,6 +97,13 @@ events after the `dispatch` cursor:
    (`endWait('timeout')`).
 4. Commit, hand the new runs to the executor.
 
+The pending waits are read and compiled once and kept in memory, indexed by exact type
+and by `expires_at`, until a wait changes (`WaitStore.revision`, also moved by a
+rolled-back transaction). An event is checked against the waits for its exact type and
+the wildcard ones only, and the deadline check walks the waits by `expires_at`, so a
+batch does not cost more as unrelated waits pile up. `wait.invalid` is logged once per
+change of the waits, not per batch.
+
 A wait's deadline is judged by when an event was stored, not when it is dispatched. A
 reply stored before the deadline still ends the wait when dispatch lags behind it (a
 crash between storing and dispatching it, a long backlog); the clock times a wait out
@@ -104,10 +111,13 @@ only once no stored event is left undispatched, so a wait whose type or filter n
 compiles times out after the backlog is drained. Both `ts` and `expires_at` come from
 the daemon clock; a backward clock step can still order a timeout before its reply.
 
-`drain()` repeats until a batch is short. Every inserted event calls `wake()`, which
-coalesces into one `setImmediate` drain; a 1 s timer is the safety net, so a wait
-timeout is noticed within a second. A `manual.run` is drained synchronously inside the
-API call, so `POST /v1/runs` returns the queued run.
+`drain()` repeats until a batch is short, in one go: start-up recovery and a
+`manual.run`, which is drained synchronously inside the API call, so `POST /v1/runs`
+returns the queued run. Every inserted event calls `wake()`, which coalesces into one
+`setImmediate` drain that dispatches one batch per macrotask and wakes again after a
+full one, so API requests, cron ticks and finished runs are served between the batches
+of a long backlog. A 1 s timer is the safety net, so a wait timeout is noticed within a
+second.
 
 An event that ends no wait and matches no task trigger is logged at info
 (`event.unconsumed`), so a mistyped type leaves a trace at the default level.
@@ -157,7 +167,10 @@ A runner parks a run with `ctx.suspend(spec, resume)` (`executor.ts`): in one
 transaction a `waits` row is written (`type` pattern, rendered `filter`, `expires_at`,
 `on_timeout`, the runner's private `resume` JSON) and the run goes `waiting`; then
 events already dispatched since the run's trigger are checked (`seq > trigger.seq`
-and `≤` the cursor), so a reply that raced the asking step is not lost. The worker
+and `≤` the cursor), so a reply that raced the asking step is not lost. The check reads
+only events of the wait's type through the `events(type, seq)` index (a pattern by its
+literal prefix), so an old trigger costs no scan of the events of other types; only a
+pattern that starts with `*` reads the whole range. The worker
 slot is freed and no timer runs. The dispatcher ends the wait (`waits.resolve` sets
 `outcome` and `event_id` once), sets the run `queued` and hands it back; the runner
 restarts with `ctx.resume = {resume, outcome, event?}` on the same attempt. The row is

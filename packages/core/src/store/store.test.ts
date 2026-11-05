@@ -287,6 +287,39 @@ describe('EventStore', () => {
     expect(store.events.insert(event()).inserted).toBe(true);
     expect(store.events.listAfter(0, 10)).toHaveLength(3);
   });
+
+  it('lists the events of a type or pattern in a seq range, in seq order (#101)', () => {
+    const types = ['chat.reply', 'chat.a.reply', 'chat', 'chatx.reply', 'mail.reply', 'chat.reply'];
+    for (const type of types) {
+      store.events.insert(event({ id: `evt_${type}_${String(n)}`, type }));
+    }
+    const seqs = (pattern: string, after = 0, upTo = 99, limit = 10) =>
+      store.events.listOfType(pattern, after, upTo, limit).map((e) => e.seq);
+    expect(seqs('chat.reply')).toEqual([1, 6]);
+    expect(seqs('chat.*')).toEqual([1, 6]);
+    expect(seqs('chat.*.reply')).toEqual([2]);
+    expect(seqs('*.reply')).toEqual([1, 4, 5, 6]);
+    expect(seqs('*.reply', 1, 5)).toEqual([4, 5]);
+    expect(seqs('*.reply', 0, 99, 2)).toEqual([1, 4]);
+    expect(seqs('chat.*', 1, 5)).toEqual([]);
+  });
+});
+
+describe('WaitStore.revision', () => {
+  it('moves on every wait change and when a transaction rolls back (#101)', () => {
+    const r0 = store.waits.revision;
+    expect(store.waits.listPending()).toEqual([]);
+    expect(store.waits.revision).toBe(r0);
+    expect(() =>
+      store.transaction(() => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+    expect(store.waits.revision).toBeGreaterThan(r0);
+    const r1 = store.waits.revision;
+    store.waits.delete('run_none');
+    expect(store.waits.revision).toBeGreaterThan(r1);
+  });
 });
 
 describe('RunStore', () => {
