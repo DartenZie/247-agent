@@ -78,6 +78,8 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    and the reported cost is under half of it, `settle()` also logs `llm.cost_below_table`
    (warn: `task`, `provider`, `model`, `reported_usd`, `table_usd`) and counts it in
    `oa_model_cost_below_table_total` and `oa_model_cost_below_table_usd_total` (#128).
+   An agent turn whose cumulative cost update arrives after its stop records `0` for
+   that turn and can be flagged even though the next turn carries the cost.
    Write the ledger row, trip the daily breaker when `spentToday + usd` reaches the
    cap (the crossing call still returns its result), log `llm.call` with token counts
    and USD, never the prompt or the key.
@@ -179,8 +181,7 @@ in an error message.
 - **OpenRouter** (`openrouter.ts`): the `openai` SDK against
   `https://openrouter.ai/api/v1` (or `base_url`), Chat Completions with a `system` and a
   `user` message, `max_tokens`, `response_format` json_schema `strict: true`, and
-  `reasoning: {effort}` whenever `effort` is set; `usage.cost` (plus `cost_details.upstream_inference_cost` when `is_byok`, since `cost` is
-  then only OpenRouter's fee) → `reportedUsd`, so the
+  `reasoning: {effort}` whenever `effort` is set; `usage.cost` → `reportedUsd`, so the
   ledger says `provider` and no `pricing:` entry is needed. `finish_reason`
   stop/length/content_filter → end/max_tokens/refusal; a non-empty `message.refusal` →
   refusal. A 200 with an `error` body and no choices is an upstream failure. When its
@@ -212,6 +213,10 @@ An adapter without `decide` (every type but `openrouter`) is
 any other non-2xx → `NonRetryableError` (400 bad question, 401 no key, 402 no credits,
 413 over 32k tokens); a non-JSON body, a 2xx carrying `error`, or no `answers` map →
 retryable. `usage.cost` is the price when reported, else the table.
+
+On a bring-your-own-key response (`usage.is_byok: true`), from Chat Completions or the
+Decisions API, `usage.cost` is only OpenRouter's fee; the adapter adds
+`usage.cost_details.upstream_inference_cost` to it so the ledger keeps the upstream charge.
 
 The runner then checks every declared question is answered with its declared type, a
 `choice` is one of its labels, a `score` is within `0..levels−1`, a `noul` is a number in

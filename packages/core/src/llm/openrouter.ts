@@ -161,7 +161,7 @@ interface DecisionsBody {
   id?: unknown;
   provider?: unknown;
   answers?: unknown;
-  usage?: { input_tokens?: unknown; output_tokens?: unknown; cost?: unknown } | undefined;
+  usage?: ({ input_tokens?: unknown; output_tokens?: unknown } & CostFields) | undefined;
   error?: { message?: unknown; code?: unknown; type?: unknown } | undefined;
 }
 

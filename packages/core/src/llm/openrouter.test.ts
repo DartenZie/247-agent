@@ -497,6 +497,21 @@ describe('openrouter adapter: decide', () => {
     });
   });
 
+  it('adds the upstream cost of a bring-your-own-key decision to the fee (#128)', async () => {
+    const { res } = await decide(
+      decision({
+        usage: {
+          input_tokens: 476,
+          output_tokens: 0,
+          cost: 0.00001,
+          is_byok: true,
+          cost_details: { upstream_inference_cost: 0.0002 },
+        },
+      }),
+    );
+    expect(res.usage.reportedUsd).toBeCloseTo(0.00021, 12);
+  });
+
   it('leaves reportedUsd unset without a cost and tolerates a missing usage block', async () => {
     const { res } = await decide(decision({ usage: { input_tokens: 10, output_tokens: 0 } }));
     expect(res.usage).toEqual({ input: 10, output: 0, cacheRead: 0, cacheWrite: 0 });
