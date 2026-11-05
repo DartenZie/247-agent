@@ -1,8 +1,8 @@
 # The smallest useful 247-agent workflow: a greeting on a schedule, an event, and a
 # reaction to that event. Deterministic only — no model call, no connector, no secrets.
 #
-#   node packages/cli/dist/main.js validate docs/examples/hello-world.yaml
-#   node packages/core/dist/main.js --config docs/examples/hello-agent.yaml
+#   node packages/cli/dist/main.js validate docs/examples/hello-world/hello-world.yaml
+#   node packages/core/dist/main.js --config docs/examples/hello-world/agent.yaml
 #   node packages/cli/dist/main.js run say_hello --wait
 
 tasks:
