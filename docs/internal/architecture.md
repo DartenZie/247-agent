@@ -337,6 +337,7 @@ packages/core/src/
   secrets/           env, file, systemd-credentials
   api/               routes.ts (transport-free handlers), server.ts, metrics-server.ts, client.ts, socket-path.ts
   expr/              glob.ts (type patterns), jmespath.ts, template.ts
+  dry-run.ts         oa dry-run: one task offline with stubbed steps, no store (actions.md)
   metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts, process-group.ts
 ```
 

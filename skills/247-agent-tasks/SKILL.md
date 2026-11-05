@@ -32,7 +32,7 @@ never invent a way for one task to reference another by name.
 4. **Write the task** using the field reference in `references/task-reference.md` and
    the templating rules in `references/templating.md`. Copy a shape from
    `references/patterns.md` when one fits (poll cursor + fan-out, approval gate,
-   notify on failure, stand-in for a model step).
+   notify on failure, dry-run a task offline, stand-in for a model step).
 5. **Route the result with `emit`.** Every task already emits
    `task.<name>.succeeded|failed`; add domain events (`email.received`,
    `email.classified`) so that other tasks can react without knowing who produced
@@ -84,10 +84,17 @@ never invent a way for one task to reference another by name.
 
 ## Testing without a model
 
-Every action kind runs end to end. To exercise a workflow offline, replace each
-`llm`/`decide`/`agent` task with the stand-in pattern in `references/patterns.md`: a
-`shell` task with the same name, trigger, filter and `emit`, so the downstream tasks run
-unchanged.
+To test one task offline, unchanged, run `oa dry-run <task> --tasks <file> --event
+<event.json> --stubs <stubs.yaml>`. The stub file gives the result of each `llm`,
+`decide`, `agent`, `connector` and `wait` step by its path (`action`, or
+`action.steps[<k>]` in a sequence). The command checks the trigger filter against the
+event and prints the result, the events `emit` would publish and the `state_updates`,
+without a daemon, a model call or a ledger entry. A step with no stub fails with its
+path. See `references/patterns.md` and `docs/reference/cli.md`.
+
+To exercise a chain of tasks on a real daemon without a model, the stand-in pattern in
+`references/patterns.md` still applies: a `shell` task with the same name, trigger,
+filter and `emit`, so the downstream tasks run unchanged.
 
 ## Review checklist
 

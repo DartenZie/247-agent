@@ -3,6 +3,7 @@ import { VERSION } from '@247-agent/core';
 import { backup, BACKUP_USAGE } from './commands/backup.js';
 import { connector, CONNECTOR_USAGE } from './commands/connector.js';
 import { cost, COST_USAGE } from './commands/cost.js';
+import { dryRun, DRY_RUN_USAGE } from './commands/dry-run.js';
 import { emit, EMIT_USAGE } from './commands/emit.js';
 import { events, EVENTS_USAGE } from './commands/events.js';
 import { health, HEALTH_USAGE } from './commands/health.js';
@@ -20,6 +21,7 @@ commands:
   validate <file>...                 validate tasks files / agent.yaml against the schema
   run <task> [-p k=v] [--payload f]  queue a run of a task by hand (--wait to block)
   emit <type> [payload.json|-]       inject an event
+  dry-run <task> --tasks <f>         run a task offline with stubbed model and connector steps
   runs ls|show <id>|logs <id>        list runs / one run with its cost / its agent transcript
   runs cancel <id>                   end a queued, running or waiting run as cancelled
   tasks ls|pause|resume <name>       list tasks / stop or restart new runs of one
@@ -40,6 +42,7 @@ const COMMAND_USAGE: Record<string, string> = {
   validate: VALIDATE_USAGE,
   run: RUN_USAGE,
   emit: EMIT_USAGE,
+  'dry-run': DRY_RUN_USAGE,
   runs: RUNS_USAGE,
   tasks: TASKS_USAGE,
   events: EVENTS_USAGE,
@@ -77,6 +80,8 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
         return validate(rest, io);
       case 'run':
         return await run(rest, io);
+      case 'dry-run':
+        return await dryRun(rest, io);
       case 'emit':
         return await emit(rest, io);
       case 'runs':

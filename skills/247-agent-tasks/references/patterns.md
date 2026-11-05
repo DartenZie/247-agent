@@ -140,9 +140,34 @@ Run it with `oa run deploy -p ref=v1.2.0 -p env=prod --wait`.
 
 Run with `oa run rebuild_site --wait`.
 
+## Dry-run a task offline
+
+`oa dry-run` runs the task as written, with stubs for the steps that would call a model
+or a connector. Put the sample event and the stubs in two files:
+
+```yaml
+# mail.yaml
+type: email.received
+payload: { from: editor@example.com, subject: "New opening hours" }
+```
+
+```yaml
+# stubs.yaml: one result for each llm, decide, agent, connector and wait step, by path
+results:
+  action: { kind: general_change, summary: "New opening hours" }
+state: {}
+```
+
+Run `oa dry-run classify_email --tasks tasks.yaml --event mail.yaml --stubs stubs.yaml`.
+It fails when the event does not pass the trigger filter or a step has no stub, and
+otherwise prints `{result, emitted, state_updates}`. Nothing is published or written. In
+a `sequence`, the paths are `action.steps[0]`, `action.steps[1]` and so on; `shell` steps
+run for real unless stubbed.
+
 ## Stand-in for a model step (to keep a test offline)
 
-Keep the same name, trigger, filter and `emit` so downstream tasks are exercised
+Use this when a chain of tasks must run on a real daemon without a model. To test one
+task, `oa dry-run` above does not change the task. Keep the same name, trigger, filter and `emit` so downstream tasks are exercised
 unchanged; replace only the action. This is how the integration test drives the
 website workflow without a model.
 

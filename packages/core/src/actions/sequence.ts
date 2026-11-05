@@ -66,7 +66,37 @@ function checkpointOf(data: JsonValue, what: string): Checkpoint {
   throw new NonRetryableError(`sequence ${what} data is corrupt`);
 }
 
-export async function runSequence(action: unknown, ctx: ActionContext): Promise<JsonValue> {
+/** A step as it runs: its `when` already evaluated and removed. */
+export type SequenceStepAction = SequenceStepConfig extends infer S
+  ? S extends unknown
+    ? Omit<S, 'when'>
+    : never
+  : never;
+
+/** Runs one step of a sequence; `index` is its position in `steps`. */
+export type StepRunner = (
+  step: SequenceStepAction,
+  index: number,
+  ctx: ActionContext,
+) => Promise<JsonValue>;
+
+const runStepForReal: StepRunner = (step, _index, ctx) => STEP_RUNNERS[step.kind](step, ctx);
+
+export const runSequence: ActionRunner = createSequenceRunner(runStepForReal);
+
+/**
+ * A sequence runner whose steps run through `runStep`: the built-in runners for the daemon,
+ * stubs for `oa dry-run` (`dry-run.ts`).
+ */
+export function createSequenceRunner(runStep: StepRunner): ActionRunner {
+  return (action, ctx) => sequence(action, ctx, runStep);
+}
+
+async function sequence(
+  action: unknown,
+  ctx: ActionContext,
+  runStep: StepRunner,
+): Promise<JsonValue> {
   const cfg = SequenceAction.parse(action);
   let start = 0;
   let results: JsonValue[] = [];
@@ -112,7 +142,7 @@ export async function runSequence(action: unknown, ctx: ActionContext): Promise<
     const result =
       stepCtx.resume !== undefined && step.kind === 'wait'
         ? waitResult(WaitAction.parse(stepAction), stepCtx.resume)
-        : await STEP_RUNNERS[step.kind](stepAction, stepCtx);
+        : await runStep(stepAction, index, stepCtx);
     results.push(result);
     ctx.saveProgress({ step: index + 1, steps: results });
     resume = undefined;

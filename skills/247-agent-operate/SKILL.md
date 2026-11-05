@@ -78,6 +78,11 @@ node skills/247-agent-operate/scripts/oa-api.mjs GET '/v1/runs?task=fetch_email&
    Logs are JSON lines on stdout; add `--log-level debug` when hunting.
 5. In another shell: `export OA_CORE_SOCKET=<socket>`; `oa run <task> --wait`.
 
+To test one task without a daemon, a model or the network, use `oa dry-run <task>
+--tasks <file> --event <event.json> --stubs <stubs.yaml>` (`docs/reference/cli.md`): stubs
+answer its model, connector and wait steps, and it prints the result, the emitted events
+and the state updates without applying them.
+
 To exercise a whole workflow without a model or the network, replace the connectors
 with the fakes in `packages/core/test/fixtures/` (inline manifests with
 `exec: [node, …/fake-email.ts]`) and the `llm`/`decide`/`agent` tasks with `shell` stand-ins
