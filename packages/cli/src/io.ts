@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 
-import { ApiClient, ApiConnectionError, ApiError, DEFAULT_SOCKET } from '@247-agent/core';
+import {
+  ApiClient,
+  ApiConnectionError,
+  ApiError,
+  DEFAULT_SOCKET,
+  errorMessage,
+} from '@247-agent/core';
 
 /** Where a command writes and reads, so tests can capture it. */
 export interface Io {
@@ -68,15 +74,13 @@ export async function readJson(source: string, io: Io): Promise<unknown> {
   try {
     text = source === '-' ? await io.readStdin() : readFileSync(source, 'utf8');
   } catch (err) {
-    throw new UsageError(
-      `cannot read ${source}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    throw new UsageError(`cannot read ${source}: ${errorMessage(err)}`);
   }
   try {
     return JSON.parse(text) as unknown;
   } catch (err) {
     throw new UsageError(
-      `${source === '-' ? 'stdin' : source}: invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      `${source === '-' ? 'stdin' : source}: invalid JSON: ${errorMessage(err)}`,
     );
   }
 }

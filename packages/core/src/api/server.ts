@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { connect } from 'node:net';
 import { pipeline } from 'node:stream';
 
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { ApiError, route, type ApiResponse, type RouteContext } from './routes.js';
 import { socketPathProblem } from './socket-path.js';
@@ -24,10 +25,6 @@ export interface ApiServer {
 }
 
 class BodyTooLargeError extends Error {}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * Past `max` the rest of the body is read and discarded, not refused: closing the socket

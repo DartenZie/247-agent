@@ -9,6 +9,7 @@ import {
   type AgentSession,
   type AgentStop,
 } from '../connectors/acp-types.js';
+import { errorMessage } from '../errors.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
 import { evaluateExpr } from '../expr/template.js';
 import { Budget } from '../llm/config.js';
@@ -264,7 +265,7 @@ async function runTurn(
     });
     session.cancel().catch((err: unknown) => {
       ctx.log.warn('agent.cancel_failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     });
   };
@@ -411,9 +412,7 @@ function parseSchema(text: string, file: string): Record<string, unknown> {
   try {
     doc = JSON.parse(text);
   } catch (err) {
-    throw new NonRetryableError(
-      `result.schema ${file} is not JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    throw new NonRetryableError(`result.schema ${file} is not JSON: ${errorMessage(err)}`);
   }
   if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
     throw new NonRetryableError(`result.schema ${file} must be a JSON Schema object`);
@@ -611,7 +610,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
         ctx.log.warn('agent.restarting', { reason: STUCK });
         await agents.restart(connector, STUCK).catch((err: unknown) => {
           ctx.log.warn('agent.restart_failed', {
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           });
         });
       }
@@ -690,8 +689,7 @@ export async function runAgent(action: unknown, ctx: ActionContext): Promise<Jso
       }
       if (out.end.kind === 'error') {
         if (unbudgeted) {
-          const why =
-            out.end.error instanceof Error ? out.end.error.message : String(out.end.error);
+          const why = errorMessage(out.end.error);
           throw new NonRetryableError(
             `agent "${connector}" reported its cost only in ${out.currency ?? ''} and the turn ended without a stop (${why}), so a retry could not be budgeted`,
             { cause: out.end.error },

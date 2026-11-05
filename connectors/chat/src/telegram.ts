@@ -4,7 +4,13 @@
  * `retry_after` so the poll loop can back off.
  */
 
-import { isTransientHttpError } from '@247-agent/connector-sdk';
+import {
+  createJsonClient,
+  HttpTransportError,
+  isTransientHttpError,
+  type FetchLike,
+  type JsonResponse,
+} from '@247-agent/connector-sdk';
 
 export interface TelegramApi {
   call<T>(method: string, params?: Record<string, unknown>, opts?: CallOptions): Promise<T>;
@@ -44,7 +50,7 @@ export class TelegramError extends Error {
   }
 }
 
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+export type { FetchLike };
 
 export interface TelegramClientOptions {
   token: string;
@@ -62,41 +68,40 @@ interface ApiEnvelope {
 }
 
 export function createTelegramApi(opts: TelegramClientOptions): TelegramApi {
-  const doFetch: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
-  const token = opts.token;
-  const hideToken = (text: string): string => text.split(token).join('<token>');
+  const http = createJsonClient({
+    secrets: [opts.token],
+    placeholder: '<token>',
+    ...(opts.fetch === undefined ? {} : { fetch: opts.fetch }),
+  });
 
   return {
     async call<T>(method: string, params: Record<string, unknown> = {}, callOpts?: CallOptions) {
-      const url = `${opts.apiBase}/bot${token}/${method}`;
-      let res: Response;
+      let res: JsonResponse;
       try {
-        res = await doFetch(url, {
+        res = await http.request({
           method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify(params),
-          signal: AbortSignal.timeout(callOpts?.timeoutMs ?? opts.timeoutMs),
+          url: `${opts.apiBase}/bot${opts.token}/${method}`,
+          body: params,
+          timeoutMs: callOpts?.timeoutMs ?? opts.timeoutMs,
         });
       } catch (err) {
-        const cause = err instanceof Error ? (err.cause ?? err) : err;
-        const message = cause instanceof Error ? cause.message : String(cause);
-        throw new TelegramError(method, 0, hideToken(message), undefined, err);
+        throw err instanceof HttpTransportError
+          ? new TelegramError(method, 0, err.message, undefined, err)
+          : err;
       }
-      let body: ApiEnvelope;
-      try {
-        body = (await res.json()) as ApiEnvelope;
-      } catch {
+      if (typeof res.body !== 'object' || res.body === null) {
         throw new TelegramError(
           method,
           res.status,
           `non-JSON response (HTTP ${String(res.status)})`,
         );
       }
+      const body = res.body as ApiEnvelope;
       if (!body.ok) {
         throw new TelegramError(
           method,
           body.error_code ?? res.status,
-          hideToken(body.description ?? 'request failed'),
+          http.redact(body.description ?? 'request failed'),
           body.parameters?.retry_after,
         );
       }

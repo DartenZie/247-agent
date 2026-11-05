@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { AgentSandbox } from '../actions/sandbox.js';
 import { socketPathProblem } from '../api/socket-path.js';
 import { PollerConfig } from '../connectors/poller.js';
+import { errorMessage } from '../errors.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { timerDuration } from './duration.js';
 import { issuesFromZod, type ConfigIssue } from './load.js';
@@ -347,7 +348,7 @@ export function loadManifestFile(path: string): ConnectorLoadResult {
   try {
     doc = parseYaml(readFileSync(path, 'utf8'));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       ok: false,
       file: path,

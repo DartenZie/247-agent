@@ -13,11 +13,14 @@ import {
   CoreApiError,
   CoreClient,
   createConnectorServer,
+  createJsonClient,
   defineTool,
   isNetworkError,
   isTransient,
   isConnectError,
   isTransientHttpError,
+  HttpTransportError,
+  redact,
   toJson,
   TransientError,
   type JsonValue,
@@ -265,5 +268,88 @@ describe('toJson', () => {
       toJson(new Map<string, string>());
     };
     expect(typeof bad).toBe('function');
+  });
+});
+
+describe('createJsonClient', () => {
+  const SECRET = 's3cr3t-token';
+  interface Call {
+    url: string;
+    init: RequestInit;
+  }
+
+  function client(respond: (call: Call) => Promise<Response>, calls: Call[] = []) {
+    return createJsonClient({
+      secrets: [SECRET, ''],
+      placeholder: '<token>',
+      headers: { 'user-agent': '247-agent' },
+      fetch: (url, init) => {
+        const call = { url, init };
+        calls.push(call);
+        return respond(call);
+      },
+    });
+  }
+
+  it('sends JSON with the query, headers and a timeout, and parses the reply', async () => {
+    const calls: Call[] = [];
+    const http = client(() => Promise.resolve(Response.json({ a: 1 }, { status: 201 })), calls);
+    const res = await http.request({
+      method: 'POST',
+      url: 'https://api.example/v1/things',
+      query: { page: 2, all: true, skip: undefined },
+      headers: { authorization: `Bearer ${SECRET}` },
+      body: { name: 'x' },
+      timeoutMs: 1000,
+    });
+    expect(res).toMatchObject({ status: 201, ok: true, json: true, body: { a: 1 } });
+    expect(res.text).toBe('{"a":1}');
+    expect(calls[0]?.url).toBe('https://api.example/v1/things?page=2&all=true');
+    expect(calls[0]?.init).toMatchObject({
+      method: 'POST',
+      body: '{"name":"x"}',
+      headers: {
+        accept: 'application/json',
+        'user-agent': '247-agent',
+        authorization: `Bearer ${SECRET}`,
+        'content-type': 'application/json',
+      },
+    });
+    expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('returns error statuses and bodies that are empty or not JSON without throwing', async () => {
+    const http = client(({ url }) =>
+      Promise.resolve(
+        url.endsWith('/empty')
+          ? new Response(null, { status: 204 })
+          : new Response('<html>bad gateway</html>', { status: 502 }),
+      ),
+    );
+    const empty = await http.request({ method: 'GET', url: 'https://x/empty', timeoutMs: 1000 });
+    expect(empty).toMatchObject({ status: 204, ok: true, json: true, body: null, text: '' });
+    const html = await http.request({ method: 'GET', url: 'https://x/html', timeoutMs: 1000 });
+    expect(html).toMatchObject({ status: 502, ok: false, json: false, body: undefined });
+    expect(html.text).toBe('<html>bad gateway</html>');
+  });
+
+  it('throws a transport failure with the secret redacted and the cause kept', async () => {
+    const refused = Object.assign(new Error(`connect ECONNREFUSED x/bot${SECRET}`), {
+      code: 'ECONNREFUSED',
+    });
+    const http = client(() => Promise.reject(new TypeError('fetch failed', { cause: refused })));
+    const err = await http
+      .request({ method: 'GET', url: `https://x/bot${SECRET}/getMe`, timeoutMs: 1000 })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpTransportError);
+    expect((err as Error).message).toBe('connect ECONNREFUSED x/bot<token>');
+    expect(isTransientHttpError({ status: 0, idempotent: false, cause: err })).toBe(true);
+  });
+
+  it('redacts every secret, and ignores empty ones', () => {
+    expect(redact('a s1 b s2 s1', ['s1', 's2', ''], '<c>')).toBe('a <c> b <c> <c>');
+    expect(redact('abc', [''])).toBe('abc');
+    expect(redact('x s1', ['s1'])).toBe('x <redacted>');
+    expect(client(() => Promise.reject(new Error())).redact(`t=${SECRET}`)).toBe('t=<token>');
   });
 });

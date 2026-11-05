@@ -23,6 +23,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { MAX_SOCKET_PATH } from '../api/socket-path.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { VERSION } from '../version.js';
 import type { McpServerLaunch } from './acp-types.js';
@@ -89,10 +90,6 @@ sock.on('close', () => process.stdin.destroy());
 /** A client that has not said hello by then is dropped. */
 const HELLO_TIMEOUT_MS = 10_000;
 const HELLO_MAX_BYTES = 4096;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function failure(text: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text }] };

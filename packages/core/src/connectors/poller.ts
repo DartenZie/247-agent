@@ -12,6 +12,7 @@ import {
   validateJmespath,
   validateTimezone,
 } from '../config/validators.js';
+import { errorMessage } from '../errors.js';
 import { collectTemplateRefs, renderValue } from '../expr/template.js';
 import type { Logger } from '../log.js';
 import { armSchedule, Schedule, type ScheduleTimer } from '../scheduler/schedule.js';
@@ -123,10 +124,6 @@ export type PollResult =
     }
   | { status: 'skipped'; reason: 'in_flight' }
   | { status: 'failed'; error: string };
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function typeName(v: unknown): string {
   if (v === null) {

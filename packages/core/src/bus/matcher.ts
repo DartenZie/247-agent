@@ -1,4 +1,5 @@
 import type { TaskConfig, TasksFileConfig } from '../config/schema.js';
+import { errorMessage } from '../errors.js';
 import { compileTypePattern, isTypePattern, type TypeMatcher } from '../expr/glob.js';
 import { compileFilter, type Filter } from '../expr/jmespath.js';
 import { collectTemplateRefs } from '../expr/template.js';
@@ -109,7 +110,7 @@ export function compileTask(task: TaskConfig): CompiledTask {
       return {
         matched: false,
         reason: 'filter_error',
-        detail: err instanceof Error ? err.message : String(err),
+        detail: errorMessage(err),
       };
     }
   };

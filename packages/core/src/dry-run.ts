@@ -12,6 +12,7 @@ import { parseDuration } from './config/duration.js';
 import { applyParams } from './config/params.js';
 import type { TaskConfig } from './config/schema.js';
 import { taskActions, type TaskAction } from './config/walk.js';
+import { errorMessage } from './errors.js';
 import { contextEvent, renderEmits, renderStateUpdates } from './executor/executor.js';
 import type { TemplateScope } from './expr/template.js';
 import { nullLogger, type Logger } from './log.js';
@@ -116,10 +117,6 @@ const DEFAULT_TIMEOUT = '15m';
 const RUN_ID = 'run_dryrun';
 const EVENT_ID = 'evt_dryrun';
 const CORRELATION_ID = 'cor_dryrun';
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function label(at: string, action: StepAction): string {
   return action.kind === 'connector'

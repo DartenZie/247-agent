@@ -1,5 +1,6 @@
 import type { EventBus } from '../bus/bus.js';
 import { CRON_MISSED, CRON_TICK, type CompiledConfig, type CompiledTask } from '../bus/matcher.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
 import type { CursorStore } from '../store/cursors.js';
@@ -130,7 +131,7 @@ export class CronScheduler {
       onError: (err: unknown) => {
         this.log.error('cron.tick_failed', {
           task: task.name,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       },
     });
@@ -196,7 +197,7 @@ export class CronScheduler {
     } catch (err) {
       this.log.error('cron.missed_failed', {
         task: task.name,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return false;
     }

@@ -1,4 +1,5 @@
 import type { AgentStop, AgentUpdate, PermissionRequest } from '../connectors/acp-types.js';
+import { errorMessage } from '../errors.js';
 import { redact, redactions } from '../secrets/redact.js';
 import type { Logger } from '../log.js';
 import type { NewTranscriptEntry, TranscriptSink } from '../store/transcripts.js';
@@ -155,7 +156,7 @@ export class TranscriptWriter {
     } catch (err) {
       this.failed = true;
       this.opts.log.warn('agent.transcript_failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     }
   }

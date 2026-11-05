@@ -193,6 +193,28 @@ describe('init', () => {
     expect((err as MatrixError).transient).toBe(false);
   });
 
+  it('keeps the token out of an error body and a transport failure', async () => {
+    const answers = [
+      Response.json({ errcode: 'M_FORBIDDEN', error: `token ${TOKEN} may not` }, { status: 403 }),
+    ];
+    const api = createMatrixApi({
+      homeserver: 'https://matrix.example.org',
+      token: TOKEN,
+      timeoutMs: 1000,
+      fetch: () => {
+        const next = answers.shift();
+        return next === undefined
+          ? Promise.reject(new TypeError('fetch failed', { cause: new Error(`bad ${TOKEN}`) }))
+          : Promise.resolve(next);
+      },
+    });
+    const body = await api.call('GET', '/account/whoami?x=1').catch((e: unknown) => e);
+    expect((body as Error).message).toBe('GET /account/whoami: token <token> may not (403)');
+    const transport = await api.call('GET', '/account/whoami').catch((e: unknown) => e);
+    expect(transport).toBeInstanceOf(MatrixError);
+    expect((transport as Error).message).toBe('GET /account/whoami: bad <token>');
+  });
+
   it('marks a rate limit, a failed read and a refused connection transient (#32)', async () => {
     const refused = new TypeError('fetch failed', {
       cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),

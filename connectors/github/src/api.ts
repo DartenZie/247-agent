@@ -3,9 +3,15 @@
  * `Authorization` header, errors that name the status and GitHub's message (and when a
  * rate limit resets) but never the token.
  */
-import { isTransientHttpError } from '@247-agent/connector-sdk';
+import {
+  createJsonClient,
+  HttpTransportError,
+  isTransientHttpError,
+  type FetchLike,
+  type JsonResponse,
+} from '@247-agent/connector-sdk';
 
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+export type { FetchLike };
 
 export interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
@@ -53,42 +59,35 @@ export interface GitHubClientOptions {
 }
 
 export function createGitHubApi(opts: GitHubClientOptions): GitHubApi {
-  const doFetch: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
-  const hide = (text: string): string => text.split(opts.token).join('<token>');
+  const http = createJsonClient({
+    secrets: [opts.token],
+    placeholder: '<token>',
+    headers: {
+      authorization: `Bearer ${opts.token}`,
+      'user-agent': '247-agent',
+      'x-github-api-version': '2022-11-28',
+    },
+    ...(opts.fetch === undefined ? {} : { fetch: opts.fetch }),
+  });
 
-  async function send(method: string, path: string, ro: RequestOptions): Promise<Response> {
-    const url = new URL(opts.apiBase + path);
-    for (const [k, v] of Object.entries(ro.query ?? {})) {
-      if (v !== undefined) {
-        url.searchParams.set(k, String(v));
-      }
-    }
-    let res: Response;
+  async function send(method: string, path: string, ro: RequestOptions): Promise<JsonResponse> {
+    let res: JsonResponse;
     try {
-      res = await doFetch(url.toString(), {
+      res = await http.request({
         method,
-        headers: {
-          accept: ro.accept ?? 'application/vnd.github+json',
-          authorization: `Bearer ${opts.token}`,
-          'user-agent': '247-agent',
-          'x-github-api-version': '2022-11-28',
-          ...(ro.body === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        ...(ro.body === undefined ? {} : { body: JSON.stringify(ro.body) }),
-        signal: AbortSignal.timeout(opts.timeoutMs),
+        url: opts.apiBase + path,
+        query: ro.query,
+        headers: { accept: ro.accept ?? 'application/vnd.github+json' },
+        body: ro.body,
+        timeoutMs: opts.timeoutMs,
       });
     } catch (err) {
-      const cause = err instanceof Error ? (err.cause ?? err) : err;
-      throw new GitHubError(
-        method,
-        path,
-        0,
-        hide(cause instanceof Error ? cause.message : String(cause)),
-        { cause: err },
-      );
+      throw err instanceof HttpTransportError
+        ? new GitHubError(method, path, 0, err.message, { cause: err })
+        : err;
     }
     if (!res.ok) {
-      throw new GitHubError(method, path, res.status, hide(await errorMessage(res)), {
+      throw new GitHubError(method, path, res.status, http.redact(errorMessage(res)), {
         rateLimited:
           res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'),
       });
@@ -99,14 +98,13 @@ export function createGitHubApi(opts: GitHubClientOptions): GitHubApi {
   return {
     async request<T>(method: string, path: string, ro: RequestOptions = {}): Promise<T> {
       const res = await send(method, path, ro);
-      if (res.status === 204) {
-        return null as T;
+      if (!res.json) {
+        throw new GitHubError(method, path, res.status, 'non-JSON response');
       }
-      const text = await res.text();
-      return (text === '' ? null : JSON.parse(text)) as T;
+      return res.body as T;
     },
     async text(method: string, path: string, ro: RequestOptions = {}): Promise<string> {
-      return (await send(method, path, ro)).text();
+      return (await send(method, path, ro)).text;
     },
   };
 }
@@ -116,21 +114,19 @@ function isIdempotent(method: string): boolean {
   return ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method.toUpperCase());
 }
 
-async function errorMessage(res: Response): Promise<string> {
+function errorMessage(res: JsonResponse): string {
   let message = `HTTP ${String(res.status)}`;
-  try {
-    const body = (await res.json()) as { message?: string; errors?: { message?: string }[] };
+  if (typeof res.body === 'object' && res.body !== null) {
+    const body = res.body as { message?: unknown; errors?: unknown };
     if (typeof body.message === 'string') {
       message = body.message;
     }
-    const details = (body.errors ?? []).flatMap((e) =>
-      typeof e.message === 'string' ? [e.message] : [],
-    );
+    const details = (
+      Array.isArray(body.errors) ? (body.errors as { message?: unknown }[]) : []
+    ).flatMap((e) => (typeof e.message === 'string' ? [e.message] : []));
     if (details.length > 0) {
       message += `: ${details.join('; ')}`;
     }
-  } catch {
-    // not JSON; keep the status
   }
   if (res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset'));

@@ -8,6 +8,7 @@
 import { parseArgs } from 'node:util';
 
 import { ConnectorHostError, startConnectorHost } from './connectors/host.js';
+import { errorMessage } from './errors.js';
 import { findHome, homeEnv } from './home.js';
 import { createLogger } from './log.js';
 import { VERSION } from './version.js';
@@ -43,7 +44,7 @@ async function main(argv: string[]): Promise<number> {
       },
     });
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n${USAGE}`);
+    process.stderr.write(`${errorMessage(err)}\n${USAGE}`);
     return 2;
   }
   const { values, positionals } = parsed;
@@ -84,7 +85,7 @@ async function main(argv: string[]): Promise<number> {
       log,
     });
   } catch (err) {
-    log.error('connector_host.failed', { error: err instanceof Error ? err.message : String(err) });
+    log.error('connector_host.failed', { error: errorMessage(err) });
     return err instanceof ConnectorHostError ? 1 : 70;
   }
   const running = host;

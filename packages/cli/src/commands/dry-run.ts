@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 
 import {
   dryRun as runDry,
+  errorMessage,
   formatLoadResult,
   loadTasks,
   parseStubs,
@@ -88,7 +89,7 @@ export async function dryRun(args: string[], io: Io): Promise<number> {
       values.event === undefined ? undefined : eventOf(readDataFile(values.event), values.event);
     stubs = parseStubs(values.stubs === undefined ? {} : readDataFile(values.stubs));
   } catch (err) {
-    throw new UsageError(`dry-run: ${err instanceof Error ? err.message : String(err)}`);
+    throw new UsageError(`dry-run: ${errorMessage(err)}`);
   }
   try {
     const report = await runDry({ task, event, stubs });
@@ -100,7 +101,7 @@ export async function dryRun(args: string[], io: Io): Promise<number> {
     io.out(JSON.stringify(rest, null, 2));
     return EXIT.ok;
   } catch (err) {
-    io.err(`dry-run: ${err instanceof Error ? err.message : String(err)}`);
+    io.err(`dry-run: ${errorMessage(err)}`);
     return EXIT.failed;
   }
 }

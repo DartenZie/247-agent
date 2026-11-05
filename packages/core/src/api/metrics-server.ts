@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import type { ListenAddress } from '../config/agent.js';
+import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import type { Metrics } from '../metrics.js';
 import { METRICS_CONTENT_TYPE } from './routes.js';
@@ -38,10 +39,6 @@ export function formatListen(listen: ListenAddress): string {
 
 function sameAddress(a: ListenAddress | undefined, b: ListenAddress | undefined): boolean {
   return a?.host === b?.host && a?.port === b?.port;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function createMetricsServer(opts: MetricsServerOptions): MetricsServer {

@@ -1,4 +1,5 @@
 import { compile, search, tokenize } from 'jmespath';
+import { errorMessage } from '../errors.js';
 
 /** A compiled trigger filter. `evaluate` may throw on runtime type errors. */
 export interface Filter {
@@ -91,7 +92,7 @@ const JSON_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
  * from the source text, or no number when that is not valid JSON.
  */
 function syntaxMessage(expr: string, err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   const lexed = NUMBER_TOKEN.exec(message)?.[1];
   if (lexed === undefined) {
     return message;

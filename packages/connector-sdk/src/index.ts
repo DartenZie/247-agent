@@ -326,6 +326,120 @@ export function isTransientHttpError(failure: {
   return idempotent && (status === 408 || (status >= 500 && status !== 501));
 }
 
+/** `fetch`'s shape, so a test can pass a fake. */
+export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+
+/** `text` with every non-empty string of `secrets` replaced by `placeholder`. */
+export function redact(
+  text: string,
+  secrets: readonly string[],
+  placeholder = '<redacted>',
+): string {
+  return secrets.reduce((t, s) => (s === '' ? t : t.split(s).join(placeholder)), text);
+}
+
+export interface JsonRequest {
+  method: string;
+  url: string;
+  /** Appended to `url`; `undefined` values are left out. */
+  query?: Record<string, string | number | boolean | undefined> | undefined;
+  /** Added to the client's headers, overriding them. */
+  headers?: Record<string, string> | undefined;
+  /** Sent as JSON with `content-type: application/json`; no body when `undefined`. */
+  body?: unknown;
+  timeoutMs: number;
+}
+
+export interface JsonResponse {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  /** The raw body. */
+  text: string;
+  /** Whether `text` is JSON or empty. */
+  json: boolean;
+  /** `text` parsed: `null` when empty, `undefined` when not JSON. */
+  body: unknown;
+}
+
+/** A request that got no response. The message is redacted; `cause` is what `fetch` threw. */
+export class HttpTransportError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'HttpTransportError';
+  }
+}
+
+export interface JsonClient {
+  /**
+   * Sends one request and reads the whole body. Resolves for every HTTP status, so the
+   * caller builds its own error from `status` and `body`, passing any text from the body
+   * through `redact`. Rejects only with `HttpTransportError` when no response came.
+   */
+  request(req: JsonRequest): Promise<JsonResponse>;
+  /** Replaces the client's secrets in `text`. */
+  redact(text: string): string;
+}
+
+/**
+ * A JSON-over-HTTP client for an external API. `secrets` (tokens, passwords) are redacted
+ * from the transport errors it throws and by its `redact`, so an error message never
+ * carries a credential even when the credential is in the URL.
+ */
+export function createJsonClient(opts: {
+  secrets: readonly string[];
+  /** What replaces a secret; `<redacted>` by default. */
+  placeholder?: string;
+  /** Sent on every request after `accept: application/json`. */
+  headers?: Record<string, string>;
+  fetch?: FetchLike;
+}): JsonClient {
+  const doFetch: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
+  const hide = (text: string): string => redact(text, opts.secrets, opts.placeholder);
+  return {
+    redact: hide,
+    async request(req: JsonRequest): Promise<JsonResponse> {
+      const url = new URL(req.url);
+      for (const [k, v] of Object.entries(req.query ?? {})) {
+        if (v !== undefined) {
+          url.searchParams.set(k, String(v));
+        }
+      }
+      let res: Response;
+      try {
+        res = await doFetch(url.toString(), {
+          method: req.method,
+          headers: {
+            accept: 'application/json',
+            ...opts.headers,
+            ...req.headers,
+            ...(req.body === undefined ? {} : { 'content-type': 'application/json' }),
+          },
+          ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
+          signal: AbortSignal.timeout(req.timeoutMs),
+        });
+      } catch (err) {
+        const cause = err instanceof Error ? (err.cause ?? err) : err;
+        throw new HttpTransportError(hide(cause instanceof Error ? cause.message : String(cause)), {
+          cause: err,
+        });
+      }
+      const text = await res.text();
+      let body: unknown = null;
+      let json = true;
+      if (text !== '') {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = undefined;
+          json = false;
+        }
+      }
+      return { status: res.status, ok: res.ok, headers: res.headers, text, json, body };
+    },
+  };
+}
+
 /** `err` and its `cause`s, at most eight deep, objects only. */
 function causes(err: unknown): object[] {
   const out: object[] = [];

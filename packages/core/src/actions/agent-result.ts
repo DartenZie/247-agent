@@ -12,6 +12,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 
 import { isInside } from '../config/crosscheck.js';
+import { errorMessage } from '../errors.js';
 import type { JsonValue } from '../store/types.js';
 import { NonRetryableError } from './types.js';
 
@@ -69,7 +70,7 @@ function schemaValidator(schema: Record<string, unknown>): z.ZodType {
       v = z.fromJSONSchema(schema);
     } catch (err) {
       throw new NonRetryableError(
-        `result.schema is not a usable JSON Schema: ${err instanceof Error ? err.message : String(err)}`,
+        `result.schema is not a usable JSON Schema: ${errorMessage(err)}`,
       );
     }
     compiled.set(key, v);
@@ -114,7 +115,7 @@ function readRegularFile(workspace: string, path: string, relative: string): str
     if (code === 'ELOOP' || code === 'EMLINK') {
       return invalid(`${relative} is not a regular file`);
     }
-    return invalid(`cannot read ${relative}: ${err instanceof Error ? err.message : String(err)}`);
+    return invalid(`cannot read ${relative}: ${errorMessage(err)}`);
   }
   try {
     const st = fstatSync(fd);
@@ -152,7 +153,7 @@ function readRegularFile(workspace: string, path: string, relative: string): str
     }
     return buf.toString('utf8', 0, n);
   } catch (err) {
-    return invalid(`cannot read ${relative}: ${err instanceof Error ? err.message : String(err)}`);
+    return invalid(`cannot read ${relative}: ${errorMessage(err)}`);
   } finally {
     closeSync(fd);
   }

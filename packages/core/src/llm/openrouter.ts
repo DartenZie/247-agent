@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 
 import { NonRetryableError } from '../actions/types.js';
+import { errorMessage } from '../errors.js';
 import type { Effort } from './config.js';
 import {
   cacheTokensOf,
@@ -194,7 +195,7 @@ async function decide(
     if (req.signal.aborted) {
       throw err;
     }
-    throw new Error(`${PREFIX}: ${err instanceof Error ? err.message : String(err)}`, {
+    throw new Error(`${PREFIX}: ${errorMessage(err)}`, {
       cause: err,
     });
   }

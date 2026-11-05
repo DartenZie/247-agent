@@ -339,6 +339,7 @@ packages/core/src/
   expr/              glob.ts (type patterns), jmespath.ts, template.ts
   dry-run.ts         oa dry-run: one task offline with stubbed steps, no store (actions.md)
   metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts, process-group.ts
+  errors.ts          errorMessage(err), the one helper for a thrown value's message (core and oa)
 ```
 
 Ports between the parts, all on `ActionContext` (`actions/types.ts`):

@@ -35,6 +35,7 @@ import type { RetryConfig } from './config/schema.js';
 import { taskActions } from './config/walk.js';
 import { Poller } from './connectors/poller.js';
 import { ConnectorSupervisor, manifestKey, type ApplyResult } from './connectors/supervisor.js';
+import { errorMessage } from './errors.js';
 import { Executor } from './executor/executor.js';
 import { BatchPoller } from './llm/batches.js';
 import type {
@@ -649,7 +650,7 @@ export function createCore(opts: CoreOptions): Core {
       try {
         applied = await applyConnectors(next);
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
+        const error = errorMessage(err);
         metrics.configReloads.inc({ result: 'failed' });
         log.error('core.reload_failed', { error });
         return { ...result, ok: false, error };
@@ -702,7 +703,7 @@ export function createCore(opts: CoreOptions): Core {
         await applyPollers(before.manifests);
       } catch (undo) {
         log.error('core.reload_undo_failed', {
-          error: undo instanceof Error ? undo.message : String(undo),
+          error: errorMessage(undo),
         });
       }
       throw err;
@@ -798,7 +799,7 @@ export function createCore(opts: CoreOptions): Core {
       // below. The supervisor logs and retries a failed spawn; the catch is a backstop.
       supervisor?.start().catch((err: unknown) => {
         log.error('core.connectors_start_failed', {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       });
       for (const { poller } of pollers) {

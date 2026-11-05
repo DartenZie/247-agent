@@ -26,6 +26,7 @@ import {
 import type { Clock } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
 import { Retry, type EmitRuleConfig, type RetryConfig, type TaskConfig } from '../config/schema.js';
+import { errorMessage } from '../errors.js';
 import { isJmesTruthy } from '../expr/jmespath.js';
 import { newId } from '../ids.js';
 import {
@@ -161,10 +162,6 @@ const CANCEL_SETTLE_MS = 5000;
 const ADOPT_INTERVAL_MS = 10_000;
 const ADOPT_BATCH = 1000;
 const NO_SECRETS = staticSecrets({});
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * The action context's `event` for a run (docs/internal/architecture.md, `manual`): a `manual.run`

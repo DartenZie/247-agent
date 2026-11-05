@@ -1,5 +1,6 @@
 import { Cron } from 'croner';
 
+import { errorMessage } from '../errors.js';
 import { validateTypePattern as validatePattern } from '../expr/glob.js';
 import { validateJmespath as validateJmes } from '../expr/jmespath.js';
 import { validateTemplate as validateTpl } from '../expr/template.js';
@@ -26,7 +27,7 @@ export function validateCron(schedule: string, tz: string | undefined): string |
     // No callback, so croner parses without arming a timer.
     job = tz === undefined ? new Cron(schedule) : new Cron(schedule, { timezone: tz });
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessage(err);
   }
   const next = job.nextRun();
   job.stop();

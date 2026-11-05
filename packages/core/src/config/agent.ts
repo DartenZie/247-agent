@@ -9,6 +9,7 @@ import { AgentDefaults } from '../actions/agent-config.js';
 import { netProxyDir } from '../actions/sandbox-net.js';
 import { Sandbox, type ProtectedPath } from '../actions/sandbox.js';
 import { socketPathProblem } from '../api/socket-path.js';
+import { errorMessage } from '../errors.js';
 import { SecretsConfig } from '../secrets/secrets.js';
 import { parseManifest, type ConnectorConfig } from './connector.js';
 import {
@@ -171,7 +172,7 @@ export function parseAgent(text: string, file: string): AgentLoadResult {
   try {
     doc = parseYaml(text);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return { ok: false, file, issues: [{ path: '', message: `YAML syntax error: ${message}` }] };
   }
   const result = AgentFile.safeParse(doc ?? {});
@@ -234,7 +235,7 @@ export function loadAgentFile(path: string): AgentLoadResult {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       ok: false,
       file: path,
