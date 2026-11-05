@@ -89,8 +89,8 @@ the model calls and their cost.
   with `exponential` the pause before attempt *n* is `base × 2^(n−1)`, capped at `max`.
   A task without `retry` uses `defaults.retry` from `agent.yaml`, normally a single
   attempt. A task with `retry` replaces `defaults.retry` as a whole: the fields it
-  leaves out take the built-in defaults (`backoff: exponential`, `base: 30s`,
-  `max: 1h`), not the values in `agent.yaml`.
+  leaves out take the built-in defaults (`attempts: 1`, `backoff: exponential`,
+  `base: 30s`, `max: 1h`), not the values in `agent.yaml`.
 
 ```yaml
 retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }
