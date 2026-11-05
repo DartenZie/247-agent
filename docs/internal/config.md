@@ -255,8 +255,11 @@ The `configure()` seams, and what each one takes:
 
 Invariant: a setting from `agent.yaml` is read through one of these seams, never copied
 into a constructor and forgotten. Adding a key means adding it to a seam and to the
-reload test in `core.test.ts`; a key that genuinely cannot change at run time joins
-`FIXED_KEYS` and is documented as restart-only.
+reload tests. `core.reload.test.ts` starts the core with one value, reloads with another
+and shows the component behaving by the new one. It also shows that a reload failing
+after validation leaves the old value in place. It covers `workers`, the two `limits`,
+`defaults.llm` and `retention.events`; the other keys have no test there yet. A key that
+genuinely cannot change at run time joins `FIXED_KEYS` and is documented as restart-only.
 
 ## Where the schemas feed other things
 
