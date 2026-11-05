@@ -84,7 +84,6 @@ describe('reportApiError', () => {
       'cannot connect to the daemon at /run/247-agent/core.sock (EACCES): permission denied. ' +
         'Add your user to the 247-agent group (then log in again) or run oa with sudo.',
     ]);
-    expect(err[0]).not.toMatch(/running/);
   });
 
   it('keeps the not-running hint for other connection errors', () => {

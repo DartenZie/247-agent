@@ -3,6 +3,7 @@
 | Symptom / error | Cause | Fix |
 |---|---|---|
 | `oa` cannot connect | Daemon not running, or a different socket path | `--socket`, or `OA_CORE_SOCKET` = `socket:` from `agent.yaml` resolved against its directory |
+| `oa` says `(EACCES): permission denied` | Your user may not open the socket (mode `0660`) | Add your user to the `247-agent` group and log in again, or run `oa` with `sudo` |
 | daemon refuses to start, socket in use | A live daemon owns the socket | Stop it first; a stale file from a dead one is replaced automatically |
 | socket path error on macOS | Path longer than 104 bytes | Use a short dir like `/tmp/247-agent` |
 | cron task never runs | A run is still queued/running/waiting and `overlap: skip` | `GET /v1/runs?task=<name>`; wait, `oa runs cancel <id>` the stuck run, or `overlap: allow` |
