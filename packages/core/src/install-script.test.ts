@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -140,8 +140,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     );
     expect(run.stderr).toBe('');
     expect(run.status).toBe(code);
-    const unpacked = readFileSync(tmpLog, 'utf8').trim();
-    expect(existsSync(unpacked)).toBe(false);
+    const tmp = dirname(readFileSync(tmpLog, 'utf8').trim());
+    expect(existsSync(tmp)).toBe(false);
     expect(existsSync(`${prefix}-9.9.9`)).toBe(false);
   });
 });

@@ -108,8 +108,8 @@ tmp=$(mktemp -d)
 # A signal trap that returns lets sh carry on with the next command, so INT and TERM
 # exit after the cleanup, with the status a shell killed by the signal would have.
 trap 'rm -rf "$tmp"' EXIT
-trap 'rm -rf "$tmp"; trap - EXIT; exit 130' INT
-trap 'rm -rf "$tmp"; trap - EXIT; exit 143' TERM
+trap 'rm -rf "$tmp" || :; trap - EXIT; exit 130' INT
+trap 'rm -rf "$tmp" || :; trap - EXIT; exit 143' TERM
 
 # --- get the tarball -----------------------------------------------------------------
 if [ -n "$from" ]; then
