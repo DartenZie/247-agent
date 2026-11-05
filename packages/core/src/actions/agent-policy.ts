@@ -16,8 +16,8 @@ export interface AgentPolicy {
   bashAllow: readonly string[];
   workspace: string;
   /**
-   * What to make of an `execute` call the agent ran without asking. `judge` (default):
-   * its command must pass `bashAllow` like one that asked. `sandboxed`: the agent's own
+   * What to make of a call with a command that the agent ran without asking. `judge`
+   * (default): its command must pass `bashAllow` like one that asked. `sandboxed`: the agent's own
    * sandbox already confined it (no writes outside the workspace, no network: what Codex
    * enforces at the OS level for commands it does not ask about), so only its kind and
    * paths are judged. Calls that ask are always judged in full.
@@ -144,10 +144,12 @@ export interface JudgedCall {
 }
 
 /**
- * Why `call` falls outside the policy, or undefined when it does not. An `execute` call
- * without a known command cannot be judged on its command (only on its kind and paths);
- * neither is one the agent ran without asking (`asked: false`) under
- * `unaskedExecute: sandboxed`.
+ * Why `call` falls outside the policy, or undefined when it does not. A call that carries a
+ * command is judged against `bashAllow` whatever kind the agent reports, so a shell
+ * command labelled `other` (the kind connector tools need) is held to the same allowlist
+ * as an `execute` one. A call without a known command cannot be judged on its command
+ * (only on its kind and paths); neither is one the agent ran without asking
+ * (`asked: false`) under `unaskedExecute: sandboxed`.
  */
 export function policyViolation(
   policy: AgentPolicy,
@@ -159,7 +161,6 @@ export function policyViolation(
   }
   const judgeCommand = asked || policy.unaskedExecute === 'judge';
   if (
-    call.toolKind === 'execute' &&
     judgeCommand &&
     call.command !== undefined &&
     !commandAllowed(call.command, policy.bashAllow)
@@ -175,16 +176,29 @@ export function policyViolation(
  * `allow_always`: every call is judged); refused ones `reject_once`, then `reject_always`,
  * then the protocol's `cancelled` outcome when the agent offers no reject option. An
  * `execute` request without `rawInput.command` is judged on its title, which is what the
- * agent shows as the command.
+ * agent shows as the command; a request of another kind has no command to show, so its
+ * title is not judged. `known` is what the agent reported for the same call before it
+ * asked: ACP lets a request leave out every field but the id (a missing kind reads as
+ * `other`), so a request of kind `other` is judged as the reported kind, a request
+ * without a command as the reported command, and the paths of both are checked.
  */
-export function decidePermission(policy: AgentPolicy, req: PermissionRequest): PermissionDecision {
+export function decidePermission(
+  policy: AgentPolicy,
+  req: PermissionRequest,
+  known?: JudgedCall,
+): PermissionDecision {
   const call = req.toolCall;
   const refuse = (reason: string): PermissionDecision => ({
     allow: false,
     optionId: pick(req.options, ['reject_once', 'reject_always']) ?? PERMISSION_CANCELLED,
     reason,
   });
-  const violation = policyViolation(policy, { ...call, command: call.command ?? call.title });
+  const toolKind =
+    call.toolKind === 'other' && known !== undefined ? known.toolKind : call.toolKind;
+  const command =
+    call.command ?? known?.command ?? (toolKind === 'execute' ? call.title : undefined);
+  const locations = [...call.locations, ...(known?.locations ?? [])];
+  const violation = policyViolation(policy, { toolKind, command, locations });
   if (violation !== undefined) {
     return refuse(violation);
   }

@@ -113,7 +113,9 @@ unset to use the program's own defaults.
 | `switch_mode` | change the program's mode |
 | `other` | anything else the program reports as a tool, including the connector tools of `mcp_servers` on Claude Code |
 
-`bash_allow` lists the commands an `execute` call may run. A command passes when it is
+`bash_allow` lists the commands the agent may run. Every tool call that carries a
+command is judged against it, whatever kind the agent reports, so adding `other` to
+`tools` does not let other commands run. A command passes when it is
 exactly one of the entries, or when it starts with an entry followed by a space, so
 arguments may follow. A chain of commands joined with `&&`, `||`, `|`, `;` or `&`
 passes only when every part passes on its own. Redirections, backticks, `$(…)` and
@@ -183,6 +185,10 @@ logged and counts toward `max_tool_calls`.
 > when you use `mcp_servers` with it. Granting an operation is granting what it does:
 > an agent with `send` on `email` can send mail. Never grant a connector that publishes
 > or deploys; the agent never publishes.
+
+An operation that takes an argument named `command` is judged against `bash_allow`
+like a shell command, because the core cannot tell it from one. List the commands
+such an operation may run in `bash_allow`.
 
 ## The prompt
 
@@ -317,7 +323,7 @@ reads a failed agent run step by step.
 | `budget.max_usd` | no | `defaults.agent.budget.max_usd` | the cost cap for one run; the smaller of this and the task's applies |
 | `workspace` | yes | | `{ kind: git-worktree, repo, branch }` (branch default `main`) or `{ kind: temp }` |
 | `tools` | yes, at least one | | tool kinds: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other` |
-| `bash_allow` | no | `[]` | the commands an `execute` call may run |
+| `bash_allow` | no | `[]` | the commands a tool call may run, whatever its kind |
 | `unasked_execute` | no | `judge` | how a command run without asking is judged: `judge` against `bash_allow`, `sandboxed` on kind and paths only |
 | `mcp_servers` | no | `[]` | connector operations as tools: a connector name, or `{ connector, ops }` |
 | `system_file` | no | | a static file under the configuration directory, prepended to the prompt; no `${…}` |

@@ -133,7 +133,7 @@ action:
   budget: { max_usd: 0.50 }
   workspace: { kind: git-worktree, repo: /var/lib/247-agent/repos/site, branch: main }
   tools: [read, edit, search, execute]  # ACP tool kinds; everything else is refused
-  bash_allow: ["npm run build"]         # what `execute` may run
+  bash_allow: ["npm run build"]         # what any command the agent runs must match
   system_file: prompts/agent_event_list.md
   prompt: |
     Update data/events.yaml according to the request below. Touch no other file.
