@@ -29,4 +29,5 @@ fi
 export COPYFILE_DISABLE=1
 # shellcheck disable=SC2086
 tar $tar_flags -C "$out" -czf "$out/$name.tar.gz" "$name"
-(cd "$out" && sha256 "$name.tar.gz" > "$name.tar.gz.sha256" && sed -i.bak "s|\$| $name.tar.gz|" "$name.tar.gz.sha256" && rm -f "$name.tar.gz.sha256.bak")
+# Two spaces between hash and name: the format sha256sum -c and shasum -c read (issue #116).
+(cd "$out" && hash=$(sha256 "$name.tar.gz") && printf '%s  %s\n' "$hash" "$name.tar.gz" > "$name.tar.gz.sha256")

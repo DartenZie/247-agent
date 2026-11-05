@@ -56,7 +56,9 @@ When the target is the build machine it smoke-tests the stage: `oa --version` an
 077 cannot record a tree closed to the service user. `scripts/pack-release.sh <out>
 <name>` packs it and records root (uid 0, gid 0) as the owner of every entry, so the
 tarball does not carry the build user's uid. The tarball and its `.sha256` land in
-`dist-release/`.
+`dist-release/`. Each `.sha256` file, here and from `scripts/build-package.sh`, is one
+line `<hash>  <file name>` with two spaces, so `sha256sum -c` and `shasum -a 256 -c`
+accept it; `install.sh` reads only the hash.
 
 `scripts/stage-share.sh <stage>` fills `share/`. The layout keeps every relative link in
 the shipped docs working as in a checkout: `share/doc/examples` is a link to

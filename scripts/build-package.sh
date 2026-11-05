@@ -83,6 +83,6 @@ for fmt in deb rpm; do
   file=$("$nfpm" package --config "$config" --packager $fmt --target "$out/" | sed -n 's/.*created package: *//p' | tail -n 1)
   [ -n "$file" ] || file=$(ls -t "$out"/*."$fmt" | head -n 1)
   name=$(basename "$file")
-  (cd "$out" && sha256 "$name" | sed "s|\$| $name|" > "$name.sha256")
+  (cd "$out" && hash=$(sha256 "$name") && printf '%s  %s\n' "$hash" "$name" > "$name.sha256")
   echo "wrote $file ($(du -h "$file" | cut -f1))"
 done
