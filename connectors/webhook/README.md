@@ -13,7 +13,7 @@ connectors/webhook/src/
   config.ts   zod schema: listener (TCP or Unix socket), routes, verify kinds and their defaults, route name slugs
   verify.ts   HMAC and token checks over the raw body, constant-time
   server.ts   routing, body limit and parsing, the event payload, status codes (202/200/400/401/404/405/413/422/503/500)
-  main.ts     connectorEnv + CoreClient; listens, logs the routes, stops on SIGTERM and SIGINT
+  main.ts     connectorEnv + CoreClient; listens, logs the routes; on SIGTERM and SIGINT drains requests in flight for 4 s, then exits
 ```
 
 Tests run without the network beyond loopback: `server.test.ts` starts the server on a

@@ -6,7 +6,13 @@
 import { connectorEnv, CoreClient } from '@247-agent/connector-sdk';
 
 import { parseConfig } from './config.js';
-import { startServer } from './server.js';
+import { startServer, stopServer } from './server.js';
+
+/**
+ * How long requests in flight may run after SIGTERM or SIGINT. The core sends SIGKILL 5 s
+ * after SIGTERM, so this stays below that.
+ */
+const SHUTDOWN_GRACE_MS = 4000;
 
 const log = (line: string): void => {
   process.stderr.write(line + '\n');
@@ -27,8 +33,7 @@ for (const r of config.routes) {
 }
 
 const shutdown = (): void => {
-  server.close(() => process.exit(0));
-  server.closeAllConnections();
+  void stopServer(server, SHUTDOWN_GRACE_MS).then(() => process.exit(0));
 };
 process.once('SIGTERM', shutdown);
 process.once('SIGINT', shutdown);
