@@ -49,7 +49,7 @@ export class ApiError extends Error {
   }
 }
 
-/** The socket could not be reached: the daemon is down or the path is wrong. */
+/** The socket could not be reached: the daemon is down, the path is wrong, or the user may not open it. */
 export class ApiConnectionError extends Error {
   constructor(
     readonly socketPath: string,

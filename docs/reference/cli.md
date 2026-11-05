@@ -22,7 +22,10 @@ works, `oa --json run hello` is an unknown command.
 | 141 | the program reading the output closed the pipe (`oa runs list \| head -1`): `oa` stops at its next write, without a message. A shell reports the same status for a program that SIGPIPE ends |
 
 An unreachable socket prints `cannot connect to the daemon at <path> (<code>). Is
-247-agent-core running? Set --socket or OA_CORE_SOCKET.`
+247-agent-core running? Set --socket or OA_CORE_SOCKET.`, except when your user may not
+open the socket. Then it prints `cannot connect to the daemon at <path> (EACCES):
+permission denied. Add your user to the 247-agent group (then log in again) or run oa
+with sudo.`
 
 ### `oa validate <file>...`
 

@@ -11,7 +11,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | Symptom | Cause | Fix |
 |---|---|---|
 | `cannot connect to the daemon at /run/247-agent/core.sock (ENOENT). Is 247-agent-core running? Set --socket or OA_CORE_SOCKET.` | the daemon is not running, or the socket is elsewhere | `systemctl status 247-agent`; for a local daemon `export OA_CORE_SOCKET=<the socket: in agent.yaml, resolved against that file's directory>` |
-| the same with `EACCES` | your user may not open the socket (mode `0660`) | run `oa` with `sudo`, or add yourself to the `247-agent` group |
+| `cannot connect to the daemon at /run/247-agent/core.sock (EACCES): permission denied. Add your user to the 247-agent group (then log in again) or run oa with sudo.` | your user may not open the socket (mode `0660`) | run `oa` with `sudo`, or add yourself to the `247-agent` group and log in again |
 | the daemon exits with `another daemon is listening on <path>` | a live daemon owns the socket | stop it first; a stale file from a dead daemon is replaced on its own |
 | the daemon exits with `invalid agent config <file>:` and `<path>: <message>` lines, or `invalid connector config:` | the configuration does not validate | `oa validate <agent.yaml>` prints the same issues without starting anything; fix and restart |
 | `no tasks files found` | the `tasks:` paths in `agent.yaml` name no `*.yaml` file | check the paths; they are relative to the directory of `agent.yaml` |
