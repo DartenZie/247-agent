@@ -51,8 +51,26 @@ const COMMAND_USAGE: Record<string, string> = {
   backup: BACKUP_USAGE,
 };
 
+/** True when `--help` or `-h` comes before any `--` separator. */
+function asksForHelp(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === '--') {
+      return false;
+    }
+    if (arg === '--help' || arg === '-h') {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
   const [command, ...rest] = argv;
+  const usage = command === undefined ? undefined : COMMAND_USAGE[command];
+  if (usage !== undefined && asksForHelp(rest)) {
+    io.out(usage);
+    return EXIT.ok;
+  }
   try {
     switch (command) {
       case 'validate':

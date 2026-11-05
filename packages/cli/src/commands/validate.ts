@@ -2,14 +2,17 @@ import { checkConfigFile, formatCheck, formatWarnings } from '@247-agent/core';
 
 import { EXIT, UsageError, type Io } from '../io.js';
 
-export const VALIDATE_USAGE = `usage: oa validate <file>...
+export const VALIDATE_USAGE = `usage: oa validate [--] <file>...
 
 Validates tasks files and agent.yaml files against the schema. An agent.yaml also has its
 referenced tasks file checked. Warnings (a filter comparison that cannot mean what it
 says) are printed but do not fail the file.
 `;
 
-export function validate(files: string[], io: Io): number {
+export function validate(args: string[], io: Io): number {
+  // The first `--` ends the options, so a file may start with a dash (`oa validate -- -h`).
+  const end = args.indexOf('--');
+  const files = end === -1 ? args : [...args.slice(0, end), ...args.slice(end + 1)];
   if (files.length === 0) {
     throw new UsageError('validate: at least one file is required');
   }

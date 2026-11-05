@@ -28,7 +28,9 @@ An unreachable socket prints `cannot connect to the daemon at <path> (<code>). I
 
 Validates tasks files, connector manifests and `agent.yaml` files against the schema and
 the semantic checks. An `agent.yaml` is followed to every tasks file and manifest it
-names. The daemon does not need to run. There are no flags: every argument is a file.
+names. The daemon does not need to run. Every argument is a file,
+except `--help` and `-h`, which print the usage. To validate a file whose name starts
+with a dash, put it after `--`: `oa validate -- -h`.
 
 Output, one line per file or referenced file:
 
@@ -318,8 +320,9 @@ shows how to schedule it and how to restore.
 ### `oa help [command]`, `oa version`
 
 `help` prints the top-level usage or one command's usage to stdout and exits 0 (`oa`
-with no arguments prints the usage and exits 2). `version`, `--version` and `-V` print
-the version.
+with no arguments prints the usage and exits 2). `oa <command> --help` and
+`oa <command> -h` print the same usage as `oa help <command>` and exit 0. After a `--`, `--help` and `-h` are arguments, not
+flags. `version`, `--version` and `-V` print the version.
 
 ## `247-agent-core`
 

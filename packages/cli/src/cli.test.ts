@@ -749,6 +749,58 @@ describe('oa help', () => {
     expect(await main(['frobnicate'], io)).toBe(2);
   });
 
+  it('prints the usage of a command for <command> --help and -h, exiting 0 without an error (#110)', async () => {
+    const commands = [
+      'validate',
+      'run',
+      'emit',
+      'runs',
+      'tasks',
+      'events',
+      'connector',
+      'cost',
+      'reload',
+      'health',
+      'metrics',
+      'backup',
+    ];
+    for (const command of commands) {
+      for (const flag of ['--help', '-h']) {
+        out = [];
+        err = [];
+        expect(await main([command, flag], io), `${command} ${flag}`).toBe(0);
+        expect(err, `${command} ${flag}`).toEqual([]);
+        expect(out.join('\n'), `${command} ${flag}`).toMatch(new RegExp(`^usage: oa ${command}`));
+      }
+    }
+    out = [];
+    err = [];
+    expect(await main(['run', 'ok', '--wait', '--help'], io)).toBe(0);
+    expect(err).toEqual([]);
+    expect(out[0]).toMatch(/^usage: oa run/);
+  });
+
+  it('treats --help after -- as an argument, not a request for usage', async () => {
+    expect(await main(['validate', '--', '--help'], io)).toBe(1);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toMatch(/^--help: cannot read file/);
+    out = [];
+    err = [];
+    const tasks = join(EXAMPLES, 'website-updates.yaml');
+    expect(await main(['validate', tasks, '--', '-h'], io)).toBe(1);
+    expect(out).toEqual([`ok ${tasks} (9 tasks)`]);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toMatch(/^-h: cannot read file/);
+  });
+
+  it('prints the usage for a help flag after a positional argument', async () => {
+    expect(await main(['backup', 'out.db', '--help'], io)).toBe(0);
+    expect(await main(['validate', 'a.yaml', '-h'], io)).toBe(0);
+    expect(err).toEqual([]);
+    expect(out[0]).toMatch(/^usage: oa backup/);
+    expect(out[1]).toMatch(/^usage: oa validate/);
+  });
+
   it('says which secrets backends a connector restart picks up a rotation from', async () => {
     expect(await main(['help', 'connector'], io)).toBe(0);
     const help = out.join('\n').replace(/\s+/g, ' ');
