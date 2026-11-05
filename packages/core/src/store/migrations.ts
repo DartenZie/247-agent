@@ -168,6 +168,10 @@ export const MIGRATIONS: readonly string[] = [
     ts          TEXT    NOT NULL
   );
   INSERT INTO ledger_new SELECT * FROM ledger;
+  -- Keep the id counter: \`llm.batch.ended\` payloads name ledger ids, and retention may
+  -- have removed the newest rows.
+  DELETE FROM sqlite_sequence WHERE name = 'ledger_new';
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'ledger_new', seq FROM sqlite_sequence WHERE name = 'ledger';
   DROP TABLE ledger;
   ALTER TABLE ledger_new RENAME TO ledger;
   CREATE INDEX ledger_ts ON ledger(ts);

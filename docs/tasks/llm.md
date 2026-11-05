@@ -123,11 +123,18 @@ event is published.
 | the provider rejected the request: bad key, bad schema, unknown model (HTTP 400, 401, 403, 404, 422) | fails without retry |
 | a rate limit, a server error or a connection error | the attempt fails and is retried under the task's `retry` policy |
 | the answer was not valid JSON for the schema | the attempt fails and is retried |
+| the call was still waiting on the provider when the task's `timeout` ended the attempt | the attempt fails and is retried |
 | the cost overran the run's budget, or the daily cap is reached | fails without retry |
 
 Every answer the provider bills is recorded in the ledger before the run fails, so
 the cut-off, refused and invalid answers above count against the run's budget and
 the daily cap. A retry of an invalid answer spends from the same run budget.
+
+The provider may also bill a call that the task's `timeout`, `oa runs cancel` or a
+daemon stop cut off while the provider was still answering. No answer says what it
+cost, so the ledger records the call at its worst case, with `priced_by: estimate`.
+That row counts against the run's budget and the daily cap. A retry after a timeout can
+therefore be refused when `budget.max_usd` does not cover two worst cases.
 
 ## `batch: true`: half price for anything that can wait
 

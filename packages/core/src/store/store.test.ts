@@ -121,11 +121,15 @@ describe('openStore', () => {
         VALUES ('run_1', 't', 'evt_1', 'cor_1', 'running', '2026-09-19T10:00:00.000Z');
       INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts)
         VALUES ('run_1', 't', 'anthropic', 'claude-haiku-4-5', 10, 1, 0.5, 'table', '2026-09-19T10:00:00.000Z');
+      INSERT INTO ledger (run_id, task, provider, model, in_tok, out_tok, usd, priced_by, ts)
+        VALUES ('run_1', 't', 'anthropic', 'claude-haiku-4-5', 10, 1, 0.5, 'table', '2026-09-19T10:00:00.000Z');
+      DELETE FROM ledger WHERE id = 2;
     `);
     db.close();
     const migrated = openStore(path);
     try {
-      migrated.ledger.insert({
+      // Ids keep counting past a row retention removed: event payloads name ledger ids.
+      const id = migrated.ledger.insert({
         run_id: 'run_1',
         task: 't',
         provider: 'anthropic',
@@ -138,6 +142,7 @@ describe('openStore', () => {
         priced_by: 'estimate',
         ts: '2026-09-19T10:01:00.000Z',
       });
+      expect(id).toBe(3);
       expect(migrated.ledger.listByRun('run_1').map((r) => r.priced_by)).toEqual([
         'table',
         'estimate',
