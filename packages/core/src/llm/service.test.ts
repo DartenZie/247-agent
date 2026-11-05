@@ -245,6 +245,7 @@ describe('LlmService.call', () => {
     // One worst case (~$0.000505) reaches this cap: a leaked hold would refuse the retry.
     const s = service({ budgets: { daily_usd: 0.0005 } });
     await expect(call(s)).rejects.toThrow(/upstream down/);
+    expect(env.store.ledger.sumSince('2000-01-01')).toBe(0);
     fail = false;
     await expect(call(s)).resolves.toBeDefined();
   });
@@ -265,6 +266,91 @@ describe('LlmService.call', () => {
       UnpricedModelError,
     );
     expect(env.store.ledger.listByRun(r.id)[0]).toMatchObject({ usd: 0, priced_by: 'unpriced' });
+  });
+});
+
+/** A provider that answers only when the request's signal aborts, rejecting with its reason. */
+function hanging(): FakeProvider {
+  const never = (signal: AbortSignal): Promise<never> =>
+    new Promise((_, reject) => {
+      signal.addEventListener('abort', () => {
+        reject(signal.reason as Error);
+      });
+    });
+  return fakeProviderFactory(
+    (req) => never(req.signal),
+    (req) => never(req.signal),
+  );
+}
+
+describe('LlmService: a call aborted in flight (#78)', () => {
+  it('ledgers the worst case of an aborted call, so a retry spends from the same cap', async () => {
+    fake = hanging();
+    const s = service();
+    const r = run();
+    const ac = new AbortController();
+    const pending = s.call(
+      { provider: 'anthropic', model: 'claude-haiku-4-5', input: 'classify this', maxTokens: 100 },
+      { run: r, task: r.task, signal: ac.signal, log: env.log },
+    );
+    ac.abort(new Error('timed out after 5s'));
+    await expect(pending).rejects.toThrow('timed out after 5s');
+    // 13 chars → 5 input tokens + 100 output tokens = worst case $0.000505.
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        in_tok: 5,
+        out_tok: 100,
+        priced_by: 'estimate',
+      },
+    ]);
+    expect(env.store.ledger.sumForRun(r.id)).toBeCloseTo(0.000505, 9);
+    expect(env.lines.find((l) => l.msg === 'llm.call')).toMatchObject({
+      priced_by: 'estimate',
+      aborted: true,
+    });
+    // The retry sees the abandoned spend: two worst cases no longer fit $0.0008.
+    fake = fakeProviderFactory(usage(1000, 100));
+    await expect(call(service(), { maxUsd: 0.0008 }, r)).rejects.toThrow(/worst case/);
+  });
+
+  it('ledgers an aborted decide at its input-only worst case', async () => {
+    fake = hanging();
+    const s = service();
+    const r = run();
+    const ac = new AbortController();
+    const pending = s.decide(
+      {
+        provider: 'router',
+        model: 'typesafe/jev-1.13',
+        state: { a: 1 },
+        questions: { urgent: { type: 'noul', instructions: 'Urgent?' } },
+      },
+      { run: r, task: r.task, signal: ac.signal, log: env.log },
+    );
+    ac.abort(new Error('stopped'));
+    await expect(pending).rejects.toThrow('stopped');
+    const rows = env.store.ledger.listByRun(r.id);
+    expect(rows).toMatchObject([{ model: 'typesafe/jev-1.13', out_tok: 0, priced_by: 'estimate' }]);
+    expect(rows[0]?.in_tok).toBeGreaterThan(0);
+    expect(rows[0]?.usd).toBeGreaterThan(0);
+  });
+
+  it('ledgers an aborted call to a model without a table price at $0', async () => {
+    fake = hanging();
+    const s = service();
+    const r = run();
+    const ac = new AbortController();
+    const pending = s.call(
+      { provider: 'router', model: 'vendor/no-price', input: 'classify this', maxTokens: 100 },
+      { run: r, task: r.task, signal: ac.signal, log: env.log },
+    );
+    ac.abort(new Error('stopped'));
+    await expect(pending).rejects.toThrow('stopped');
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      { in_tok: 5, out_tok: 100, usd: 0, priced_by: 'estimate' },
+    ]);
   });
 });
 

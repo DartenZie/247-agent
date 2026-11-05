@@ -1,7 +1,7 @@
 import type { Database, Statement } from 'better-sqlite3';
 
 /** How a row's `usd` was determined (docs/internal/model-actions.md): no call goes unpriced silently. */
-export type PricedBy = 'table' | 'provider' | 'unpriced';
+export type PricedBy = 'table' | 'provider' | 'unpriced' | 'estimate';
 
 export interface LedgerEntry {
   id: number;

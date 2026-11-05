@@ -83,7 +83,9 @@ increase(oa_sandbox_net_requests_total{result="denied"}[1h]) > 0
 Every model call is a ledger row: the run, the task, the provider, the model, input and
 output tokens, cache reads and writes, dollars, and how the price was determined
 (`table` from the built-in or configured price, `provider` when the provider reported
-the cost, `unpriced` when neither was possible, which fails the run so it is noticed). An
+the cost, `unpriced` when neither was possible, which fails the run so it is noticed,
+`estimate` for a call cut off by the task's `timeout`, a cancel or a stop while the
+provider was answering: its worst case, because the provider may bill it). An
 agent turn is a row under the connector's name as provider.
 
 `oa cost` sums the ledger:

@@ -587,7 +587,30 @@ export class LlmService implements LlmPort, BatchSource {
     // Held until the ledger row replaces it.
     const { res, settled } = await this.reserving(estimate, async (release) => {
       const startedAt = Date.now();
-      const r = await invoke(adapter);
+      let r: T;
+      try {
+        r = await invoke(adapter);
+      } catch (err) {
+        if (cctx.signal.aborted) {
+          // Cut off by the run's timeout, a cancel or a stop with the request in flight:
+          // the provider may bill it, so its worst case is ledgered (#78).
+          this.settle(
+            spec,
+            spec.estimate,
+            price,
+            spentRun,
+            now,
+            cctx,
+            {
+              duration_ms: Date.now() - startedAt,
+              aborted: true,
+            },
+            'estimate',
+          );
+          release();
+        }
+        throw err;
+      }
       const durationMs = Date.now() - startedAt;
       const s = this.settle(spec, r.usage, price, spentRun, now, cctx, {
         duration_ms: durationMs,
@@ -725,10 +748,15 @@ export class LlmService implements LlmPort, BatchSource {
     now: Date,
     cctx: LlmCallContext,
     logFields: Record<string, unknown>,
+    as?: 'estimate',
   ): { usd: number; pricedBy: PricedBy; ledgerId: number } {
     let usd: number;
     let pricedBy: PricedBy;
-    if (usage.reportedUsd !== undefined) {
+    if (as === 'estimate') {
+      // Without a table price there is no worst case: the row records the call at $0.
+      usd = price === undefined ? 0 : costUsd(price, usage);
+      pricedBy = 'estimate';
+    } else if (usage.reportedUsd !== undefined) {
       usd = usage.reportedUsd;
       pricedBy = 'provider';
     } else if (price !== undefined) {
