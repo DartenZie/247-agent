@@ -27,6 +27,13 @@ open the socket. Then it prints `cannot connect to the daemon at <path> (EACCES)
 permission denied. Add your user to the 247-agent group (then log in again) or run oa
 with sudo.`
 
+With `--follow` (`runs logs`, `events tail`), a daemon that goes away after the first
+answer is not an error. `oa` prints `lost the daemon (<code>); waiting for it to come
+back (Ctrl-C to stop)` on stderr, tries again every second, and prints `reconnected to
+the daemon` when the daemon answers. It continues after the last entry or event it
+printed, so a restart causes no duplicates and no gaps. A permission error or an error
+that the daemon answers still ends the command.
+
 ### `oa validate <file>...`
 
 Validates tasks files, connector manifests and `agent.yaml` files against the schema and
@@ -131,7 +138,7 @@ characters, more than 8 segments) or an unknown parent is a 400 from the daemon,
 | `--status <s>` | `ls` | `queued`, `running`, `waiting`, `succeeded`, `failed` or `cancelled` | all |
 | `--task <name>` | `ls` | one task | all |
 | `-n, --limit <n>` | `ls` | how many | 20 |
-| `-f, --follow` | `logs` | keep printing while the run is queued, running or waiting | off |
+| `-f, --follow` | `logs` | keep printing while the run is queued, running or waiting; wait for the daemon when it restarts | off |
 | `--after <id>` | `logs` | transcript entries after this entry id | 0 |
 | `--json` | all | JSON output (`logs`: one entry or attempt per line; `cancel`: the run) | off |
 | `--socket <path>` | all | the daemon socket | see above |
@@ -206,7 +213,7 @@ Exit 0; exit 1 for an unknown task.
 |---|---|---|---|
 | `--type <type\|pattern>` | `tail` | only this type; `*` matches exactly one segment (`email.*`, `task.*.failed`) | all |
 | `-n, --limit <n>` | `tail` | how many to start with | 20 |
-| `-f, --follow` | `tail` | poll for new events every second until interrupted | off |
+| `-f, --follow` | `tail` | poll for new events every second until interrupted; wait for the daemon when it restarts | off |
 | `--json` | both | JSON output (`tail`: one event per line) | off |
 | `--socket <path>` | both | the daemon socket | see above |
 

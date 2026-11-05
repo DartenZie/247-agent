@@ -11,6 +11,7 @@ import {
 } from '@247-agent/core';
 
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
+import { reconnecting, POLL_MS } from './follow.js';
 import { eventLine, runLine, took, transcriptLines } from './format.js';
 
 export const RUNS_USAGE = `usage: oa runs <ls|show <id>|logs <id>|cancel <id>> [options]
@@ -30,7 +31,8 @@ options for ls:
   --task <name>         one task
   -n, --limit <n>       how many (default 20)
 options for logs:
-  -f, --follow          keep printing while the run is queued, running or waiting
+  -f, --follow          keep printing while the run is queued, running or waiting,
+                        waiting for the daemon when it restarts
   --after <id>          entries after this transcript entry id
 common:
   --json                print the response as JSON (logs: one entry per line)
@@ -48,8 +50,6 @@ const STATUSES: readonly RunStatus[] = [
 
 const isActive = (status: RunStatus): boolean =>
   (ACTIVE_STATUSES as readonly RunStatus[]).includes(status);
-
-const POLL_MS = 1000;
 
 function positiveInt(flag: string, value: string): number {
   const n = Number(value);
@@ -239,6 +239,7 @@ async function logs(
   let run: RunRecord = await api.getRun(id);
   let after = opts.after;
   let printed = 0;
+  const call = opts.follow ? reconnecting(io) : <T>(f: () => Promise<T>): Promise<T> => f();
   const print = (entries: TranscriptEntry[]): void => {
     for (const e of entries) {
       printed++;
@@ -255,17 +256,17 @@ async function logs(
   for (;;) {
     let page: TranscriptEntry[];
     do {
-      page = (await api.getTranscript(id, { after, limit: 1000 })).entries;
+      page = (await call(() => api.getTranscript(id, { after, limit: 1000 }))).entries;
       print(page);
     } while (page.length === 1000);
     if (!opts.follow || !isActive(run.status)) {
       break;
     }
     await sleep(POLL_MS);
-    run = await api.getRun(id);
+    run = await call(() => api.getRun(id));
   }
   if (printed === 0) {
-    printed = printOutput((await api.getRunAttempts(id)).attempts, opts.json, io);
+    printed = printOutput((await call(() => api.getRunAttempts(id))).attempts, opts.json, io);
   }
   if (printed === 0 && !opts.json) {
     io.out(

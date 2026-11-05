@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import type { EventRecord, EventTasksBody, TaskMatch } from '@247-agent/core';
 
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
+import { reconnecting, POLL_MS } from './follow.js';
 import { eventLine } from './format.js';
 
 export const EVENTS_USAGE = `usage: oa events <tail|show <id>> [options]
@@ -16,13 +17,12 @@ show <id>   one event with its payload and, per configured task, the run it star
 options for tail:
   --type <type|pattern>   only this type; * matches one segment (email.*, task.*.failed)
   -n, --limit <n>         how many to start with (default 20)
-  -f, --follow            poll for new events until interrupted
+  -f, --follow            poll for new events until interrupted, waiting for the
+                          daemon when it restarts
 common:
   --json                  print events as JSON (tail: one per line)
   --socket <path>         daemon socket (default: $OA_CORE_SOCKET or /run/247-agent/core.sock)
 `;
-
-const POLL_MS = 1000;
 
 export async function events(args: string[], io: Io): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -64,9 +64,10 @@ export async function events(args: string[], io: Io): Promise<number> {
         }
         // Nothing matched yet: start from the newest event of any type.
         let after = first.at(-1)?.seq ?? (await api.listEvents({ limit: 1 })).at(-1)?.seq ?? 0;
+        const call = reconnecting(io);
         for (;;) {
           await sleep(POLL_MS);
-          const page = await api.listEvents({ type: values.type, after, limit: 1000 });
+          const page = await call(() => api.listEvents({ type: values.type, after, limit: 1000 }));
           page.forEach(print);
           after = page.at(-1)?.seq ?? after;
         }
