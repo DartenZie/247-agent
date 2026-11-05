@@ -92,7 +92,7 @@ export const AgentAction = z
     workspace: Workspace,
     /** ACP tool kinds the agent may use; the permission policy refuses the rest. */
     tools: z.array(z.enum(TOOL_KINDS)).min(1),
-    /** Commands an `execute` tool call may run: each segment of a linear chain must be one of these or start with one followed by a space. */
+    /** Commands a tool call may run, whatever kind the agent reports: each segment of a linear chain must be one of these or start with one followed by a space. */
     bash_allow: z.array(z.string().min(1)).default([]),
     /**
      * An `execute` call the agent ran without asking: `judge` checks its command against

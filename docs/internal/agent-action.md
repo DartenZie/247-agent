@@ -71,7 +71,11 @@ relies on.
 `agent-policy.ts`, `decidePermission()`, judged per request, never `allow_always`:
 
 - The tool's kind must be in `tools` (which must be non-empty).
-- An `execute` call's command (`rawInput.command`, else the title) passes when it
+- A call's command is judged whatever kind the agent reports, so granting `other`
+  (needed for connector tools) never widens what shell commands may run. The command
+  is `rawInput.command` for any kind, else the title for an `execute` call only; a
+  call of another kind without `rawInput.command` (a connector tool) is judged on kind
+  and paths alone. The command passes when it
   equals a `bash_allow` entry exactly (an exact entry may contain anything). Otherwise
   it must contain none of `<`, `>`, a backtick, a line break, `$(` or `${` anywhere
   (`SHELL_UNSAFE`), and `splitChain()` must split it on `&&`, `||`, `|`, `;`, `&` into
@@ -97,7 +101,7 @@ runs everything its own OS sandbox admits and asks only to escape it. So every
 `tool_call` or `tool_call_update` that reaches `in_progress`, `completed` or `failed`
 without a permission request is judged after the fact from what it reports (kind,
 command, locations; later updates may add them). `unasked_execute: judge` (default)
-holds an unasked `execute` to `bash_allow` like one that asked; `sandboxed` judges only
+holds an unasked call's command to `bash_allow` like one that asked; `sandboxed` judges only
 kind and paths, for an agent whose own sandbox confines the command (codex-acp pins
 the workspace-write sandbox regardless of `sandbox_mode`; pair it with
 `approval_policy: on-request`, never `never` or `danger-full-access`). A violation
