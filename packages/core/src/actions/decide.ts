@@ -142,12 +142,18 @@ function checkAnswers(
         if (typeof a.noul !== 'number') {
           throw new Error(`question "${id}": noul is not a number`);
         }
+        if (!isProbability(a.noul)) {
+          throw new Error(`question "${id}": noul ${String(a.noul)} is outside 0..1`);
+        }
         break;
       case 'choice':
         if (q.type === 'choice' && !Object.hasOwn(q.criteria, a.choice)) {
           throw new Error(
             `question "${id}": choice "${a.choice}" is not one of ${Object.keys(q.criteria).join(', ')}`,
           );
+        }
+        if (q.type === 'choice') {
+          checkSpread(id, a, Object.keys(q.criteria));
         }
         break;
       case 'score':
@@ -159,9 +165,50 @@ function checkAnswers(
             `question "${id}": score ${String(a.score)} is outside 0..${String(q.criteria.length - 1)}`,
           );
         }
+        if (q.type === 'score') {
+          checkSpread(
+            id,
+            a,
+            q.criteria.map((_, i) => String(i)),
+          );
+        }
         break;
     }
     out[id] = a;
   }
   return out;
+}
+
+const isProbability = (x: unknown): x is number =>
+  typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 1;
+
+/**
+ * A `choice` or `score` answer carries a `confidence` in 0..1 and a `probabilities` map whose
+ * keys are among `keys` (the labels, or the level indexes as strings) and whose values are in
+ * 0..1. Routing compares these, so a malformed one would silently evaluate to null instead.
+ */
+function checkSpread(
+  id: string,
+  a: { confidence?: unknown; probabilities?: unknown },
+  keys: string[],
+): void {
+  if (!isProbability(a.confidence)) {
+    throw new Error(`question "${id}": confidence ${String(a.confidence)} is not a number in 0..1`);
+  }
+  const p = a.probabilities;
+  if (p === null || typeof p !== 'object' || Array.isArray(p)) {
+    throw new Error(`question "${id}": probabilities is not a map of criteria to numbers`);
+  }
+  for (const [key, value] of Object.entries(p as Record<string, unknown>)) {
+    if (!keys.includes(key)) {
+      throw new Error(
+        `question "${id}": probabilities has "${key}", which is not one of ${keys.join(', ')}`,
+      );
+    }
+    if (!isProbability(value)) {
+      throw new Error(
+        `question "${id}": probability ${String(value)} for "${key}" is outside 0..1`,
+      );
+    }
+  }
 }

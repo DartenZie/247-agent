@@ -237,6 +237,81 @@ describe('runDecide', () => {
       { ...answers, urgent: { type: 'noul', noul: 'yes' } },
       /noul is not a number/,
     ],
+    [
+      'a noul above 1',
+      { ...answers, urgent: { type: 'noul', noul: 1.5 } },
+      /question "urgent": noul 1.5 is outside 0..1/,
+    ],
+    [
+      'a negative noul',
+      { ...answers, urgent: { type: 'noul', noul: -0.1 } },
+      /question "urgent": noul -0.1 is outside 0..1/,
+    ],
+    [
+      'a choice without a confidence',
+      { ...answers, kind: { ...answers.kind, confidence: undefined } },
+      /question "kind": confidence undefined is not a number in 0..1/,
+    ],
+    [
+      'a non-numeric choice confidence',
+      { ...answers, kind: { ...answers.kind, confidence: 'high' } },
+      /question "kind": confidence high is not a number in 0..1/,
+    ],
+    [
+      'a choice confidence above 1',
+      { ...answers, kind: { ...answers.kind, confidence: 1.2 } },
+      /question "kind": confidence 1.2 is not a number in 0..1/,
+    ],
+    [
+      'a score without a confidence',
+      { ...answers, anger: { ...answers.anger, confidence: undefined } },
+      /question "anger": confidence undefined is not a number in 0..1/,
+    ],
+    [
+      'a negative score confidence',
+      { ...answers, anger: { ...answers.anger, confidence: -1 } },
+      /question "anger": confidence -1 is not a number in 0..1/,
+    ],
+    [
+      'a choice without probabilities',
+      { ...answers, kind: { ...answers.kind, probabilities: undefined } },
+      /question "kind": probabilities is not a map of criteria to numbers/,
+    ],
+    [
+      'choice probabilities as an array',
+      { ...answers, kind: { ...answers.kind, probabilities: [0.9, 0.1] } },
+      /question "kind": probabilities is not a map of criteria to numbers/,
+    ],
+    [
+      'a choice probability for an unknown label',
+      { ...answers, kind: { ...answers.kind, probabilities: { update: 0.9, spam: 0.1 } } },
+      /question "kind": probabilities has "spam", which is not one of update, ignore/,
+    ],
+    [
+      'a choice probability above 1',
+      { ...answers, kind: { ...answers.kind, probabilities: { update: 1.4 } } },
+      /question "kind": probability 1.4 for "update" is outside 0..1/,
+    ],
+    [
+      'a non-numeric choice probability',
+      { ...answers, kind: { ...answers.kind, probabilities: { update: '0.9' } } },
+      /question "kind": probability 0.9 for "update" is outside 0..1/,
+    ],
+    [
+      'a score without probabilities',
+      { ...answers, anger: { ...answers.anger, probabilities: undefined } },
+      /question "anger": probabilities is not a map of criteria to numbers/,
+    ],
+    [
+      'a score probability for a level that does not exist',
+      { ...answers, anger: { ...answers.anger, probabilities: { '1': 0.9, '3': 0.1 } } },
+      /question "anger": probabilities has "3", which is not one of 0, 1, 2/,
+    ],
+    [
+      'a score probability keyed by label',
+      { ...answers, anger: { ...answers.anger, probabilities: { Calm: 1 } } },
+      /question "anger": probabilities has "Calm", which is not one of 0, 1, 2/,
+    ],
   ])('fails retryably on %s', async (_name, bad, message) => {
     const llm = fakeLlmPort({
       decideDefaults: { provider: 'r' },

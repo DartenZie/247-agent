@@ -209,8 +209,10 @@ any other non-2xx → `NonRetryableError` (400 bad question, 401 no key, 402 no 
 retryable. `usage.cost` is the price when reported, else the table.
 
 The runner then checks every declared question is answered with its declared type, a
-`choice` is one of its labels, a `score` is within `0..levels−1`, a `noul` is a number;
-a mismatch is a retryable `Error` (the provider's fault); extra answers are dropped.
+`choice` is one of its labels, a `score` is within `0..levels−1`, a `noul` is a number in
+`0..1`, and a `choice` or `score` carries a `confidence` in `0..1` and a `probabilities`
+map whose keys are its labels (`choice`) or level indexes as strings (`score`) and whose
+values are in `0..1`. A mismatch is a retryable `Error` (the provider's fault); extra answers are dropped.
 The result is the answers map keyed by question id. Jev is absent from
 `/api/v1/models` and rejects `/chat/completions`: never route a `decide` model through
 `llm` or the reverse.
