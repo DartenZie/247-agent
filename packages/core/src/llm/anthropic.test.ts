@@ -487,7 +487,7 @@ describe('anthropic adapter: message batches', () => {
     });
   });
 
-  it('maps errored, expired and canceled results; only an invalid or too large request is final', async () => {
+  it('maps errored, expired and canceled results; only an invalid request is final', async () => {
     const outcome = async (result: unknown) =>
       poll(batchApi('ended', [{ custom_id: 'run_1', result }]).fetch);
     await expect(
@@ -500,12 +500,6 @@ describe('anthropic adapter: message batches', () => {
       error: 'anthropic: invalid_request_error: bad',
       retryable: false,
     });
-    await expect(
-      outcome({
-        type: 'errored',
-        error: { type: 'error', error: apiError('request_too_large', 'too big').error },
-      }),
-    ).resolves.toMatchObject({ status: 'errored', retryable: false });
     await expect(
       outcome({
         type: 'errored',

@@ -199,7 +199,7 @@ function outcomeOf(
       return {
         status: 'errored',
         error: `anthropic: ${e.type}: ${e.message}`,
-        retryable: e.type !== 'invalid_request_error' && e.type !== 'request_too_large',
+        retryable: e.type !== 'invalid_request_error',
       };
     }
     case 'expired':
