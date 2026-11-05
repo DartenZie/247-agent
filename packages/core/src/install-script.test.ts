@@ -341,7 +341,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     // An install before #117 left the config with the service user; the upgrade takes it
     // back, but only what the group can still read once root owns it.
     expect(lines).toContain(
-      'find /etc/247-agent -user 247-agent -group 247-agent ( -type f -perm -g=r -o -type d -perm -g=rx ) -exec chown root:247-agent {} +',
+      'find /etc/247-agent -user 247-agent -group 247-agent ( -type f -perm -g=r -o -type d -perm -g=rx ) -exec chown -h root:247-agent {} ;',
     );
     expect(lines.filter((l) => l.includes('-o 247-agent'))).toEqual([]);
   });

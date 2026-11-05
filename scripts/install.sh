@@ -298,8 +298,10 @@ if [ $service = 1 ]; then
   root install -d -m 750 -o root -g "$user" /etc/247-agent /etc/247-agent/tasks.d /etc/247-agent/connectors.d
   # An install before #117 gave the config to the user: take back what the group can still
   # read once root owns it. A file the admin closed to the group (mode 600) stays as it is.
+  # One chown per path, -h, as find reaches it: a directory is root's before find reads it,
+  # so the user cannot swap an entry for a symlink to a file outside.
   root find /etc/247-agent -user "$user" -group "$user" \( -type f -perm -g=r -o -type d -perm -g=rx \) \
-    -exec chown "root:$user" {} +
+    -exec chown -h "root:$user" {} \;
   if [ $has_config = 0 ]; then
     # The starter config from the tree (packaging/etc in the repository, shared with the
     # .deb/.rpm): the production defaults and a manual `hello` task.

@@ -17,10 +17,13 @@ prefix=/opt/247-agent
 # The config is root's and the service group only reads it (issue #117). A package before
 # that gave it to the user, and dpkg keeps the owner of a directory or a changed conffile:
 # take back what the group can still read once root owns it. A file the admin closed to
-# the group (mode 600) stays as it is.
+# the group (mode 600) stays as it is. One chown per path, -h, as find reaches it: a
+# directory is root's before find reads it, so the user cannot swap an entry for a symlink.
+# A chown that fails (a read-only mount) prints its error and does not fail the upgrade:
+# find exits 0 whatever an -exec ... \; returns.
 if [ -d /etc/247-agent ]; then
   find /etc/247-agent -user 247-agent -group 247-agent \( -type f -perm -g=r -o -type d -perm -g=rx \) \
-    -exec chown root:247-agent {} +
+    -exec chown -h root:247-agent {} \;
 fi
 
 # The way back after an upgrade: the previous package, whose version deb tells us.

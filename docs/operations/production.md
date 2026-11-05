@@ -27,8 +27,10 @@ place; this page is for operating it afterwards.
 The installer and the packages give `/etc/247-agent` and the files they write to
 `root:247-agent`, directories 750 and files 640: the daemon and its connectors read the
 configuration and cannot change it. Give the files you add the same owner and modes
-(`sudo install -m 640 -o root -g 247-agent website.yaml /etc/247-agent/tasks.d/`). An
-upgrade gives back to root the files an older version left with the `247-agent` user.
+(`sudo install -m 640 -o root -g 247-agent website.yaml /etc/247-agent/tasks.d/`). The
+exception is a secrets file for the `file` backend: it stays mode 600, owned by the
+`247-agent` user. An upgrade gives back to root the files an older version left with the `247-agent` user, except a file the group cannot
+read.
 
 Keep `/etc/247-agent` in git. Run `oa validate /etc/247-agent/agent.yaml` in CI and before
 every deploy; it follows the file to every tasks file and manifest it names and needs no
