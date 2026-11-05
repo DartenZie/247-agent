@@ -47,6 +47,7 @@ packages/core/src/         the daemon
 packages/core/test/fixtures/   fake connectors, a fake ACP agent, a fake bwrap
 packages/cli/src/          oa: one file per command under commands/
 packages/connector-sdk/src/index.ts   runConnector, defineTool, CoreClient; no local imports
+packages/connector-sdk/src/testing.ts listTools for connector tests (`@247-agent/connector-sdk/testing`)
 connectors/<name>/         one workspace package per bundled connector: src/, README.md (development notes), examples/, test/smoke/
 test/smoke/                lib.mjs (exit codes, RESULT line, lock), connectors/ and acp/ rigs
 skills/                    agent skills that ship with releases; .claude/skills/ links to them

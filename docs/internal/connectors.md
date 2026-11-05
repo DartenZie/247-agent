@@ -253,6 +253,9 @@ straight from TypeScript source; the test fixtures depend on that. The contract:
   `tools(rt)`, serve stdio. Every bundled `main.ts` is `await runConnector(…)` at module
   top level, so a throw anywhere in that sequence (invalid config, a failed `getMe` or
   `/myself`) exits the process with code 1 and the supervisor backs off.
+- `listTools(tools)` from `@247-agent/connector-sdk/testing`, for tests only: registers
+  `tools` on a connector server and returns `tools/list` as an MCP client sees it over an
+  in-memory transport, without running a handler.
 
 Connectors in other languages implement the same three things: `POST /v1/events`,
 `/v1/state`, MCP over stdio. `skills/247-agent-connectors/references/protocol.md` is the
@@ -293,7 +296,9 @@ Transient errors per connector, each with tests on its failure paths:
 | `ftp` | `errors.ts`, `isTransientFileError(err, {repeatable})`, applied in `describe()` of `ftp.ts` and `sftp.ts`, which wraps the library error as `cause`: for `connect` and the read-only steps an FTP `4xx`, network codes and basic-ftp's and ssh2's timeout and broken-connection errors; for a write only `425` and `450`, which come before anything changed |
 
 Each `connectors/<name>/` is an npm workspace package with its zod `config.ts`, a
-`main.ts` on `runConnector`, unit tests against fake transports, development notes in
+`main.ts` on `runConnector`, for a connector with ops a `tools.ts` that returns its
+`defineTool` list and a `tools.test.ts` that checks the listed names against the example
+manifest's `ops`, unit tests against fake transports, development notes in
 its `README.md`, and for chat, email, ftp and webhook a `test/smoke/` module for the rig
 ([`testing.md`](testing.md)). The user pages under `docs/connectors/` are the
 configuration reference. Event `source` is always the manifest name, so a manifest

@@ -21,7 +21,8 @@ example manifest, a user page and a skill reference. `../connectors.md` has the 
    a unit test rejects a missing required key with that prefix.
 4. **Write `src/main.ts`** on `runConnector({version, setup?, tools})`: read config from
    `rt.env.config`, do any start-up call (a `whoami`) in `setup`, define ops with
-   `defineTool`, keep cursors in `rt.core.getState`/`putState`, log to `rt.log`, throw
+   `defineTool` in `src/tools.ts` (a function of what the handlers need, which `tools`
+   calls), keep cursors in `rt.core.getState`/`putState`, log to `rt.log`, throw
    for an op error, mark the transient ones (a client error's `transient` flag, a
    `TransientError`, or a `runConnector({transient})` rule; `../connectors.md`), and
    for a push-style connector emit with `rt.core.emitEvent` using a `dedup_key` and,
@@ -37,7 +38,9 @@ example manifest, a user page and a skill reference. `../connectors.md` has the 
    socket to the outside.
 7. **Add the example manifest** `docs/examples/connectors.d/<name>.yaml`, annotated.
    Done when `node packages/cli/dist/main.js validate docs/examples/connectors.d/<name>.yaml`
-   prints `ok`.
+   prints `ok`, and `src/tools.test.ts` (copy `connectors/email/src/tools.test.ts`)
+   passes: it lists the tools with `listTools` from `@247-agent/connector-sdk/testing` and
+   compares their names with the manifest's `ops`.
 8. **Document it for users**: `docs/connectors/<name>.md` (setup walkthrough, the
    manifest, every config key, every op with input and result, the events, state keys,
    task examples, traps), a row in the table of `docs/connectors/index.md`, and a row in

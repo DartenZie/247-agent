@@ -16,13 +16,14 @@ connectors/jira/src/
   api.ts      REST over fetch: v3 or v2, auth header, errors without credentials
   adf.ts      Atlassian Document Format ↔ plain text
   ops.ts      project scope (keys, JQL wrapping with a balance check), paging (Cloud token, DC startAt), every op
-  main.ts     runConnector: /myself at start, the op definitions (zod inputs)
+  tools.ts    the op definitions (zod inputs) over JiraOps
+  main.ts     runConnector: /myself at start, then tools.ts
 ```
 
 `ops.test.ts` runs every op against a fake Jira behind the injected `fetch`, on both API
 versions: scope refusals including a query that tries to close the project clause, both
 paging schemes, ADF bodies, transitions by name, id and target status, and error text
-without credentials. There is no smoke rig: Jira cannot run in a container.
+without credentials. `tools.test.ts` lists the registered tools over an in-memory MCP transport and checks their names against the `ops` of `docs/examples/connectors.d/jira.yaml` plus the two ops the example leaves out (`create_issue`, `update_issue`). There is no smoke rig: Jira cannot run in a container.
 
 ```
 npm run build
