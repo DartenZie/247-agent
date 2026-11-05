@@ -660,10 +660,31 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 
   it('rejects oversized bodies', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: 'a'.repeat(2 * 1024 * 1024) });
-    await expect(raw('POST', '/v1/events', big)).resolves.toEqual({
-      status: 413,
-      body: { error: 'request body exceeds 1048576 bytes' },
+    // Settle on the request's close, so a client write error (EPIPE) fails this test (#76).
+    const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+      let result: { status: number; text: string } | undefined;
+      const req = request(
+        { socketPath: daemon.config.socket, method: 'POST', path: '/v1/events', agent: false },
+        (r) => {
+          let text = '';
+          r.setEncoding('utf8');
+          r.on('data', (c: string) => (text += c));
+          r.on('end', () => {
+            result = { status: r.statusCode ?? 0, text };
+          });
+        },
+      );
+      req.on('error', reject);
+      req.on('close', () => {
+        if (result === undefined) {
+          reject(new Error('the connection closed without a complete response'));
+        } else {
+          resolve(result);
+        }
+      });
+      req.end(big);
     });
+    expect(res).toEqual({ status: 413, text: '{"error":"request body exceeds 1048576 bytes"}' });
   });
 });
 

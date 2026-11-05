@@ -33,20 +33,32 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function post(body: string): Promise<{ status: number; body: unknown }> {
+/**
+ * Settles once the request is closed, not at the end of the response, so a write error
+ * on the client (EPIPE, reset) rejects the call instead of surfacing after the test.
+ */
+function post(body: string): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
+    let result: { status: number; text: string } | undefined;
     const req = request(
-      { socketPath: server.socketPath, method: 'POST', path: '/v1/events' },
+      { socketPath: server.socketPath, method: 'POST', path: '/v1/events', agent: false },
       (res) => {
         let text = '';
         res.setEncoding('utf8');
         res.on('data', (c: string) => (text += c));
         res.on('end', () => {
-          resolve({ status: res.statusCode ?? 0, body: JSON.parse(text) });
+          result = { status: res.statusCode ?? 0, text };
         });
       },
     );
     req.on('error', reject);
+    req.on('close', () => {
+      if (result === undefined) {
+        reject(new Error('the connection closed without a complete response'));
+      } else {
+        resolve(result);
+      }
+    });
     req.end(body);
   });
 }
@@ -56,7 +68,13 @@ describe('api server', () => {
     const big = JSON.stringify({ type: 'x.y', payload: { data: 'a'.repeat(2 * 1024 * 1024) } });
     await expect(post(big)).resolves.toEqual({
       status: 413,
-      body: { error: 'request body exceeds 1024 bytes' },
+      text: '{"error":"request body exceeds 1024 bytes"}',
     });
+  });
+
+  it('reads a body of exactly the limit, and refuses one byte more', async () => {
+    // Not JSON, so the server answers 400 after reading it and never reaches a route.
+    await expect(post('a'.repeat(1024))).resolves.toMatchObject({ status: 400 });
+    await expect(post('a'.repeat(1025))).resolves.toMatchObject({ status: 413 });
   });
 });
