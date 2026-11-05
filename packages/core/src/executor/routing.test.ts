@@ -200,6 +200,79 @@ describe('emit routing and state_updates', () => {
     });
     expect(events().map((e) => e.type)).toEqual(['x.bademit', 'task.bad_emit.failed']);
   });
+
+  /** Makes the store throw on inserting an event of `type`, as a full disk would (#87). */
+  function failInsertsOf(type: string): () => void {
+    const insert = env.store.events.insert.bind(env.store.events);
+    env.store.events.insert = (event, rootId) => {
+      if (event.type === type) {
+        throw new Error('SQLITE_FULL: database or disk is full');
+      }
+      return insert(event, rootId);
+    };
+    return () => {
+      env.store.events.insert = insert;
+    };
+  }
+
+  it('commits nothing of the finish when an emitted event cannot be stored, and recovers the run on the next start (#87)', async () => {
+    const restore = failInsertsOf('x.classified');
+    const ex = make({ defaultRetry: Retry.parse({ attempts: 2, base: '10ms' }) });
+    const trigger = publish('x.fan');
+    bus.dispatcher.drain();
+    await ex.idle();
+
+    expect(env.store.runs.getByTaskAndEvent('fan', trigger.id)).toMatchObject({
+      status: 'running',
+      finished_at: null,
+    });
+    expect(env.store.state.snapshot()).toEqual({});
+    expect(events().map((e) => e.type)).toEqual(['x.fan']);
+    expect(env.lines.some((l) => l.msg === 'run.succeeded')).toBe(false);
+    expect(env.lines.find((l) => l.msg === 'run.bookkeeping_failed')).toMatchObject({
+      task: 'fan',
+      error: expect.stringMatching(/SQLITE_FULL/) as string,
+    });
+
+    await ex.stop();
+    restore();
+    expect(ex.start()).toMatchObject({ resumed: 1 });
+    await ex.idle();
+    expect(env.store.runs.getByTaskAndEvent('fan', trigger.id)).toMatchObject({
+      status: 'succeeded',
+      attempt: 2,
+    });
+    expect(env.store.state.snapshot()).toMatchObject({ email: { last_uid: 7 } });
+    expect(events().map((e) => e.type)).toEqual([
+      'x.fan',
+      'task.fan.succeeded',
+      'email.received',
+      'email.received',
+      'x.classified',
+    ]);
+  });
+
+  it('leaves a run unfinished when its lifecycle event cannot be stored on start (#87)', async () => {
+    const trigger = publish('x.state'); // default: 1 attempt, so start fails it as interrupted
+    bus.dispatcher.drain();
+    const run = env.store.runs.getByTaskAndEvent('uses_state', trigger.id);
+    env.store.runs.setStatus(run?.id ?? '', 'running', { started_at: 'earlier', attempt: 1 });
+    const restore = failInsertsOf('task.uses_state.failed');
+
+    const ex = make();
+    await ex.idle();
+    expect(env.store.runs.getByTaskAndEvent('uses_state', trigger.id)?.status).toBe('running');
+    expect(env.lines.find((l) => l.msg === 'run.bookkeeping_failed')).toMatchObject({
+      run_id: run?.id,
+      error: expect.stringMatching(/SQLITE_FULL/) as string,
+    });
+
+    await ex.stop();
+    restore();
+    ex.start();
+    expect(env.store.runs.getByTaskAndEvent('uses_state', trigger.id)?.status).toBe('failed');
+    expect(events().map((e) => e.type)).toEqual(['x.state', 'task.uses_state.failed']);
+  });
 });
 
 describe('secrets', () => {

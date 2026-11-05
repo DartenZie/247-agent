@@ -405,21 +405,19 @@ export class Executor {
         resumed += this.enqueue([run]);
         continue;
       }
-      this.finish(run, { ok: false, error: INTERRUPTED, retryable: false }, task, log);
-      interrupted++;
+      if (this.finishOnStart(run, { ok: false, error: INTERRUPTED, retryable: false }, task, log)) {
+        interrupted++;
+      }
     }
     for (const run of this.store.runs.listByStatus('waiting', 1_000_000)) {
       const wait = this.store.waits.get(run.id);
       const log = this.log.child(runFields(run));
       if (wait === undefined) {
         const task = config.byName.get(run.task);
-        this.finish(
-          run,
-          { ok: false, error: 'waiting run has no wait record', retryable: false },
-          task,
-          log,
-        );
-        interrupted++;
+        const outcome = fatal('waiting run has no wait record');
+        if (this.finishOnStart(run, outcome, task, log)) {
+          interrupted++;
+        }
       } else if (wait.outcome !== null) {
         this.store.runs.setStatus(run.id, 'queued');
         resumed += this.enqueue([{ ...run, status: 'queued' }]);
@@ -430,6 +428,25 @@ export class Executor {
     resumed += this.enqueue(this.store.runs.listByStatus('queued', 1_000_000));
     this.log.info('executor.started', { workers: this.workers, interrupted, resumed, waiting });
     return { interrupted, resumed, waiting };
+  }
+
+  /**
+   * `finish` for a run that recovery ends. A store failure leaves the run as it was for the
+   * next start instead of failing `start()`. Returns whether the run finished.
+   */
+  private finishOnStart(
+    run: RunRecord,
+    outcome: Outcome,
+    task: CompiledTask | undefined,
+    log: Logger,
+  ): boolean {
+    try {
+      this.finish(run, outcome, task, log);
+      return true;
+    } catch (err) {
+      log.error('run.bookkeeping_failed', { error: errorMessage(err) });
+      return false;
+    }
   }
 
   /** Takes runs from the dispatcher. Returns how many were new to the executor. */
@@ -937,14 +954,6 @@ export class Executor {
       }
     }
     const finishedAt = this.clock.now().toISOString();
-    this.metrics.runsFinished.inc({ task: run.task, status: final.ok ? 'succeeded' : 'failed' });
-    const queuedAt = Date.parse(run.created_at);
-    if (!Number.isNaN(queuedAt)) {
-      this.metrics.runDuration.observe(
-        { task: run.task },
-        Math.max(0, (Date.parse(finishedAt) - queuedAt) / 1000),
-      );
-    }
     this.store.transaction(() => {
       this.store.waits.delete(run.id);
       this.store.runs.setProgress(run.id, null);
@@ -957,7 +966,6 @@ export class Executor {
         for (const u of updates) {
           this.store.state.put(u.namespace, u.key, u.value, finishedAt);
         }
-        log.info('run.succeeded', { emitted: emitted.length, state_updates: updates.length });
         this.publish({
           type: `task.${run.task}.succeeded`,
           source,
@@ -972,7 +980,6 @@ export class Executor {
           finished_at: finishedAt,
           error: final.error,
         });
-        log.error('run.failed', { error: final.error, attempt: run.attempt });
         this.publish({
           type: `task.${run.task}.failed`,
           source,
@@ -981,6 +988,13 @@ export class Executor {
         });
       }
     });
+    // Only once committed: a store failure above leaves the run unfinished (#87).
+    this.countFinished(run, final.ok ? 'succeeded' : 'failed', finishedAt);
+    if (final.ok) {
+      log.info('run.succeeded', { emitted: emitted.length, state_updates: updates.length });
+    } else {
+      log.error('run.failed', { error: final.error, attempt: run.attempt });
+    }
   }
 
   /**
@@ -990,14 +1004,6 @@ export class Executor {
    */
   private finishCancelled(run: RunRecord, log: Logger): void {
     const finishedAt = this.clock.now().toISOString();
-    this.metrics.runsFinished.inc({ task: run.task, status: 'cancelled' });
-    const queuedAt = Date.parse(run.created_at);
-    if (!Number.isNaN(queuedAt)) {
-      this.metrics.runDuration.observe(
-        { task: run.task },
-        Math.max(0, (Date.parse(finishedAt) - queuedAt) / 1000),
-      );
-    }
     this.store.transaction(() => {
       this.store.waits.delete(run.id);
       this.store.runs.setProgress(run.id, null);
@@ -1006,7 +1012,6 @@ export class Executor {
         finished_at: finishedAt,
         error: CANCELLED,
       });
-      log.warn('run.cancelled', { previous_status: run.status, attempt: run.attempt });
       this.publish({
         type: `task.${run.task}.cancelled`,
         source: taskSource(run.task),
@@ -1019,6 +1024,23 @@ export class Executor {
         },
       });
     });
+    this.countFinished(run, 'cancelled', finishedAt);
+    log.warn('run.cancelled', { previous_status: run.status, attempt: run.attempt });
+  }
+
+  private countFinished(
+    run: RunRecord,
+    status: 'succeeded' | 'failed' | 'cancelled',
+    finishedAt: string,
+  ): void {
+    this.metrics.runsFinished.inc({ task: run.task, status });
+    const queuedAt = Date.parse(run.created_at);
+    if (!Number.isNaN(queuedAt)) {
+      this.metrics.runDuration.observe(
+        { task: run.task },
+        Math.max(0, (Date.parse(finishedAt) - queuedAt) / 1000),
+      );
+    }
   }
 
   /** The `run` template scope: ids, attempt, and where an `agent` run's workspace is. */
@@ -1033,17 +1055,14 @@ export class Executor {
     };
   }
 
+  /**
+   * Publishes inside the caller's finishing transaction. A store error propagates, so the
+   * transaction rolls back and the run stays unfinished for the next start (#87).
+   */
   private publish(event: NewEvent): void {
-    try {
-      const r = this.bus.publish(event);
-      if (r.status === 'duplicate') {
-        this.log.debug('run.emit_duplicate', { event_type: event.type, dedup_key: r.dedup_key });
-      }
-    } catch (err) {
-      this.log.error('run.lifecycle_publish_failed', {
-        event_type: event.type,
-        error: errorMessage(err),
-      });
+    const r = this.bus.publish(event);
+    if (r.status === 'duplicate') {
+      this.log.debug('run.emit_duplicate', { event_type: event.type, dedup_key: r.dedup_key });
     }
   }
 }
