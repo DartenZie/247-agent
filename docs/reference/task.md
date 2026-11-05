@@ -40,8 +40,11 @@ tasks:
 | `emit` | Rules turning the result into events. See [Routing](../tasks/routing.md). Templates here may not use `secrets`. | none |
 | `state_updates` | `<namespace>.<key>: value`, each part `[a-z0-9_-]+`. Values are templates over the result. Written after a successful run, in the same transaction as the emitted events. Templates here may not use `secrets`. | none |
 
-The `retry` defaults come from `defaults.retry` in `agent.yaml` when the task has no
-`retry`.
+A task without `retry` uses `defaults.retry` from `agent.yaml`. A task with `retry`
+replaces `defaults.retry` as a whole: each field the task leaves out takes the built-in
+default in the table above, not the value in `agent.yaml`. For example,
+`retry: { attempts: 5 }` waits `30s` before the second attempt, even when
+`defaults.retry.base` is `1m`.
 
 ### How budgets combine
 

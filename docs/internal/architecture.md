@@ -155,7 +155,9 @@ Statuses: `queued` → `running` → (`waiting` → `queued` → `running`)* →
 keeps the attempt; a retry increments it.
 
 Retry policy is `task.retry ?? defaults.retry` (`attempts` 1, `exponential`, `base`
-30s, `max` 1h). A failed attempt retries when the error is retryable, `attempt <
+30s, `max` 1h): a task's `retry` replaces `defaults.retry` whole, and the fields it
+omits take the `Retry` schema defaults in `config/schema.ts`, never `defaults.retry`'s
+values. A failed attempt retries when the error is retryable, `attempt <
 attempts` and the executor is not stopping; the delay is `base` for `fixed` and
 `min(base × 2^(attempt−1), max)` for `exponential`. Between attempts the run stays
 `running` with the attempt's error and keeps its task's `concurrency`, but gives up its

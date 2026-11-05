@@ -228,8 +228,9 @@ The executor is a worker pool bounded by `workers` globally and `concurrency` pe
 - `timeout` (task's, else `defaults.timeout`, 15m) bounds each attempt's active work;
   the timer aborts `ctx.signal`. Waiting time is excluded (above).
 - `retry` (task's, else `defaults.retry`: `attempts: 1`, `exponential`, `base: 30s`,
-  `max: 1h`): `fixed` waits `base`; `exponential` waits `min(base × 2^(attempt−1),
-  max)`. Between attempts the run stays `running` with the attempt's error in
+  `max: 1h`; a task's `retry` replaces `defaults.retry` whole, its omitted fields
+  take these built-in values): `fixed` waits `base`; `exponential` waits
+  `min(base × 2^(attempt−1), max)`. Between attempts the run stays `running` with the attempt's error in
   `run.error`, which the next attempt sees (the agent runner puts it in the prompt).
 - Retryable is the default. An error is final when it carries `retryable === false`
   (`NonRetryableError` in `actions/types.ts`, `BudgetExceededError`,

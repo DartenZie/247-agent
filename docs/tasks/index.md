@@ -77,7 +77,8 @@ everything about it: the event that started it, the result or the error, each at
 the model calls and their cost.
 
 - **`concurrency`** is how many runs of this task may execute at once. The default is
-  1. `workers` in `agent.yaml` caps all tasks together; its default is 4.
+  1 for every task, so the runs of an event-triggered task execute one at a time
+  unless you raise it. `workers` in `agent.yaml` caps all tasks together; its default is 4.
 - **`timeout`** bounds each attempt of active work. The default comes from
   `defaults.timeout` in `agent.yaml`, 15 minutes. Time a run spends `waiting`, for a
   human's reply or a batch result, does not count. When the timeout expires the attempt
@@ -86,7 +87,10 @@ the model calls and their cost.
   `running` between them, with the last error recorded, and `task.<name>.failed` is
   published once, after the last attempt. With `backoff: fixed` every pause is `base`;
   with `exponential` the pause before attempt *n* is `base × 2^(n−1)`, capped at `max`.
-  The default is a single attempt.
+  A task without `retry` uses `defaults.retry` from `agent.yaml`, normally a single
+  attempt. A task with `retry` replaces `defaults.retry` as a whole: the fields it
+  leaves out take the built-in defaults (`attempts: 1`, `backoff: exponential`,
+  `base: 30s`, `max: 1h`), not the values in `agent.yaml`.
 
 ```yaml
 retry: { attempts: 3, backoff: exponential, base: 30s, max: 1h }
