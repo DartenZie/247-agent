@@ -152,6 +152,31 @@ describe('LlmService.call', () => {
     });
   });
 
+  it('logs why a billed response was unusable on its llm.call line (#162)', async () => {
+    fake = fakeProviderFactory({
+      output: null,
+      usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 },
+      stopReason: 'end',
+      error: 'anthropic: failed to parse the structured output: Unexpected token',
+    });
+    const r = run();
+    const res = await call(service(), {}, r);
+    expect(res.error).toMatch(/failed to parse/);
+    expect(env.store.ledger.listByRun(r.id)).toHaveLength(1);
+    const line = env.lines.find((l) => l.msg === 'llm.call');
+    expect(line).toMatchObject({
+      error: 'anthropic: failed to parse the structured output: Unexpected token',
+      stop_reason: 'end',
+    });
+    expect(JSON.stringify(line)).not.toContain('classify this');
+    expect(JSON.stringify(line)).not.toContain('sk-ant');
+  });
+
+  it('leaves error off the llm.call line of a usable response (#162)', async () => {
+    await call(service());
+    expect(env.lines.find((l) => l.msg === 'llm.call')).not.toHaveProperty('error');
+  });
+
   it('renders provider headers from env and secrets', async () => {
     const s = service();
     await call(s, { provider: 'router' });

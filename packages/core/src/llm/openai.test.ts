@@ -252,6 +252,16 @@ describe('openai adapter: response mapping', () => {
     expect(res.usage.output).toBeGreaterThan(0);
     expect(res.error).toMatch(/openai: failed to parse the structured output/);
   });
+
+  it('keeps the response text out of the parse error (#162)', async () => {
+    const { res } = await call(response({ output: [textItem('hello secret text')] }), {
+      outputSchema: SCHEMA,
+    });
+    expect(res.error).toMatch(
+      /openai: failed to parse the structured output as JSON: Unexpected token/,
+    );
+    expect(res.error).not.toContain('secret');
+  });
 });
 
 describe('openai adapter: errors', () => {

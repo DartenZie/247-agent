@@ -238,6 +238,19 @@ describe('anthropic adapter: response mapping', () => {
     expect(res.error).toMatch(/anthropic: failed to parse the structured output/);
   });
 
+  it('keeps the response text out of the parse error (#162)', async () => {
+    const { res } = await call(
+      message({ content: [{ type: 'text', text: 'hello secret text' }] }),
+      {
+        outputSchema: SCHEMA,
+      },
+    );
+    expect(res.error).toMatch(
+      /anthropic: failed to parse the structured output as JSON: Unexpected token/,
+    );
+    expect(res.error).not.toContain('secret');
+  });
+
   it('does not parse a truncated structured output, so the runner reports the truncation', async () => {
     const { res } = await call(
       message({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"kind":"gen' }] }),

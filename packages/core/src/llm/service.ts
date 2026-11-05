@@ -180,7 +180,12 @@ export class LlmService implements LlmPort, BatchSource {
           effort: req.effort,
           signal: cctx.signal,
         }),
-      (res) => ({ stop_reason: res.stopReason }),
+      // `error` says why a billed response is unusable (#162); it is the adapter's
+      // message, never the prompt or the response text.
+      (res) => ({
+        stop_reason: res.stopReason,
+        ...(res.error === undefined ? {} : { error: res.error }),
+      }),
     );
   }
 
