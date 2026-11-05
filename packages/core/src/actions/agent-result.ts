@@ -1,5 +1,13 @@
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { z } from 'zod';
 
@@ -110,8 +118,20 @@ function readRegularFile(workspace: string, path: string, relative: string): str
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile()) {
+    // A hard link can name a file outside the workspace; an agent's own file has one name.
+    if (!st.isFile() || st.nlink > 1) {
       return invalid(`${relative} is not a regular file`);
+    }
+    // The open went by path, so a directory swapped for a symlink after the check above
+    // could have led it outside. Re-resolve the directory and require the same file there.
+    const realDir = realpathSync(dirname(path));
+    const there = lstatSync(join(realDir, basename(path)), { throwIfNoEntry: false });
+    if (
+      !isInside(realpathSync(workspace), realDir) ||
+      there?.dev !== st.dev ||
+      there.ino !== st.ino
+    ) {
+      return invalid(`${relative} is outside the workspace`);
     }
     const tooLarge = invalid(`${relative} is larger than ${String(MAX_RESULT_BYTES)} bytes`);
     if (st.size > MAX_RESULT_BYTES) {
@@ -161,11 +181,9 @@ export function readAgentResult(
   try {
     doc = JSON.parse(text);
   } catch (err) {
-    return {
-      ok: false,
-      missing: false,
-      error: `${relative} is not JSON: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    // V8's message quotes the start of the text; keep only where parsing stopped.
+    const at = /position \d+/.exec(err instanceof Error ? err.message : '');
+    return invalid(`${relative} is not JSON${at === null ? '' : ` (at ${at[0]})`}`);
   }
   const base = BaselineResult.safeParse(doc);
   if (!base.success) {

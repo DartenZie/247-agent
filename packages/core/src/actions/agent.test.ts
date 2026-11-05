@@ -1,6 +1,7 @@
 /* eslint-disable require-yield, @typescript-eslint/require-await -- scripted turns are generators by contract, whatever they do */
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1219,6 +1220,28 @@ describe('readAgentResult', () => {
       missing: false,
       error: expect.stringMatching(/RESULT.json is not a regular file/) as string,
     });
+    expect(JSON.stringify(read)).not.toContain('TOPSECRET');
+  });
+
+  it('refuses a hard-linked result file', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    const outside = join(dir, 'outside.json');
+    writeFileSync(outside, '{"status":"done","summary":"leaked"}');
+    linkSync(outside, join(ws, 'RESULT.json'));
+    const read = readAgentResult(ws, 'RESULT.json', undefined);
+    expect(read).toMatchObject({
+      error: expect.stringMatching(/RESULT.json is not a regular file/) as string,
+    });
+    expect(JSON.stringify(read)).not.toContain('leaked');
+  });
+
+  it('does not quote the file in a JSON parse error', () => {
+    const ws = join(dir, 'ws');
+    mkdirSync(ws);
+    writeFileSync(join(ws, 'RESULT.json'), 'TOPSECRET line');
+    const read = readAgentResult(ws, 'RESULT.json', undefined);
+    expect(read).toMatchObject({ error: expect.stringMatching(/not JSON/) as string });
     expect(JSON.stringify(read)).not.toContain('TOPSECRET');
   });
 
