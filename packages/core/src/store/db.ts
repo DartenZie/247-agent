@@ -97,6 +97,24 @@ function copyBeforeMigration(db: Database.Database, path: string): void {
   }
 }
 
+/**
+ * Copies the open database to `dest` with SQLite's online backup API: a consistent
+ * snapshot taken in steps between which the daemon keeps writing. `dest` must not exist;
+ * it is created 0600 (it holds every payload and transcript) and is on disk when the
+ * promise settles. A failed copy removes `dest`.
+ */
+export async function backupDatabase(db: Database.Database, dest: string): Promise<void> {
+  closeSync(openSync(dest, 'wx', 0o600));
+  try {
+    chmodSync(dest, 0o600);
+    await db.backup(dest);
+    syncFile(dest, 'r+');
+  } catch (err) {
+    rmSync(dest, { force: true });
+    throw err;
+  }
+}
+
 function syncFile(path: string, flags: 'r' | 'r+'): void {
   const fd = openSync(path, flags);
   try {

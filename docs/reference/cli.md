@@ -225,6 +225,23 @@ Flags: `--json`, `--socket`.
 
 Prints `GET /metrics`, the Prometheus text exposition, to stdout. Only `--socket`. Exit 0.
 
+### `oa backup <file> [options]`
+
+Writes a consistent copy of the daemon's database to `<file>` while the daemon runs
+(`POST /v1/backup`). `<file>` is a path on the machine that runs `oa`, created with mode
+0600. The copy is written to a hidden file in the same directory first, so `<file>`
+either holds the whole copy or does not change. The request has no timeout.
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--force` | replace `<file>` when it exists | off |
+| `--socket <path>` | the daemon socket | see above |
+
+Output: `wrote <file>`. Exit 1 when `<file>` exists without `--force`
+(`<file> already exists; use --force to replace it`), when it cannot be written, or when
+the daemon fails; exit 2 without exactly one file. [Backups](../operations/production.md#backups)
+shows how to schedule it and how to restore.
+
 ### `oa help [command]`, `oa version`
 
 `help` prints the top-level usage or one command's usage to stdout and exits 0 (`oa`

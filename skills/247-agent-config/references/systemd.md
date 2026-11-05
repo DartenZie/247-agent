@@ -141,8 +141,10 @@ interrupted runs are retried per policy or failed as interrupted.
 - Metrics: `oa metrics` prints `GET /metrics`. Prometheus cannot scrape the socket, so
   set `metrics: { listen: 9464 }` in `agent.yaml` and scrape `127.0.0.1:9464`. Without a
   port, write `oa metrics` to a node_exporter textfile on a timer.
-- Backups: `state.db` (with its `-wal` file, or via `sqlite3 .backup`) and
-  `/etc/247-agent` in git.
+- Backups: `oa backup <file>` for `state.db` (never copy it and its `-wal` while the
+  daemon runs), `/etc/247-agent` in git, plus `/etc/credstore`, the unit drop-ins and
+  `/var/lib/247-agent/.claude`. Restore: stop, remove `state.db-wal` and `-shm`, install
+  the copy 0640 owned by `247-agent`, start. See docs/operations/production.md#backups.
 
 ## Hardening notes
 

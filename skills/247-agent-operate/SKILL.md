@@ -42,6 +42,7 @@ oa connector restart <name> [--json]           # kill, re-resolve secrets, respa
 oa reload [--json]                             # re-read agent.yaml + manifests + tasks, all or nothing; exit 1 when refused
 oa health [--json]                             # ok | degraded | failing per check (dispatcher, database, connectors); exit 0 only when ok
 oa metrics                                     # GET /metrics (Prometheus text)
+oa backup /backup/state.db                     # consistent copy of the running database
 ```
 
 `oa run` bypasses filters and cron overlap and gives the action `--event` as its

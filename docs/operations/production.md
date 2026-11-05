@@ -220,16 +220,74 @@ Do not mix the package and the installer on one machine: both own `/opt/247-agen
 
 ## Backups
 
-- `/etc/247-agent` in git is the configuration backup.
-- `/var/lib/247-agent/state.db` holds everything the daemon knows. Copy it with its `-wal`
-  file while the daemon runs, or take a consistent snapshot with `sqlite3
-  /var/lib/247-agent/state.db ".backup /backup/state.db"`.
-- `/etc/credstore` holds the secrets; back it up where you back up root's files.
+### What to save
 
-To restore `state.db` from a `.backup` snapshot or from the copy taken before a migration
-(`state.db.schema-<n>.bak`), stop the service first. Otherwise it reopens the file while
-you copy it. A copy taken with its `-wal` file goes back with that file instead of the
-`rm`.
+| Path | What it holds | How to save it |
+|---|---|---|
+| `/var/lib/247-agent/state.db` | everything the daemon knows: pending waits and approvals, poller cursors and dedup keys, state, run history, transcripts and the cost ledger | `oa backup` (below) |
+| `/etc/247-agent` | the configuration: `agent.yaml`, tasks, manifests, prompts, schemas | keep it in git |
+| `/etc/credstore` | the secrets | back it up where you back up root's files, encrypted |
+| `/etc/systemd/system/247-agent.service.d/` | your unit drop-ins: `LoadCredential=` lines, extra `ReadWritePaths=` | with `/etc/credstore`, or in git when it holds no secret |
+| `/var/lib/247-agent/.claude` | the Claude Code login of an agent logged in with a claude.ai account | with `/etc/credstore`: it is a credential |
+
+`repos/` and `work/` under `/var/lib/247-agent` do not need a backup. Base checkouts can be
+cloned again, and agent workspaces are temporary.
+
+### Back up the database
+
+Do not copy `state.db` and its `-wal` file while the daemon runs: the two files do not
+match at any one moment. Use `oa backup` instead. It writes a consistent copy while the
+daemon runs, and runs in flight continue:
+
+```sh
+oa backup /backup/state-$(date +%F).db
+```
+
+The daemon copies the database to a temporary file in `/var/lib/247-agent` and streams it
+to `oa`, so that directory needs free space for one more copy of the database. The
+backup file is created with mode 0600, because it holds every payload and transcript. `oa
+backup` does not replace an existing file unless you add `--force`.
+
+Back up once a day, and before each upgrade. A cursor or a wait recorded after the last
+backup is lost on restore, so a mailbox poller can process the mail of that interval
+again. Back up more often when that matters. A systemd timer runs the backup daily:
+
+```ini
+# /etc/systemd/system/247-agent-backup.service
+[Unit]
+Description=Back up the 247-agent database
+Requires=247-agent.service
+After=247-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'exec /opt/247-agent/bin/oa backup --force /backup/247-agent-state-$(date +%%a).db'
+
+# /etc/systemd/system/247-agent-backup.timer
+[Unit]
+Description=Back up the 247-agent database daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it with `systemctl enable --now 247-agent-backup.timer`. The weekday in the file
+name keeps the last seven backups.
+
+### Restore
+
+To restore `state.db` from an `oa backup` file or from the copy taken before a migration
+(`state.db.schema-<n>.bak`):
+
+1. Stop the service. Otherwise the daemon writes to the file while you replace it.
+2. Remove the `-wal` and `-shm` files. They belong to the old database, and SQLite
+   would apply them to the restored one.
+3. Install the backup as `state.db`, owned by the service user, with mode 0640.
+4. Start the service.
 
 ```sh
 systemctl stop 247-agent
@@ -237,6 +295,13 @@ rm -f /var/lib/247-agent/state.db-wal /var/lib/247-agent/state.db-shm
 install -o 247-agent -g 247-agent -m 0640 /backup/state.db /var/lib/247-agent/state.db
 systemctl start 247-agent
 ```
+
+The daemon treats runs that were in flight when the backup was taken as runs a restart
+interrupted, and recovers them as [after a crash](#stop-crash-restart).
+
+On a new server, install 247-agent first. Then restore `/etc/247-agent`, `/etc/credstore`,
+the drop-ins and `/var/lib/247-agent/.claude` (owned by `247-agent`), run `systemctl
+daemon-reload`, and restore the database as above.
 
 ## Logs
 
