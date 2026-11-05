@@ -660,8 +660,10 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 
   it('rejects oversized bodies', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: 'a'.repeat(2 * 1024 * 1024) });
-    const res = await raw('POST', '/v1/events', big).catch(() => ({ status: 413, body: null }));
-    expect(res.status).toBe(413);
+    await expect(raw('POST', '/v1/events', big)).resolves.toEqual({
+      status: 413,
+      body: { error: 'request body exceeds 1048576 bytes' },
+    });
   });
 });
 
