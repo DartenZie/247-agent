@@ -17,13 +17,14 @@ connectors/email/src/
   imap.ts     imapflow: UID cursor owned by the caller, UIDVALIDITY tracking, initial: none | all, partial fetch up to max_message_bytes, mark_read
   pop3.ts     own POP3 client: UIDL-based "seen" list (max 20 000), a pending batch confirmed by since_uid, STLS, delete_after_fetch
   send.ts     nodemailer: footer and footer_html, in_reply_to → References, attachments from content
-  main.ts     runConnector: the three ops; no network call at start
+  tools.ts    the three ops (zod inputs) over a Mailbox and the outgoing config
+  main.ts     runConnector: builds the mailbox, then tools.ts; no network call at start
 ```
 
 Tests run without the network: `pop3.test.ts` starts a fake POP3 server in-process,
 `imap.test.ts` drives the mailbox with a fake client and checks the STARTTLS refusal
 against an in-process plain IMAP server, `send.test.ts` renders through nodemailer's
-stream transport. Successful STARTTLS and STLS upgrades are not covered by the unit
+stream transport. `tools.test.ts` lists the registered tools over an in-memory MCP transport and checks their names against the `ops` of `docs/examples/connectors.d/email.yaml`. Successful STARTTLS and STLS upgrades are not covered by the unit
 tests; the smoke rig covers them against real servers:
 
 ```

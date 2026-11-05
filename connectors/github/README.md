@@ -15,12 +15,13 @@ connectors/github/src/
   config.ts   zod schema: token, repos (owner/name, lower-cased, deduplicated), api_base, limits
   api.ts      REST over fetch: auth headers, JSON, errors without the token, rate-limit reset
   ops.ts      repository scope, paging (min(100, limit) per page, 100 when filtering), result slimming, every op
-  main.ts     runConnector: GET /user at start (a 403 is tolerated for an installation token), the op definitions (zod inputs)
+  tools.ts    the op definitions (zod inputs) over GitHubOps
+  main.ts     runConnector: GET /user at start (a 403 is tolerated for an installation token), then tools.ts
 ```
 
 `ops.test.ts` runs every op against a fake GitHub behind the injected `fetch` (routing by
 method and path, recording calls): scope refusals, paging, the poller shape, write
-payloads and error text. There is no smoke rig: GitHub cannot run in a container. To try
+payloads and error text. `tools.test.ts` lists the registered tools over an in-memory MCP transport and checks their names against the `ops` of `docs/examples/connectors.d/github.yaml` plus the four write ops the example leaves out (`create_issue`, `update_issue`, `remove_label`, `create_pull_request`). There is no smoke rig: GitHub cannot run in a container. To try
 the real thing by hand:
 
 ```

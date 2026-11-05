@@ -29,7 +29,11 @@ touch the network or a real model: connector tests inject a fake `fetch` or a fa
 server library, adapter tests drive the real SDK through `recordingFetch()` from
 `packages/core/src/llm/testing.ts`, and runner tests use `fakeLlmPort` and
 `fakeProviderFactory()` from the same place. Tests in other packages reach the core's
-sources, not its `dist/` (`vitest.config.js`).
+sources, not its `dist/` (`vitest.config.js`). Each connector with ops has a `tools.test.ts`
+that lists its registered tools over an in-memory MCP transport (`listTools` from
+`@247-agent/connector-sdk/testing`) and compares the names with the `ops` of its example
+manifest in `docs/examples/connectors.d/`, so a renamed or removed op fails until the
+manifest follows.
 
 A test that needs a directory makes its own with `mkdtempSync` and deletes it in
 `afterEach`, also when the test or its setup fails. It never writes into a fixed path

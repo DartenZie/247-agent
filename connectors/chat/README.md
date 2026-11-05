@@ -18,7 +18,8 @@ connectors/chat/src/
   bot.ts          Telegram: send, ask, the update handler and the poll loop over a narrow CoreLike port
   matrix.ts       the Client-Server API over fetch: bearer token, errcode and retry_after_ms on errors
   matrix-bot.ts   Matrix: join, send, ask with keycap reactions, the event handler and the sync loop
-  main.ts         runConnector: getMe / whoami + join at start (a bad token ends the process), the two ops
+  tools.ts        the two ops (zod inputs) over the Bot interface both backends implement
+  main.ts         runConnector: getMe / whoami + join at start (a bad token ends the process), then tools.ts
 ```
 
 Tests run without the network: `test-helpers.ts` has a fake Bot API behind the injected
@@ -28,7 +29,7 @@ the ask → reply flow for buttons and text replies, answers from users not in `
 the poll loop's backoff. `matrix-bot.test.ts` does the same for Matrix against a fake
 homeserver behind `fetch`: alias resolution, reactions and text replies as answers,
 ignored edits and encrypted rooms, the `since` cursor, a limited timeline's gap filled from `/messages`, a rejected
-`since` token, a retried batch and the 429 wait.
+`since` token, a retried batch and the 429 wait. `tools.test.ts` lists the registered tools over an in-memory MCP transport and checks their names against the `ops` of `docs/examples/connectors.d/chat.yaml`.
 The Matrix backend also runs against a real Synapse in the smoke rig (Telegram has no
 server one can run):
 

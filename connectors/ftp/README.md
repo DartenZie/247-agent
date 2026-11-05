@@ -17,12 +17,13 @@ connectors/ftp/src/
   sftp.ts     ssh2-sftp-client adapter behind a narrow SftpLib interface; host key pinning, realpath
   ftp.ts      basic-ftp adapter behind a narrow FtpLib interface (FTP and FTPS)
   types.ts    FileClient, FileEntry, FtpOpError and its codes (not_found, too_large, exists, path), op shapes
-  main.ts     runConnector: the op definitions (zod inputs); no connection at start
+  tools.ts    the op definitions (zod inputs) over FileOps
+  main.ts     runConnector: builds FileOps, then tools.ts; no connection at start
 ```
 
 Tests run without the network: `ops.test.ts` drives every op against an in-memory
 `FileClient`; `confine.test.ts` adds server-side symlinks to it; `sftp.test.ts` and `ftp.test.ts` inject fake library objects through the
-factories and assert the calls, option mapping and error handling. The wire is covered by
+factories and assert the calls, option mapping and error handling. `tools.test.ts` lists the registered tools over an in-memory MCP transport and checks their names against the `ops` of `docs/examples/connectors.d/ftp.yaml`. The wire is covered by
 the smoke rig against real servers (atmoz/sftp built at a pinned commit, vsftpd in plain
 FTP and in forced FTPS):
 
