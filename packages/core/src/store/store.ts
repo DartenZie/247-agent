@@ -1,5 +1,6 @@
 import type { Database } from 'better-sqlite3';
 
+import { RunAttemptStore } from './attempts.js';
 import { BatchStore } from './batches.js';
 import { CursorStore } from './cursors.js';
 import { backupDatabase, openDatabase } from './db.js';
@@ -15,6 +16,8 @@ export interface Store {
   readonly db: Database;
   readonly events: EventStore;
   readonly runs: RunStore;
+  /** One row per attempt of a run: times, status, error, output tail. */
+  readonly attempts: RunAttemptStore;
   readonly cursors: CursorStore;
   readonly state: StateStore;
   readonly waits: WaitStore;
@@ -47,6 +50,7 @@ export function openStore(path: string): Store {
     db,
     events: new EventStore(db),
     runs: new RunStore(db),
+    attempts: new RunAttemptStore(db),
     cursors,
     state: new StateStore(db),
     waits: new WaitStore(db),

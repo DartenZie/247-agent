@@ -255,7 +255,9 @@ describe('oa runs', () => {
     const id = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
     out = [];
     expect(await oa('runs', 'logs', id, '--follow')).toBe(0);
-    expect(out).toEqual([`no transcript for ${id} (ok, succeeded): only agent runs record one`]);
+    expect(out).toEqual([
+      `no output for ${id} (ok, succeeded): it printed nothing and has no agent transcript`,
+    ]);
     out = [];
 
     const base = { run_id: id, ts: '2026-09-29T10:00:00.000Z', turn: 1 as const };
@@ -313,6 +315,80 @@ describe('oa runs', () => {
     );
     expect(await oa('runs', 'logs', 'run_nope')).toBe(1);
     expect(await oa('runs', 'logs')).toBe(2);
+  });
+});
+
+describe('the attempts and output of a run (#89)', () => {
+  /** Runs `ok`, then gives it two attempts as a retried shell run would leave them. */
+  async function retried(): Promise<string> {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    const id = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    out = [];
+    const attempts = daemon.core.store.attempts;
+    attempts.deleteForRuns([id]);
+    attempts.start(id, 1, '2026-09-29T10:00:00.000Z');
+    attempts.setOutput(id, 1, { stdout: 'fetching\n', stderr: 'disk full\nretry later\n' });
+    attempts.end(id, 1, {
+      status: 'failed',
+      finished_at: '2026-09-29T10:00:01.500Z',
+      error: 'exit code 1: disk full',
+    });
+    attempts.start(id, 2, '2026-09-29T10:00:05.000Z');
+    attempts.setOutput(id, 2, { stdout: 'done', stderr: null });
+    attempts.end(id, 2, {
+      status: 'succeeded',
+      finished_at: '2026-09-29T10:00:06.000Z',
+      error: null,
+    });
+    return id;
+  }
+
+  it('lists each attempt in oa runs show, and in its JSON', async () => {
+    const id = await retried();
+    expect(await oa('runs', 'show', id)).toBe(0);
+    const at = out.findIndex((l) => l.startsWith('attempts'));
+    expect(out.slice(at, at + 3)).toEqual([
+      'attempts    1  failed     2026-09-29T10:00:00.000Z  took 1.5s  exit code 1: disk full',
+      '            2  succeeded  2026-09-29T10:00:05.000Z  took 1.0s',
+      `output      yes  (oa runs logs ${id})`,
+    ]);
+    out = [];
+    expect(await oa('runs', 'show', id, '--json')).toBe(0);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      attempts: [
+        { attempt: 1, status: 'failed', stderr: 'disk full\nretry later\n' },
+        { attempt: 2, status: 'succeeded', stdout: 'done' },
+      ],
+    });
+  });
+
+  it('prints the output of a non-agent run by attempt in oa runs logs, or as JSON lines', async () => {
+    const id = await retried();
+    expect(await oa('runs', 'logs', id)).toBe(0);
+    expect(out).toEqual([
+      'attempt 1  failed  2026-09-29T10:00:00.000Z  took 1.5s  exit code 1: disk full',
+      '  stdout',
+      '    fetching',
+      '  stderr',
+      '    disk full',
+      '    retry later',
+      'attempt 2  succeeded  2026-09-29T10:00:05.000Z  took 1.0s',
+      '  stdout',
+      '    done',
+    ]);
+    out = [];
+    expect(await oa('runs', 'logs', id, '--json')).toBe(0);
+    expect(out.map((l) => (JSON.parse(l) as { attempt: number }).attempt)).toEqual([1, 2]);
+  });
+
+  it('records a real failed shell run as one attempt', async () => {
+    expect(await oa('run', 'bad', '--wait')).toBe(1);
+    const id = /(run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    out = [];
+    expect(await oa('runs', 'show', id, '--json')).toBe(1);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({
+      attempts: [{ attempt: 1, status: 'failed', error: 'exit code 1' }],
+    });
   });
 });
 

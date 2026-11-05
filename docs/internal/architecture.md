@@ -260,7 +260,7 @@ packages/core/src/
   daemon.ts          agent.yaml → secrets backend → manifests → core → API; reload with FIXED_KEYS
   core.ts            wires everything, defaultRunners, start/stop/reload, scrape-time gauges
   config/            zod schemas (agent.ts, schema.ts, connector.ts, retention.ts), load.ts, validators.ts, crosscheck.ts, check.ts, lint.ts, walk.ts
-  store/             better-sqlite3: db.ts, migrations.ts, events, runs, waits, state, ledger, transcripts, batches, cursors, retention.ts (the SQL)
+  store/             better-sqlite3: db.ts, migrations.ts, events, runs, waits, state, ledger, transcripts, attempts, batches, cursors, retention.ts (the SQL)
   bus/               publish.ts, matcher.ts, dispatcher.ts, manual.ts, bus.ts
   scheduler/cron.ts  croner jobs → cron.tick
   executor/          executor.ts: the worker pool and run lifecycle
@@ -287,6 +287,8 @@ Ports between the parts, all on `ActionContext` (`actions/types.ts`):
 - `ctx.render`, `ctx.renderText`, `ctx.scope`, `ctx.state`, `ctx.secrets`: templating
   over `{event, result, state, secrets, env, run, item, steps}`.
 - `ctx.transcripts`: where an agent run writes its transcript.
+- `ctx.output`: where a runner hands what its child processes printed; the executor
+  keeps a capped, secret-redacted tail per attempt in `run_attempts`.
 
 The store is reached only by the executor, the dispatcher, the LLM service, retention
 and the API; runners never touch it. Everything is in-process and single-node on

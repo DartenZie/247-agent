@@ -110,6 +110,19 @@ DEFAULT 0`, `usd REAL`, `priced_by` with a CHECK on `table`|`provider`|`unpriced
 `transcripts_run(run_id, id)`. Written by `actions/agent-transcript.ts` through
 `ctx.transcripts`, with secrets redacted before the row exists.
 
+**`run_attempts`**: `run_id REFERENCES runs(id)`, `attempt INTEGER`, `status` with a CHECK on
+`running`|`waiting`|`succeeded`|`failed`|`cancelled`|`interrupted`, `started_at`,
+`finished_at`, `error`, `stdout`, `stderr`, `PRIMARY KEY (run_id, attempt)`. Written by the
+executor only (`store/attempts.ts`): a row when the attempt starts, its output tail when
+the runner returns, its end when a retry follows, the run finishes or a stop gives the
+attempt back (`interrupted`; the next start replaces the row). An attempt parked in a
+`wait` stays `waiting` with no `finished_at` and goes on, same row and start, when the
+run resumes. Recovery marks the open attempt of a run found `running` as `interrupted`.
+`stdout` and `stderr` are the last 4096 characters each stream printed
+(`executor/output-tail.ts`; a cut tail starts with `…`; `NULL` when silent), with the
+run's resolved secret values replaced by `***` before the row is written. At most
+`retry.attempts` (100) rows per run, so a run costs at most about 800 KiB of output.
+
 **`llm_batches`**: `batch_id TEXT PRIMARY KEY`, `run_id`, `task`, `attempt`, `provider`,
 `model`, `structured INTEGER`, `worst_usd REAL`, `submitted_at`. Index
 `llm_batches_run(run_id)`. No foreign key to `runs` on purpose: a run with a batch in
@@ -136,7 +149,7 @@ the write lock for long. The order and the conditions:
 
 1. **Runs** older than `runs` (`finished_at < cutoff`), in a terminal status, with no
    `llm_batches` row: for each batch, their `ledger` rows, their `transcripts`, their
-   `waits` row, then the runs. Active runs are never selected.
+   `run_attempts`, their `waits` row, then the runs. Active runs are never selected.
 2. **Ledger** rows older than `ledger` whose run is not `queued`, `running` or
    `waiting`.
 3. **Events** already dispatched (`seq <=` the cursor), older than `events`, referenced
@@ -179,5 +192,6 @@ the rest for the next one.
 - Every write that must be atomic with another goes through `store.transaction`; the
   executor's terminal transaction (status, `state_updates`, lifecycle event, emitted
   events, `waits` delete) is the model.
-- Secrets never reach a row: values are resolved per run and redacted from transcripts;
+- Secrets never reach a row: values are resolved per run and redacted from transcripts and
+  from the output tails in `run_attempts`;
   `state`, `events` and `runs.result` hold only what tasks and connectors put there.

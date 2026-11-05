@@ -110,9 +110,13 @@ describe('purgeStore', () => {
     transcript(oldDone.runId, 'old');
     transcript(oldDone.runId, 'old too');
     transcript(running.runId, 'live');
+    store.attempts.start(oldDone.runId ?? '', 1, ago(40));
+    store.attempts.start(running.runId ?? '', 1, ago(50));
 
     const counts = await purgeStore(store, NOW, policy());
     expect(counts).toEqual({ runs: 2, ledger: 1, transcripts: 2, events: 2 });
+    expect(store.attempts.listByRun(oldDone.runId ?? '')).toEqual([]);
+    expect(store.attempts.listByRun(running.runId ?? '')).toHaveLength(1);
     expect(store.transcripts.countByRun(oldDone.runId ?? '')).toBe(0);
     expect(store.transcripts.countByRun(running.runId ?? '')).toBe(1);
     expect(store.runs.getById(oldDone.runId ?? '')).toBeUndefined();

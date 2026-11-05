@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import {
   ACTIVE_STATUSES,
   ApiError,
+  type AttemptRecord,
   type RunRecord,
   type RunStatus,
   type TranscriptEntry,
@@ -15,9 +16,10 @@ import { eventLine, runLine, took, transcriptLines } from './format.js';
 export const RUNS_USAGE = `usage: oa runs <ls|show <id>|logs <id>|cancel <id>> [options]
 
 ls          the newest runs, one per line: id, task, status, created, duration, error
-show <id>   one run: its trigger event, timings, ledger rows and result or error
+show <id>   one run: its trigger event, timings, attempts, ledger rows and result or error
 logs <id>   the run's agent transcript: prompt, messages, tool calls, permissions,
-            usage, stop and result (other action kinds record none)
+            usage, stop and result; for other action kinds, the tail of what each
+            attempt printed to stdout and stderr
 cancel <id> end a queued, running or waiting run as cancelled: a queued run never
             starts, a waiting run stops waiting, a running run's action is aborted;
             publishes task.<name>.cancelled
@@ -142,7 +144,7 @@ type Api = ReturnType<typeof client>;
 
 async function show(api: Api, id: string, json: boolean, io: Io): Promise<number> {
   const run: RunRecord = await api.getRun(id);
-  const [event, ledger, transcript] = await Promise.all([
+  const [event, ledger, transcript, { attempts }] = await Promise.all([
     api.getEvent(run.event_id).catch((err: unknown) => {
       if (err instanceof ApiError && err.status === 404) {
         return undefined;
@@ -151,6 +153,7 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
     }),
     api.getRunLedger(id),
     api.getTranscript(id, { limit: 1 }),
+    api.getRunAttempts(id),
   ]);
   if (json) {
     io.out(
@@ -158,6 +161,7 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
         run,
         event: event ?? null,
         ledger,
+        attempts,
         has_transcript: transcript.entries.length > 0,
       }),
     );
@@ -179,6 +183,15 @@ async function show(api: Api, id: string, json: boolean, io: Io): Promise<number
   }
   if (run.finished_at !== null) {
     row('finished', `${run.finished_at}  (took ${took(run.started_at, run.finished_at)})`);
+  }
+  if (attempts.length > 1) {
+    const width = Math.max(...attempts.map((a) => a.status.length));
+    attempts.forEach((a, i) => {
+      row(i === 0 ? 'attempts' : '', `${String(a.attempt)}  ${attemptLine(a, width)}`);
+    });
+  }
+  if (attempts.some((a) => a.stdout !== null || a.stderr !== null)) {
+    row('output', `yes  (oa runs logs ${run.id})`);
   }
   if (ledger.entries.length > 0) {
     row(
@@ -238,11 +251,55 @@ async function logs(
     await sleep(POLL_MS);
     run = await api.getRun(id);
   }
+  if (printed === 0) {
+    printed = printOutput((await api.getRunAttempts(id)).attempts, opts.json, io);
+  }
   if (printed === 0 && !opts.json) {
     io.out(
-      `no transcript for ${run.id} (${run.task}, ${run.status}): only agent runs record one` +
+      `no output for ${run.id} (${run.task}, ${run.status}): it printed nothing and has no agent transcript` +
         (run.error === null ? '' : `; error: ${run.error}`),
     );
   }
   return EXIT.ok;
+}
+
+/** `<status>  <started>  took <d>  <error>`, the status padded to `width`. */
+function attemptLine(a: AttemptRecord, width = 0): string {
+  const parts = [a.status.padEnd(width), a.started_at];
+  if (a.finished_at !== null) {
+    parts.push(`took ${took(a.started_at, a.finished_at)}`);
+  }
+  if (a.error !== null) {
+    parts.push(a.error);
+  }
+  return parts.join('  ');
+}
+
+/** What the attempts of a non-agent run printed; returns how many attempts had output. */
+function printOutput(attempts: readonly AttemptRecord[], json: boolean, io: Io): number {
+  let printed = 0;
+  for (const a of attempts) {
+    if (a.stdout === null && a.stderr === null) {
+      continue;
+    }
+    printed++;
+    if (json) {
+      io.out(JSON.stringify(a));
+      continue;
+    }
+    io.out(`attempt ${String(a.attempt)}  ${attemptLine(a)}`);
+    for (const [name, text] of [
+      ['stdout', a.stdout],
+      ['stderr', a.stderr],
+    ] as const) {
+      if (text === null) {
+        continue;
+      }
+      io.out(`  ${name}`);
+      for (const line of text.replace(/\n$/, '').split('\n')) {
+        io.out(`    ${line}`);
+      }
+    }
+  }
+  return printed;
 }

@@ -50,6 +50,16 @@ export interface AgentClients {
   restart(connector: string, reason: string): Promise<unknown>;
 }
 
+export type OutputStream = 'stdout' | 'stderr';
+
+/**
+ * Where a runner hands what its child processes printed (`ctx.output`). The executor keeps a
+ * capped, secret-redacted tail per stream on the run's attempt (docs/internal/actions.md).
+ */
+export interface RunOutput {
+  write(stream: OutputStream, text: string): void;
+}
+
 /** What a `wait` suspends the run for (docs/internal/actions.md). */
 export interface WaitSpec {
   /** Event type pattern (`*` = one segment). */
@@ -112,6 +122,8 @@ export interface ActionContext {
   readonly agents?: AgentClients | undefined;
   /** Where `agent` actions persist their session transcript (the store's `transcripts`). */
   readonly transcripts?: TranscriptSink | undefined;
+  /** The attempt's output tail; a `shell` step writes its stdout and stderr here. */
+  readonly output?: RunOutput | undefined;
   /**
    * Parks the run in `waiting` until an event matches `spec` or it times out; the executor
    * then starts the runner again with `resume` set. The returned promise never resolves:

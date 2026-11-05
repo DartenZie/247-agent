@@ -148,6 +148,17 @@ Batches request the run already submitted still completes and is billed.
 200 `{"run_id": "...", "entries": [<TranscriptEntry>…]}`. Empty for runs of actions
 other than `agent`. 404 for an unknown run.
 
+### `GET /v1/runs/{id}/attempts`
+
+200 `{"run_id": "...", "attempts": [<AttemptRecord>…]}`, oldest first. An
+`AttemptRecord` is `{run_id, attempt, status, started_at, finished_at, error, stdout,
+stderr}`. `status` is `running`, `waiting` (the run is parked in a `wait`; the attempt
+goes on when it resumes), `succeeded`, `failed`, `cancelled` or `interrupted` (a stop or
+a restart cut it short). `stdout` and `stderr` are the last 4096 characters of what the
+attempt's `shell` steps printed, with secret values replaced by `***`; a cut tail starts
+with `…`, and a stream that printed nothing is `null`. Other action kinds record the
+attempt with no output. 404 for an unknown run.
+
 ### `GET /v1/runs/{id}/ledger`
 
 200 `{"run_id": "...", "entries": [<LedgerEntry>…], "total_usd": 0.0123}`, the run's

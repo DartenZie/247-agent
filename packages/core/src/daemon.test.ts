@@ -611,6 +611,19 @@ describe('POST /v1/runs and GET /v1/runs', () => {
     await expect(api.getRunLedger('run_nope')).rejects.toMatchObject({ status: 404 });
   });
 
+  it("serves a run's attempts with their times, error and output (#89)", async () => {
+    const { run } = await api.run('bad');
+    await settled(run.id);
+    const body = await api.getRunAttempts(run.id);
+    expect(body).toMatchObject({
+      run_id: run.id,
+      attempts: [{ run_id: run.id, attempt: 1, status: 'failed', stdout: null, stderr: null }],
+    });
+    expect(body.attempts[0]?.error).toMatch(/exit code 1/);
+    expect(body.attempts[0]?.finished_at).not.toBeNull();
+    await expect(api.getRunAttempts('run_nope')).rejects.toMatchObject({ status: 404 });
+  });
+
   it("serves a run's transcript (empty for a shell run) and its ledger rows", async () => {
     const { run } = await api.run('ok');
     await settled(run.id);

@@ -25,6 +25,7 @@ import { RunNotActiveError } from '../executor/executor.js';
 import type { ReloadReport } from '../daemon.js';
 import type { CostGroup, CostRow, LedgerEntry } from '../store/ledger.js';
 import type { StateEntry } from '../store/state.js';
+import type { AttemptRecord } from '../store/attempts.js';
 import type { TranscriptEntry } from '../store/transcripts.js';
 import type { EventRecord, JsonValue, RunRecord } from '../store/types.js';
 
@@ -188,6 +189,12 @@ const TranscriptQuery = z.strictObject({
 export interface TranscriptBody {
   run_id: string;
   entries: TranscriptEntry[];
+}
+
+/** `GET /v1/runs/{id}/attempts`: oldest first. */
+export interface RunAttemptsBody {
+  run_id: string;
+  attempts: AttemptRecord[];
 }
 
 export interface RunLedgerBody {
@@ -356,6 +363,15 @@ function getTranscript(ctx: RouteContext, id: string, query: URLSearchParams): A
   return { status: 200, body: body as unknown as JsonValue };
 }
 
+function getRunAttempts(ctx: RouteContext, id: string): ApiResponse {
+  const run = requireRun(ctx, id);
+  const body: RunAttemptsBody = {
+    run_id: run.id,
+    attempts: ctx.core.store.attempts.listByRun(run.id),
+  };
+  return { status: 200, body: body as unknown as JsonValue };
+}
+
 function getRunLedger(ctx: RouteContext, id: string): ApiResponse {
   const run = requireRun(ctx, id);
   const entries = ctx.core.store.ledger.listByRun(run.id);
@@ -481,6 +497,7 @@ const RUN_CANCEL_PATH = /^\/v1\/runs\/([^/]+)\/cancel$/;
 const TASK_PAUSE_PATH = /^\/v1\/tasks\/([^/]+)\/(pause|resume)$/;
 const RUN_TRANSCRIPT_PATH = /^\/v1\/runs\/([^/]+)\/transcript$/;
 const RUN_LEDGER_PATH = /^\/v1\/runs\/([^/]+)\/ledger$/;
+const RUN_ATTEMPTS_PATH = /^\/v1\/runs\/([^/]+)\/attempts$/;
 const CONNECTOR_RESTART_PATH = /^\/v1\/connectors\/([^/]+)\/restart$/;
 const EVENT_PATH = /^\/v1\/events\/([^/]+)$/;
 const STATE_NS_PATH = /^\/v1\/state\/([^/]+)$/;
@@ -563,6 +580,11 @@ export function route(ctx: RouteContext, req: ApiRequest): ApiResponse | Promise
   if (transcript?.[1] !== undefined) {
     const id = transcript[1];
     return only(method, 'GET', () => getTranscript(ctx, id, req.query));
+  }
+  const attempts = RUN_ATTEMPTS_PATH.exec(path);
+  if (attempts?.[1] !== undefined) {
+    const id = attempts[1];
+    return only(method, 'GET', () => getRunAttempts(ctx, id));
   }
   const ledger = RUN_LEDGER_PATH.exec(path);
   if (ledger?.[1] !== undefined) {

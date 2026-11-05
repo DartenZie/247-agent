@@ -579,6 +579,149 @@ describe('Executor', () => {
   });
 });
 
+describe('the attempts of a run (#89)', () => {
+  const attempts = (task: string, eventId: string) =>
+    env.store.attempts.listByRun(env.store.runs.getByTaskAndEvent(task, eventId)?.id ?? '');
+
+  it('records a shell step output tail on its attempt', async () => {
+    const ex = make();
+    ex.start();
+    const trigger = publish('x.go');
+    bus.dispatcher.drain();
+    await ex.idle();
+    expect(attempts('echo', trigger.id)).toEqual([
+      {
+        run_id: env.store.runs.getByTaskAndEvent('echo', trigger.id)?.id,
+        attempt: 1,
+        status: 'succeeded',
+        started_at: '2026-09-19T10:00:00.000Z',
+        finished_at: '2026-09-19T10:00:00.000Z',
+        error: null,
+        stdout: 'hi\n',
+        stderr: null,
+      },
+    ]);
+  });
+
+  it('keeps every attempt of a retried run with its own times, error and output, secrets redacted', async () => {
+    current = config([
+      {
+        name: 'flaky',
+        trigger: { kind: 'event', type: 'x.flaky' },
+        action: { kind: 'shell', cmd: ['deploy', '${secrets.token}'] },
+        retry: { attempts: 3, backoff: 'fixed', base: '1ms' },
+      },
+    ]);
+    bus.dispatcher.setConfig(current);
+    let calls = 0;
+    executor = new Executor({
+      store: env.store,
+      bus,
+      clock: env.clock,
+      log: env.log,
+      config: () => current,
+      secrets: staticSecrets({ token: 'tok-s3cr3t' }),
+      runners: {
+        shell: (_a, ctx) => {
+          calls++;
+          env.clock.set(`2026-09-19T10:00:0${String(calls)}.000Z`);
+          ctx.output?.write('stdout', `try ${String(calls)} with tok-s3cr3t\n`);
+          if (calls < 3) {
+            ctx.output?.write('stderr', 'refused tok-s3cr3t\n');
+            return Promise.reject(new Error(`attempt ${String(calls)} refused`));
+          }
+          return Promise.resolve('ok');
+        },
+      },
+    });
+    executor.start();
+    const trigger = publish('x.flaky');
+    bus.dispatcher.drain();
+    await executor.idle();
+    expect(env.store.runs.getByTaskAndEvent('flaky', trigger.id)).toMatchObject({
+      status: 'succeeded',
+      attempt: 3,
+    });
+    expect(
+      attempts('flaky', trigger.id).map((a) => [
+        a.attempt,
+        a.status,
+        a.started_at,
+        a.finished_at,
+        a.error,
+        a.stdout,
+        a.stderr,
+      ]),
+    ).toEqual([
+      [
+        1,
+        'failed',
+        '2026-09-19T10:00:00.000Z',
+        '2026-09-19T10:00:01.000Z',
+        'attempt 1 refused',
+        'try 1 with ***\n',
+        'refused ***\n',
+      ],
+      [
+        2,
+        'failed',
+        '2026-09-19T10:00:01.000Z',
+        '2026-09-19T10:00:02.000Z',
+        'attempt 2 refused',
+        'try 2 with ***\n',
+        'refused ***\n',
+      ],
+      [
+        3,
+        'succeeded',
+        '2026-09-19T10:00:02.000Z',
+        '2026-09-19T10:00:03.000Z',
+        null,
+        'try 3 with ***\n',
+        null,
+      ],
+    ]);
+  });
+
+  it('records a cancelled attempt with what it printed', async () => {
+    const d = deferredRunner();
+    const ex = make({
+      shell: (a, ctx) => {
+        ctx.output?.write('stdout', 'working\n');
+        return d.runner(a, ctx);
+      },
+    });
+    ex.start();
+    const trigger = publish('x.go');
+    bus.dispatcher.drain();
+    await until(() => d.active() === 1);
+    const run = env.store.runs.getByTaskAndEvent('echo', trigger.id);
+    await ex.cancel(run?.id ?? '');
+    expect(attempts('echo', trigger.id)).toMatchObject([
+      { attempt: 1, status: 'cancelled', stdout: 'working\n' },
+    ]);
+    expect(attempts('echo', trigger.id)[0]?.finished_at).not.toBeNull();
+  });
+
+  it('closes the attempt a crash left open when recovery ends or retries the run', async () => {
+    const trigger = publish('x.go');
+    bus.dispatcher.drain();
+    const run = env.store.runs.getByTaskAndEvent('echo', trigger.id);
+    env.store.runs.setStatus(run?.id ?? '', 'running', { started_at: 'earlier', attempt: 1 });
+    env.store.attempts.start(run?.id ?? '', 1, 'earlier');
+    make().start();
+    await executor?.idle();
+    expect(attempts('echo', trigger.id)).toMatchObject([
+      {
+        attempt: 1,
+        status: 'failed',
+        error: expect.stringMatching(/^interrupted/) as string,
+        finished_at: '2026-09-19T10:00:00.000Z',
+      },
+    ]);
+  });
+});
+
 describe('the child environment of a shell step', () => {
   afterEach(() => {
     delete process.env.MYAPP_X;

@@ -22,7 +22,8 @@ visible to a runner), `event` (the trigger event as the action should see it), `
 `log` (already tagged with `run_id`, `task`, `correlation_id`), `state` (a snapshot at
 run start), `secrets` (only the names the task's templates reference, resolved for
 this run), `scope` and `render`/`renderText`, and the optional ports: `connectors`,
-`llm`, `agents`, `transcripts`, `sandbox` (`defaults.sandbox`), `sandboxHost`,
+`llm`, `agents`, `transcripts`, `output` (the attempt's output tail: a runner whose
+child processes print hands their stdout and stderr to it), `sandbox` (`defaults.sandbox`), `sandboxHost`,
 `suspend`/`resume` for waits. A port is absent when the core runs without the matching
 component; a runner that needs one throws `NonRetryableError`.
 
@@ -88,7 +89,11 @@ and `cmd` render to strings; `stdin` is sent verbatim when a string, else as JSO
 `json_stdout` (parse failure fails the attempt), `exit_code` (the number, never a
 failure for a non-zero exit). In the first two modes a non-zero exit is `ShellError`
 with the last 1024 characters of stderr. A spawn failure or a signal fails in every
-mode. Each of stdout and stderr is kept up to 8 MiB. The child runs in a session and process
+mode. Each of stdout and stderr is kept up to 8 MiB. Whatever the outcome (success, a
+failed exit, an abort), the runner hands both to `ctx.output` before it returns or
+throws; the executor keeps the last 4096 characters of each on the attempt's
+`run_attempts` row, secrets redacted (docs/internal/store.md). Inside a `sequence` every
+`shell` step writes to the same tail, in order. The child runs in a session and process
 group of its own (`detached`); an abort sends SIGTERM to the group, then SIGKILL to it after 5 s,
 so grandchildren that hold stdout open do not keep the attempt running. Unsandboxed, the child starts from `ctx.childEnv` plus the action's
 `env`; the context always carries one, there is no fallback to `process.env`.

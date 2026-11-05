@@ -69,24 +69,24 @@ function event(over: Partial<Omit<EventRecord, 'seq'>> = {}): Omit<EventRecord, 
 describe('openStore', () => {
   it('migrates an empty file, sets WAL and is idempotent on re-open', () => {
     expect(store.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.db.pragma('user_version', { simple: true })).toBe(12);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(13);
     expect(store.cursors.get('dispatch')).toBe(0);
     const path = join(dir, 'state.db');
     store.close();
     store = openStore(path);
-    expect(store.db.pragma('user_version', { simple: true })).toBe(12);
+    expect(store.db.pragma('user_version', { simple: true })).toBe(13);
   });
 
   it('refuses a database whose schema is newer than this build', () => {
     const path = join(dir, 'state.db');
-    store.db.pragma('user_version = 13');
+    store.db.pragma('user_version = 14');
     store.close();
     expect(() => (store = openStore(path))).toThrow(
-      /schema version 13 is newer than this build's 12/,
+      /schema version 14 is newer than this build's 13/,
     );
     store = openStore(join(dir, 'other.db'));
     const db = new Database(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(13);
+    expect(db.pragma('user_version', { simple: true })).toBe(14);
     db.close();
   });
 
@@ -578,5 +578,87 @@ describe('TranscriptStore', () => {
     expect(() =>
       store.transcripts.append({ ...base, run_id: 'run_c', kind: 'text', text: 'x', data: null }),
     ).toThrow(/FOREIGN KEY/);
+  });
+});
+
+describe('RunAttemptStore', () => {
+  beforeEach(() => {
+    store.events.insert(event({ id: 'evt_a' }));
+    store.runs.insertQueued({
+      id: 'run_a',
+      task: 't',
+      event_id: 'evt_a',
+      correlation_id: 'cor_a',
+      created_at: '2026-09-19T10:00:00.000Z',
+    });
+  });
+
+  it('records each attempt with its times, status, error and output, in order', () => {
+    store.attempts.start('run_a', 1, 't1');
+    store.attempts.setOutput('run_a', 1, { stdout: 'out', stderr: 'err' });
+    store.attempts.end('run_a', 1, { status: 'failed', finished_at: 't2', error: 'boom' });
+    store.attempts.start('run_a', 2, 't3');
+    expect(store.attempts.listByRun('run_a')).toEqual([
+      {
+        run_id: 'run_a',
+        attempt: 1,
+        status: 'failed',
+        started_at: 't1',
+        finished_at: 't2',
+        error: 'boom',
+        stdout: 'out',
+        stderr: 'err',
+      },
+      {
+        run_id: 'run_a',
+        attempt: 2,
+        status: 'running',
+        started_at: 't3',
+        finished_at: null,
+        error: null,
+        stdout: null,
+        stderr: null,
+      },
+    ]);
+    expect(store.attempts.get('run_a', 2)?.status).toBe('running');
+    expect(store.attempts.get('run_a', 3)).toBeUndefined();
+    expect(() => {
+      store.attempts.start('run_missing', 1, 't1');
+    }).toThrow(/FOREIGN KEY/);
+  });
+
+  it('continues an attempt that resumes after a wait, and replaces one that runs again', () => {
+    store.attempts.start('run_a', 1, 't1');
+    store.attempts.setOutput('run_a', 1, { stdout: 'asked', stderr: null });
+    store.attempts.end('run_a', 1, { status: 'waiting', finished_at: null, error: null });
+    store.attempts.start('run_a', 1, 't2', { resume: true });
+    expect(store.attempts.get('run_a', 1)).toMatchObject({
+      status: 'running',
+      started_at: 't1',
+      stdout: 'asked',
+    });
+    store.attempts.closeOpen('run_a', { status: 'interrupted', finished_at: 't3', error: null });
+    store.attempts.start('run_a', 1, 't4');
+    expect(store.attempts.get('run_a', 1)).toMatchObject({
+      status: 'running',
+      started_at: 't4',
+      finished_at: null,
+      stdout: null,
+    });
+  });
+
+  it('closes only the attempts still open, and deletes the attempts of runs for retention', () => {
+    store.attempts.start('run_a', 1, 't1');
+    store.attempts.end('run_a', 1, { status: 'failed', finished_at: 't2', error: 'first' });
+    store.attempts.start('run_a', 2, 't3');
+    store.attempts.closeOpen('run_a', { status: 'succeeded', finished_at: 't4', error: null });
+    expect(
+      store.attempts.listByRun('run_a').map((a) => [a.status, a.finished_at, a.error]),
+    ).toEqual([
+      ['failed', 't2', 'first'],
+      ['succeeded', 't4', null],
+    ]);
+    expect(store.attempts.deleteForRuns(['run_a'])).toBe(2);
+    expect(store.attempts.listByRun('run_a')).toEqual([]);
   });
 });
