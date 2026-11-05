@@ -53,6 +53,7 @@ config:
     initial: none                       # first fetch with no cursor: skip what is there | all
     limit: 50                           # most messages one fetch_new returns
     max_body_chars: 100000              # body is cut here
+    max_message_bytes: 10000000         # IMAP: most bytes downloaded per message
     authserv_id: mx.example.com         # whose Authentication-Results fill `auth`
     delete_after_fetch: false           # POP3 only
   outgoing:
@@ -153,8 +154,9 @@ Each entry of `emails`:
 `payload.from == 'editor@example.com'` works. `body` is the text part, or a plain-text
 rendering of an HTML-only mail. Attachment contents are not returned, only their names
 and sizes. Over IMAP, a message larger than `max_message_bytes` is downloaded only up to
-that size: it gets `truncated: true`, and `attachments` lists only the attachments that
-start in the downloaded part. A message without a `Message-ID` gets one derived from a hash of the message,
+that size. It gets `truncated: true`, and `attachments` lists only the attachments that
+start in the downloaded part. The size of an attachment that the limit cuts is the size
+of the part that arrived. A message without a `Message-ID` gets one derived from a hash of the message,
 so a `dedup_key` built from it still works. `auth` holds the sender authentication
 results; [Trust the sender](#trust-the-sender) explains them.
 
@@ -163,8 +165,8 @@ as an entry with its `uid`, a hash-derived `message_id`, a `parse_error` that gi
 the reason, and empty other fields. The other messages and `last_uid` are returned as
 usual, so the cursor moves past it. To drop such entries, filter on `parse_error`.
 
-A connection that drops or times out during a call fails that call with the error. The
-connector keeps running, and the next call opens a new connection.
+Over IMAP, a connection that drops or times out during a call fails that call with the
+error. The connector keeps running, and the next call opens a new connection.
 
 ### Trust the sender
 
