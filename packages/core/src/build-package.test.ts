@@ -18,12 +18,19 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Runs `sha256sum -c` (Linux) or `shasum -a 256 -c` (macOS) on a checksum file in `dir`. */
+/** Runs `sha256sum -c` and `shasum -a 256 -c`, each one that is installed, on a checksum file in `dir`. */
 function checkSha256(dir: string, file: string) {
-  const hasSha256sum = spawnSync('sh', ['-c', 'command -v sha256sum']).status === 0;
-  return hasSha256sum
-    ? spawnSync('sha256sum', ['-c', file], { cwd: dir, encoding: 'utf8' })
-    : spawnSync('shasum', ['-a', '256', '-c', file], { cwd: dir, encoding: 'utf8' });
+  const has = (cmd: string) => spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0;
+  const runs = [
+    has('sha256sum')
+      ? spawnSync('sha256sum', ['-c', file], { cwd: dir, encoding: 'utf8' })
+      : undefined,
+    has('shasum')
+      ? spawnSync('shasum', ['-a', '256', '-c', file], { cwd: dir, encoding: 'utf8' })
+      : undefined,
+  ].filter((r) => r !== undefined);
+  expect(runs.length).toBeGreaterThan(0);
+  return runs;
 }
 
 describe.skipIf(process.platform === 'win32')('build-package.sh', () => {
@@ -58,9 +65,10 @@ describe.skipIf(process.platform === 'win32')('build-package.sh', () => {
       expect(readFileSync(join(out, `${name}.sha256`), 'utf8')).toMatch(
         new RegExp(`^[0-9a-f]{64} {2}${name.replace(/\./g, '\\.')}\\n$`),
       );
-      const check = checkSha256(out, `${name}.sha256`);
-      expect(check.status, check.stderr).toBe(0);
-      expect(check.stdout).toBe(`${name}: OK\n`);
+      for (const check of checkSha256(out, `${name}.sha256`)) {
+        expect(check.status, check.stderr).toBe(0);
+        expect(check.stdout).toBe(`${name}: OK\n`);
+      }
     }
   });
 });
