@@ -10,7 +10,7 @@ export const BACKUP_USAGE = `usage: oa backup <file> [options]
 
 Writes a consistent copy of the daemon's database to <file> while the daemon runs, with
 SQLite's online backup API. The daemon copies the database next to itself and streams the
-copy over the socket, so <file> is on the machine and in the directory you run oa from.
+copy over the socket, so <file> is a path on the machine you run oa on.
 The file is created 0600; it holds every payload, result and transcript.
 
 options:

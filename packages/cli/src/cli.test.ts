@@ -8,6 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -555,6 +556,28 @@ describe('oa backup', () => {
     expect(await main(['backup', file, '--socket', join(dir, 'nope.sock')], io)).toBe(1);
     expect(err[0]).toMatch(/cannot connect to the daemon/);
     expect(readdirSync(dir).filter((f) => f.startsWith('backup'))).toEqual([]);
+  });
+
+  it('survives a client that hangs up during the copy and removes its own copy', async () => {
+    const store = daemon.core.store;
+    const real = store.backup.bind(store);
+    let copied!: () => void;
+    const done = new Promise<void>((r) => (copied = r));
+    vi.spyOn(store, 'backup').mockImplementation(async (dest) => {
+      await new Promise((r) => setTimeout(r, 200));
+      await real(dest);
+      copied();
+    });
+    const req = request({ socketPath: daemon.config.socket, method: 'POST', path: '/v1/backup' });
+    req.on('error', () => undefined);
+    req.end();
+    setTimeout(() => req.destroy(), 50);
+    await done;
+    await vi.waitFor(() => {
+      expect(readdirSync(dir).filter((f) => f.startsWith('.'))).toEqual([]);
+    });
+    vi.restoreAllMocks();
+    expect(await oa('health')).toBe(0);
   });
 
   it('needs exactly one file', async () => {

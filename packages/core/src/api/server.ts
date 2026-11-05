@@ -191,6 +191,13 @@ function sendFile(
       log.warn('api.file_remove_failed', { file, error: errorMessage(err) });
     });
   };
+  // The client may have hung up while the file was being made; pipe() to a destroyed
+  // stream throws on newer Node instead of calling back.
+  if (res.destroyed || res.writableEnded) {
+    log.warn('api.file_send_failed', { file, error: 'the client disconnected' });
+    remove();
+    return;
+  }
   let size: number;
   try {
     size = statSync(file).size;
@@ -202,10 +209,18 @@ function sendFile(
     return;
   }
   res.writeHead(response.status, { 'content-type': response.contentType, 'content-length': size });
-  pipeline(createReadStream(file), res, (err) => {
-    if (err) {
-      log.warn('api.file_send_failed', { file, error: errorMessage(err) });
-    }
+  const source = createReadStream(file);
+  try {
+    pipeline(source, res, (err) => {
+      if (err) {
+        log.warn('api.file_send_failed', { file, error: errorMessage(err) });
+      }
+      remove();
+    });
+  } catch (err) {
+    log.warn('api.file_send_failed', { file, error: errorMessage(err) });
+    source.destroy();
+    res.destroy();
     remove();
-  });
+  }
 }

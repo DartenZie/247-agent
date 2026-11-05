@@ -85,7 +85,9 @@ A connector that must hold a secret the daemon should not see, or needs privileg
 `LoadCredential=` lines and the daemon never does. Drop-ins set `User=`, capabilities
 and credentials; `Group=247-agent` stays, which is how it reads `/etc/247-agent` and
 the daemon's socket (created `0660`), and the daemon's state directory is hidden from
-it.
+it. The directory hides the file only: anyone who can open the socket can read the whole
+database through `POST /v1/backup`, as they could read most of it through `/v1/runs`,
+`/v1/events` and `/v1/state`. The socket is the trust boundary, not the directory.
 
 ## The shell sandbox
 

@@ -248,6 +248,11 @@ to `oa`, so that directory needs free space for one more copy of the database. T
 backup file is created with mode 0600, because it holds every payload and transcript. `oa
 backup` does not replace an existing file unless you add `--force`.
 
+If `oa backup` is killed, it can leave a hidden `.<file>.<random>.partial` file next to
+the target. If the daemon is killed during a backup, it can leave a
+`.backup-<random>.db` file in `/var/lib/247-agent`. Delete these files. They are not
+complete backups.
+
 Back up once a day, and before each upgrade. A cursor or a wait recorded after the last
 backup is lost on restore, so a mailbox poller can process the mail of that interval
 again. Back up more often when that matters. A systemd timer runs the backup daily:
@@ -256,7 +261,7 @@ again. Back up more often when that matters. A systemd timer runs the backup dai
 # /etc/systemd/system/247-agent-backup.service
 [Unit]
 Description=Back up the 247-agent database
-Requires=247-agent.service
+Requisite=247-agent.service
 After=247-agent.service
 
 [Service]

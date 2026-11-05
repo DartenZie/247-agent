@@ -283,7 +283,8 @@ export class ApiClient {
         await rename(partial, dest);
       } else {
         await link(partial, dest);
-        await rm(partial);
+        // `dest` is complete now; a stale `.partial` is not worth failing the backup for.
+        await rm(partial, { force: true }).catch(() => undefined);
       }
     } catch (err) {
       await out.close().catch(() => undefined);
