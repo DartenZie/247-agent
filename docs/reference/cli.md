@@ -99,7 +99,7 @@ When no task would start a run for the event and no waiting run waits for it, `e
 also prints a warning on stderr. A mistyped type is the usual cause:
 
 ```
-warning: no task and no waiting run matches <type>; oa events show <event id> says why
+warning: no task would start a run for <type> and no waiting run matches it; oa events show <event id> says why
 ```
 
 `--json` prints the daemon's answer, with `tasks` and `waiting_runs`

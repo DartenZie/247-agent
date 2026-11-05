@@ -79,8 +79,9 @@ any other key that is not in the table, gets a 400.
 201 `{"status": "inserted", "event": <EventRecord>, "tasks": [<TaskMatch>…], "waiting_runs": ["run_…"]}`
 or 200 `{"status": "duplicate", "dedup_key": "<key>"}`. The core works out `tasks` and
 `waiting_runs` before it dispatches the event: a task whose trigger matches is
-`pending`, and `waiting_runs` lists the waiting runs whose wait the event matches. An
-invalid type or an unknown parent is a 400.
+`pending`, and `waiting_runs` lists the waiting runs whose wait the event matches. Both
+are `null` when the core could not work them out; the event is inserted all the same.
+An invalid type or an unknown parent is a 400.
 
 ### `GET /v1/events`
 

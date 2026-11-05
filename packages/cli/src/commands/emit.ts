@@ -60,10 +60,10 @@ export async function emit(args: string[], io: Io): Promise<number> {
     if (!values.json) {
       io.out(`inserted ${e.id} type=${e.type} correlation=${e.correlation_id}`);
     }
-    const starts = result.tasks.some((t) => t.outcome === 'pending' || t.outcome === 'started');
-    if (!starts && result.waiting_runs.length === 0) {
+    const starts = result.tasks?.some((t) => t.outcome === 'pending' || t.outcome === 'started');
+    if (starts === false && result.waiting_runs?.length === 0) {
       io.err(
-        `warning: no task and no waiting run matches ${e.type}; oa events show ${e.id} says why`,
+        `warning: no task would start a run for ${e.type} and no waiting run matches it; oa events show ${e.id} says why`,
       );
     }
     return EXIT.ok;

@@ -27,15 +27,15 @@ failure, 2 usage.
 ```
 oa validate <file>...                          # tasks files, manifests, agent.yaml (follows references)
 oa run <task> [--event f.json] [--type t] [--correlation id] [--wait] [--json]
-oa emit <type> [payload.json|-] [--source s] [--dedup-key k] [--parent evt] [--correlation id] [--json]
+oa emit <type> [payload.json|-] [--source s] [--dedup-key k] [--parent evt] [--correlation id] [--json]   # warns when no task would run
 oa runs ls [--status s] [--task t] [-n N] [--json]   # newest runs: id, task, status, created, duration, error
-oa runs show <id> [--json]                     # trigger event, timings, ledger rows, result or error; exit 1 if failed
+oa runs show <id> [--json]                     # trigger event, timings, what a waiting run waits for, ledger rows, result or error; exit 1 if failed
 oa runs logs <id> [--follow] [--json]          # the agent transcript (prompt, messages, tool calls, permissions, result)
 oa runs cancel <id> [--json]                   # end a queued, running or waiting run as cancelled; publishes task.<name>.cancelled
-oa tasks ls [--json]                           # configured tasks: name, trigger, active or paused since <time>
+oa tasks ls [--json]                           # configured tasks: trigger, active or paused, schedule and next fire or types and filter, last run, run counts
 oa tasks pause|resume <name> [--json]          # stop or restart new runs of a task; in-flight runs carry on; survives restarts
 oa events tail [--type t] [-n N] [--follow] [--json]   # newest events in order; --type takes a trigger pattern
-oa events show <id> [--json]
+oa events show <id> [--json]                   # the event, the run it started per task, and why each other task did not run
 oa cost [--by task|model|provider|day] [--since 7d] [--json]
 oa connector list [--json]                     # state, pid, restarts per connector
 oa connector restart <name> [--json]           # kill, re-resolve secrets, respawn; exit 1 if not up after

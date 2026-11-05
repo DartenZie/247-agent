@@ -128,7 +128,7 @@ export class Dispatcher {
     };
   }
 
-  private compileWaits(): CompiledWait[] {
+  private compileWaits(quiet = false): CompiledWait[] {
     const out: CompiledWait[] = [];
     for (const wait of this.store.waits.listPending()) {
       try {
@@ -138,6 +138,9 @@ export class Dispatcher {
           filter: wait.filter === null ? undefined : compileFilter(wait.filter),
         });
       } catch (err) {
+        if (quiet) {
+          continue;
+        }
         this.log.error('wait.invalid', {
           run_id: wait.run_id,
           task: wait.task,
@@ -199,7 +202,7 @@ export class Dispatcher {
     });
     const waitingRuns = dispatched
       ? []
-      : this.compileWaits()
+      : this.compileWaits(true)
           .filter((w) => this.waitMatches(w, event, true))
           .map((w) => w.wait.run_id);
     return { event_id: event.id, dispatched, runs, tasks, waiting_runs: waitingRuns };

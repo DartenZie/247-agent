@@ -106,7 +106,13 @@ export interface HealthBody {
  * waiting runs it ends, worked out before it is dispatched (`oa emit` warns on none).
  */
 export type EmitResponse =
-  | { status: 'inserted'; event: EventRecord; tasks: TaskMatch[]; waiting_runs: string[] }
+  | {
+      status: 'inserted';
+      event: EventRecord;
+      /** `null` when the explanation failed; the event is inserted all the same. */
+      tasks: TaskMatch[] | null;
+      waiting_runs: string[] | null;
+    }
   | { status: 'duplicate'; dedup_key: string };
 
 /** `GET /v1/events/{id}/tasks`: the runs the event started and why each other task did not run. */
@@ -261,8 +267,19 @@ function emit(ctx: RouteContext, body: unknown): ApiResponse {
   }
   // Synchronous with the publish: the dispatcher drains on a later macrotask, so a match is
   // still `pending` and the waits it ends are still armed.
-  const { tasks, waiting_runs } = ctx.core.bus.dispatcher.explain(result.event);
-  const answer: EmitResponse = { ...result, tasks, waiting_runs };
+  // The event is committed: an explanation that throws must not turn that into a 500, or a
+  // connector retrying without a dedup key would publish it twice.
+  let explained: Pick<EventExplanation, 'tasks' | 'waiting_runs'> | null = null;
+  try {
+    explained = ctx.core.bus.dispatcher.explain(result.event);
+  } catch {
+    // Left null: the answer says the explanation is missing.
+  }
+  const answer: EmitResponse = {
+    ...result,
+    tasks: explained?.tasks ?? null,
+    waiting_runs: explained?.waiting_runs ?? null,
+  };
   // The store's shape is already JSON; the cast just names it for the response type.
   return { status: 201, body: answer as unknown as JsonValue };
 }

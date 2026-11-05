@@ -524,12 +524,19 @@ describe('why a task did or did not run (#92)', () => {
     expect(out[0]).toMatch(/^inserted (evt_\w+) type=order\.recieved/);
     const id = /(evt_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
     expect(err).toEqual([
-      `warning: no task and no waiting run matches order.recieved; oa events show ${id} says why`,
+      `warning: no task would start a run for order.recieved and no waiting run matches it; oa events show ${id} says why`,
     ]);
     err = [];
     stdin = '{"total": 20}';
     expect(await oa('emit', 'order.received', '-')).toBe(0);
     expect(err).toEqual([]);
+    expect(await oa('tasks', 'pause', 'watch')).toBe(0);
+    expect(await oa('emit', 'order.received', '-')).toBe(0);
+    expect(err).toEqual([
+      expect.stringMatching(/^warning: no task would start a run for order\.received/) as string,
+    ]);
+    expect(await oa('tasks', 'resume', 'watch')).toBe(0);
+    err = [];
     expect(await oa('run', 'hold')).toBe(0);
     expect(await oa('emit', 'chat.reply', '--json')).toBe(0);
     expect(err).toEqual([]);
