@@ -125,8 +125,9 @@ action:
     - { kind: shell, when: "steps[1].payload.approved == `true`", cmd: [git, push, origin, "HEAD:main"] }
 ```
 
-Steps are `shell`, `connector` or `wait`, each with an optional `when` (bare JMESPath
-over the scope). `steps[i]` is the result of step i (`null` if skipped) for later
+Steps are `shell`, `connector`, `wait`, `llm`, `decide` or `agent` (at most one
+`agent`), each with an optional `when` (bare JMESPath over the scope). A model step is
+budgeted against the whole run (task and step `budget.max_usd` cap the run total). `steps[i]` is the result of step i (`null` if skipped) for later
 templates and `when`s. The run result is `{steps: [...]}`. A `wait` step checkpoints
 the sequence; after a restart or retry it resumes there. Use a sequence only for
 tightly coupled steps; anything another workflow might observe should be its own task

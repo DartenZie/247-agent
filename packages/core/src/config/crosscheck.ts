@@ -8,6 +8,7 @@ import {
   type SandboxConfig,
 } from '../actions/sandbox.js';
 import { netProxySocket } from '../actions/sandbox-net.js';
+import type { AgentActionConfig } from '../actions/agent.js';
 import type { ShellActionConfig } from '../actions/shell.js';
 import { socketPathProblem } from '../api/socket-path.js';
 import {
@@ -60,83 +61,84 @@ export function checkLlmTasks(tasks: readonly TaskConfig[], ctx: LlmCheckContext
     }
   };
   tasks.forEach((task, i) => {
-    const a = task.action;
-    const at = (field: string): string => `tasks[${String(i)}].action.${field}`;
-    if (a.kind === 'agent') {
-      // The agent makes its own model calls; `model` only prices what it reports, so it
-      // must be priced when set. The connector is checked against the manifests by the core.
-      if (a.model !== undefined && !ctx.pricing.has(a.model)) {
+    taskActions(task, `tasks[${String(i)}].action`).forEach(({ action: a, at: base }) => {
+      const at = (field: string): string => `${base}.${field}`;
+      if (a.kind === 'agent') {
+        // The agent makes its own model calls; `model` only prices what it reports, so it
+        // must be priced when set. The connector is checked against the manifests by the core.
+        if (a.model !== undefined && !ctx.pricing.has(a.model)) {
+          issues.push({
+            path: at('model'),
+            message: `no price for model "${a.model}": add a pricing entry in agent.yaml (or omit model when the agent reports cost)`,
+          });
+        }
+        if (a.system_file !== undefined) {
+          fileUnder('system_file', a.system_file, at('system_file'));
+        }
+        if (a.result.schema !== undefined) {
+          fileUnder('result.schema', a.result.schema, at('result.schema'));
+        }
+        return;
+      }
+      if (a.kind !== 'llm' && a.kind !== 'decide') {
+        return;
+      }
+      const section = a.kind === 'llm' ? 'defaults.llm' : 'defaults.decide';
+      const providerName =
+        a.provider ?? (a.kind === 'llm' ? ctx.defaults.provider : decideDefaults.provider);
+      const model = a.model ?? (a.kind === 'llm' ? ctx.defaults.model : decideDefaults.model);
+      if (providerName === undefined) {
         issues.push({
-          path: at('model'),
-          message: `no price for model "${a.model}": add a pricing entry in agent.yaml (or omit model when the agent reports cost)`,
+          path: at('provider'),
+          message: `no provider: set action.provider or ${section}.provider in agent.yaml`,
         });
       }
-      if (a.system_file !== undefined) {
+      if (model === undefined) {
+        issues.push({
+          path: at('model'),
+          message: `no model: set action.model or ${section}.model in agent.yaml`,
+        });
+      }
+      const provider = providerName === undefined ? undefined : ctx.providers[providerName];
+      if (providerName !== undefined && provider === undefined) {
+        issues.push({
+          path: at('provider'),
+          message: `unknown provider "${providerName}" (not in providers: of agent.yaml)`,
+        });
+      }
+      if (a.kind === 'decide' && provider !== undefined && provider.type !== 'openrouter') {
+        issues.push({
+          path: at('provider'),
+          message: `decide needs an openrouter provider (the Decisions API); "${String(providerName)}" is type ${provider.type}`,
+        });
+      }
+      if (
+        a.kind === 'llm' &&
+        a.batch === true &&
+        provider !== undefined &&
+        provider.type !== 'anthropic'
+      ) {
+        issues.push({
+          path: at('batch'),
+          message: `batch: true needs an anthropic provider (Message Batches); "${String(providerName)}" is type ${provider.type}`,
+        });
+      }
+      if (
+        provider !== undefined &&
+        providerName !== undefined &&
+        model !== undefined &&
+        provider.type !== 'openrouter' &&
+        !ctx.pricing.has(model)
+      ) {
+        issues.push({
+          path: at('model'),
+          message: `no price for model "${model}" on provider "${providerName}" (type ${provider.type}): add a pricing entry in agent.yaml`,
+        });
+      }
+      if (a.kind === 'llm' && a.system_file !== undefined) {
         fileUnder('system_file', a.system_file, at('system_file'));
       }
-      if (a.result.schema !== undefined) {
-        fileUnder('result.schema', a.result.schema, at('result.schema'));
-      }
-      return;
-    }
-    if (a.kind !== 'llm' && a.kind !== 'decide') {
-      return;
-    }
-    const section = a.kind === 'llm' ? 'defaults.llm' : 'defaults.decide';
-    const providerName =
-      a.provider ?? (a.kind === 'llm' ? ctx.defaults.provider : decideDefaults.provider);
-    const model = a.model ?? (a.kind === 'llm' ? ctx.defaults.model : decideDefaults.model);
-    if (providerName === undefined) {
-      issues.push({
-        path: at('provider'),
-        message: `no provider: set action.provider or ${section}.provider in agent.yaml`,
-      });
-    }
-    if (model === undefined) {
-      issues.push({
-        path: at('model'),
-        message: `no model: set action.model or ${section}.model in agent.yaml`,
-      });
-    }
-    const provider = providerName === undefined ? undefined : ctx.providers[providerName];
-    if (providerName !== undefined && provider === undefined) {
-      issues.push({
-        path: at('provider'),
-        message: `unknown provider "${providerName}" (not in providers: of agent.yaml)`,
-      });
-    }
-    if (a.kind === 'decide' && provider !== undefined && provider.type !== 'openrouter') {
-      issues.push({
-        path: at('provider'),
-        message: `decide needs an openrouter provider (the Decisions API); "${String(providerName)}" is type ${provider.type}`,
-      });
-    }
-    if (
-      a.kind === 'llm' &&
-      a.batch === true &&
-      provider !== undefined &&
-      provider.type !== 'anthropic'
-    ) {
-      issues.push({
-        path: at('batch'),
-        message: `batch: true needs an anthropic provider (Message Batches); "${String(providerName)}" is type ${provider.type}`,
-      });
-    }
-    if (
-      provider !== undefined &&
-      providerName !== undefined &&
-      model !== undefined &&
-      provider.type !== 'openrouter' &&
-      !ctx.pricing.has(model)
-    ) {
-      issues.push({
-        path: at('model'),
-        message: `no price for model "${model}" on provider "${providerName}" (type ${provider.type}): add a pricing entry in agent.yaml`,
-      });
-    }
-    if (a.kind === 'llm' && a.system_file !== undefined) {
-      fileUnder('system_file', a.system_file, at('system_file'));
-    }
+    });
   });
   return issues;
 }
@@ -152,13 +154,9 @@ export function checkAgentTools(
   manifests: readonly ConnectorConfig[],
 ): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
-  tasks.forEach((task, i) => {
-    const a = task.action;
-    if (a.kind !== 'agent') {
-      return;
-    }
+  agentActions(tasks).forEach(({ action: a, at }) => {
     a.mcp_servers.forEach((grant, j) => {
-      const path = `tasks[${String(i)}].action.mcp_servers[${String(j)}]`;
+      const path = `${at}.mcp_servers[${String(j)}]`;
       const m = manifests.find((x) => x.name === grant.connector);
       if (m === undefined) {
         issues.push({ path, message: `unknown connector "${grant.connector}"` });
@@ -195,11 +193,7 @@ export function agentToolWarnings(
   manifests: readonly ConnectorConfig[],
 ): ConfigIssue[] {
   const out: ConfigIssue[] = [];
-  tasks.forEach((task, i) => {
-    const a = task.action;
-    if (a.kind !== 'agent') {
-      return;
-    }
+  agentActions(tasks).forEach(({ action: a, at, task }) => {
     a.mcp_servers.forEach((grant, j) => {
       const m = manifests.find((x) => x.name === grant.connector);
       if (
@@ -211,7 +205,7 @@ export function agentToolWarnings(
         return;
       }
       out.push({
-        path: `tasks[${String(i)}].action.mcp_servers[${String(j)}]`,
+        path: `${at}.mcp_servers[${String(j)}]`,
         task: task.name,
         message:
           `connector "${m.name}" (${m.file}) has no ops in its manifest, so the agent can ` +
@@ -361,9 +355,8 @@ export function checkSandboxes(
       out.manifests.push({ file: m.file, issues });
     }
   }
-  tasks.forEach((task, i) => {
-    const a = task.action;
-    if (a.kind !== 'agent' || a.workspace.kind !== 'git-worktree') {
+  agentActions(tasks).forEach(({ action: a, at }) => {
+    if (a.workspace.kind !== 'git-worktree') {
       return;
     }
     const name = a.connector ?? ctx.defaultConnector;
@@ -372,11 +365,22 @@ export function checkSandboxes(
       return;
     }
     out.tasks.push({
-      path: `tasks[${String(i)}].action.workspace.repo`,
+      path: `${at}.workspace.repo`,
       message: `${a.workspace.repo} is not visible to the sandboxed agent program "${m.name}": add it to sandbox.ro_binds in ${m.file} (rw_binds if the agent itself commits)`,
     });
   });
   return out;
+}
+
+/** Every `agent` action (a task's own or a sequence step) with its task and issue path. */
+function agentActions(
+  tasks: readonly TaskConfig[],
+): { action: AgentActionConfig; at: string; task: TaskConfig }[] {
+  return tasks.flatMap((task, i) =>
+    taskActions(task, `tasks[${String(i)}].action`).flatMap(({ action, at }) =>
+      action.kind === 'agent' ? [{ action, at, task }] : [],
+    ),
+  );
 }
 
 type ShellLike = Pick<ShellActionConfig, 'cwd' | 'sandbox'>;

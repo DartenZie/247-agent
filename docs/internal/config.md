@@ -151,8 +151,9 @@ runner renders each template as a value in place (`expr/filter-template.ts`), so
 placeholder is never itself suspect. A filter that does not parse even with
 placeholders is reported, since the dispatcher could not compile it (`wait.invalid`) and
 the wait would never match. `taskActions` (`config/walk.ts`) is the one walker over a
-task's action and its sequence steps; the lint, `checkSandboxes`,
-`checkConnectorActions` and the core's connector-reference warning use it.
+task's action and its sequence steps; the lint, `checkLlmTasks`, `checkAgentTools`,
+`agentToolWarnings`, `checkSandboxes`, `checkConnectorActions`, the bwrap probe, `oa
+dry-run` and the core's connector-reference and `core.unknown_agent` warnings use it.
 
 Event cycles (`eventCycles`): edges go from a task to every other task whose event
 trigger's `type` or `type_any` matches a type it produces (its `emit` types and its

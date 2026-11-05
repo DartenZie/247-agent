@@ -89,8 +89,9 @@ wildcard. Templates are `${ <JMESPath> }`; see [Templates](../tasks/templates.md
 - Every `emit` type is concrete, `when` is valid JMESPath, and `each` is a single
   whole `${…}` template.
 - Every `state_updates` key follows the grammar.
-- A `sequence` has only `shell`, `connector` and `wait` steps, each with valid
-  `when`.
+- A `sequence` has only `shell`, `connector`, `wait`, `llm`, `decide` and `agent`
+  steps, at most one of them `agent`, each with valid `when`. The checks below for an
+  `llm`, `decide` or `agent` action apply to such a step too.
 - An `llm` action has `system` or `system_file` but not both, and no `${` in either.
 - A `decide` action has at least one question, question ids follow the grammar, no
   question contains `${`, a `choice` has 2 to 255 labels, a `score` 2 to 10 levels.
