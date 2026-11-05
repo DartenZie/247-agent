@@ -54,7 +54,12 @@ const ManifestFields = z.strictObject({
    * Default `/run/247-agent-connector/<name>/mcp.sock`, inside the unit's runtime directory.
    */
   socket: z.string().min(1).optional(),
-  /** Event types the connector emits (documentation; checked for shape). */
+  /**
+   * Event types the connector emits. Documentation only: each entry must be a concrete
+   * event type, and a poller's list must include its `config.event`, but the core never
+   * compares the events a connector posts against it. Any process with the daemon's uid
+   * can post any well-formed `type` and any `source` (docs/internal/security.md, "The trust model").
+   */
   emits: z.array(z.string().min(1)).default([]),
   /** MCP tools the core may call; empty = whatever the server lists. */
   ops: z.array(z.string().min(1)).default([]),
