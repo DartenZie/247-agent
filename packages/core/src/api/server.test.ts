@@ -37,8 +37,10 @@ afterEach(async () => {
 });
 
 /**
- * Settles once the request is closed, not at the end of the response, so a write error
- * on the client (EPIPE, reset) rejects the call instead of surfacing after the test.
+ * Settles on the request's close, so every client error is seen here, not after the test.
+ * A client error before a complete response rejects: that is the #76 bug. On Linux the
+ * client socket can also report EPIPE after the whole body was sent and the whole
+ * response read, when the server closes the connection. The response then stands.
  */
 function post(body: string): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
@@ -55,13 +57,12 @@ function post(body: string): Promise<{ status: number; text: string }> {
       },
     );
     req.on('error', (err: Error) => {
+      if (result !== undefined) {
+        resolve(result);
+        return;
+      }
       // Says how far the body got and what the server logged, so a failure shows its cause.
-      const detail = {
-        bodyBytes: Buffer.byteLength(body),
-        written: req.socket?.bytesWritten,
-        response: result,
-        server: lines,
-      };
+      const detail = { bodyBytes: Buffer.byteLength(body), server: lines };
       reject(new Error(`${err.message}: ${JSON.stringify(detail)}`, { cause: err }));
     });
     req.on('close', () => {

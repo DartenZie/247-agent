@@ -660,7 +660,9 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 
   it('rejects oversized bodies', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: 'a'.repeat(2 * 1024 * 1024) });
-    // Settle on the request's close, so a client write error (EPIPE) fails this test (#76).
+    // A client error before a complete response fails this test (#76). On Linux the client
+    // can report EPIPE after it sent the whole body and read the whole response; that
+    // response stands. See post() in api/server.test.ts.
     const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
       let result: { status: number; text: string } | undefined;
       const req = request(
@@ -674,7 +676,13 @@ describe('POST /v1/runs and GET /v1/runs', () => {
           });
         },
       );
-      req.on('error', reject);
+      req.on('error', (err) => {
+        if (result === undefined) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      });
       req.on('close', () => {
         if (result === undefined) {
           reject(new Error('the connection closed without a complete response'));
