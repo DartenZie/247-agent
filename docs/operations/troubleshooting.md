@@ -87,7 +87,7 @@ read the run with `oa runs show`, read the log lines that share its `run_id`, fi
 | `reload refused: the previous config stays active`, exit 1 | a file is invalid; the issues are printed above it | fix them; `oa validate` shows the same |
 | `restart required for: db, socket` on stderr after a successful reload | those keys only apply at start | `systemctl restart 247-agent` |
 | a changed manifest of a connector in its own unit did nothing; the log says `connector.unit_restart_needed` | the daemon does not run that process | `systemctl restart 247-agent-connector@<name>` |
-| `oa connector restart` answers `connector "x" is built in: it re-reads its secrets on every poll, nothing to restart` | a poller needs no restart | nothing to do |
+| `oa connector restart` answers `connector "x" is built in: it re-reads its secrets on every poll, nothing to restart` | a poller re-reads its secrets on every poll | nothing with the `file` backend; `systemctl restart 247-agent` with `env` or `systemd-credentials` from `LoadCredential=` |
 
 Still stuck? `oa runs show <id>` for the run, `journalctl -u 247-agent -o cat | jq
 'select(.run_id=="<id>")'` for its log lines, and the [events reference](../reference/events.md)

@@ -158,7 +158,8 @@ What to know before relying on it:
 
 An agent program has the same lifecycle as any connector: it is started with the daemon,
 restarted with backoff when it exits, respawned by `oa reload` when its manifest changed
-and by `oa connector restart <name>` after a rotated key, and its standard error is
-logged as `connector.output`. A changed `work_dir` in `agent.yaml` also respawns every
+and by `oa connector restart <name>` after a key rotated in the `file` secrets backend
+(with `env`, or `systemd-credentials` from `LoadCredential=`,
+`systemctl restart 247-agent` picks up the new key), and its standard error is logged as `connector.output`. A changed `work_dir` in `agent.yaml` also respawns every
 sandboxed agent, since it mounts the old one. `oa connector list` shows `acp` as its
 transport.

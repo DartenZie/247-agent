@@ -98,14 +98,16 @@ LoadCredential=ftp_pass:/etc/credstore/ftp_pass
 ```
 
 The name on the left is the secret's name in your configuration (`${secrets.ftp_pass}`);
-the file on the right holds the value, owned by root with mode `0600`. A connector that
+the file on the right holds the value, owned by root with mode `0600`. A name starts with
+a letter and has only letters, digits and `_`: a credential named `ftp-pass` or
+`ftp.pass` cannot be referenced as `${secrets.<name>}`. A connector that
 runs in [its own unit](../connectors/own-unit.md) takes its `LoadCredential=` lines on that
 unit instead; the daemon never resolves them.
 
 To find every name a configuration needs:
 
 ```sh
-grep -rhoE 'secrets\.[a-z0-9_]+' /etc/247-agent | sort -u
+grep -rhoE 'secrets\.[a-zA-Z0-9_]+' /etc/247-agent | sort -u
 ```
 
 A missing secret fails the run that needs it, without a retry, at run time rather than at
@@ -182,10 +184,15 @@ Change the value at the backend first. Then:
 | `systemd-credentials`, `env` | `systemctl restart 247-agent` (systemd loads credentials at start) | restarted with the daemon |
 | `file` | nothing: the file is re-read on every use | `oa connector restart <name>` |
 
-A connector receives its secrets once, when it starts, so after rotating a mailbox
-password run `oa connector restart email`; it exits 1 if the connector is not up
-afterwards. The built-in poller re-reads its secrets on every poll and needs nothing. A
-connector in its own unit is restarted with `systemctl restart 247-agent-connector@<name>`.
+A connector receives its secrets once, when it starts. With the `file` backend, after
+rotating a mailbox password, run `oa connector restart email`; it exits 1 if the
+connector is not up afterwards. With `systemd-credentials`, `oa connector restart` is
+not enough: systemd copies each `LoadCredential=` file into the service's credentials
+directory when the service starts, so a respawned connector reads the same old copy.
+With `env`, the daemon's environment is also fixed at start. The built-in poller
+re-reads its secrets on every poll, so with `file` it needs nothing. A connector in its
+own unit reads its own unit's credentials: restart it with
+`systemctl restart 247-agent-connector@<name>`.
 Runs already in flight keep the value they resolved at start.
 
 ## Upgrading and rolling back

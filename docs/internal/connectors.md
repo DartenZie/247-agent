@@ -122,7 +122,10 @@ failures}`; `ok` is `null` until the first check after a start.
 **Restart.** `POST /v1/connectors/<name>/restart` kills the process group (a `stdio`
 connector's stdin is closed first; then SIGTERM and SIGKILL, with a grace before each),
 resets the counter, re-resolves the secrets and respawns; it is the step after rotating a
-secret. A restart requested while one is in flight joins it
+secret in the `file` backend. The `env` backend, and `systemd-credentials` without
+`secrets.dir`, read values fixed when the service started (the process environment,
+systemd's copy of each `LoadCredential=` file), so a respawn gets the old value and only
+a service restart picks up the new one. A restart requested while one is in flight joins it
 (`connector.restart_joined`), so two never spawn two processes. A restart, reload or
 stop that lands while a process is still starting (before `initialize` is answered)
 stops that process and waits for it to exit before a replacement spawns: the stdio
@@ -179,7 +182,8 @@ timeout?, items?, item_key, event, first_run, keep}` (strict; the user table is 
 1. A poll in flight → the tick is skipped (`poller.skipped`).
 2. `args` templates are rendered fresh with `{secrets, env}`; secrets are resolved per
    poll and never kept on the instance, which is why a poller needs no restart after a
-   rotation.
+   rotation that the backend can see (the `file` backend; not `env` or systemd's
+   start-time credential copy, see Restart above).
 3. The target connector's op is called through the supervisor's client with the
    poller's `timeout` or the 60 s default; the manifest's `ops` applies.
 4. `items` (JMESPath, default the whole result) must be an array; each `item_key` must be

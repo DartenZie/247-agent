@@ -68,7 +68,8 @@ and `cwd`, `env` and `health` do not apply. `emits` may be left out; it defaults
 - The events and the updated seen list are written together, so a crash between them
   cannot lose or duplicate an item.
 - The poller re-reads any secret in `args` on every poll, so it needs no restart after a
-  rotation. `oa connector restart` refuses it for that reason.
+  rotation in the `file` backend. With `env`, or `systemd-credentials` from
+  `LoadCredential=`, the values are fixed at service start: run `systemctl restart 247-agent`. `oa connector restart` refuses it for that reason.
 
 `oa validate` checks that `connector` names a process connector that lists `op` in its
 `ops` (or has `ops: []`), and that `schedule`, `items`, `item_key` and `event` are
