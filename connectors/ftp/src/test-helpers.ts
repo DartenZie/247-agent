@@ -1,12 +1,29 @@
 /** An in-memory `FileClient` and config helpers for the tests. */
-import { readFileSync } from 'node:fs';
-import { posix } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, posix } from 'node:path';
 
 import { parseConfig, type FtpConfig } from './config.js';
 import type { FileClient, RawEntry } from './types.js';
 
 export function ftpConfig(extra: Record<string, unknown> = {}): FtpConfig {
   return parseConfig({ host: 'h', user: 'u', password: 'p', ...extra });
+}
+
+const tempDirs: string[] = [];
+
+/** A new directory under the system temp dir, deleted again by `removeTempDirs`. */
+export function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/** Deletes every directory `tempDir` made. A test file registers it with `afterEach`. */
+export function removeTempDirs(): void {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const MTIME = new Date('2026-06-01T08:00:00.000Z');

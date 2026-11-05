@@ -140,8 +140,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await daemon.stop();
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    await daemon.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 async function until(pred: () => Promise<boolean> | boolean, ms = 15_000): Promise<void> {

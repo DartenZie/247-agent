@@ -1,12 +1,14 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { FileOps } from './ops.js';
-import { ftpConfig, MemoryFileClient } from './test-helpers.js';
+import { ftpConfig, MemoryFileClient, removeTempDirs, tempDir } from './test-helpers.js';
 import { FtpOpError } from './types.js';
+
+afterEach(removeTempDirs);
 
 const SEED = {
   'incoming/b.csv': 'b;2',
@@ -273,7 +275,7 @@ describe('every op', () => {
 describe('sync', () => {
   /** A local tree: a.html, css/site.css, img/1.jpg, an empty dir and a symlink (skipped). */
   function localSite(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'ftp-sync-'));
+    const dir = tempDir('ftp-sync-');
     writeFileSync(join(dir, 'a.html'), '<a>');
     mkdirSync(join(dir, 'css'));
     writeFileSync(join(dir, 'css', 'site.css'), 'body{}');
@@ -370,7 +372,7 @@ describe('sync', () => {
   });
 
   it('refuses to prune from a local tree without files, before connecting', async () => {
-    const local = mkdtempSync(join(tmpdir(), 'ftp-empty-'));
+    const local = tempDir('ftp-empty-');
     mkdirSync(join(local, 'assets'));
     const { ops, client, connects } = setup({ local_roots: [local] });
     client.seed('/srv/x/index.html', '<i>');
@@ -394,7 +396,7 @@ describe('sync', () => {
 
   it('refuses without local_roots, outside them, relative, missing, or a file', async () => {
     const local = localSite();
-    const other = mkdtempSync(join(tmpdir(), 'ftp-other-'));
+    const other = tempDir('ftp-other-');
     const off = setup();
     expect(await code(off.ops.sync({ local }))).toBe('path');
     const { ops, connects } = setup({ local_roots: [local] });

@@ -52,6 +52,12 @@ function manifest(over: Record<string, unknown> = {}): ConnectorConfig {
 
 let sup: ConnectorSupervisor | undefined;
 let lines: Record<string, unknown>[];
+/** Each test's agent work_dir, so no test writes into the shared default under tmpdir(). */
+let agentWork: string;
+
+beforeEach(() => {
+  agentWork = mkdtempSync(join(tmpdir(), 'oa-sup-work-'));
+});
 
 function make(
   manifests: ConnectorConfig[],
@@ -67,13 +73,18 @@ function make(
       sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>),
     }),
     env: { PATH: process.env.PATH ?? '', FAKE_EXTRA: 'from-base' },
+    agents: { defaults: AgentDefaults.parse({}), workDir: agentWork },
   });
   return sup;
 }
 
 afterEach(async () => {
-  await sup?.stop();
-  sup = undefined;
+  try {
+    await sup?.stop();
+  } finally {
+    sup = undefined;
+    rmSync(agentWork, { recursive: true, force: true });
+  }
 });
 
 const signal = (): AbortSignal => new AbortController().signal;

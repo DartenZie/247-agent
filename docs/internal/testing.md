@@ -31,6 +31,12 @@ server library, adapter tests drive the real SDK through `recordingFetch()` from
 `fakeProviderFactory()` from the same place. Tests in other packages reach the core's
 sources, not its `dist/` (`vitest.config.js`).
 
+A test that needs a directory makes its own with `mkdtempSync` and deletes it in
+`afterEach`, also when the test or its setup fails. It never writes into a fixed path
+that another test file or a parallel run can share, such as the supervisor's default
+agent `work_dir` under `tmpdir()`: pass `agents.workDir` instead. The ftp connector's
+tests use `tempDir()` and `removeTempDirs()` from `connectors/ftp/src/test-helpers.ts`.
+
 Integration tests (`packages/core/src/integration.test.ts`,
 `integration.agent.test.ts`, `core.*.test.ts`, `daemon.test.ts`) start a real daemon on
 a temp SQLite file with the fixtures below and drive it through the API: the non-model

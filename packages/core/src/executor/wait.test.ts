@@ -1,5 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -356,7 +355,7 @@ describe('wait inside a sequence', () => {
   });
 
   it('resumes again after a stop aborts the resumed attempt (#39)', async () => {
-    const marker = join(mkdtempSync(join(tmpdir(), 'oa-wait-')), 'go');
+    const marker = join(env.dir, 'go');
     current = config([
       {
         name: 'gate_slow',
@@ -394,7 +393,7 @@ describe('wait inside a sequence', () => {
   });
 
   it('lets a stop finish when a run parks during the grace window on a reply already in (#39)', async () => {
-    const marker = join(mkdtempSync(join(tmpdir(), 'oa-wait-')), 'go');
+    const marker = join(env.dir, 'go');
     current = config([
       {
         name: 'ask_then_wait',

@@ -1,11 +1,10 @@
 import type { Readable, Writable } from 'node:stream';
 
 import { FileType } from 'basic-ftp';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { isTransient } from '@247-agent/connector-sdk';
 
@@ -16,7 +15,9 @@ import {
   type FtpFileInfo,
   type FtpLib,
 } from './ftp.js';
-import { ftpConfig } from './test-helpers.js';
+import { ftpConfig, removeTempDirs, tempDir } from './test-helpers.js';
+
+afterEach(removeTempDirs);
 
 interface FakeFtp {
   lib: FtpLib;
@@ -289,7 +290,7 @@ describe('replace', () => {
 
 describe('upload', () => {
   it('streams a local file to the remote path', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ftp-up-'));
+    const dir = tempDir('ftp-up-');
     const file = join(dir, 'f.bin');
     writeFileSync(file, 'streamed');
     const fake = fakeFtp();
