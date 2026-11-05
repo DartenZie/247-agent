@@ -84,6 +84,7 @@ zod shape.
 | `connectorEnv()` | `{ socket, name, config }` from the environment; deletes `OA_CONFIG_JSON` once read |
 | `CoreClient({ socket, name })` | `emitEvent({ type, payload?, dedup_key?, parent_id?, correlation_id? })`, `getState(key)`, `putState(key, value)`, all in your own namespace |
 | `defineTool({ name, description?, input?, handler })` | one op; `input` is a zod shape and the handler is typed from it |
+| `toJson(value)` | types a handler result with optional fields as `JsonValue` without a cast; a `Date`, `bigint`, `Map`, `Set`, function or `unknown` in it is a compile error |
 | `createConnectorServer({ name, version?, tools })` | the MCP server with the tools registered |
 | `serveStdio(server)` | connect it to standard input and output |
 | `ConnectorRuntime` | `{ env, core, log }`; `log(line)` writes to standard error |

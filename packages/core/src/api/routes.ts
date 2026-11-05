@@ -281,7 +281,6 @@ function emit(ctx: RouteContext, body: unknown): ApiResponse {
     tasks: explained?.tasks ?? null,
     waiting_runs: explained?.waiting_runs ?? null,
   };
-  // The store's shape is already JSON; the cast just names it for the response type.
   return { status: 201, body: toJson(answer) };
 }
 

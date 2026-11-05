@@ -25,6 +25,13 @@ describe('toJson', () => {
     expect(toJson(rec)).toEqual(direct);
   });
 
+  it('accepts index signatures whose values may be absent', () => {
+    const counts: Partial<Record<string, number>> = { a: 1 };
+    expect(toJson(counts)).toEqual({ a: 1 });
+    const raw: { payload: JsonValue; extra?: JsonValue[] } = { payload: { a: [1] } };
+    expect(toJson(raw)).toBe(raw);
+  });
+
   it('rejects values that JSON cannot represent at compile time', () => {
     // These lines are type checks: `tsc -b` fails when an error below goes away.
     const bad = (): void => {
@@ -42,6 +49,14 @@ describe('toJson', () => {
       toJson(undefined);
       // @ts-expect-error unknown may be anything
       toJson({ x: 1 as unknown });
+      const hidden: {} = new Date(); // eslint-disable-line @typescript-eslint/no-empty-object-type
+      // @ts-expect-error `{}` may hold a Date
+      toJson({ hidden });
+      const obj: object = new Map([[1, 2]]);
+      // @ts-expect-error `object` may hold a Map
+      toJson(obj);
+      // @ts-expect-error wider than JsonValue
+      toJson({ v: null as JsonValue | Date });
     };
     expect(typeof bad).toBe('function');
   });

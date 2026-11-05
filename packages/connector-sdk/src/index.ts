@@ -22,18 +22,36 @@ export type JsonValue =
  */
 export type JsonCompatible<T> = unknown extends T
   ? never
-  : T extends JsonValue
-    ? T
+  : [JsonValue] extends [T] // a field typed `JsonValue` itself; stops the recursion
+    ? [T] extends [JsonValue]
+      ? T
+      : never // wider than JSON, such as `JsonValue | Date`
+    : CompatibleParts<T>;
+
+/** Distributes over a union, so each member is checked on its own. */
+type CompatibleParts<T> = T extends null | boolean | number | string
+  ? T
+  : [keyof T] extends [never]
+    ? never // `{}` and `object`: a Date or a Map hides behind them
     : T extends readonly unknown[]
       ? { [K in keyof T]: JsonCompatible<T[K]> }
       : T extends Date | Map<unknown, unknown> | Set<unknown> | ((...args: never[]) => unknown)
         ? never
         : T extends object
-          ? { [K in keyof T]: JsonCompatible<Exclude<T[K], undefined>> | OptionalOf<T, K> }
+          ? { [K in keyof T]: JsonCompatible<Exclude<T[K], undefined>> | Absent<T, K> }
           : never;
 
-/** `undefined` for an optional field, so `{ a?: string }` stays compatible. */
-type OptionalOf<T, K extends keyof T> = object extends Pick<T, K> ? undefined : never;
+/**
+ * `undefined` where `JSON.stringify` drops the field: an optional field, or the value of an
+ * index signature (`Partial<Record<string, number>>`). A required field stays required.
+ */
+type Absent<T, K extends keyof T> = string extends K
+  ? undefined
+  : number extends K
+    ? undefined
+    : object extends Pick<T, K>
+      ? undefined
+      : never;
 
 /**
  * `value` typed as `JsonValue`, for a handler result with optional fields (which plain
