@@ -238,6 +238,12 @@ straight from TypeScript source; the test fixtures depend on that. The contract:
   handler's return value becomes one JSON text block, a throw becomes `isError` with the
   message, plus the `oa/transient` mark when `isTransient(err)` or `transient(err)` holds),
   `serveStdio(server)`.
+- `toJson(value)` types a handler result as `JsonValue` without a cast. A record with
+  optional fields is not assignable to `JsonValue` under `exactOptionalPropertyTypes`;
+  `toJson` accepts it, and rejects at compile time a value with a `Date`, `bigint`, `Map`,
+  `Set`, function, `undefined` or `unknown` in it. The core has the same helper in
+  `packages/core/src/json.ts` for API response bodies. Never cast through `unknown` to
+  `JsonValue`.
 - Transient errors: `TransientError` (`transient = true`); `isTransient(err)` looks for
   `transient === true` along the `cause` chain (eight deep, cycle-safe), so a connector
   that wraps a library error keeps the mark. `isConnectError(err)` matches the Node and

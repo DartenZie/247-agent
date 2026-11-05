@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { defineTool, type JsonValue, type ToolDef } from '@247-agent/connector-sdk';
+import { defineTool, toJson, type ToolDef } from '@247-agent/connector-sdk';
 
 import type { AskArgs, SendArgs, SentMessage } from './bot.js';
 
@@ -28,7 +28,7 @@ export function chatTools(b: Bot): ToolDef[] {
         reply_to: replyTo,
         chat_id: chatId,
       },
-      handler: async (args) => (await b.send(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await b.send(args)),
     }),
     defineTool({
       name: 'ask',
@@ -42,7 +42,7 @@ export function chatTools(b: Bot): ToolDef[] {
         reply_to: replyTo,
         chat_id: chatId,
       },
-      handler: async (args) => (await b.ask(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await b.ask(args)),
     }),
   ];
 }

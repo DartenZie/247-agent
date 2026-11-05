@@ -29,6 +29,7 @@ import type { StateEntry } from '../store/state.js';
 import type { AttemptRecord } from '../store/attempts.js';
 import type { TranscriptEntry } from '../store/transcripts.js';
 import type { WaitRecord } from '../store/waits.js';
+import { toJson } from '../json.js';
 import { RUN_STATUSES, type EventRecord, type JsonValue, type RunRecord } from '../store/types.js';
 
 /**
@@ -248,7 +249,7 @@ function health(ctx: RouteContext): ApiResponse {
     runs: ctx.core.executor.stats(),
     checks,
   };
-  return { status: status === 'failing' ? 503 : 200, body: body as unknown as JsonValue };
+  return { status: status === 'failing' ? 503 : 200, body: toJson(body) };
 }
 
 function emit(ctx: RouteContext, body: unknown): ApiResponse {
@@ -263,7 +264,7 @@ function emit(ctx: RouteContext, body: unknown): ApiResponse {
     throw err;
   }
   if (result.status === 'duplicate') {
-    return { status: 200, body: result as unknown as JsonValue };
+    return { status: 200, body: toJson(result) };
   }
   // Synchronous with the publish: the dispatcher drains on a later macrotask, so a match is
   // still `pending` and the waits it ends are still armed.
@@ -280,8 +281,7 @@ function emit(ctx: RouteContext, body: unknown): ApiResponse {
     tasks: explained?.tasks ?? null,
     waiting_runs: explained?.waiting_runs ?? null,
   };
-  // The store's shape is already JSON; the cast just names it for the response type.
-  return { status: 201, body: answer as unknown as JsonValue };
+  return { status: 201, body: toJson(answer) };
 }
 
 function runTask(ctx: RouteContext, body: unknown): ApiResponse {
@@ -292,7 +292,7 @@ function runTask(ctx: RouteContext, body: unknown): ApiResponse {
       payload: input.event?.payload,
       correlation_id: input.correlation_id,
     });
-    return { status: 201, body: result as unknown as JsonValue };
+    return { status: 201, body: toJson(result) };
   } catch (err) {
     if (err instanceof UnknownTaskError) {
       throw new ApiError(404, err.message);
@@ -321,18 +321,18 @@ async function cancelRun(ctx: RouteContext, id: string): Promise<ApiResponse> {
   if (run === undefined) {
     throw new ApiError(404, `unknown run "${id}"`);
   }
-  return { status: run.status === 'running' ? 202 : 200, body: run as unknown as JsonValue };
+  return { status: run.status === 'running' ? 202 : 200, body: toJson(run) };
 }
 
 function listTasks(ctx: RouteContext): ApiResponse {
   const tasks: TaskEntry[] = ctx.core.listTasks();
-  return { status: 200, body: { tasks: tasks as unknown as JsonValue } };
+  return { status: 200, body: { tasks: toJson(tasks) } };
 }
 
 function setPaused(ctx: RouteContext, name: string, paused: boolean): ApiResponse {
   try {
     const task: TaskEntry = paused ? ctx.core.pauseTask(name) : ctx.core.resumeTask(name);
-    return { status: 200, body: task as unknown as JsonValue };
+    return { status: 200, body: toJson(task) };
   } catch (err) {
     if (err instanceof UnknownTaskError) {
       throw new ApiError(404, err.message);
@@ -348,7 +348,7 @@ function listRuns(ctx: RouteContext, query: URLSearchParams): ApiResponse {
     task: q.task,
     limit: q.limit,
   });
-  return { status: 200, body: { runs: runs as unknown as JsonValue } };
+  return { status: 200, body: { runs: toJson(runs) } };
 }
 
 function costSummary(ctx: RouteContext, query: URLSearchParams): ApiResponse {
@@ -372,11 +372,11 @@ function costSummary(ctx: RouteContext, query: URLSearchParams): ApiResponse {
     rows,
     total_usd: rows.reduce((sum, r) => sum + r.usd, 0),
   };
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getRun(ctx: RouteContext, id: string): ApiResponse {
-  return { status: 200, body: requireRun(ctx, id) as unknown as JsonValue };
+  return { status: 200, body: toJson(requireRun(ctx, id)) };
 }
 
 function listEvents(ctx: RouteContext, query: URLSearchParams): ApiResponse {
@@ -386,7 +386,7 @@ function listEvents(ctx: RouteContext, query: URLSearchParams): ApiResponse {
     after: q.after,
     limit: q.limit,
   });
-  return { status: 200, body: { events: events as unknown as JsonValue } };
+  return { status: 200, body: { events: toJson(events) } };
 }
 
 function requireRun(ctx: RouteContext, id: string): RunRecord {
@@ -404,7 +404,7 @@ function getTranscript(ctx: RouteContext, id: string, query: URLSearchParams): A
     run_id: run.id,
     entries: ctx.core.store.transcripts.listByRun(run.id, { after: q.after, limit: q.limit }),
   };
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getRunAttempts(ctx: RouteContext, id: string): ApiResponse {
@@ -413,7 +413,7 @@ function getRunAttempts(ctx: RouteContext, id: string): ApiResponse {
     run_id: run.id,
     attempts: ctx.core.store.attempts.listByRun(run.id),
   };
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getRunLedger(ctx: RouteContext, id: string): ApiResponse {
@@ -424,7 +424,7 @@ function getRunLedger(ctx: RouteContext, id: string): ApiResponse {
     entries,
     total_usd: entries.reduce((sum, e) => sum + e.usd, 0),
   };
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getEvent(ctx: RouteContext, id: string): ApiResponse {
@@ -432,7 +432,7 @@ function getEvent(ctx: RouteContext, id: string): ApiResponse {
   if (event === undefined) {
     throw new ApiError(404, `unknown event "${id}"`);
   }
-  return { status: 200, body: event as unknown as JsonValue };
+  return { status: 200, body: toJson(event) };
 }
 
 function getEventTasks(ctx: RouteContext, id: string): ApiResponse {
@@ -441,7 +441,7 @@ function getEventTasks(ctx: RouteContext, id: string): ApiResponse {
     throw new ApiError(404, `unknown event "${id}"`);
   }
   const body: EventTasksBody = ctx.core.bus.dispatcher.explain(event);
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getRunWait(ctx: RouteContext, id: string): ApiResponse {
@@ -460,7 +460,7 @@ function getRunWait(ctx: RouteContext, id: string): ApiResponse {
             created_at: wait.created_at,
           },
   };
-  return { status: 200, body: body as unknown as JsonValue };
+  return { status: 200, body: toJson(body) };
 }
 
 function getState(ctx: RouteContext, ns: string, key: string): ApiResponse {
@@ -468,7 +468,7 @@ function getState(ctx: RouteContext, ns: string, key: string): ApiResponse {
   if (entry === undefined) {
     throw new ApiError(404, `no state for ${ns}/${key}`);
   }
-  return { status: 200, body: entry as unknown as JsonValue };
+  return { status: 200, body: toJson(entry) };
 }
 
 function putState(ctx: RouteContext, ns: string, key: string, body: unknown): ApiResponse {
@@ -484,7 +484,7 @@ function deleteState(ctx: RouteContext, ns: string, key: string): ApiResponse {
 
 function listState(ctx: RouteContext, ns: string): ApiResponse {
   const entries: StateEntry[] = ctx.core.store.state.list(ns);
-  return { status: 200, body: { entries: entries as unknown as JsonValue } };
+  return { status: 200, body: { entries: toJson(entries) } };
 }
 
 function listConnectors(ctx: RouteContext): ApiResponse {
@@ -505,7 +505,7 @@ function listConnectors(ctx: RouteContext): ApiResponse {
     error: p.status().last_error,
   }));
   const connectors = [...processes, ...builtins];
-  return { status: 200, body: { connectors: connectors as unknown as JsonValue } };
+  return { status: 200, body: { connectors: toJson(connectors) } };
 }
 
 async function restartConnector(ctx: RouteContext, name: string): Promise<ApiResponse> {
@@ -529,7 +529,7 @@ async function restartConnector(ctx: RouteContext, name: string): Promise<ApiRes
   }
   try {
     const status = await supervisor.restart(name);
-    return { status: 200, body: status as unknown as JsonValue };
+    return { status: 200, body: toJson(status) };
   } catch (err) {
     if (err instanceof NonRetryableError) {
       throw new ApiError(404, err.message);
@@ -558,7 +558,7 @@ async function reload(ctx: RouteContext): Promise<ApiResponse> {
     throw new ApiError(404, 'this core has no config to reload');
   }
   const report = await ctx.reload();
-  return { status: 200, body: report as unknown as JsonValue };
+  return { status: 200, body: toJson(report) };
 }
 
 /** Prometheus text exposition (version 0.0.4). */

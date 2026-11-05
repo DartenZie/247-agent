@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { defineTool, type JsonValue, type ToolDef } from '@247-agent/connector-sdk';
+import { defineTool, toJson, type ToolDef } from '@247-agent/connector-sdk';
 
 import type { OutgoingConfig } from './config.js';
 import { buildMessage, createSmtpTransport, sendMail, type SmtpTransport } from './send.js';
@@ -46,7 +46,7 @@ export function emailTools({ mailbox, outgoing, log }: EmailToolDeps): ToolDef[]
         since_uid: z.union([z.number(), z.string(), z.null()]).optional(),
         limit: z.number().int().min(1).optional(),
       },
-      handler: async (args) => (await requireMailbox().fetchNew(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await requireMailbox().fetchNew(args)),
     }),
     defineTool({
       name: 'mark_read',
@@ -56,7 +56,7 @@ export function emailTools({ mailbox, outgoing, log }: EmailToolDeps): ToolDef[]
         uid: z.union([z.number(), z.string()]).optional(),
         message_id: z.string().optional(),
       },
-      handler: async (args) => (await requireMailbox().markRead(args)) as unknown as JsonValue,
+      handler: async (args) => toJson(await requireMailbox().markRead(args)),
     }),
     defineTool({
       name: 'send',
