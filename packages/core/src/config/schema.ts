@@ -10,6 +10,7 @@ import { WaitAction } from '../actions/wait.js';
 import { collectTemplateRefs } from '../expr/template.js';
 import { Budget } from '../llm/config.js';
 import { timerDuration } from './duration.js';
+import { ManualParams } from './params.js';
 import {
   validateCron,
   validateEventType,
@@ -80,7 +81,11 @@ export const EventTrigger = z
   });
 
 /** No automatic trigger. The task can still be started with `oa run <task>`. */
-export const ManualTrigger = z.strictObject({ kind: z.literal('manual') });
+export const ManualTrigger = z.strictObject({
+  kind: z.literal('manual'),
+  /** The inputs `oa run` must supply as `event.payload.<name>`; checked before the run is queued. */
+  params: ManualParams.optional(),
+});
 
 export const Trigger = z.discriminatedUnion('kind', [CronTrigger, EventTrigger, ManualTrigger]);
 

@@ -18,7 +18,7 @@ export const USAGE = `usage: oa <command> [args]
 
 commands:
   validate <file>...                 validate tasks files / agent.yaml against the schema
-  run <task> [--event f.json]        queue a run of a task by hand (--wait to block)
+  run <task> [-p k=v] [--payload f]  queue a run of a task by hand (--wait to block)
   emit <type> [payload.json|-]       inject an event
   runs ls|show <id>|logs <id>        list runs / one run with its cost / its agent transcript
   runs cancel <id>                   end a queued, running or waiting run as cancelled

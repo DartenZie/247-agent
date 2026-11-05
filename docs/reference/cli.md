@@ -55,6 +55,8 @@ not apply; the task's `concurrency` and the global `workers` cap still do.
 
 | Flag | Meaning | Default |
 |---|---|---|
+| `-p`, `--param <key=value>` | one value of the payload the action sees as `event.payload`; repeatable; merged over `--payload` or the `--event` payload, which must then be an object | none |
+| `--payload <file\|->` | a JSON payload the action sees as `event.payload`, without the `type`/`payload` envelope; `-` reads stdin; cannot be combined with `--event` | none |
 | `--event <file\|->` | a JSON object `{"type": "...", "payload": ...}` the action sees as its trigger event; `-` reads stdin; other keys are refused | none |
 | `--type <event.type>` | sets or overrides the event type | `manual.input` |
 | `--correlation <id>` | the correlation id to thread the run under | a new one |
@@ -72,7 +74,17 @@ succeeded <run id> for <task>                       # with --wait, then the resu
 
 `--json` prints `{"event_id": "...", "run": {...}}`, the final run record when waiting.
 Exit 1 with `--wait` when the final status is not `succeeded`; an unknown task or a task
-paused with `oa tasks pause` is a daemon error, exit 1.
+paused with `oa tasks pause` is a daemon error, exit 1. When the task declares
+[`params`](../tasks/triggers.md#declare-the-params-a-manual-task-needs), the daemon
+checks the payload against them and refuses the run with exit 2, one line for each
+problem:
+
+```
+daemon: invalid params for task "greet"
+  name: required parameter is missing
+  age: expected integer, got string "old"
+  nmae: unknown parameter; declared: name, age
+```
 
 ### `oa emit <type> [payload.json|-] [options]`
 

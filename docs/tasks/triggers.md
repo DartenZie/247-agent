@@ -84,6 +84,37 @@ trigger: { kind: manual }
 Nothing starts the task but `oa run`. Use it for maintenance jobs: a rebuild, a
 one-off import, a replay.
 
+### Declare the params a manual task needs
+
+A manual task that reads values from `event.payload` can declare them under `params`.
+The daemon then checks every `oa run` of the task before it queues the run:
+
+```yaml
+tasks:
+  - name: greet
+    trigger:
+      kind: manual
+      params:
+        name: { type: string, description: who to greet }
+        age: { type: integer, required: false }
+        env: { enum: [staging, prod], default: staging }
+    action:
+      kind: shell
+      cmd: ["echo", "Hello ${event.payload.name} on ${event.payload.env}"]
+```
+
+```sh
+oa run greet -p name=Ada -p age=36 --wait
+oa run greet --payload params.json --wait
+```
+
+The daemon refuses the run, and names each problem, when a required param is missing,
+when a value does not have the declared type or is not in the `enum`, or when the
+payload has a key that is not declared (a misspelled name). A param with a `default`
+gets that value when it is not given. A string value is converted to the declared type,
+so `-p age=36` gives the integer 36 and `-p loud=true` the boolean `true`. A task
+without `params` takes any payload.
+
 ## `oa run` works on every task
 
 Whatever its trigger, any task can be started by hand:
@@ -95,7 +126,8 @@ oa run classify_email --event mail.json --wait
 
 This publishes a `manual.run` event and starts one run from it. Trigger filters and the
 cron overlap rule do not apply, and manual runs are never deduplicated; the task's
-`concurrency` and the global `workers` cap still do. With `--event`, the action sees the
+`concurrency` and the global `workers` cap still do. With `-p key=value` or
+`--payload <file>`, the action sees the given values as `event.payload`. With `--event`, the action sees the
 file's `type` and `payload` as its event, under the manual run's ids, so you can replay
 a real email through a task to test it. `oa emit <type> payload.json` is the other
 tool: it publishes the event itself, so the trigger and the filter are exercised too.
@@ -110,6 +142,22 @@ See [the CLI reference](../reference/cli.md).
 | `schedule` | yes | | 5, 6 or 7 space-separated fields, or a nickname such as `@hourly` |
 | `tz` | no | the daemon's zone | an IANA time zone name |
 | `overlap` | no | `skip` | `skip` drops a tick while a run of the task is queued, running or waiting; `allow` starts another run |
+
+### `manual`
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `params` | no | none: any payload | a map from param name (lower case letters, digits, `_`) to its declaration |
+
+Each param:
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `type` | no | `string` | `string`, `number`, `integer`, `boolean`, `object` or `array` |
+| `required` | no | `true`, or `false` with a `default` | whether `oa run` must give the param |
+| `default` | no | | the value when the param is not given; must have the declared type |
+| `enum` | no | | the only values allowed; each must have the declared type |
+| `description` | no | | what the param is for |
 
 ### `event`
 

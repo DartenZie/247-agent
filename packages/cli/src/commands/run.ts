@@ -10,6 +10,10 @@ export const RUN_USAGE = `usage: oa run <task> [options]
 Queues a run of <task> whatever its trigger kind; filters and cron overlap do not apply.
 
 options:
+  -p, --param <key=value>  one parameter in the payload; repeatable; the daemon checks
+                        it against the task's declared params and converts the value
+  --payload <file|->    JSON payload the action sees as event.payload, without the
+                        {type, payload} envelope; -p values are merged over it
   --event <file|->      JSON {"type": "...", "payload": ...} the action sees as its
                         trigger event (default type: manual.input)
   --type <event.type>   sets or overrides the event type
@@ -42,6 +46,33 @@ function eventFromFile(doc: unknown, source: string): EventInput {
   return { type: o.type, payload: o.payload as JsonValue | undefined };
 }
 
+function isObject(v: JsonValue | undefined): v is Record<string, JsonValue> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** Merges `-p key=value` pairs over the payload; each value stays a string. */
+function withParams(
+  payload: JsonValue | undefined,
+  params: readonly string[],
+  source: string,
+): JsonValue | undefined {
+  if (params.length === 0) {
+    return payload;
+  }
+  if (payload !== undefined && payload !== null && !isObject(payload)) {
+    throw new UsageError(`${source}: -p needs the payload to be an object`);
+  }
+  const out: Record<string, JsonValue> = { ...(payload ?? {}) };
+  for (const p of params) {
+    const eq = p.indexOf('=');
+    if (eq <= 0) {
+      throw new UsageError(`-p ${p}: expected key=value`);
+    }
+    out[p.slice(0, eq)] = p.slice(eq + 1);
+  }
+  return out;
+}
+
 const isActive = (status: RunStatus): boolean =>
   (ACTIVE_STATUSES as readonly RunStatus[]).includes(status);
 
@@ -50,6 +81,8 @@ export async function run(args: string[], io: Io): Promise<number> {
     args,
     allowPositionals: true,
     options: {
+      param: { type: 'string', short: 'p', multiple: true, default: [] },
+      payload: { type: 'string' },
       event: { type: 'string' },
       type: { type: 'string' },
       correlation: { type: 'string' },
@@ -62,8 +95,19 @@ export async function run(args: string[], io: Io): Promise<number> {
   if (task === undefined || extra.length > 0) {
     throw new UsageError('run: exactly one task name is required');
   }
-  const input: EventInput =
-    values.event === undefined ? {} : eventFromFile(await readJson(values.event, io), values.event);
+  if (values.payload !== undefined && values.event !== undefined) {
+    throw new UsageError('run: --payload and --event cannot be combined');
+  }
+  let input: EventInput = {};
+  let source = '-p';
+  if (values.event !== undefined) {
+    input = eventFromFile(await readJson(values.event, io), values.event);
+    source = values.event === '-' ? 'stdin' : values.event;
+  } else if (values.payload !== undefined) {
+    input = { payload: (await readJson(values.payload, io)) as JsonValue };
+    source = values.payload === '-' ? 'stdin' : values.payload;
+  }
+  input.payload = withParams(input.payload, values.param, source);
   if (values.type !== undefined) {
     input.type = values.type;
   }

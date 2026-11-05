@@ -1,3 +1,4 @@
+import { applyParams, type ParamIssue } from '../config/params.js';
 import type { JsonValue, RunRecord } from '../store/types.js';
 import type { Store } from '../store/store.js';
 import type { EventBus } from './bus.js';
@@ -17,6 +18,17 @@ export class UnknownTaskError extends Error {
   }
 }
 
+/** The input of a manual run does not fit the params the task declares. */
+export class InvalidParamsError extends Error {
+  constructor(
+    readonly task: string,
+    readonly issues: ParamIssue[],
+  ) {
+    super(`invalid params for task "${task}"`);
+    this.name = 'InvalidParamsError';
+  }
+}
+
 export class TaskPausedError extends Error {
   constructor(readonly task: string) {
     super(`task "${task}" is paused: resume it with oa tasks resume ${task}`);
@@ -27,7 +39,9 @@ export class TaskPausedError extends Error {
 /**
  * `oa run <task>`: publishes a `manual.run` event for the task and dispatches it
  * synchronously. Works for any task regardless of its trigger kind; filters and cron
- * overlap-skip do not apply; a paused task is refused (`TaskPausedError`). Never
+ * overlap-skip do not apply; a paused task is refused (`TaskPausedError`), and so is input
+ * that does not fit a manual trigger's `params` (`InvalidParamsError`), whose defaults
+ * are filled in otherwise. Never
  * deduplicated: every call is a new run.
  *
  * Executor rule: for a `manual.run` trigger event the action context's `event` is
@@ -40,11 +54,24 @@ export function runTaskManually(
   taskName: string,
   input?: ManualInput,
 ): { event_id: string; run: RunRecord } {
-  if (!config.byName.has(taskName)) {
+  const task = config.byName.get(taskName);
+  if (task === undefined) {
     throw new UnknownTaskError(taskName);
   }
   if (store.pauses.pausedAt(taskName) !== undefined) {
     throw new TaskPausedError(taskName);
+  }
+  let event: { type: string; payload: JsonValue } | null =
+    input === undefined
+      ? null
+      : { type: input.type ?? 'manual.input', payload: input.payload ?? null };
+  const trigger = task.config.trigger;
+  if (trigger.kind === 'manual' && trigger.params !== undefined) {
+    const checked = applyParams(trigger.params, input?.payload);
+    if (!checked.ok) {
+      throw new InvalidParamsError(taskName, checked.issues);
+    }
+    event = { type: input?.type ?? 'manual.input', payload: checked.payload };
   }
   const published = bus.publish({
     type: MANUAL_RUN,
@@ -52,10 +79,7 @@ export function runTaskManually(
     correlation_id: input?.correlation_id,
     payload: {
       task: taskName,
-      event:
-        input === undefined
-          ? null
-          : { type: input.type ?? 'manual.input', payload: input.payload ?? null },
+      event,
     },
   });
   if (published.status !== 'inserted') {
