@@ -55,7 +55,9 @@ config:
   request is made.
 - `search_issues` always appends `repo:<owner/name>` to the query and refuses a query
   that names `repo:`, `org:`, `user:` or `owner:` itself, wherever it appears: inside
-  parentheses or quotes, negated with `-`, or after a comma.
+  parentheses or quotes, negated with `-`, or after a comma. It also refuses a query
+  that contains the word `OR`, because the appended `repo:` would scope only one side of
+  it. Run one search per alternative instead.
 - The manifest's `ops` list is the second boundary: give an agent a copy of the
   manifest with the read ops only, and keep the write ops for tasks.
 

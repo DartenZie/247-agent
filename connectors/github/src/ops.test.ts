@@ -232,6 +232,19 @@ describe('ops', () => {
     expect(gh.calls).toHaveLength(1);
   });
 
+  it('refuses OR, which would leave one side of the query unscoped', async () => {
+    const gh = new FakeGitHub().on('GET /search/issues', () => ({
+      body: { total_count: 0, items: [] },
+    }));
+    const ops = gh.ops();
+    for (const query of ['label:bug OR is:issue', 'x) OR (is:issue', 'a\tOR\tb', '(a)OR(b)']) {
+      await expect(ops.searchIssues({ query }), query).rejects.toThrow(/must not use OR/);
+    }
+    expect(gh.calls).toEqual([]);
+    await ops.searchIssues({ query: 'ORACLE color' });
+    expect(gh.calls[0]?.query.q).toBe('ORACLE color repo:acme/site');
+  });
+
   it('lists workflow runs of one workflow', async () => {
     const gh = new FakeGitHub().on('GET /repos/acme/site/actions/workflows/ci.yml/runs', () => ({
       body: {
