@@ -21,7 +21,8 @@ or `connectors/mcp-bridge.ts`. The user-facing page is
 | `connectors/acp.ts` | the ACP client, the only file importing `@agentclientprotocol/sdk` |
 | `connectors/acp-types.ts` | the runner-facing session types and normalised updates |
 | `connectors/mcp-bridge.ts` | connector ops as agent tools |
-| `connectors/supervisor.ts` | spawns the agent, opens sessions (`AgentClients`), opens a bridge per session |
+| `connectors/supervisor.ts` | supervises the agent program, opens sessions (`AgentClients`), opens a bridge per session |
+| `connectors/launchers/acp.ts` | spawns the agent program, in bwrap when the manifest says so |
 
 ## The session
 

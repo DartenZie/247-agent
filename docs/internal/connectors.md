@@ -70,7 +70,13 @@ stderr) and nothing else.
 
 ## The supervisor
 
-`connectors/supervisor.ts` owns every connector process and the clients on top of them.
+`connectors/supervisor.ts` owns every connector process and the clients on top of them:
+its lifecycle, restart backoff and health checks. Starting one is the job of a launcher
+per transport behind one interface (`connectors/launchers/index.ts`, `Launcher`), picked
+from the manifest by `launcherKind`: `stdio.ts`, `socket.ts` (`managed_by: systemd`),
+`acp.ts` and `process.ts` (`transport: none`). A launcher resolves the process and its
+client as a `Launched` (`pid`, `client` or `acp`, `ended`, `stop`), or rejects with the
+reason the connector is `down`; the supervisor alone decides what an end means.
 
 **Spawn.** A `stdio` connector is started through `ProcessClientTransport`
 (`connectors/stdio-transport.ts`, the MCP stdio framing over the child's pipes) with its
@@ -281,11 +287,13 @@ language-neutral statement of it.
 ## Sandboxed agent programs
 
 For an `acp` manifest with `sandbox: bwrap` the supervisor spawns `bwrap … -- <exec>`
+(`connectors/launchers/acp.ts`)
 once, for the life of the process (`actions/sandbox.ts`, `buildSandboxArgv`): `work_dir`
 is the one writable path and holds every run's workspace and the program's home, the
 manifest's `ro_binds`/`rw_binds` add the repositories, and the daemon's protected paths
 are masked. With `sandbox.network` the supervisor also opens a filtering proxy per
-connector on a Unix socket in `<socket>.net/` (`connectors/net-proxy.ts`), binds it
+connector on a Unix socket in `<socket>.net/` (`connectors/net-proxy.ts`, pooled by
+`connectors/launchers/net-proxy-pool.ts`), binds it
 into the sandbox at `/tmp/.247-agent-net.sock`, and starts the agent behind an in-sandbox
 bridge (`actions/sandbox-net.ts`) that exposes the proxy on loopback and sets
 `HTTP_PROXY`/`HTTPS_PROXY`; `allow: []` gets neither proxy nor bridge, an empty network

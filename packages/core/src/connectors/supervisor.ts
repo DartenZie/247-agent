@@ -1,20 +1,17 @@
-import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   ErrorCode,
   McpError,
   type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { execa } from 'execa';
 
 import { AgentDefaults, type AgentDefaultsConfig } from '../actions/agent-config.js';
-import { netProxyDir, netProxySocket } from '../actions/sandbox-net.js';
-import { buildSandboxArgv, type SandboxBackend, type SandboxHost } from '../actions/sandbox.js';
+import { netProxyDir } from '../actions/sandbox-net.js';
+import type { SandboxBackend, SandboxHost } from '../actions/sandbox.js';
 import {
   NonRetryableError,
   OutcomeUnknownError,
@@ -22,30 +19,31 @@ import {
   type AgentOpenOptions,
   type ConnectorClients,
 } from '../actions/types.js';
-import {
-  unitSocket,
-  type ConnectorConfig,
-  type Manager,
-  type Transport,
-} from '../config/connector.js';
+import type { ConnectorConfig, Manager, Transport } from '../config/connector.js';
 import { systemTimer, type SetTimer } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
 import { errorMessage } from '../errors.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
-import { mkdirPrivate } from '../private-fs.js';
-import { exitOf, killGroup, releasePipes, sweepGroupAfter } from '../process-group.js';
 import type { SecretsBackend } from '../secrets/secrets.js';
 import type { JsonValue } from '../store/types.js';
-import { VERSION } from '../version.js';
 import type { AgentInfo, AgentSession } from './acp-types.js';
-import { AcpAgent } from './acp.js';
-import { OutputLimiter, pipeLines } from './output.js';
 import { connectorBaseEnv, connectorChildEnv, sandboxOf } from './child-env.js';
+import { AcpLauncher } from './launchers/acp.js';
+import {
+  launcherKind,
+  type Launched,
+  type Launcher,
+  type LauncherKind,
+} from './launchers/index.js';
+import { NetProxyPool } from './launchers/net-proxy-pool.js';
+import { processLauncher } from './launchers/process.js';
+import { socketLauncher } from './launchers/socket.js';
+import { stdioLauncher } from './launchers/stdio.js';
 import { openToolBridge, type ConnectorTools } from './mcp-bridge.js';
-import { openNetProxy, type NetProxy } from './net-proxy.js';
-import { SocketClientTransport } from './socket-transport.js';
-import { ProcessClientTransport } from './stdio-transport.js';
+import { OutputLimiter } from './output.js';
+
+export { agentHome } from './launchers/acp.js';
 
 export interface SupervisorOptions {
   manifests: readonly ConnectorConfig[];
@@ -168,37 +166,16 @@ export class ConnectorNoAnswerError extends OutcomeUnknownError {
 /** How long a connector must stay up before its restart backoff resets. */
 const STABLE_MS = 30_000;
 
-/**
- * The home directory of a sandboxed agent program: inside `work_dir` (the one writable
- * path) and outside every run's workspace, so its caches and settings (`~/.npm`,
- * `~/.claude`) survive restarts and the retention sweep, which only takes `run_*` names.
- */
-export function agentHome(workDir: string, connector: string): string {
-  return join(workDir, 'home', connector);
-}
-
 function networkOf(m: ConnectorConfig): ConnectorNetwork {
   const network = sandboxOf(m)?.network;
   return network === undefined ? 'host' : network.allow.length === 0 ? 'none' : 'allowlist';
 }
 
-/** A `transport: none` child: no MCP, just a process to watch and stop. */
-interface PlainProcess {
-  readonly pid: number | undefined;
-  kill(signal: NodeJS.Signals): void;
-  /** Resolves when the process has exited, however. */
-  readonly exited: Promise<void>;
-}
-
 interface Managed {
   readonly manifest: ConnectorConfig;
   state: ConnectorState;
-  client: Client | undefined;
-  /** A child's stdio, or the unit's socket for a `managed_by: systemd` connector. */
-  transport: ProcessClientTransport | SocketClientTransport | undefined;
-  /** A `none` child, or the `acp` agent (which is also a plain process to watch and stop). */
-  process: PlainProcess | undefined;
-  acp: AcpAgent | undefined;
+  /** The process (or the unit's connection) while it is up, from its transport's launcher. */
+  launched: Launched | undefined;
   restarts: number;
   error: string | null;
   upSince: number;
@@ -211,7 +188,7 @@ interface Managed {
   epoch: number;
   /**
    * The spawn in flight, until its process is up or given up: its process is not on
-   * `transport`/`process` yet, so `kill` aborts it and waits for it to stop.
+   * `launched` yet, so `kill` aborts it and waits for it to stop.
    */
   starting: { abort: AbortController; done: Promise<void> } | undefined;
 }
@@ -226,10 +203,7 @@ function newManaged(manifest: ConnectorConfig): Managed {
   return {
     manifest,
     state: 'stopped',
-    client: undefined,
-    transport: undefined,
-    process: undefined,
-    acp: undefined,
+    launched: undefined,
     restarts: 0,
     error: null,
     upSince: 0,
@@ -258,12 +232,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private readonly metrics: Metrics;
   private readonly baseEnv: Record<string, string>;
   private readonly templateEnv: Record<string, string>;
-  private readonly sandboxHost: SandboxHost | undefined;
   private readonly callTimeoutMs: number;
-  /** Where the allowlist proxies listen (`netProxyDir`): made on first use, 0700. */
-  private readonly netDir: string;
-  private netSeq = 0;
-  private readonly netProxies = new Set<NetProxy>();
+  /** The allowlist proxies of sandboxed agents, under `netProxyDir`: made on first use, 0700. */
+  private readonly netProxies: NetProxyPool;
+  /** One per transport; `launcherKind` picks it from the manifest. */
+  private readonly launchers: Record<Exclude<LauncherKind, 'external'>, Launcher>;
   private stopping = false;
   private readonly setTimer: SetTimer;
   /** The restart in flight per connector, which a concurrent `restart` joins. */
@@ -271,13 +244,26 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
 
   constructor(opts: SupervisorOptions) {
     this.socketPath = opts.socketPath;
-    this.netDir = netProxyDir(opts.socketPath);
     this.secrets = opts.secrets;
     this.log = opts.log;
     this.metrics = opts.metrics ?? new Metrics();
     this.templateEnv = opts.templateEnv ?? opts.secrets.scrub(process.env);
     this.baseEnv = opts.env ?? connectorBaseEnv(this.templateEnv);
-    this.sandboxHost = opts.sandboxHost;
+    this.netProxies = new NetProxyPool({
+      dir: netProxyDir(opts.socketPath),
+      metrics: this.metrics,
+    });
+    this.launchers = {
+      stdio: stdioLauncher,
+      socket: socketLauncher,
+      process: processLauncher,
+      acp: new AcpLauncher({
+        workDir: () => this.agentWorkDir,
+        sandboxHost: opts.sandboxHost,
+        hostEnv: this.baseEnv,
+        proxies: this.netProxies,
+      }),
+    };
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
     this.setTimer = opts.setTimer ?? systemTimer;
     this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
@@ -330,7 +316,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   }
 
   info(connector: string): AgentInfo | undefined {
-    return this.managed.get(connector)?.acp?.info;
+    return this.managed.get(connector)?.launched?.acp?.info;
   }
 
   status(): ConnectorStatus[] {
@@ -363,7 +349,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         `connector "${connector}" is not an acp agent (transport ${m.manifest.transport})`,
       );
     }
-    const acp = m.acp;
+    const acp = m.launched?.acp;
     if (acp === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
@@ -413,13 +399,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   async stop(): Promise<void> {
     this.stopping = true;
     await Promise.all([...this.managed.values()].map((m) => this.kill(m)));
-    await Promise.all([...this.netProxies].map((p) => p.close()));
-    try {
-      // Each proxy removed its socket; the directory goes only if nothing else is in it.
-      rmdirSync(this.netDir);
-    } catch {
-      // never made, or not empty
-    }
+    await this.netProxies.closeAll();
   }
 
   /**
@@ -589,10 +569,11 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     if (m.manifest.transport !== 'stdio') {
       throw new ConnectorOpError(connector, op, 'this connector serves no ops');
     }
-    if (m.client === undefined || m.state !== 'up') {
+    const client = m.launched?.client;
+    if (client === undefined || m.state !== 'up') {
       throw new ConnectorDownError(connector);
     }
-    return m.client;
+    return client;
   }
 
   /** The child's environment, secrets rendered (docs/internal/connectors.md); see `connectorChildEnv`. */
@@ -604,83 +585,6 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       templateEnv: this.templateEnv,
       socketPath: this.socketPath,
     });
-  }
-
-  /**
-   * The filtering proxy of a sandbox with a network allowlist (`connectors/net-proxy.ts`):
-   * a socket in the daemon's runtime directory, which every sandbox masks and no bind may
-   * show (`sandboxHost`, `checkSandboxes`), so no sandbox sees it unless bwrap binds it in
-   * and one agent cannot borrow another's allowlist. The pid in the name keeps a second
-   * daemon started on the same config, which fails only once it binds the core socket,
-   * off this one's sockets. The caller closes it when the program is gone.
-   */
-  private async openNetProxy(m: Managed, allow: readonly string[], log: Logger): Promise<NetProxy> {
-    if (!existsSync(this.netDir)) {
-      // Not recursive: the runtime directory is the operator's to make, with its own mode.
-      mkdirSync(this.netDir, { mode: 0o700 });
-    }
-    const connector = m.manifest.name;
-    const proxy = await openNetProxy({
-      allow,
-      socket: netProxySocket(this.netDir, process.pid, ++this.netSeq),
-      log,
-      onRequest: (result) => {
-        this.metrics.sandboxNetRequests.inc({ connector, result });
-      },
-    });
-    this.netProxies.add(proxy);
-    return {
-      socket: proxy.socket,
-      close: () => {
-        this.netProxies.delete(proxy);
-        return proxy.close();
-      },
-    };
-  }
-
-  /**
-   * How an acp agent is started: as it is, or as `bwrap … -- <exec>` with `work_dir`
-   * writable, its home under it, the manifest's `cwd` (else that home) as cwd and the
-   * agent's environment set inside; bwrap itself runs with the base environment, which
-   * is where it is found on PATH. With `sandbox.network` the sandbox gets no network but
-   * the proxy opened here for its `allow` list (none at all for an empty one).
-   */
-  private async agentSpawn(
-    m: Managed,
-    env: Record<string, string>,
-    log: Logger,
-  ): Promise<{
-    exec: string[];
-    cwd: string | undefined;
-    env: Record<string, string>;
-    proxy: NetProxy | undefined;
-  }> {
-    const exec = m.manifest.exec ?? [];
-    const sandbox = sandboxOf(m.manifest);
-    if (sandbox === undefined) {
-      return { exec, cwd: m.manifest.cwd, env, proxy: undefined };
-    }
-    const home = agentHome(this.agentWorkDir, m.manifest.name);
-    // The agent's login and config live here: closed to other users like its workspaces.
-    mkdirPrivate(home);
-    const allow = sandbox.network?.allow ?? [];
-    const proxy = allow.length === 0 ? undefined : await this.openNetProxy(m, allow, log);
-    return {
-      exec: buildSandboxArgv({
-        sandbox,
-        cmd: exec,
-        writable: this.agentWorkDir,
-        cwd: m.manifest.cwd ?? home,
-        home,
-        env,
-        host: this.sandboxHost,
-        hostEnv: this.baseEnv,
-        net: sandbox.network === undefined ? undefined : { proxySocket: proxy?.socket },
-      }),
-      cwd: undefined,
-      env: this.baseEnv,
-      proxy,
-    };
   }
 
   /** Whether `m` is still the supervised entry for its name (a reload may have replaced it). */
@@ -728,208 +632,46 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     const epoch = m.epoch;
     m.state = 'starting';
     m.error = null;
-    if (m.manifest.managed_by === 'systemd') {
-      await this.attach(m, epoch, signal, log);
-      return;
-    }
-    let env: Record<string, string>;
-    try {
-      env = this.childEnv(m);
-    } catch (err) {
-      this.failed(m, `cannot prepare environment: ${errorMessage(err)}`, log);
-      return;
-    }
-    const [command, ...args] = m.manifest.exec ?? [];
-    if (command === undefined) {
-      this.failed(m, 'exec is empty (a built-in connector is not spawned)', log);
-      return;
-    }
-    const cwd = m.manifest.cwd;
-    if (m.manifest.transport === 'none') {
-      const child = execa(command, args, {
-        ...(cwd === undefined ? {} : { cwd }),
-        env,
-        extendEnv: false,
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        // Logged line by line and dropped: a buffer would hit execa's maxBuffer and kill it.
-        buffer: false,
-        reject: false,
-        // Its own process group, so a stop reaches what a wrapper started too (#196).
-        detached: true,
-      });
-      const proc: PlainProcess = {
-        pid: child.pid,
-        kill: (signal) => {
-          if (child.pid !== undefined) {
-            killGroup(child.pid, signal);
-          }
-        },
-        // On the exit, not execa's result, which waits for pipes a helper can hold (#198),
-        // and the pipes are released, even from a helper outside the group (#200).
-        exited: sweepGroupAfter(child.pid, exitOf(child))
-          .then(() => releasePipes(child))
-          .then(() => child)
-          .then(
-            (r) => {
-              if (m.process !== proc) {
-                return; // killed on purpose (stop/restart); not a crash
-              }
-              m.process = undefined;
-              const why =
-                r.exitCode === undefined
-                  ? `killed by ${r.signal ?? '?'}`
-                  : `exit code ${String(r.exitCode)}`;
-              this.exited(m, why, log);
-            },
-            (err: unknown) => {
-              if (m.process !== proc) {
-                return;
-              }
-              m.process = undefined;
-              this.exited(m, errorMessage(err), log);
-            },
-          ),
-      };
-      m.process = proc;
-      const limiter = this.outputLimiter(m.manifest.name);
-      void pipeLines(child.stdout, 'stdout', log, limiter);
-      void pipeLines(child.stderr, 'stderr', log, limiter);
-      this.up(m, log);
-      return;
-    }
-    if (m.manifest.transport === 'acp') {
-      let agent: AcpAgent;
-      let proxy: NetProxy | undefined;
-      try {
-        const spawn = await this.agentSpawn(m, env, log);
-        proxy = spawn.proxy;
-        if (!this.stillWanted(m, epoch)) {
-          // Stopped, killed or replaced while the proxy was opening: start nothing.
-          void proxy?.close();
-          return;
-        }
-        agent = await AcpAgent.spawn({
-          exec: spawn.exec,
-          cwd: spawn.cwd,
-          env: spawn.env,
-          log,
-          outputLimiter: this.outputLimiter(m.manifest.name),
-          signal,
-        });
-      } catch (err) {
-        void proxy?.close();
-        if (this.stillWanted(m, epoch)) {
-          this.failed(m, `cannot start: ${errorMessage(err)}`, log);
-        }
-        return;
-      }
-      // The proxy serves this process alone: it goes when the process does, however.
-      void agent.exited.then(() => proxy?.close());
-      if (!this.stillWanted(m, epoch)) {
-        agent.kill('SIGTERM');
-        return;
-      }
-      m.acp = agent;
-      m.process = agent;
-      void agent.exited.then(() => {
-        if (m.process !== agent) {
-          return; // killed on purpose (stop/restart); not a crash
-        }
-        m.process = undefined;
-        m.acp = undefined;
-        this.exited(m, 'process exited', log);
-      });
-      this.up(m, log);
-      return;
-    }
-    const transport = new ProcessClientTransport({
-      command,
-      args,
-      env,
-      ...(cwd === undefined ? {} : { cwd }),
-    });
-    const client = new Client({ name: '247-agent-core', version: VERSION });
-    transport.onerror = (err) => {
-      log.warn('connector.transport_error', { error: err.message });
-    };
-    void pipeLines(transport.stderr, 'stderr', log, this.outputLimiter(m.manifest.name));
-    try {
-      await connectUntil(client, transport, signal);
-    } catch (err) {
-      if (this.stillWanted(m, epoch)) {
-        this.failed(m, `cannot start: ${errorMessage(err)}`, log);
-      }
-      return;
-    }
-    if (!this.stillWanted(m, epoch)) {
-      await transport.close().catch(() => undefined);
-      return;
-    }
-    m.client = client;
-    m.transport = transport;
-    // Chain, not replace: the client's own handler rejects the requests still in flight.
-    const clientOnClose = transport.onclose;
-    transport.onclose = () => {
-      clientOnClose?.();
-      if (m.transport !== transport) {
-        return; // an older process; ignore
-      }
-      m.client = undefined;
-      m.transport = undefined;
-      this.exited(m, 'process exited', log);
-    };
-    this.up(m, log);
-  }
-
-  /**
-   * A `managed_by: systemd` connector: its unit runs the process, so nothing is spawned and
-   * no secret is resolved here. One without ops is `external`; one with ops is reached on
-   * the unit's socket, reconnected with the restart backoff when the connection drops.
-   */
-  private async attach(m: Managed, epoch: number, signal: AbortSignal, log: Logger): Promise<void> {
-    if (m.manifest.transport !== 'stdio') {
+    const kind = launcherKind(m.manifest);
+    if (kind === 'external') {
+      // Its own unit runs it and the core has nothing to reach.
       m.state = 'external';
       log.info('connector.external', { unit: `247-agent-connector@${m.manifest.name}` });
       return;
     }
-    const path = unitSocket(m.manifest);
-    const transport = new SocketClientTransport(path);
-    const client = new Client({ name: '247-agent-core', version: VERSION });
-    transport.onerror = (err) => {
-      log.warn('connector.transport_error', { error: err.message });
-    };
+    let launched: Launched | undefined;
     try {
-      await connectUntil(client, transport, signal);
+      launched = await this.launchers[kind].launch({
+        manifest: m.manifest,
+        env: () => this.childEnv(m),
+        log,
+        outputLimiter: () => this.outputLimiter(m.manifest.name),
+        signal,
+        wanted: () => this.stillWanted(m, epoch),
+      });
     } catch (err) {
       if (this.stillWanted(m, epoch)) {
-        this.failed(
-          m,
-          `cannot connect to ${path} (is 247-agent-connector@${m.manifest.name} running?): ${errorMessage(err)}`,
-          log,
-        );
+        this.failed(m, errorMessage(err), log);
       }
+      return;
+    }
+    if (launched === undefined) {
       return;
     }
     if (!this.stillWanted(m, epoch)) {
-      await transport.close().catch(() => undefined);
+      // Stopped, killed or replaced while it was starting.
+      await launched.stop();
       return;
     }
-    m.client = client;
-    m.transport = transport;
-    // Chain, not replace: the client's own handler rejects the ops in flight, which would
-    // otherwise wait out their whole timeout on a connection that is gone.
-    const clientOnClose = transport.onclose;
-    transport.onclose = () => {
-      clientOnClose?.();
-      if (m.transport !== transport) {
-        return; // an older connection; ignore
+    m.launched = launched;
+    const up = launched;
+    void up.ended.then((why) => {
+      if (m.launched !== up) {
+        return; // killed on purpose (stop/restart), or an older process; not a crash
       }
-      m.client = undefined;
-      m.transport = undefined;
-      this.exited(m, 'connection to the unit closed', log);
-    };
+      m.launched = undefined;
+      this.exited(m, why, log);
+    });
     this.up(m, log);
   }
 
@@ -951,14 +693,14 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   /** Schedules the next `ping` of a stdio connector with `health:`; checks never overlap. */
   private armHealth(m: Managed, log: Logger): void {
     const health = m.manifest.health;
-    if (health === undefined || m.client === undefined || this.stopping) {
+    const client = m.launched?.client;
+    if (health === undefined || client === undefined || this.stopping) {
       return;
     }
-    const client = m.client;
     m.healthTimer = this.setTimer(() => {
       m.healthTimer = undefined;
       void this.checkHealth(m, client, log).then(() => {
-        if (m.client === client && m.state === 'up') {
+        if (m.launched?.client === client && m.state === 'up') {
           this.armHealth(m, log);
         }
       });
@@ -977,7 +719,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     } catch (err) {
       error = errorMessage(err);
     }
-    if (m.client !== client) {
+    if (m.launched?.client !== client) {
       return; // the process changed under us; the new one has its own checks
     }
     const now = new Date().toISOString();
@@ -1053,71 +795,18 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     m.state = 'stopped';
     // Left set until the spawn settles, so a second kill waits for the same process.
     const starting = m.starting;
-    const transport = m.transport;
-    const child = m.process;
-    m.client = undefined;
-    m.transport = undefined;
-    m.process = undefined;
-    m.acp = undefined;
+    const launched = m.launched;
+    m.launched = undefined;
     if (starting !== undefined) {
       starting.abort.abort();
       await starting.done.catch(() => undefined);
     }
-    if (transport !== undefined) {
-      await transport.close().catch(() => undefined);
-    }
-    if (child?.pid !== undefined) {
-      child.kill('SIGTERM');
-      const done = await Promise.race([child.exited.then(() => true), sleep(5000, false)]);
-      if (!done) {
-        child.kill('SIGKILL');
-        await child.exited;
-      }
-    }
-  }
-}
-
-/**
- * `client.connect(transport)`, cut short by `signal`, which closes the transport. Rejects
- * on failure or abort only once the transport is closed, so a child it ran has exited.
- */
-async function connectUntil(
-  client: Client,
-  transport: ProcessClientTransport | SocketClientTransport,
-  signal: AbortSignal,
-): Promise<void> {
-  let closing: Promise<void> | undefined;
-  const close = (): Promise<void> => (closing ??= transport.close().catch(() => undefined));
-  // The connect itself ends only when stdout closes, which a grandchild can hold open.
-  let rejectAborted: (reason: unknown) => void = () => undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    rejectAborted = reject;
-  });
-  aborted.catch(() => undefined);
-  const onAbort = (): void => {
-    void close().then(() => {
-      rejectAborted(signal.reason);
-    });
-  };
-  signal.addEventListener('abort', onAbort, { once: true });
-  try {
-    signal.throwIfAborted();
-    const connecting = client.connect(transport);
-    connecting.catch(() => undefined);
-    await Promise.race([connecting, aborted]);
-    // `initialize` may have been answered just as the abort came.
-    signal.throwIfAborted();
-  } catch (err) {
-    await close();
-    throw err;
-  } finally {
-    signal.removeEventListener('abort', onAbort);
+    await launched?.stop();
   }
 }
 
 function pidOf(m: Managed): number | null {
-  const t = m.transport;
-  return (t instanceof ProcessClientTransport ? t.pid : null) ?? m.process?.pid ?? null;
+  return m.launched?.pid ?? null;
 }
 
 interface ToolResult {
