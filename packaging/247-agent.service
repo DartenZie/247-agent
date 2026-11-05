@@ -14,12 +14,17 @@
 # config, opened the database and bound its socket. It sends each notification through a
 # systemd-notify child, hence NotifyAccess=all. WatchdogSec=: a daemon whose event loop
 # stops answering for a minute is killed and restarted. TimeoutStartSec= leaves room for a
-# database migration on start.
+# database migration on start. StartLimitIntervalSec= and StartLimitBurst=: a sixth start
+# within ten minutes is refused and the unit stays failed, so a crash loop shows in
+# `systemctl is-failed` instead of restarting forever; `systemctl reset-failed 247-agent`
+# allows a start again at once.
 [Unit]
 Description=247-agent core
 Documentation=file:///opt/247-agent/share/doc/operations/production.md https://github.com/DartenZie/247-agent/blob/main/docs/operations/production.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=notify

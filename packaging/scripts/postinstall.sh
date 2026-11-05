@@ -43,12 +43,15 @@ if [ $upgrade = 1 ]; then
   # Running, or enabled but down (crash-looping after a failed upgrade, which a retry with
   # `dpkg --configure -a` must not report as fine). Stopped and disabled stays that way.
   systemctl is-active --quiet 247-agent || systemctl is-enabled --quiet 247-agent || exit 0
+  # A unit that crash-looped into its start limit refuses a restart until it is reset.
+  systemctl reset-failed 247-agent 2> /dev/null || true
   if ! systemctl restart 247-agent || ! sh "$prefix/share/check-service.sh"; then
     echo "247-agent: the upgraded daemon did not come up." >&2
     rollback
     exit 1
   fi
 else
+  systemctl reset-failed 247-agent 2> /dev/null || true
   if ! systemctl enable --now 247-agent || ! sh "$prefix/share/check-service.sh"; then
     echo "247-agent: the daemon did not come up after the install." >&2
     exit 1
