@@ -18,8 +18,8 @@ One call to a classification-only model, typed answers with probabilities, no te
 | type | question | answer |
 |---|---|---|
 | `noul` | `{ type, instructions, criteria?: { "true": "…", "false": "…" } }`; both sides or neither | `{ type: noul, noul }` where `noul` is P(true) in 0..1; no confidence field (0.5 means "cannot tell") |
-| `choice` | `{ type, instructions, criteria: { label: description, … } }`; 2 to 255 labels | `{ type: choice, choice, confidence?, probabilities? }`; `choice` is the argmax, probabilities sum to 1 |
-| `score` | `{ type, instructions, criteria: [lowest, …, highest] }`; 2 to 10 levels | `{ type: score, score, confidence?, probabilities?, legend? }`; `score` is Σ index × p(index), so `1.05` means "level 1, a little of level 2" |
+| `choice` | `{ type, instructions, criteria: { label: description, … } }`; 2 to 255 labels | `{ type: choice, choice, confidence, probabilities }`; `choice` is the argmax, `confidence` is in 0..1, `probabilities` maps labels to 0..1 and sum to 1 |
+| `score` | `{ type, instructions, criteria: [lowest, …, highest] }`; 2 to 10 levels | `{ type: score, score, confidence, probabilities, legend? }`; `probabilities` maps level indexes (as strings) to 0..1; `score` is Σ index × p(index), so `1.05` means "level 1, a little of level 2" |
 
 The run result is the answers map keyed by question id, so `emit`/`state_updates` read
 `result.kind.choice`, `result.kind.probabilities.ignore`, `result.urgent.noul`,

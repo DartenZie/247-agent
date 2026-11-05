@@ -103,7 +103,7 @@ call.
 | the provider is not an `openrouter` one | refused by `oa validate`; at run time the run fails without retry |
 | a rate limit or a server error | the attempt fails and is retried |
 | the request was rejected: no key, no credits, over 32k tokens | fails without retry |
-| an answer is missing, of the wrong type, a label outside the criteria or a score out of range | the attempt fails and is retried; the provider answered badly |
+| an answer is missing, of the wrong type, a label outside the criteria, a score out of range, a `noul` outside 0..1, or a `confidence` or `probabilities` that is missing or out of range | the attempt fails and is retried; the provider answered badly |
 | the cost overran the run's budget, or the daily cap is reached, counting calls in flight at their worst case | fails without retry |
 
 [`decide-triage.yaml`](../examples/decide-triage.yaml) is a complete example, and
