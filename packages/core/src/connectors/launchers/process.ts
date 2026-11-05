@@ -35,7 +35,14 @@ export async function stopProcess(proc: {
  * logged line by line.
  */
 export const processLauncher: Launcher = {
-  launch: (req) => Promise.resolve(req).then(start),
+  // Spawned at once, as the supervisor asks: no tick in which a kill could miss it.
+  launch: (req) => {
+    try {
+      return Promise.resolve(start(req));
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  },
 };
 
 function start(req: LaunchRequest): Launched {

@@ -34,8 +34,9 @@ export interface LaunchRequest {
   readonly signal: AbortSignal;
   /**
    * Whether the supervisor still wants this start: false once the core is stopping or the
-   * connector was killed or replaced meanwhile. A launch that finds it false stops what it
-   * began and resolves `undefined`.
+   * connector was killed or replaced meanwhile. A launcher with a step before the spawn
+   * (the acp proxy) checks it there and resolves `undefined`; the supervisor checks it again
+   * on whatever a launch resolves and stops it.
    */
   wanted(): boolean;
 }
