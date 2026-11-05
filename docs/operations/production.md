@@ -284,6 +284,10 @@ systemctl reset-failed 247-agent
 systemctl restart 247-agent
 ```
 
+Remove an old tree (`rm -rf /opt/247-agent-<previous version>`) only after the service
+runs on the new version and you no longer need the rollback. Until the restart, the
+running daemon uses the old tree, and the new child processes it starts need its files.
+
 Do not mix the package and the installer on one machine: both own `/opt/247-agent`.
 
 ## Backups
