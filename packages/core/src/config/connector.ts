@@ -56,9 +56,10 @@ const ManifestFields = z.strictObject({
   socket: z.string().min(1).optional(),
   /**
    * Event types the connector emits. Documentation only: each entry must be a concrete
-   * event type, and a poller's list must include its `config.event`, but the core never
-   * compares the events a connector posts against it. Any process with the daemon's uid
-   * can post any well-formed `type` and any `source` (docs/internal/security.md, "The trust model").
+   * event type, the list must be empty on `acp`, and a poller's list, when given, must
+   * include its `config.event`. The core never compares the events a connector posts
+   * against it: any process that reaches the socket can post any well-formed `type` and
+   * any `source` (docs/internal/security.md, "The trust model").
    */
   emits: z.array(z.string().min(1)).default([]),
   /** MCP tools the core may call; empty = whatever the server lists. */
