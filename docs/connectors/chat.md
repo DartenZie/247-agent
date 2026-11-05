@@ -282,7 +282,7 @@ tasks:
 | Key | Backend | Value |
 |---|---|---|
 | `offset` | Telegram | the next update id to ask for; written after every handled update, so a restart does not replay |
-| `since` | Matrix | the sync token; written after every handled batch |
+| `since` | Matrix | the sync token; written after every handled batch, `null` after the homeserver rejected it |
 | `pending` | both | the open questions, newest `pending_limit` kept, with their options and correlation id |
 
 Inspect them with `GET /v1/state/chat`. Deleting `offset` with `initial: all` replays the
@@ -291,7 +291,16 @@ are gone from `pending`, so their taps only get "already answered". An update wh
 handling fails is retried on the next poll; after three attempts it is skipped with a log
 line. While the daemon's socket is unreachable, as during a start, stop or restart, the
 update waits for the daemon and the attempts are not counted. Telegram keeps an update
-for 24 hours, and a Matrix room that gets more than 50 new events meanwhile loses the
-older ones, as below. Poll failures back off from 1 s to 30 s, or
-wait as long as the service asks on a rate limit. A Matrix room with more than 50 new
-events between two syncs logs that the older ones were skipped.
+for 24 hours. Poll failures back off from 1 s to 30 s, or wait as long as the service
+asks on a rate limit.
+
+A Matrix room with more than 50 new events between two syncs, after downtime or in a busy
+room, has the rest fetched with `/rooms/{room}/messages` and handled first, oldest first. A
+failed fetch is retried with the batch. Older events are skipped, with a log line, when
+the gap holds more than 2000 events, when the homeserver refuses to page through it, or
+when the fetch fails three times in a row, so that one room does not hold up the others.
+
+When a sync with the stored `since` token gets a `400` and a sync without it does not,
+for example after a homeserver reset, the homeserver rejected the token. The connector
+logs it, sets `since` to `null` and syncs again as on a first start, so `initial`
+decides whether the backlog is delivered.

@@ -30,6 +30,8 @@ interface Call {
 class FakeMatrix {
   readonly calls: Call[] = [];
   readonly syncs: (MxSync | { status: number; body: unknown })[] = [];
+  /** Scripted `/rooms/{room}/messages` pages, handed out in order. */
+  readonly pages: ({ chunk: MxEvent[]; end?: string } | { status: number; body: unknown })[] = [];
   /** Called on every /sync with the number of syncs so far. */
   onSync: (count: number) => void = () => undefined;
   private eventSeq = 0;
@@ -81,6 +83,12 @@ class FakeMatrix {
       return path.includes('%40ghost')
         ? Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 })
         : Response.json({ displayname: 'Miro P' });
+    }
+    if (path.endsWith('/messages')) {
+      const page = this.pages.shift() ?? { chunk: [] };
+      return 'status' in page
+        ? Response.json(page.body, { status: page.status })
+        : Response.json({ start: call.query.from, ...page });
     }
     if (path.includes('/send/')) {
       this.eventSeq += 1;
@@ -505,6 +513,177 @@ describe('sync loop', () => {
     await bot.pollOnce();
     expect(core.ofType('chat.message')).toHaveLength(1);
     expect(core.state.get(STATE_SINCE)).toBe('s1');
+  });
+
+  it('fetches the events a limited timeline left out, oldest first, before the rest', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const [a, b, c, d] = [msg('a'), msg('b'), msg('c'), msg('d')];
+    mx.syncs.push({
+      next_batch: 's1',
+      rooms: { join: { [ROOM]: { timeline: { events: [d], limited: true, prev_batch: 'p0' } } } },
+    });
+    // /messages with dir=b returns the newest first.
+    mx.pages.push({ chunk: [c, b], end: 'p1' }, { chunk: [a], end: 'p2' }, { chunk: [] });
+    expect(await bot.pollOnce()).toBe(4);
+    const pages = mx.of('GET', `/rooms/${encodeURIComponent(ROOM)}/messages`);
+    expect(pages.map((p) => [p.query.from, p.query.to, p.query.dir])).toEqual([
+      ['p0', 's0', 'b'],
+      ['p1', 's0', 'b'],
+      ['p2', 's0', 'b'],
+    ]);
+    expect(JSON.parse(pages[0]?.query.filter ?? '{}')).toMatchObject({
+      types: ['m.room.message', 'm.reaction', 'm.room.encrypted'],
+    });
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+    expect(logs.some((l) => l.includes('skipped'))).toBe(false);
+  });
+
+  it('delivers a reply from the gap of a limited timeline as chat.reply', async () => {
+    const { bot, mx, core } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const q = await bot.ask({ text: 'Deploy?', correlation_id: 'cor_1' });
+    const answer = msg('Approve', {
+      'm.relates_to': { 'm.in_reply_to': { event_id: q.message_id } },
+    });
+    mx.syncs.push({
+      next_batch: 's1',
+      rooms: {
+        join: { [ROOM]: { timeline: { events: [msg('later')], limited: true, prev_batch: 'p0' } } },
+      },
+    });
+    mx.pages.push({ chunk: [answer] });
+    await bot.pollOnce();
+    expect(core.ofType('chat.reply')).toHaveLength(1);
+    expect(core.ofType('chat.reply')[0]?.correlation_id).toBe('cor_1');
+  });
+
+  it('keeps since when fetching the gap fails, so the next round fetches it again', async () => {
+    const { bot, mx, core } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const limited: MxSync = {
+      next_batch: 's1',
+      rooms: {
+        join: { [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } } },
+      },
+    };
+    mx.syncs.push(limited, limited);
+    mx.pages.push({ status: 502, body: {} }, { chunk: [msg('c')] });
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    expect(core.ofType('chat.message')).toHaveLength(0);
+    await bot.pollOnce();
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'c',
+      'd',
+    ]);
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+  });
+
+  it('logs the gap as skipped when the homeserver refuses to page through it', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    mx.syncs.push({
+      next_batch: 's1',
+      rooms: {
+        join: { [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } } },
+      },
+    });
+    mx.pages.push({ status: 403, body: { errcode: 'M_FORBIDDEN', error: 'No access' } });
+    await bot.pollOnce();
+    expect(core.ofType('chat.message')).toHaveLength(1);
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+    expect(logs.some((l) => l.includes('No access') && l.includes('skipped'))).toBe(true);
+  });
+
+  it('discards a since token the homeserver rejects and starts syncing again', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 'stale');
+    mx.syncs.push({ status: 400, body: { errcode: 'M_UNKNOWN_POS', error: 'Unknown position' } });
+    await expect(bot.pollOnce()).rejects.toThrow(/Unknown position/);
+    expect(core.state.get(STATE_SINCE)).toBeNull();
+    expect(logs.some((l) => l.includes('rejected the sync token'))).toBe(true);
+
+    mx.syncs.push({ next_batch: 'n0' }, batch('n1', [msg('new')]));
+    await bot.pollOnce();
+    const syncs = mx.of('GET', '/sync');
+    // The 400, a probe without the token, then the first-start skip and the next sync.
+    expect(syncs.slice(1).map((c) => c.query.since)).toEqual([undefined, undefined, 'n0']);
+    expect(core.state.get(STATE_SINCE)).toBe('n1');
+    expect(core.ofType('chat.message')).toHaveLength(1);
+  });
+
+  it('keeps since on a 400 that a sync without the token gets too', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const bad = { status: 400, body: { errcode: 'M_INVALID_PARAM', error: 'Bad filter' } };
+    mx.syncs.push(bad, bad);
+    await expect(bot.pollOnce()).rejects.toThrow(/Bad filter/);
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    expect(logs.some((l) => l.includes('rejected the sync token'))).toBe(false);
+    mx.syncs.push(batch('s1', []));
+    await bot.pollOnce();
+    expect(mx.of('GET', '/sync').at(-1)?.query.since).toBe('s0');
+  });
+
+  it('skips a gap that keeps failing, so the other rooms are not held up', async () => {
+    const { bot, mx, core, logs } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    const limited: MxSync = {
+      next_batch: 's1',
+      rooms: {
+        join: {
+          [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } },
+          [OTHER]: { timeline: { events: [msg('other')] } },
+        },
+      },
+    };
+    mx.syncs.push(limited, limited, limited);
+    mx.pages.push({ status: 502, body: {} }, { status: 502, body: {} }, { status: 502, body: {} });
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    expect(core.state.get(STATE_SINCE)).toBe('s0');
+    await bot.pollOnce();
+    expect(core.state.get(STATE_SINCE)).toBe('s1');
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'd',
+      'other',
+    ]);
+    expect(logs.some((l) => l.includes('after 3 attempts') && l.includes('skipped'))).toBe(true);
+  });
+
+  it('pages on past an empty chunk that still has an end', async () => {
+    const { bot, mx, core } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    mx.syncs.push({
+      next_batch: 's1',
+      rooms: {
+        join: { [ROOM]: { timeline: { events: [msg('d')], limited: true, prev_batch: 'p0' } } },
+      },
+    });
+    mx.pages.push({ chunk: [], end: 'p1' }, { chunk: [msg('a')] });
+    await bot.pollOnce();
+    expect(core.ofType('chat.message').map((e) => (e.payload as { text: string }).text)).toEqual([
+      'a',
+      'd',
+    ]);
+  });
+
+  it('keeps since on other sync failures', async () => {
+    const { bot, mx, core } = await setup();
+    core.state.set(STATE_SINCE, 's0');
+    mx.syncs.push({ status: 502, body: {} }, { status: 403, body: { errcode: 'M_FORBIDDEN' } });
+    await expect(bot.pollOnce()).rejects.toThrow(/502/);
+    await expect(bot.pollOnce()).rejects.toThrow(/403/);
+    mx.syncs.push(batch('s1', []));
+    await bot.pollOnce();
+    expect(mx.of('GET', '/sync').map((c) => c.query.since)).toEqual(['s0', 's0', 's0']);
   });
 
   it('waits for the rate limit before syncing again', async () => {

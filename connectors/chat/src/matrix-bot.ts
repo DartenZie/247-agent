@@ -44,6 +44,12 @@ const BACKOFF_MAX_MS = 30_000;
 /** A poison event is skipped after this many failed attempts. */
 const MAX_EVENT_ATTEMPTS = 3;
 const TIMELINE_LIMIT = 50;
+/** Events per `/messages` page when filling the gap a limited timeline left. */
+const GAP_PAGE_LIMIT = 100;
+/** Pages fetched for one gap at most; a longer gap keeps only its newest part. */
+const GAP_MAX_PAGES = 20;
+/** The event types the bot reads, for the sync filter and for `/messages`. */
+const EVENT_TYPES = ['m.room.message', 'm.reaction', 'm.room.encrypted'];
 
 export interface MxEvent {
   type: string;
@@ -56,7 +62,10 @@ export interface MxEvent {
 export interface MxSync {
   next_batch: string;
   rooms?: {
-    join?: Record<string, { timeline?: { events?: MxEvent[]; limited?: boolean } } | undefined>;
+    join?: Record<
+      string,
+      { timeline?: { events?: MxEvent[]; limited?: boolean; prev_batch?: string } } | undefined
+    >;
   };
 }
 
@@ -91,6 +100,8 @@ export class MatrixBot {
   /** Events of the batch being handled, so a retried batch does not handle one twice. */
   private readonly handled = new Set<string>();
   private failing: { event_id: string; attempts: number } | undefined;
+  /** The gap whose fetch keeps failing (room and `since`), and how often it failed. */
+  private gapFailing: { key: string; attempts: number } | undefined;
   private readonly names = new Map<string, string>();
   private readonly warnedEncrypted = new Set<string>();
   /** Serialises read-modify-write of `pending` between `ask` and the sync loop. */
@@ -217,22 +228,38 @@ export class MatrixBot {
    */
   async pollOnce(): Promise<number> {
     const since = await this.loadSince();
-    const sync = await this.api.call<MxSync>('GET', '/sync', {
-      query: {
-        ...(since === undefined ? {} : { since }),
-        timeout: this.config.poll_timeout * 1000,
-        filter: this.filter(TIMELINE_LIMIT),
-      },
-      timeoutMs: this.config.timeout + this.config.poll_timeout * 1000,
-    });
+    let sync: MxSync;
+    try {
+      sync = await this.api.call<MxSync>('GET', '/sync', {
+        query: {
+          ...(since === undefined ? {} : { since }),
+          timeout: this.config.poll_timeout * 1000,
+          filter: this.filter(TIMELINE_LIMIT),
+        },
+        timeoutMs: this.config.timeout + this.config.poll_timeout * 1000,
+      });
+    } catch (err) {
+      if (since !== undefined && (await this.tokenRejected(err))) {
+        this.log(
+          `chat: the homeserver rejected the sync token: ${errorText(err)}; syncing again as on a first start`,
+        );
+        this.since = undefined;
+        this.sinceLoaded = false;
+        await this.core.putState(STATE_SINCE, null);
+      }
+      throw err;
+    }
     let count = 0;
     for (const [roomId, room] of Object.entries(sync.rooms?.join ?? {})) {
-      if (room?.timeline?.limited === true && since !== undefined) {
-        this.log(
-          `chat: room ${roomId} had more than ${String(TIMELINE_LIMIT)} new events; older ones were skipped`,
-        );
-      }
-      for (const event of room?.timeline?.events ?? []) {
+      const timeline = room?.timeline;
+      const events =
+        timeline?.limited === true && since !== undefined
+          ? [
+              ...(await this.fillGap(roomId, since, timeline.prev_batch)),
+              ...(timeline.events ?? []),
+            ]
+          : (timeline?.events ?? []);
+      for (const event of events) {
         count++;
         if (this.handled.has(event.event_id)) {
           continue;
@@ -264,7 +291,96 @@ export class MatrixBot {
     }
     await this.setSince(sync.next_batch);
     this.handled.clear();
+    this.gapFailing = undefined;
     return count;
+  }
+
+  /**
+   * The events a limited timeline left out: `/messages` backwards from the timeline's
+   * `prev_batch` to the previous sync's token, oldest first. A transient failure throws,
+   * so the batch is synced again from the same token; a gap longer than
+   * `GAP_MAX_PAGES` pages, or one the homeserver refuses to page through, keeps what
+   * was fetched and logs that the older events were skipped.
+   */
+  private async fillGap(
+    roomId: string,
+    since: string,
+    prevBatch: string | undefined,
+  ): Promise<MxEvent[]> {
+    const skipped = (why: string): void => {
+      this.log(
+        `chat: room ${roomId} had more new events than could be fetched (${why}); older ones were skipped`,
+      );
+    };
+    if (prevBatch === undefined) {
+      skipped('no prev_batch');
+      return [];
+    }
+    const newestFirst: MxEvent[] = [];
+    let from = prevBatch;
+    for (let page = 0; ; page++) {
+      if (page === GAP_MAX_PAGES) {
+        skipped(`more than ${String(GAP_MAX_PAGES * GAP_PAGE_LIMIT)} events`);
+        break;
+      }
+      let res: { chunk?: MxEvent[]; end?: string };
+      try {
+        res = await this.api.call('GET', `/rooms/${seg(roomId)}/messages`, {
+          query: {
+            from,
+            to: since,
+            dir: 'b',
+            limit: GAP_PAGE_LIMIT,
+            filter: JSON.stringify({ types: EVENT_TYPES }),
+          },
+        });
+      } catch (err) {
+        if (err instanceof MatrixError && !err.transient) {
+          skipped(errorText(err));
+          break;
+        }
+        // A rate limit is waited out, not counted; another failure holds up every room,
+        // so the gap is given up after MAX_EVENT_ATTEMPTS rounds.
+        if (!(err instanceof MatrixError && err.retryAfterMs !== undefined)) {
+          const key = `${roomId} ${since}`;
+          const attempts = this.gapFailing?.key === key ? this.gapFailing.attempts + 1 : 1;
+          this.gapFailing = { key, attempts };
+          if (attempts >= MAX_EVENT_ATTEMPTS) {
+            skipped(`${errorText(err)}, after ${String(attempts)} attempts`);
+            break;
+          }
+        }
+        throw err;
+      }
+      const chunk = res.chunk ?? [];
+      newestFirst.push(...chunk);
+      // An empty chunk may only mean the server filtered a page out; `end` says whether
+      // more follows.
+      if (res.end === undefined || res.end === from) {
+        break;
+      }
+      from = res.end;
+    }
+    return newestFirst.reverse();
+  }
+
+  /**
+   * Whether a failed sync with a token failed because of the token: a 400 that a sync
+   * without the token does not get. A 400 the probe gets too (a bad filter, a broken
+   * server) keeps the token.
+   */
+  private async tokenRejected(err: unknown): Promise<boolean> {
+    if (!(err instanceof MatrixError) || err.status !== 400) {
+      return false;
+    }
+    try {
+      await this.api.call<MxSync>('GET', '/sync', {
+        query: { timeout: 0, filter: this.filter(1) },
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Routes one timeline event; exported for tests and for the sync loop. */
@@ -465,7 +581,7 @@ export class MatrixBot {
       account_data: { types: [] },
       room: {
         rooms: [...this.allowed],
-        timeline: { types: ['m.room.message', 'm.reaction', 'm.room.encrypted'], limit },
+        timeline: { types: EVENT_TYPES, limit },
         state: { types: [] },
         ephemeral: { types: [] },
         account_data: { types: [] },
