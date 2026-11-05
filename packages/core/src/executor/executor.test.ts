@@ -61,8 +61,13 @@ afterEach(async () => {
   env.close();
 });
 
-function make(runners: ActionRunners = { shell: runShell }, workers = 4): Executor {
+function make(
+  runners: ActionRunners = { shell: runShell },
+  workers = 4,
+  opts: Partial<ExecutorOptions> = {},
+): Executor {
   executor = new Executor({
+    ...opts,
     store: env.store,
     bus,
     clock: env.clock,
@@ -554,6 +559,57 @@ describe('Executor', () => {
         status: 'succeeded',
         attempt: 2,
       });
+    });
+  });
+
+  describe('a queued run the executor was never handed (#104)', () => {
+    /** Queues runs for `type` in the store through a dispatcher nobody listens to. */
+    function queueBehindItsBack(type: string): EventRecord {
+      const deaf = createBus({ store: env.store, clock: env.clock, log: env.log });
+      deaf.dispatcher.setConfig(current);
+      const e = publish(type);
+      deaf.dispatcher.drain();
+      return e;
+    }
+
+    it('is adopted from the store and run without a restart', async () => {
+      const ex = make({ shell: runShell }, 4, { adoptIntervalMs: 20 });
+      ex.start();
+      const e = queueBehindItsBack('x.go');
+      expect(env.store.runs.getByTaskAndEvent('echo', e.id)?.status).toBe('queued');
+      await until(() => env.store.runs.getByTaskAndEvent('echo', e.id)?.status === 'succeeded');
+      expect(lifecycle().map((l) => l.type)).toEqual(['task.echo.succeeded']);
+      expect(env.lines.filter((l) => l.msg === 'run.adopted')).toMatchObject([
+        { task: 'echo', run_id: env.store.runs.getByTaskAndEvent('echo', e.id)?.id },
+      ]);
+    });
+
+    it('does not adopt a run it already holds a second time', async () => {
+      const d = deferredRunner();
+      const ex = make({ shell: d.runner }, 4, { adoptIntervalMs: 10 });
+      ex.start();
+      publish('x.serial', 'a');
+      publish('x.serial', 'b');
+      bus.dispatcher.drain();
+      await until(() => d.active() === 1);
+      await new Promise((r) => setTimeout(r, 60)); // several sweeps over a pending run
+      expect(d.calls).toBe(1);
+      expect(ex.stats()).toEqual({ pending: 1, in_flight: 1 });
+      d.finish('ok');
+      await until(() => d.active() === 1);
+      d.finish('ok');
+      await ex.idle();
+      expect(d.calls).toBe(2);
+      expect(env.lines.some((l) => l.msg === 'run.adopted')).toBe(false);
+    });
+
+    it('is left queued for the next start once the executor stopped', async () => {
+      const ex = make({ shell: runShell }, 4, { adoptIntervalMs: 10 });
+      ex.start();
+      await ex.stop();
+      const e = queueBehindItsBack('x.go');
+      await new Promise((r) => setTimeout(r, 60));
+      expect(env.store.runs.getByTaskAndEvent('echo', e.id)?.status).toBe('queued');
     });
   });
 

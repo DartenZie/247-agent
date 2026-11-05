@@ -271,6 +271,14 @@ On `core.start()` (`core.ts`, `executor.start()` runs before the backlog drain):
 When the store fails to commit a run's finish during these steps, the run keeps its
 status for the next start (`run.bookkeeping_failed`) and `start()` goes on.
 
+Step 3 also runs every 10 s while the executor is started (#104): the sweep enqueues the
+oldest 1000 `queued` runs that the executor does not hold, and logs `run.adopted` for
+each. The hand-off from the dispatcher happens after its commit, so it can miss a run:
+for example, a run committed while the executor was not subscribed, or a run that a store
+failure left `queued`. Without the sweep, that run waits until the next start. The sweep
+stops with `executor.stop()`. A sweep that fails to read the store logs
+`executor.adopt_failed`, and the next sweep tries again.
+
 `executor.stop()` stops taking runs (`pump` is a no-op, the `onQueued` subscription is
 dropped, pending runs are forgotten and stay `queued`) and abandons runs in a retry
 backoff at once. It then waits up to `shutdown.grace` (`executor.draining`) for the runs
