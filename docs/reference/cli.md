@@ -16,9 +16,10 @@ works, `oa --json run hello` is an unknown command.
 
 | Code | When |
 |---|---|
-| 0 | the command did what it was asked, or the program reading its output closed the pipe (`oa events tail --follow \| head`): `oa` stops without a message |
+| 0 | the command did what it was asked |
 | 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `health` is not `ok`, `connector restart` left the connector not `up`, `validate` found a problem |
 | 2 | usage: an unknown command or flag, a missing argument, an unreadable or invalid JSON file, no arguments at all, or the daemon answered 400 (a bad event type, pattern or `--since`) |
+| 141 | the program reading the output closed the pipe (`oa runs list \| head -1`): `oa` stops at its next write, without a message. A shell reports the same status for a program that SIGPIPE ends |
 
 An unreachable socket prints `cannot connect to the daemon at <path> (<code>). Is
 247-agent-core running? Set --socket or OA_CORE_SOCKET.`
