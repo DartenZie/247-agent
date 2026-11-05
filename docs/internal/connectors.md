@@ -60,6 +60,11 @@ stderr) and nothing else.
 - `managed_by: systemd` not on a built-in (no process) nor on `acp` (confine the agent
   with `sandbox` instead); `socket` only with it and only on `stdio`, default
   `/run/247-agent-connector/<name>/mcp.sock`.
+- `emits` is documentation only. Its entries must be concrete event types, and a
+  poller's list, when given, must include its `config.event`. The core does not check
+  the events a connector posts against it: `POST /v1/events` accepts any well-formed
+  `type` and any `source` from any process that reaches the socket (see
+  [the trust model](security.md#the-trust-model)).
 - `config` and `env` values may use `${secrets.<name>}` and `${env.<VAR>}` only, and
   `secrets` never as a whole. Names are unique across files and inline entries.
 
