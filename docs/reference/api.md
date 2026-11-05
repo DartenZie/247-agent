@@ -10,7 +10,8 @@ does not cover.
   `/run/247-agent/core.sock`, created with mode `0660`. There is no authentication:
   anything that can open the socket is trusted.
 - Requests and responses are JSON (`application/json; charset=utf-8`). A body larger
-  than 1 MiB is refused with 413. A non-empty body is parsed as JSON whatever its
+  than 1 MiB is read to the end and refused with 413
+  `request body exceeds 1048576 bytes`. A non-empty body is parsed as JSON whatever its
   content type; invalid JSON is a 400.
 - Errors are `{"error": "<message>", "issues"?: [{"path": "...", "message": "..."}]}`.
   `issues` appears on validation failures. Status codes used: 200, 201, 400, 404, 405,

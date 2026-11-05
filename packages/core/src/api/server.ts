@@ -29,20 +29,27 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Past `max` the rest of the body is read and discarded, not refused: closing the socket
+ * while the client still writes gives it EPIPE or a reset instead of the 413 (#76).
+ */
 function readBody(req: IncomingMessage, max: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    let chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > max) {
-        reject(new BodyTooLargeError(`request body exceeds ${String(max)} bytes`));
-        req.destroy();
+        chunks = [];
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (size > max) {
+        reject(new BodyTooLargeError(`request body exceeds ${String(max)} bytes`));
+        return;
+      }
       resolve(Buffer.concat(chunks).toString('utf8'));
     });
     req.on('error', reject);

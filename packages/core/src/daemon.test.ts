@@ -660,8 +660,39 @@ describe('POST /v1/runs and GET /v1/runs', () => {
 
   it('rejects oversized bodies', async () => {
     const big = JSON.stringify({ type: 'x.y', payload: 'a'.repeat(2 * 1024 * 1024) });
-    const res = await raw('POST', '/v1/events', big).catch(() => ({ status: 413, body: null }));
-    expect(res.status).toBe(413);
+    // A client error before a complete response fails this test (#76). On Linux the client
+    // can report EPIPE after it sent the whole body and read the whole response; that
+    // response stands. See post() in api/server.test.ts.
+    const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+      let result: { status: number; text: string } | undefined;
+      const req = request(
+        { socketPath: daemon.config.socket, method: 'POST', path: '/v1/events', agent: false },
+        (r) => {
+          let text = '';
+          r.setEncoding('utf8');
+          r.on('data', (c: string) => (text += c));
+          r.on('end', () => {
+            result = { status: r.statusCode ?? 0, text };
+          });
+        },
+      );
+      req.on('error', (err) => {
+        if (result === undefined) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      });
+      req.on('close', () => {
+        if (result === undefined) {
+          reject(new Error('the connection closed without a complete response'));
+        } else {
+          resolve(result);
+        }
+      });
+      req.end(big);
+    });
+    expect(res).toEqual({ status: 413, text: '{"error":"request body exceeds 1048576 bytes"}' });
   });
 });
 
