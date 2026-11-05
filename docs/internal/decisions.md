@@ -37,6 +37,11 @@ scale of one server. Actions are I/O-bound (subprocesses, HTTP), so worker threa
 nothing. If a queue is ever needed, the dispatch loop in `packages/core/src/bus/` is the
 only seam to replace.
 
+`better-sqlite3` ships no type definitions. `@types/better-sqlite3` is versioned on its
+own line, so its major number need not match the library's. Its declarations cover
+every method the store calls, and the store tests run against the real library, so they
+catch a call that the types accept and the runtime rejects.
+
 ## Everything is an event; tasks never name tasks
 
 A task triggers on event types, including the automatic `task.<name>.succeeded|failed|cancelled`
