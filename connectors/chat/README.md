@@ -24,7 +24,7 @@ connectors/chat/src/
 Tests run without the network: `test-helpers.ts` has a fake Bot API behind the injected
 `fetch` (records every call, answers with defaults or scripted responses and failures)
 and an in-memory core (`state`, `events` with `dedup_key`). `bot.test.ts` covers the ops,
-the ask → reply flow for buttons and text replies, foreign chats, offset persistence and
+the ask → reply flow for buttons and text replies, answers from users not in `approvers`, foreign chats, offset persistence and
 the poll loop's backoff. `matrix-bot.test.ts` does the same for Matrix against a fake
 homeserver behind `fetch`: alias resolution, reactions and text replies as answers,
 ignored edits and encrypted rooms, the `since` cursor, a limited timeline's gap filled from `/messages`, a rejected

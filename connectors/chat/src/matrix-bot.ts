@@ -26,7 +26,7 @@ import {
   type SendArgs,
   type SentMessage,
 } from './bot.js';
-import { allowedChats, type MatrixConfig } from './config.js';
+import { allowedChats, mayAnswer, type MatrixConfig } from './config.js';
 import { MatrixError, seg, type MatrixApi } from './matrix.js';
 import type { ChatMessagePayload, ChatReplyPayload, From } from './types.js';
 import { matchOption } from './updates.js';
@@ -438,6 +438,10 @@ export class MatrixBot {
           if (question === undefined) {
             continue;
           }
+          if (!mayAnswer(this.config, event.sender)) {
+            this.logRefused(questionId, event.sender);
+            break;
+          }
           const choice = matchAnswer(text, question.options);
           if (choice === undefined) {
             replyToQuestion ??= question.correlation_id;
@@ -478,6 +482,10 @@ export class MatrixBot {
       const question = pending[questionId];
       if (question === undefined) {
         return undefined; // a reaction to anything else, or to a question already answered
+      }
+      if (!mayAnswer(this.config, event.sender)) {
+        this.logRefused(questionId, event.sender);
+        return undefined;
       }
       const choice = question.options[OPTION_KEYS_NORMALIZED.indexOf(normalizeKey(key))];
       if (choice === undefined) {
@@ -522,6 +530,12 @@ export class MatrixBot {
     delete pending[questionId];
     await this.savePending(pending);
     this.log(`chat: question ${questionId} answered: ${choice}`);
+  }
+
+  private logRefused(questionId: string, userId: string): void {
+    this.log(
+      `chat: ignoring an answer to question ${questionId} from user ${userId} (not in approvers)`,
+    );
   }
 
   /** The `Recorded: <choice>` notice in reply to an answered question; best effort. */

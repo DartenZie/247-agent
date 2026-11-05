@@ -67,6 +67,7 @@ config:
   token: "${secrets.chat_token}"        # the bot token from BotFather
   chat_id: "${secrets.chat_id}"         # the chat the bot talks to: a number, or @channelname
   allowed_chat_ids: []                  # more chats whose messages are relayed; send/ask may target them
+  approvers: [987654321]                # Telegram user ids whose answer counts; omit to let anyone answer
   poll_timeout: 30                      # long-poll wait in seconds, 0..50
   initial: none                         # first start with no stored cursor: skip the backlog | all
   ask_options: [Approve, Reject]        # default options of ask; the first one means "approved"
@@ -89,6 +90,7 @@ config:
   token: "${secrets.chat_token}"           # the bot user's access token
   chat_id: "!AbCdEf:example.org"           # a room id, or an alias like "#ops:example.org"
   allowed_chat_ids: []
+  approvers: ["@miro:example.org"]        # Matrix user ids whose answer counts; omit to let anyone answer
   poll_timeout: 30                         # /sync wait in seconds, 0..120
   initial: none
   ask_options: [Approve, Reject]           # at most 10 on Matrix
@@ -113,6 +115,7 @@ Both backends:
 | `token` | required | the bot token or the Matrix access token |
 | `chat_id` | required | Telegram: a numeric id or `@channelname`. Matrix: a room id `!…:server` or alias `#…:server` |
 | `allowed_chat_ids` | `[]` | more chats or rooms whose messages are relayed; `send` and `ask` may target them |
+| `approvers` | unset | the users who may answer an `ask`. Telegram: numeric user ids (`from.id`). Matrix: user ids `@…:server`. Unset, anyone in an allowed chat may answer. See [Restrict who can answer](#restrict-who-can-answer) |
 | `initial` | `none` | on the first start with no stored cursor, `none` skips the backlog, `all` delivers it |
 | `ask_options` | `[Approve, Reject]` | the options of an `ask` without its own; the first means "approved". 1 to 20 on Telegram, 1 to 10 on Matrix |
 | `pending_limit` | `200` | how many unanswered questions are kept in state, newest first |
@@ -158,6 +161,21 @@ match its own question.
   Replying to the question (or in its thread) with an option's text, its number or its
   keycap answers too. At most 10 options.
 
+### Restrict who can answer
+
+By default, anyone in an allowed chat can answer a question. To let only some users
+answer, for example the people who may approve a deploy, list them in `approvers`:
+
+- On Telegram, use the numeric user id. It is `from.id` in a `chat.message` event from
+  that user. Do not use the username: a user can change it, and someone else can then
+  take it.
+- On Matrix, use the user id, such as `@miro:example.org`.
+
+An answer from any other user does not emit a `chat.reply`, and the question stays open.
+The connector logs a line with the question and the user id. A button tap gets "You may
+not answer this question." A text reply from that user becomes an ordinary `chat.message`
+with `reply_to_question: null`, so it does not end a `wait` on feedback either.
+
 Each question is answered once: the first answer removes it from state and the buttons
 from the message, and the bot confirms with `Recorded: <choice>`. Later taps get "already
 answered".
@@ -188,7 +206,7 @@ bots and the bot's own messages are ignored. `dedup_key: chat:message:<chat_id>:
 
 `reply_to_question` is the `correlation_id` of the open question that the message replies
 to without naming one of its options. It is `null` for any other message, and for a reply
-to a question asked without a `correlation_id`. The question stays open. A `wait` ends on
+to a question asked without a `correlation_id` or from a user not in `approvers`. The question stays open. A `wait` ends on
 its first match, so this filter ends with either the answer or the feedback, and the task
 arms another wait to get the answer after feedback:
 
@@ -227,6 +245,8 @@ id is then `answer_message_id`.
   dropped and logged once per chat, so a stranger who finds the bot cannot inject events.
   `send` and `ask` refuse any other target too.
 - A `chat.reply` is emitted only for a question this connector asked, and only once.
+  With `approvers` set, only those users can answer. Without it, anyone in an allowed
+  chat can approve, so set it when the chat has more than one member.
 - The manifest's `ops` list is the boundary: a copy of the manifest for an agent should
   list neither `send` nor `ask`.
 

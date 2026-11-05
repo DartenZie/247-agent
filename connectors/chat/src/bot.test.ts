@@ -213,6 +213,50 @@ describe('ask and reply', () => {
     expect(core.state.get(STATE_PENDING)).toEqual({});
   });
 
+  it('lets only approvers answer when approvers is set (#97)', async () => {
+    const { tg, core, lines, bot } = setup({ approvers: [7, '8'] });
+    const asked = await bot.ask({ text: 'Deploy?', correlation_id: 'cor_a' });
+    const data = buttonData(tg);
+
+    // A tap from someone else: no chat.reply, the question and its buttons stay.
+    await bot.handleUpdate(
+      callbackUpdate(data, { message_id: asked.message_id, query_id: 'q1', from: 99 }),
+    );
+    expect(core.ofType('chat.reply')).toHaveLength(0);
+    expect(tg.of('answerCallbackQuery')[0]?.params).toEqual({
+      callback_query_id: 'q1',
+      text: 'You may not answer this question.',
+    });
+    expect(tg.of('editMessageReplyMarkup')).toHaveLength(0);
+
+    // A text reply naming an option from someone else is a plain message, not an answer
+    // and not feedback on the question.
+    await bot.handleUpdate(
+      messageUpdate('approve', { message_id: 201, reply_to: asked.message_id, from: 99 }),
+    );
+    expect(core.ofType('chat.reply')).toHaveLength(0);
+    expect(core.ofType('chat.message')[0]?.payload).toMatchObject({
+      text: 'approve',
+      reply_to: 100,
+      reply_to_question: null,
+    });
+    expect(Object.keys(core.state.get(STATE_PENDING) as object)).toEqual(['42:100']);
+    expect(lines).toEqual([
+      'chat: ignoring an answer to question 100 from user 99 (not in approvers)',
+      'chat: ignoring an answer to question 100 from user 99 (not in approvers)',
+    ]);
+
+    // An approver's tap answers it.
+    await bot.handleUpdate(
+      callbackUpdate(data, { message_id: asked.message_id, query_id: 'q2', from: 8 }),
+    );
+    expect(core.ofType('chat.reply')).toHaveLength(1);
+    expect(core.ofType('chat.reply')[0]?.payload).toMatchObject({
+      approved: true,
+      from: { id: 8 },
+    });
+  });
+
   it('rejects a forged callback whose nonce does not match', async () => {
     const { tg, core, bot } = setup();
     const asked = await bot.ask({ text: 'Deploy?', correlation_id: 'cor_4' });

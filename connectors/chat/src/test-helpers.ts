@@ -199,13 +199,13 @@ export function messageUpdate(text: string, opts: MessageOpts = {}): TgUpdate {
 
 export function callbackUpdate(
   data: string,
-  opts: { chat_id?: number; message_id: number; query_id?: string },
+  opts: { chat_id?: number; message_id: number; query_id?: string; from?: number },
 ): TgUpdate {
   return {
     update_id: updateId++,
     callback_query: {
       id: opts.query_id ?? 'q1',
-      from: { id: 7, first_name: 'Miro', username: 'miro' },
+      from: { id: opts.from ?? 7, first_name: 'Miro', username: 'miro' },
       data,
       message: { message_id: opts.message_id, chat: { id: opts.chat_id ?? 42, type: 'private' } },
     },
