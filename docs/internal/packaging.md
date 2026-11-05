@@ -53,8 +53,10 @@ When the target is the build machine it smoke-tests the stage: `oa --version` an
 `247-agent-core --version` print the version, and `oa validate` accepts
 `share/examples/agent.yaml`. The script sets umask 022 and makes the stage
 `u+rwX,go+rX,go-w` before it packs, so a build host's umask or a checkout made under
-077 cannot record a tree closed to the service user. The tarball and its `.sha256` land
-in `dist-release/`.
+077 cannot record a tree closed to the service user. `scripts/pack-release.sh <out>
+<name>` packs it and records root (uid 0, gid 0) as the owner of every entry, so the
+tarball does not carry the build user's uid. The tarball and its `.sha256` land in
+`dist-release/`.
 
 `scripts/stage-share.sh <stage>` fills `share/`. The layout keeps every relative link in
 the shipped docs working as in a checkout: `share/doc/examples` is a link to
@@ -114,7 +116,9 @@ architecture, verifies the checksum, unpacks to `/opt/247-agent-<version>` with
 a starter `/etc/247-agent` once, installs the units and starts the service. It sets
 umask 022 and makes the tree `u+rwX,go+rX,go-w` after the copy, so neither a caller's
 umask nor sudo's (`Defaults umask=0077`) nor a tarball built under 077 can close the
-tree to the service user. `/etc/247-agent` gets its 750 and 640 from explicit modes. On an
+tree to the service user. When it runs as root or through sudo, it also gives the tree
+to root (uid 0, gid 0), with or without `--no-service`, whatever owner the tarball
+records. `/etc/247-agent` gets its 750 and 640 from explicit modes. On an
 upgrade the new version's `oa validate` must accept the existing config before the
 symlink moves; the unit file is replaced, the config never touched, and the service
 restarted unless `--no-restart`. After a start or a restart it runs the new tree's

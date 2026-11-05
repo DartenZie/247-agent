@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,5 +74,36 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       expect(statSync(path).mode & 0o777, path).toBe(0o755);
     }
     expect(statSync(join(tree, 'VERSION')).mode & 0o777).toBe(0o644);
+  });
+
+  it('re-owns the tree to root:root when root installs with --no-service into a writable prefix', () => {
+    // A root caller can write every prefix, so the tree is not staged through sudo; the
+    // owner the tarball recorded must still not survive (issue #86). Fake `id` and `chown`
+    // let an unprivileged test see what root would run.
+    const shims = join(root, 'shims');
+    mkdirSync(shims);
+    const log = join(root, 'chown.log');
+    writeFileSync(join(shims, 'id'), '#!/bin/sh\necho 0\n');
+    writeFileSync(join(shims, 'chown'), `#!/bin/sh\necho "$*" >> "${log}"\n`);
+    chmodSync(join(shims, 'id'), 0o755);
+    chmodSync(join(shims, 'chown'), 0o755);
+    const prefix = join(root, 'opt', '247-agent');
+    const run = spawnSync(
+      'sh',
+      [
+        script,
+        '--from',
+        fakeRelease(),
+        '--prefix',
+        prefix,
+        '--bin-dir',
+        join(root, 'bin'),
+        '--no-service',
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${shims}:${process.env.PATH ?? ''}` } },
+    );
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(existsSync(log) ? readFileSync(log, 'utf8') : '').toBe(`-R 0:0 ${prefix}-9.9.9.new\n`);
   });
 });

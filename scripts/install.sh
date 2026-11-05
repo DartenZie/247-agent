@@ -183,7 +183,10 @@ say "installing 247-agent $version for $target into $tree"
 root rm -rf "$tree.new"
 root_mkdir "$(dirname "$tree")"
 root cp -R "$tree_src" "$tree.new"
-[ $needs_root = 1 ] && root chown -R 0:0 "$tree.new"
+# Root-owned whenever root installs it, even without sudo or the service: GNU tar run as
+# root restores the owner the tarball recorded, and an older tarball records the build
+# user's uid (issue #86).
+if [ $needs_root = 1 ] || [ "$(id -u)" -eq 0 ]; then root chown -R 0:0 "$tree.new"; fi
 # Readable by all, writable by the owner only, whatever the tarball or the umask held.
 root chmod -R u+rwX,go+rX,go-w "$tree.new"
 

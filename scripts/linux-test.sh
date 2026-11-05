@@ -197,6 +197,9 @@ modes="^(drwxr-xr-x|-rw-r--r--|-rwxr-xr-x|l[rwx-]{9})\$"
 closed=$(tar -tvzf dist-release/247-agent-*-linux-*.tar.gz | awk -v m="$modes" "\$1 !~ m")
 closed=$closed$(dpkg-deb -c dist-release/247-agent_*.deb | awk -v m="$modes" "\$6 !~ /^\\.\\/etc\\// && \$1 !~ m")
 [ -z "$closed" ] || { echo "entries closed to other users:"; echo "$closed" | head -n 20; exit 1; }
+step "the tarball records root as the owner (issue #86)"
+foreign=$(tar --numeric-owner -tvzf dist-release/247-agent-*-linux-*.tar.gz | awk "\$2 != \"0/0\"")
+[ -z "$foreign" ] || { echo "entries not owned by 0/0:"; echo "$foreign" | head -n 20; exit 1; }
 '
   in_container root '
 step "the .deb installs, starts the service and runs the starter task"
