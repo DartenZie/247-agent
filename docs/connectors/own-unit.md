@@ -89,7 +89,9 @@ manifest reaches it: `oa reload` logs `connector.unit_restart_needed`. Its log i
 and the daemon connects to it instead of spawning the program, with the usual `restart`
 backoff, `health` checks and `ops` allowlist. For each connection the host reads the
 config and secrets again and starts a fresh process, so `oa connector restart`, which
-reconnects, still picks up a rotated secret and a changed manifest. The connector shows
+reconnects, picks up a changed manifest and a secret rotated in the `file` backend. A
+credential from this unit's `LoadCredential=` lines is copied when the unit starts:
+after rotating one, run `systemctl restart 247-agent-connector@<name>`. The connector shows
 `down` with the hint `is 247-agent-connector@<name> running?` until the unit is up.
 
 The unit is `PartOf=247-agent.service`: stopping or restarting the daemon does the same to

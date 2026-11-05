@@ -107,7 +107,7 @@ unit instead; the daemon never resolves them.
 To find every name a configuration needs:
 
 ```sh
-grep -rhoE 'secrets\.[a-z0-9_]+' /etc/247-agent | sort -u
+grep -rhoE 'secrets\.[a-zA-Z0-9_]+' /etc/247-agent | sort -u
 ```
 
 A missing secret fails the run that needs it, without a retry, at run time rather than at
@@ -189,8 +189,10 @@ rotating a mailbox password, run `oa connector restart email`; it exits 1 if the
 connector is not up afterwards. With `systemd-credentials`, `oa connector restart` is
 not enough: systemd copies each `LoadCredential=` file into the service's credentials
 directory when the service starts, so a respawned connector reads the same old copy.
-With `env`, the daemon's environment is also fixed at start. The built-in poller re-reads its secrets on every poll and needs nothing. A
-connector in its own unit is restarted with `systemctl restart 247-agent-connector@<name>`.
+With `env`, the daemon's environment is also fixed at start. The built-in poller
+re-reads its secrets on every poll, so with `file` it needs nothing. A connector in its
+own unit reads its own unit's credentials: restart it with
+`systemctl restart 247-agent-connector@<name>`.
 Runs already in flight keep the value they resolved at start.
 
 ## Upgrading and rolling back

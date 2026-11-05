@@ -69,7 +69,8 @@ sandbox:                                                       # run it in bubbl
 core is the client, protocol version 1). It serves no ops and emits no events, so `ops`
 and `emits` must be empty; `config` is refused (no `OA_CONFIG_JSON`: configure the program
 through `env`). Same lifecycle as any process connector: crash backoff, `oa connector
-restart` to re-read a rotated key, stderr as `connector.output`; `oa connector list`
+restart` to re-read a key rotated in the `file` backend (`systemctl restart 247-agent` for
+`env` or `LoadCredential=`), stderr as `connector.output`; `oa connector list`
 shows `acp` as its transport, `sandbox=bwrap` when sandboxed and `net=allowlist` (or
 `net=none`) when the sandbox restricts the network.
 

@@ -11,7 +11,8 @@
  *   core, spawns the connector and bridges the connection to its stdin/stdout. A new
  *   connection replaces the old one; a closed connection stops the process. Config and
  *   secrets are read again for every process, so `oa connector restart` (which reconnects)
- *   picks up a rotated secret or a changed manifest.
+ *   picks up a changed manifest, or a rotated secret the backend can see (not systemd's
+ *   start-time credential copy).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync } from 'node:fs';

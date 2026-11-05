@@ -46,8 +46,8 @@ from `providers.<name>.api_key`, resolved per model call), `imap_user`,
 Change the value at the backend, then restart the service (`env`, `systemd-credentials`)
 or, with the `file` backend, nothing for actions and pollers. A connector resolved its
 secrets when it was spawned: with the `file` backend, `oa connector restart <name>`
-respawns just that one with the new value. With `env` and `systemd-credentials` it does
-not help: systemd copies each `LoadCredential=` file into the credentials directory at
+respawns just that one with the new value. With `env`, and with `systemd-credentials` reading `$CREDENTIALS_DIRECTORY` (no `dir`),
+it does not help: systemd copies each `LoadCredential=` file into the credentials directory at
 service start, and the environment is fixed then too, so only
 `systemctl restart 247-agent` picks up the new value. Runs already in flight keep the
 value they resolved at start.

@@ -184,9 +184,9 @@ States are `starting`, `up`, `down`, `stopped` and `external` (a connector in it
 unit that serves no ops). `health=` appears only for a manifest with `health:`.
 
 `restart` kills one connector, resolves its secrets again and respawns it. A rotated
-secret reaches the connector this way only with the `file` backend; with `env` or
-`systemd-credentials` the values are fixed when the service starts, so run
-`systemctl restart 247-agent` instead. Output
+secret reaches the connector this way with the `file` backend. With `env`, or with
+`systemd-credentials` reading `$CREDENTIALS_DIRECTORY`, the values are fixed when the
+service starts, so run `systemctl restart 247-agent` instead. Output
 `<name>  <state>  pid=<pid>`; exit 0 only when the connector is `up` afterwards. A
 built-in poller, or a unit's connector without ops, is refused with the command to use
 instead (exit 1). Flags: `--json`, `--socket`.

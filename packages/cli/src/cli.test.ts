@@ -441,8 +441,8 @@ describe('oa help', () => {
   it('says which secrets backends a connector restart picks up a rotation from', async () => {
     expect(await main(['help', 'connector'], io)).toBe(0);
     const help = out.join('\n').replace(/\s+/g, ' ');
-    expect(help).toMatch(/`?file`? backend/);
-    expect(help).toMatch(/`?env`? or `?systemd-credentials`?.*systemctl restart 247-agent/);
+    expect(help).toMatch(/file backend this is how a rotated secret reaches/);
+    expect(help).toMatch(/env backend, or systemd-credentials.*systemctl restart 247-agent/);
   });
 });
 
