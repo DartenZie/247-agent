@@ -203,6 +203,14 @@ describe('LlmService.call', () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  it('counts the output schema as input in the worst case (#79)', async () => {
+    const s = service();
+    // A 600-char schema adds ~200 input tokens ($0.0002) to 5 input + 100 output ($0.000505).
+    const outputSchema = { description: 'x'.repeat(600) };
+    await expect(call(s, { outputSchema, maxUsd: 0.0006 })).rejects.toThrow(/worst case/);
+    expect(fake.requests).toHaveLength(0);
+  });
+
   it('fails the run when the actual cost overruns the budget, keeping the row', async () => {
     fake = fakeProviderFactory(usage(10_000, 100)); // $0.0105, the estimate was $0.0005
     const s = service();
@@ -334,6 +342,30 @@ describe('LlmService: a call aborted in flight (#78)', () => {
     // The retry sees the abandoned spend: two worst cases no longer fit $0.0008.
     fake = fakeProviderFactory(usage(1000, 100));
     await expect(call(service(), { maxUsd: 0.0008 }, r)).rejects.toThrow(/worst case/);
+  });
+
+  it('ledgers the system prompt of an aborted call as cache-write tokens (#79)', async () => {
+    fake = hanging();
+    const s = service();
+    const r = run();
+    const ac = new AbortController();
+    const pending = s.call(
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        system: 'x'.repeat(300),
+        input: 'classify this',
+        maxTokens: 100,
+      },
+      { run: r, task: r.task, signal: ac.signal, log: env.log },
+    );
+    ac.abort(new Error('timed out after 5s'));
+    await expect(pending).rejects.toThrow('timed out after 5s');
+    // 100 system tokens at $1.25/Mtok + 5 input + 100 output = $0.00063.
+    expect(env.store.ledger.listByRun(r.id)).toMatchObject([
+      { in_tok: 5, out_tok: 100, cache_write: 100, priced_by: 'estimate' },
+    ]);
+    expect(env.store.ledger.sumForRun(r.id)).toBeCloseTo(0.00063, 9);
   });
 
   it('ledgers an aborted decide at its input-only worst case', async () => {

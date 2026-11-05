@@ -163,7 +163,7 @@ export class LlmService implements LlmPort, BatchSource {
         model: req.model,
         maxUsd: req.maxUsd,
         msg: 'llm.call',
-        estimate: estimateCallUsage(req.system, req.input, req.maxTokens),
+        estimate: estimateCallUsage(req),
       },
       cctx,
       (adapter) =>
@@ -227,9 +227,7 @@ export class LlmService implements LlmPort, BatchSource {
     }
     const { cfg, factory, price } = this.lookup(req.provider, req.model);
     const worst =
-      price === undefined
-        ? undefined
-        : costUsd(batchPrice(price), estimateCallUsage(req.system, req.input, req.maxTokens));
+      price === undefined ? undefined : costUsd(batchPrice(price), estimateCallUsage(req));
     const { now } = this.precheck({ maxUsd: req.maxUsd, estimate: worst }, cctx);
     // Batches in flight are spend the ledger does not show yet: without reserving their
     // worst case, any number of them would pass the daily cap before the first one ends.

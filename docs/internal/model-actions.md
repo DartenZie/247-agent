@@ -56,13 +56,15 @@ not contain `${`), renders `input`, takes the smaller of the action's and the ta
    that sum plus what is held in flight reaches it (see [The daily
    breaker](#the-daily-breaker)), and with
    `BudgetExceededError('task')` when the run has already spent its cap. When the
-   model has a table price, the worst case is also checked (`estimateCallUsage()` in `pricing.ts`): the
-   system prompt at the cache-write price, because it is sent as a cacheable block and
-   a cache miss bills it so; the input at the input price; and `max_tokens` output, all
-   at table prices. Added to what the run has spent, it must fit the cap. Text is
-   counted by `estimateInputTokens()`: one token per 3 ASCII characters, plus one per
-   UTF-16 code unit outside ASCII, because CJK text and emoji cost close to one token
-   per character. An `openrouter` model without a `pricing:` entry has no
+   model has a table price, the worst case is also checked (`estimateCallUsage()` in
+   `pricing.ts`): the system prompt at the cache-write price, because it is sent as a
+   cacheable block and a cache miss bills it so; the input and the JSON of
+   `output_schema` at the input price; and `max_tokens` output, all at table prices.
+   Added to what the run has spent, it must fit the cap. Text is counted by
+   `estimateInputTokens()`: one token per 3 ASCII characters, plus one per UTF-16 code
+   unit outside ASCII, because CJK text and emoji cost close to one token per
+   character. It is an estimate, not a bound: rare characters and dense ASCII such as
+   hex can cost more, and the post-call check catches them. An `openrouter` model without a `pricing:` entry has no
    table price, so it gets only the post-hoc check. `spentRun` is the ledger sum for
    the run id, so retries share one cap.
 2. **Call** the adapter with `{model, system, input, outputSchema, maxTokens, effort,
@@ -90,8 +92,9 @@ ledger, so the retry spends from the same cap.
 When the run's signal aborts while the adapter call is in flight (the task `timeout`, `oa
 runs cancel`, or a daemon stop), the provider may already bill the request, and no
 response says how much. Before it rethrows the abort, `execute` writes the call's worst
-case as its row: the precheck's estimate (`ceil(len(system + input) / 3)` input tokens
-plus `max_tokens` output for `call`, the JSON body's input tokens and no output for
+case as its row: the precheck's estimate (`estimateCallUsage()`: the system prompt as
+cache-write tokens, the input and output schema as input tokens, plus `max_tokens`
+output for `call`, the JSON body's input tokens and no output for
 `decide`) at table prices, `priced_by: estimate`, and logs `llm.call` or `llm.decide`
 with `aborted: true`. A model without a table price has no worst case, so the row is at
 $0. The row replaces the in-flight hold, trips the breaker like any other row, and counts
