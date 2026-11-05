@@ -34,7 +34,7 @@ function hasType(type: ParamType, value: unknown): boolean {
     case 'number':
       return typeof value === 'number' && Number.isFinite(value);
     case 'integer':
-      return typeof value === 'number' && Number.isInteger(value);
+      return typeof value === 'number' && Number.isSafeInteger(value);
     case 'boolean':
       return typeof value === 'boolean';
     case 'object':
@@ -44,6 +44,9 @@ function hasType(type: ParamType, value: unknown): boolean {
   }
 }
 
+/** A plain decimal number: no hex, no padding, no Infinity. */
+const DECIMAL = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
+
 /** `oa run -p age=36` sends a string: read it as the declared type when it is one. */
 function fromString(type: ParamType, text: string): unknown {
   switch (type) {
@@ -51,7 +54,7 @@ function fromString(type: ParamType, text: string): unknown {
       return text;
     case 'number':
     case 'integer':
-      return text.trim() === '' ? text : Number(text);
+      return DECIMAL.test(text) ? Number(text) : text;
     case 'boolean':
       return text === 'true' ? true : text === 'false' ? false : text;
     case 'object':
@@ -154,7 +157,8 @@ export function applyParams(
   const issues: ParamIssue[] = [];
   const out: Record<string, JsonValue> = {};
   for (const [name, spec] of Object.entries(params)) {
-    const value = given[name];
+    // A param named like an Object.prototype key (constructor) must not read the inherited value.
+    const value = Object.hasOwn(given, name) ? given[name] : undefined;
     if (value === undefined) {
       if (spec.default !== undefined) {
         out[name] = spec.default;

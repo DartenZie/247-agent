@@ -112,6 +112,36 @@ describe('runTaskManually', () => {
     expect(env.store.events.listAfter(0, 10)).toEqual([]);
   });
 
+  it('reads only own payload keys and converts only plain decimal numbers', () => {
+    const odd = config([
+      {
+        name: 'odd',
+        trigger: {
+          kind: 'manual',
+          params: {
+            constructor: { required: false },
+            n: { type: 'integer', required: false },
+            tags: { type: 'array', required: false },
+          },
+        },
+        action: shell,
+      },
+    ]);
+    bus.dispatcher.setConfig(odd);
+    const payload = (p: Record<string, string>) =>
+      env.store.events.getById(runTaskManually(bus, env.store, odd, 'odd', { payload: p }).event_id)
+        ?.payload;
+    expect(payload({})).toMatchObject({ event: { payload: {} } });
+    expect(payload({ n: '-12', tags: '["a"]' })).toMatchObject({
+      event: { payload: { n: -12, tags: ['a'] } },
+    });
+    for (const n of ['0x10', ' 3', '9007199254740993']) {
+      expect(() => runTaskManually(bus, env.store, odd, 'odd', { payload: { n } })).toThrow(
+        InvalidParamsError,
+      );
+    }
+  });
+
   it('rejects unknown tasks without publishing anything', () => {
     expect(() => runTaskManually(bus, env.store, tasks, 'nope')).toThrow(UnknownTaskError);
     expect(env.store.events.listAfter(0, 10)).toEqual([]);

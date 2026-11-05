@@ -76,7 +76,9 @@ six or seven fields. Ticks missed while the daemon was down are not published.
 
 The action of the started run sees `payload.event` as its trigger event, under the
 `manual.run` event's id and correlation id. The type defaults to `manual.input` and the
-payload to `null`.
+payload to `null`. For a manual task that declares
+[`params`](../tasks/triggers.md#declare-the-params-a-manual-task-needs), the trigger event
+always has a payload: the checked params with their defaults filled in.
 
 ```json
 { "type": "task.classify_email.succeeded", "source": "task:classify_email",
