@@ -254,8 +254,10 @@ The `configure()` seams, and what each one takes:
 | `MetricsServer` (`api/metrics-server.ts`) | `configure` | `metrics.listen`: the same address keeps the listener; a new one is bound before the old closes, except when the old listener holds the same port and the new host is refused for it (`EADDRINUSE`, on Linux), where the old one closes first and comes back on its port if the bind still fails (`metrics.restore_failed` if it cannot); after `close()` (daemon stop) a late reload opens nothing; a failed bind rejects and keeps the old one, which `daemon.reload()` logs as `metrics.listen_failed` without failing the reload (at start it fails the start) |
 
 Invariant: a setting from `agent.yaml` is read through one of these seams, never copied
-into a constructor and forgotten. Adding a key means adding it to a seam and to the
-reload test in `core.test.ts`; a key that genuinely cannot change at run time joins
+into a constructor and forgotten. Adding a key means adding it to a seam and to
+`core.reload.test.ts`, which starts the core with one value, reloads with another and
+shows the component behaving by the new one, and shows that a reload failing after
+validation leaves the old value in place; a key that genuinely cannot change at run time joins
 `FIXED_KEYS` and is documented as restart-only.
 
 ## Where the schemas feed other things
