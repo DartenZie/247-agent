@@ -280,15 +280,17 @@ if [ $service = 1 ]; then
       root systemctl enable --now 247-agent || not_up "the start of 247-agent $version failed"
       check_up "247-agent $version did not stay up after its first start"
       say "enabled and started 247-agent"
-    elif root systemctl is-active --quiet 247-agent; then
+    # Running, or enabled but down (crash-looping after a failed upgrade, which a rerun
+    # must not report as fine). A unit that is stopped and disabled stays that way.
+    elif root systemctl is-active --quiet 247-agent || root systemctl is-enabled --quiet 247-agent; then
       if [ $restart = 1 ]; then
         root systemctl restart 247-agent || not_up "the restart into 247-agent $version failed"
         check_up "247-agent $version did not stay up after the restart"
         say "restarted 247-agent"
       else
-        say "247-agent is still running $current. Restart it when no run is in flight"
-        say "(\`oa runs ls --status running\` prints \`no runs\`), then check that it came up:"
-        say "  systemctl restart 247-agent && sh $prefix/share/check-service.sh"
+        say "247-agent was not restarted. Restart it when no run is in flight"
+        say "(\`sudo oa runs ls --status running\` prints \`no runs\`), then check that it came up:"
+        say "  sudo systemctl restart 247-agent && sudo sh $prefix/share/check-service.sh"
       fi
     fi
   else

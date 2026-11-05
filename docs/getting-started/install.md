@@ -42,8 +42,11 @@ The package:
 
 To upgrade, install the newer file the same way. The new version validates your
 existing configuration first. If it rejects the configuration, the upgrade fails and
-the running daemon is not restarted. Fix the configuration and run
-`sudo dpkg --configure -a` to finish the upgrade. If the new version migrates the
+the running daemon is not restarted. Fix the configuration. Then, for a `.deb`, run
+`sudo dpkg --configure -a` to finish the upgrade. For an `.rpm`, run
+`sudo systemctl restart 247-agent`, then
+`sudo sh /opt/247-agent/share/check-service.sh`. The old daemon keeps running until
+then, but the new files are already in place, so restart it soon. If the new version migrates the
 database, an older package refuses to start on it. The daemon keeps a copy from before
 the migration for that case
 ([upgrading and rolling back](../operations/production.md#upgrading-and-rolling-back)).

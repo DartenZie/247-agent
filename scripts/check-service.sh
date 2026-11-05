@@ -7,10 +7,12 @@
 #
 # It waits --settle seconds, then requires that the unit is active, that systemd did not
 # restart it in the meantime (a build that crashes a moment after it reported ready) and
-# that `oa health` answers `ok` or `degraded`. Exit 0 when it is up, 1 when it is not.
+# that `oa health` answers with the dispatcher and the database not failing. Connectors
+# that are down only warn. Exit 0 when it is up, 1 when it is not.
 #
 # Options:
 #   --unit <name>     the systemd unit (default 247-agent)
+#   --config <file>   agent.yaml, for its `socket:` (default /etc/247-agent/agent.yaml)
 #   --oa <path>       the oa to ask (default: oa next to this script's tree, else on PATH)
 #   --settle <s>      seconds to wait before checking (default 5)
 #   --tries <n>       times to ask `oa health`, a second apart, before giving up (default 10)
@@ -18,22 +20,36 @@
 set -eu
 
 unit=247-agent
+config=/etc/247-agent/agent.yaml
 oa=
 settle=5
 tries=10
 while [ $# -gt 0 ]; do
   case $1 in
     --unit) unit=$2; shift 2 ;;
+    --config) config=$2; shift 2 ;;
     --oa) oa=$2; shift 2 ;;
     --settle) settle=$2; shift 2 ;;
     --tries) tries=$2; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "check-service.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 if [ -z "$oa" ]; then
   oa=$(dirname "$0")/../bin/oa
   [ -x "$oa" ] || oa=oa
+fi
+
+# The socket agent.yaml names at the top level (relative to the file, as the daemon reads
+# it); none means the daemon's and oa's default.
+socket=
+if [ -r "$config" ]; then
+  socket=$(sed -n 's/^socket:[[:space:]]*//p' "$config" | head -n 1 \
+    | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//; s/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/')
+  case $socket in
+    ''|/*) ;;
+    *) socket=$(cd "$(dirname "$config")" && pwd)/$socket ;;
+  esac
 fi
 
 fail() {
@@ -43,6 +59,9 @@ fail() {
 }
 
 restarts() { systemctl show -p NRestarts --value "$unit" 2> /dev/null || true; }
+
+# The status of one check line of `oa health`: `dispatcher<TAB>ok since=…` gives ok.
+check_status() { printf '%s\n' "$out" | awk -F '\t' -v c="$1" '$1 == c { split($2, a, " "); print a[1] }'; }
 
 before=$(restarts)
 sleep "$settle"
@@ -58,19 +77,30 @@ out=
 n=0
 while [ $n -lt "$tries" ]; do
   n=$((n + 1))
-  out=$("$oa" health 2>&1) || true
-  status=$(printf '%s\n' "$out" | head -n 1 | cut -f 1)
+  if [ -n "$socket" ]; then
+    out=$("$oa" health --socket "$socket" 2>&1) || true
+  else
+    out=$("$oa" health 2>&1) || true
+  fi
+  line=$(printf '%s\n' "$out" | head -n 1)
+  status=$(printf '%s\n' "$line" | cut -f 1)
   case $status in
     ok)
-      printf '247-agent is up: %s\n' "$(printf '%s\n' "$out" | head -n 1)"
+      printf '247-agent is up: %s\n' "$line"
       exit 0 ;;
-    degraded)
-      printf '247-agent is up: %s\n' "$(printf '%s\n' "$out" | head -n 1)"
-      printf 'warning: 247-agent is degraded; `oa health` shows which check\n' >&2
-      exit 0 ;;
-    failing)
+    degraded|failing)
+      # A connector that is down (its server unreachable) is not a failed start.
+      if [ "$(check_status dispatcher)" = ok ] && [ "$(check_status database)" = ok ]; then
+        printf '247-agent is up: %s\n' "$line"
+        if [ "$status" = failing ]; then
+          printf 'warning: no connector is up; `oa health` and `oa connector list` show which\n' >&2
+        else
+          printf 'warning: 247-agent is degraded; `oa health` shows which check\n' >&2
+        fi
+        exit 0
+      fi
       printf '%s\n' "$out" >&2
-      fail "oa health reports failing" ;;
+      fail "oa health reports $status" ;;
   esac
   [ $n -lt "$tries" ] && sleep 1
 done

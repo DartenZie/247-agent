@@ -79,10 +79,14 @@ The maintainer scripts in `packaging/scripts/` create the user on install, enabl
 start the service on a fresh install, restart it on upgrade, stop it on removal and
 clean up on purge. The connector template unit is installed, never enabled. On an
 upgrade, postinstall first runs the new `oa validate` on the kept `agent.yaml`. If it
-fails, the script leaves the running daemon alone and exits 1, so apt reports the
-upgrade as failed and `dpkg --configure -a` retries it once the config is fixed. After
-each start or restart it runs `share/check-service.sh` (below) and exits 1 with the
-rollback command when the daemon is not up.
+fails, the script does not restart the daemon and exits 1. apt then reports the upgrade
+as failed, and `dpkg --configure -a` retries it once the config is fixed. rpm only
+warns about a failed `%post`, so an rpm user restarts by hand. Either way, the new tree
+is already unpacked, so a connector respawn or a crash restart picks it up. After each
+start or restart, the script runs `share/check-service.sh` (below). It exits 1 with the
+rollback command when the daemon is not up. On an upgrade it restarts a unit that is
+active or enabled, so a retry after a crash-looping upgrade checks again instead of
+passing. `install.sh` does the same.
 
 nfpm copies the modes of the stage. The script opens the stage again in case an older
 build left it closed, and `nfpm.yaml` gives the units 644 and the starter config 640.
@@ -120,9 +124,12 @@ packages, decides whether a start or a restart worked. `Type=notify` makes the r
 return only after `READY=1`, which catches a build that cannot load. It does not catch a
 build that dies a moment later. So the script waits `--settle` seconds (default 5), then
 requires three things: the unit is active, its `NRestarts` did not change, and
-`oa health` answers `ok` or `degraded`. It asks `oa health` up to `--tries` times, one
-second apart. `degraded` passes with a warning, because a connector that is down is not
-a failed upgrade. Exit 0 when the daemon is up, 1 when it is not, with the reason and
+`oa health` answers with neither the dispatcher nor the database `failing`. A
+`degraded` status, or a `failing` one that comes only from the connectors, passes with
+a warning. A connector whose server is unreachable is not a failed upgrade. It asks
+`oa health` up to `--tries` times, one second apart, on the `socket:` that `--config`
+(default `/etc/247-agent/agent.yaml`) names, resolved against the file's directory as
+the daemon does. Exit 0 when the daemon is up, 1 when it is not, with the reason and
 the `journalctl` command on stderr. `check-service-script.test.ts` drives it with a fake
 `systemctl` and a fake `oa`.
 

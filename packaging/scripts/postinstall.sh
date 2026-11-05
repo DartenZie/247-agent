@@ -24,8 +24,9 @@ rollback() {
   echo "  (if the new version migrated state.db, restore the state.db.schema-<n>.bak copy next to it first)" >&2
 }
 
-# The new build must accept the config the upgrade kept. If it does not, the running
-# daemon is left alone: it still runs the code it loaded.
+# The new build must accept the config the upgrade kept. If it does not, the daemon is
+# not restarted; it keeps running until a connector respawn or a crash restart loads the
+# new tree, so the message asks for the fix now.
 if [ $upgrade = 1 ] && [ -f "$config" ]; then
   if ! "$prefix/bin/oa" validate "$config" > /dev/null; then
     echo "247-agent: the new version rejects $config (the issues are above); the service was not restarted." >&2
@@ -39,7 +40,9 @@ fi
 [ -d /run/systemd/system ] || exit 0
 systemctl daemon-reload
 if [ $upgrade = 1 ]; then
-  systemctl is-active --quiet 247-agent || exit 0
+  # Running, or enabled but down (crash-looping after a failed upgrade, which a retry with
+  # `dpkg --configure -a` must not report as fine). Stopped and disabled stays that way.
+  systemctl is-active --quiet 247-agent || systemctl is-enabled --quiet 247-agent || exit 0
   if ! systemctl restart 247-agent || ! sh "$prefix/share/check-service.sh"; then
     echo "247-agent: the upgraded daemon did not come up." >&2
     rollback
