@@ -180,7 +180,7 @@ the user taps, or replies with an option's text or number. Full reference:
 
 Generic HTTP in, `transport: none`, no ops. `listen` (`{host, port}`, default
 `127.0.0.1:8787`, or `{path, mode}` for a Unix socket), `routes` (each `path`, `event`,
-optional `type_header` appending `.<header value>`, `dedup_header` for the delivery id,
+optional `type_header` appending `.<header value>`, `dedup_header` for the delivery id (a route without one logs a warning at start),
 `methods`, and `verify`: `{kind: github, secret}`, `{kind: gitlab, token}`, `{kind: slack|stripe, secret,
 tolerance}`, `{kind: hmac, secret, header, algorithm, encoding, prefix, timestamp: {header,
 signed, tolerance}}`, `{kind: token, token, header,

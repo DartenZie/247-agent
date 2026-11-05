@@ -29,7 +29,8 @@ Senders get a status they can act on: `202` emitted, `200` a redelivery that was
    `github_webhook_secret`. GitHub's "Redeliver" button sends the same delivery id, which
    the dedup key drops.
 3. **Write the manifest** and `oa validate agent.yaml`. The connector logs its routes at
-   start; `GET /healthz` answers `200 {"ok":true}` without touching the daemon, for the
+   start, with a warning for each route that has `verify: none` or no `dedup_header`.
+   `GET /healthz` answers `200 {"ok":true}` without touching the daemon, for the
    proxy's or a monitor's checks.
 
 ## Manifest
@@ -76,7 +77,7 @@ Per route:
 | `name` | the path, slugged (`hooks-github`) | appears in logs, the payload and the dedup key |
 | `event` | required | the event type emitted, or its prefix when `type_header` is set |
 | `type_header` | none | appends `.<header value>` to `event`, folded into one lower-case segment (`Pull Request` becomes `pull_request`, cut at 64 characters); a request without the header gets 400 |
-| `dedup_header` | none | the delivery id header; the event gets `dedup_key: <connector>:<route>:<value>` and a repeat is answered `200 {"ok":true,"duplicate":true}` |
+| `dedup_header` | none | the delivery id header; the event gets `dedup_key: <connector>:<route>:<value>` and a repeat is answered `200 {"ok":true,"duplicate":true}`; a route without it logs a warning at start, because each sender retry becomes a new event |
 | `methods` | `[POST]` | anything else gets 405 with an `Allow` header |
 | `verify` | required | how the request proves it is genuine, below |
 
@@ -99,7 +100,7 @@ with the body. A request whose timestamp differs from the connector's clock by m
 `tolerance` seconds, in either direction, gets 401. A captured request therefore cannot
 be replayed after the window closes. Inside the window, a replay passes the check and
 emits a second event. Slack and Stripe send no delivery id header for `dedup_header`, so
-filter or deduplicate on an id in the body where it matters. Keep the server clock synchronized (for example
+these routes always log the `dedup_header` warning at start. Filter or deduplicate on an id in the body where it matters. Keep the server clock synchronized (for example
 with `systemd-timesyncd`).
 
 For a service that is not a preset, set `timestamp` on an `hmac` check:

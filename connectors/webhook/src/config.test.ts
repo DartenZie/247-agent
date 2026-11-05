@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseConfig, routeName, secretHeader } from './config.js';
+import { parseConfig, routeName, secretHeader, startupWarnings } from './config.js';
 
 const route = { path: '/hooks/github', event: 'github', verify: { kind: 'github', secret: 's' } };
 
@@ -79,5 +79,41 @@ describe('secretHeader', () => {
     expect(secretHeader({ kind: 'none' })).toBeUndefined();
     expect(secretHeader({ kind: 'slack', secret: 's', tolerance: 300 })).toBe('x-slack-signature');
     expect(secretHeader({ kind: 'stripe', secret: 's', tolerance: 300 })).toBe('stripe-signature');
+  });
+});
+
+describe('startupWarnings', () => {
+  it('warns once for each route without dedup_header, naming the route', () => {
+    const c = parseConfig({
+      routes: [
+        { ...route, dedup_header: 'X-GitHub-Delivery' },
+        { path: '/hooks/slack', event: 'slack', verify: { kind: 'slack', secret: 's' } },
+        { path: '/hooks/ci', name: 'ci', event: 'ci', verify: { kind: 'gitlab', token: 't' } },
+      ],
+    });
+    expect(startupWarnings(c)).toEqual([
+      'webhook: route /hooks/slack has no dedup_header; sender retries will create duplicate events',
+      'webhook: route /hooks/ci has no dedup_header; sender retries will create duplicate events',
+    ]);
+  });
+
+  it('warns about verify: none, and nothing for a verified route with dedup_header', () => {
+    const open = parseConfig({
+      routes: [{ path: '/in', event: 'x', dedup_header: 'X-Id', verify: { kind: 'none' } }],
+    });
+    expect(startupWarnings(open)).toEqual([
+      'webhook: route /in accepts unauthenticated requests (verify: none)',
+    ]);
+    expect(startupWarnings(parseConfig({ routes: [{ ...route, dedup_header: 'X-Id' }] }))).toEqual(
+      [],
+    );
+  });
+
+  it('gives a route with neither check both warnings, verify first', () => {
+    const c = parseConfig({ routes: [{ path: '/in', event: 'x', verify: { kind: 'none' } }] });
+    expect(startupWarnings(c)).toEqual([
+      'webhook: route /in accepts unauthenticated requests (verify: none)',
+      'webhook: route /in has no dedup_header; sender retries will create duplicate events',
+    ]);
   });
 });

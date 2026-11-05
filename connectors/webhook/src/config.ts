@@ -213,3 +213,23 @@ export function secretHeader(verify: VerifyConfig): string | undefined {
       return undefined;
   }
 }
+
+/**
+ * The lines logged at start for routes that are risky as configured: one that accepts
+ * unauthenticated requests, and one whose sender retries become duplicate events because
+ * no `dedup_header` names the delivery id.
+ */
+export function startupWarnings(config: WebhookConfig): string[] {
+  const lines: string[] = [];
+  for (const r of config.routes) {
+    if (r.verify.kind === 'none') {
+      lines.push(`webhook: route ${r.path} accepts unauthenticated requests (verify: none)`);
+    }
+    if (r.dedup_header === undefined) {
+      lines.push(
+        `webhook: route ${r.path} has no dedup_header; sender retries will create duplicate events`,
+      );
+    }
+  }
+  return lines;
+}
