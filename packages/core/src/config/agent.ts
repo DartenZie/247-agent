@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isIPv4, isIPv6 } from 'node:net';
 import { dirname, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
@@ -27,6 +28,48 @@ export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
 const pathList = z.union([z.string().min(1), z.array(z.string().min(1))]);
 
+/** Where the metrics endpoint listens: a host (name, IPv4 or bare IPv6) and a TCP port. */
+export interface ListenAddress {
+  host: string;
+  port: number;
+}
+
+/** A DNS name whose last label is not all digits, so `1.2.3.999` is not taken for one. */
+const HOSTNAME =
+  /^(?=.*[A-Za-z][A-Za-z0-9-]*$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+
+const LISTEN_HINT = 'listen looks like 9464 (loopback), 127.0.0.1:9464, [::1]:9464 or 0.0.0.0:9464';
+
+/** `9464`, `":9464"` and `"9464"` bind the loopback interface; `host:port` and `[v6]:port` name one. */
+export function parseListen(value: string | number): ListenAddress | undefined {
+  const text = String(value);
+  const m = /^(?:(?:\[([0-9A-Fa-f:.]+)\]|([^:[\]\s]+))?:)?(\d{1,5})$/.exec(text);
+  const port = Number(m?.[3]);
+  if (m === null || port > 65535) {
+    return undefined;
+  }
+  const [, v6, name] = m;
+  if (v6 !== undefined && !isIPv6(v6)) {
+    return undefined;
+  }
+  if (name !== undefined && !isIPv4(name) && !HOSTNAME.test(name)) {
+    return undefined;
+  }
+  return { host: v6 ?? name ?? '127.0.0.1', port };
+}
+
+const Listen = z.union([z.string(), z.number()]).transform((v, ctx) => {
+  const listen = parseListen(v);
+  if (listen === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `invalid address ${JSON.stringify(v)}; ${LISTEN_HINT}`,
+    });
+    return z.NEVER;
+  }
+  return listen;
+});
+
 /**
  * `agent.yaml` (docs/internal/config.md). Relative paths are resolved against the file's own
  * directory.
@@ -42,6 +85,8 @@ export const AgentFile = z.strictObject({
     .default([]),
   workers: z.number().int().positive().default(4),
   log: z.strictObject({ level: z.enum(LOG_LEVELS).default('info') }).prefault({}),
+  /** A read-only HTTP endpoint serving `GET /metrics`; off without `listen` (#59). */
+  metrics: z.strictObject({ listen: Listen.optional() }).prefault({}),
   limits: z
     .strictObject({
       max_event_depth: z.number().int().positive().default(32),

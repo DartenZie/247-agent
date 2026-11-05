@@ -341,6 +341,63 @@ describe('startDaemon', () => {
     await expect(raw('POST', '/metrics')).resolves.toMatchObject({ status: 405 });
   });
 
+  it('serves /metrics over TCP when metrics.listen is set, applied on reload (#59)', async () => {
+    // Off unless configured.
+    expect(daemon.metricsServer.address()).toBeUndefined();
+    const agent = (extra: string): void => {
+      writeFileSync(join(dir, 'agent.yaml'), `db: state.db\nsocket: core.sock\n${extra}`);
+    };
+    agent('metrics: { listen: "127.0.0.1:0" }\n');
+    expect(await api.reload()).toMatchObject({ ok: true, restart_required: [] });
+    const first = daemon.metricsServer.address();
+    expect(first?.host).toBe('127.0.0.1');
+    const scrape = (port: number | undefined): Promise<Response> =>
+      fetch(`http://127.0.0.1:${String(port)}/metrics`);
+    const res = await scrape(first?.port);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/oa_config_reloads_total\{result="ok"\} 1/);
+    expect((await fetch(`http://127.0.0.1:${String(first?.port)}/v1/health`)).status).toBe(404);
+
+    // An address in use: the rest of the reload applies, the endpoint stays where it was.
+    const taken = await new Promise<Server>((resolve) => {
+      const s = createServer();
+      s.listen(0, '127.0.0.1', () => {
+        resolve(s);
+      });
+    });
+    const port = (taken.address() as { port: number }).port;
+    agent(`workers: 7\nmetrics: { listen: "127.0.0.1:${String(port)}" }\n`);
+    expect(await daemon.reload()).toMatchObject({ ok: true });
+    expect(daemon.config.workers).toBe(7);
+    expect(daemon.metricsServer.address()).toEqual(first);
+    expect(lines.filter((l) => l.msg === 'metrics.listen_failed')).toEqual([
+      expect.objectContaining({ level: 'error', listen: `127.0.0.1:${String(port)}` }),
+    ]);
+
+    // A restart with that address fails without leaving anything open.
+    await daemon.stop();
+    await expect(startDaemon({ configFile: join(dir, 'agent.yaml'), log: log() })).rejects.toThrow(
+      /cannot listen for metrics/,
+    );
+    expect(existsSync(join(dir, 'core.sock'))).toBe(false);
+    await new Promise<void>((resolve) =>
+      taken.close(() => {
+        resolve();
+      }),
+    );
+
+    // Configured from the start; removing the key turns it off on reload.
+    agent(`metrics: { listen: ${String(port)} }\n`);
+    daemon = await startDaemon({ configFile: join(dir, 'agent.yaml'), log: log() });
+    api = new ApiClient({ socketPath: daemon.config.socket });
+    expect(daemon.metricsServer.address()).toEqual({ host: '127.0.0.1', port });
+    expect((await scrape(port)).status).toBe(200);
+    agent('');
+    expect(await api.reload()).toMatchObject({ ok: true });
+    expect(daemon.metricsServer.address()).toBeUndefined();
+    await expect(scrape(port)).rejects.toThrow();
+  });
+
   it('runs the retention pass on start and exposes it', async () => {
     expect(daemon.core.retention).toBeDefined();
     const report = await daemon.core.retention?.run();

@@ -70,6 +70,7 @@ reads its settings through a `configure()` seam so a reload applies them live
 | LLM port and ledger | `llm/service.ts`, `store/ledger.ts` | Prices, budgets and ledgers every model call; the daily breaker | No model call outside the port ([`model-actions.md`](model-actions.md)) |
 | Batch poller | `llm/batches.ts` | Settles Message Batches in flight and publishes `llm.batch.ended` | A batch is settled whatever the run did |
 | API | `api/server.ts`, `api/routes.ts` | `node:http` on the Unix socket, JSON in and out, `/metrics` as text | No authentication: the socket's mode (`0660`) and the daemon's uid are the boundary ([`security.md`](security.md)) |
+| Metrics endpoint | `api/metrics-server.ts` | Optional `node:http` on TCP (`metrics.listen`), `GET`/`HEAD /metrics` only; `configure()` moves, opens or closes it on reload | Read-only and off by default; a bare port binds loopback ([`security.md`](security.md)) |
 | Connector supervisor | `connectors/supervisor.ts` | Spawns connectors, holds one MCP client per `stdio` connector and one ACP connection per agent, restarts with backoff, pings health, serves `oa connector restart` and reload | Connector secrets are rendered at spawn and nowhere else ([`connectors.md`](connectors.md)) |
 | Retention | `retention.ts`, `store/retention.ts` | Deletes finished runs, ledger rows, dispatched events and workspaces past their durations | Active runs and anything they reference are never touched ([`store.md`](store.md)) |
 | Metrics | `metrics.ts` | One registry; counters where things happen, gauges collected at scrape | Labels are bounded: task, connector, model, status, never an id |
@@ -260,7 +261,7 @@ packages/core/src/
   llm/               service.ts (the ctx.llm port), config.ts, pricing.ts, models.ts, batches.ts, errors.ts, one adapter per provider type
   connectors/        supervisor.ts, acp.ts, acp-types.ts, mcp-bridge.ts, net-proxy.ts, poller.ts, host.ts, socket-transport.ts, stdio-transport.ts, child-env.ts
   secrets/           env, file, systemd-credentials
-  api/               routes.ts (transport-free handlers), server.ts, client.ts, socket-path.ts
+  api/               routes.ts (transport-free handlers), server.ts, metrics-server.ts, client.ts, socket-path.ts
   expr/              glob.ts (type patterns), jmespath.ts, template.ts
   metrics.ts, retention.ts, log.ts, ids.ts, clock.ts, home.ts, version.ts, host-main.ts, process-group.ts
 ```

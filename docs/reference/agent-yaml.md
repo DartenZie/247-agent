@@ -17,6 +17,7 @@ tasks: tasks.yaml                    # a file, a directory of *.yaml, or a list 
 connectors: []                       # manifest files, directories, or inline manifests
 workers: 4
 log: { level: info }
+metrics: {}                          # listen has no default: no TCP metrics endpoint
 limits: { max_event_depth: 32 }
 shutdown: { grace: 30s }
 defaults:
@@ -51,6 +52,20 @@ Durations are an integer and a unit: `500ms`, `30s`, `15m`, `24h`, `7d`. `shutdo
 | `shutdown.grace` | How long a stop (SIGTERM, `systemctl restart`, an upgrade) lets runs in flight finish before aborting them. An aborted run runs the same attempt again on the next start. Keep the unit's `TimeoutStopSec=` above this plus 10 seconds. | `30s` |
 | `limits.max_event_depth` | An event deeper than this in a causal chain (hops from the root event) starts no run. It still ends a `wait` that matches it. | `32` |
 | `limits.max_runs_per_chain` | Runs one causal chain may start, counting every item of an `emit … each` fan-out. Past it, the chain's events start no run; they still end a `wait` that matches them. | `1000` |
+
+## Metrics endpoint
+
+| Key | Meaning | Default |
+|---|---|---|
+| `metrics.listen` | A TCP address where the daemon also serves `GET /metrics` (and `HEAD`) over plain HTTP, the same text as on the socket. Every other path answers 404. A bare port such as `9464` or `":9464"` binds `127.0.0.1`; `host:port` binds that host, with an IPv6 address in brackets (`[::1]:9464`); `0.0.0.0:9464` binds every interface. A host name binds only the first address it resolves to, so prefer an IP address. | none: no TCP endpoint |
+
+The endpoint has no authentication. Anything that can reach the address reads the
+metrics: task and connector names, run counts and model spend. It cannot change
+anything. Keep it on the loopback interface, or limit access with a firewall.
+
+If the address is in use at start, the daemon does not start. If it is in use on a reload,
+the rest of the reload applies, the endpoint stays on its previous address and the log
+shows `metrics.listen_failed`.
 
 ## Defaults for tasks
 
@@ -149,7 +164,8 @@ durations.
 `oa reload` (or `systemctl reload 247-agent`) re-reads this file, every manifest and
 every tasks file and applies them together, or not at all when any file is invalid.
 Every key applies live, with three exceptions: a changed `db`, `socket` or `secrets`
-is reported as requiring a restart, and the running values stay. A run already in
+is reported as requiring a restart, and the running values stay. A changed
+`metrics.listen` moves, opens or closes the metrics endpoint. A run already in
 flight finishes under the task definition it started with; the `defaults` apply to it
 the next time it starts or resumes. A changed `defaults.agent.work_dir`
 respawns every sandboxed agent program, since the sandbox mounts that directory.

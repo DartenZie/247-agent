@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
 
 import type { ActionRunners, AgentClients, ConnectorClients } from './actions/types.js';
+import { createMetricsServer, formatListen, type MetricsServer } from './api/metrics-server.js';
 import { createApiServer, type ApiServer } from './api/server.js';
 import { systemClock, type Clock } from './clock.js';
 import {
@@ -70,6 +71,8 @@ export interface Daemon {
   readonly config: AgentConfig;
   readonly core: Core;
   readonly api: ApiServer;
+  /** The TCP scrape endpoint of `metrics.listen`; listens on nothing when it is unset. */
+  readonly metricsServer: MetricsServer;
   /**
    * SIGHUP or `POST /v1/reload`: re-reads agent.yaml, the connector manifests and the
    * tasks files and applies them together, or nothing when any of them is invalid. `db`,
@@ -205,6 +208,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     throw new ConnectorConfigError(manifests);
   }
   const metrics = new Metrics();
+  const metricsServer = createMetricsServer({ log, metrics });
 
   // What no sandbox may see, and what every one needs: fixed like `db` and `secrets`.
   const host = sandboxHost({ protected: protectedPaths(config), env });
@@ -275,6 +279,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     if (result.ok) {
       config = { ...next.config, ...fixed };
       log.setLevel?.(opts.logLevel ?? config.log.level);
+      // A taken address does not undo the reload: the endpoint stays where it was.
+      const listen = config.metrics.listen;
+      await metricsServer.configure(listen).catch((err: unknown) => {
+        log.error('metrics.listen_failed', {
+          listen: listen === undefined ? '' : formatListen(listen),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
       log.info('daemon.reloaded', { tasks: tasks(), config_file: config.file });
     }
     return {
@@ -299,7 +311,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   try {
     await core.start();
     await api.listen();
+    await metricsServer.configure(config.metrics.listen);
   } catch (err) {
+    await metricsServer.close();
     await api.close();
     await core.stop();
     throw err;
@@ -313,10 +327,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     },
     core,
     api,
+    metricsServer,
     reload,
     stop: (stopOpts) => {
       stopping ??= (async () => {
         log.info('daemon.stopping');
+        await metricsServer.close();
         await api.close();
         await core.stop(stopOpts);
         log.info('daemon.stopped');

@@ -56,7 +56,8 @@ request commits one small write to prove the database takes it.
 ### `GET /metrics`
 
 200, `text/plain; version=0.0.4; charset=utf-8`: the Prometheus exposition. See
-[Metrics](metrics.md).
+[Metrics](metrics.md). With `metrics.listen` set, the same response is also served over
+TCP on that address; that endpoint has no other route.
 
 ### `POST /v1/events`
 

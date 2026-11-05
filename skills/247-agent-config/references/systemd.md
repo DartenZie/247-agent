@@ -138,8 +138,9 @@ interrupted runs are retried per policy or failed as interrupted.
 - Reload config (tasks, manifests, `agent.yaml`): `oa reload` (prints the outcome) or
   `systemctl reload 247-agent`. Only `db`, `socket` and `secrets` need
   `systemctl restart 247-agent`.
-- Metrics: `oa metrics` prints `GET /metrics`; Prometheus cannot scrape the socket, so
-  write it to a node_exporter textfile on a timer or proxy the socket over HTTP.
+- Metrics: `oa metrics` prints `GET /metrics`. Prometheus cannot scrape the socket, so
+  set `metrics: { listen: 9464 }` in `agent.yaml` and scrape `127.0.0.1:9464`. Without a
+  port, write `oa metrics` to a node_exporter textfile on a timer.
 - Backups: `state.db` (with its `-wal` file, or via `sqlite3 .backup`) and
   `/etc/247-agent` in git.
 

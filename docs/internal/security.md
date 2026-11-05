@@ -19,6 +19,13 @@ sandbox that unshares the pid namespace and hides the socket, the database, the
 configuration and the daemon's environment. Moving secrets from the environment to a
 file or a pipe would change nothing; only the namespace split does.
 
+The one listener outside the socket is the optional metrics endpoint (`metrics.listen`,
+`api/metrics-server.ts`): TCP, no authentication, `GET`/`HEAD /metrics` only, sharing no
+route with the socket API, so a client that reaches it reads the exposition (task,
+connector and model names, counts, spend) and changes nothing. It is off by default and
+a bare port binds `127.0.0.1`. An unsandboxed step on the host network can read it like
+any local process; no metric carries a secret or an id.
+
 The units add the OS layer: `User=247-agent`, `ProtectSystem=strict`, `PrivateTmp`,
 `NoNewPrivileges`, `RuntimeDirectory` for the socket, `StateDirectory` with
 `StateDirectoryMode=0750` for the database and workspaces, which no other local user

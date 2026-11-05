@@ -7,6 +7,7 @@ tasks: website-updates.yaml     # a file, a directory (tasks.d), or a list of bo
 connectors: connectors.d          # manifest files, directories, or inline manifests
 workers: 4
 log: { level: info }
+metrics: { listen: 9464 }         # GET /metrics on 127.0.0.1:9464 for a Prometheus scrape job; omit for none
 limits: { max_event_depth: 32 }
 defaults:
   timeout: 15m

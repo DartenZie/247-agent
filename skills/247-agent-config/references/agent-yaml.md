@@ -11,6 +11,7 @@ is strict; unknown keys are rejected.
 | `connectors` | Manifest file(s), directories, or inline manifest objects | none |
 | `workers` | Global cap on runs executing at once | `4` |
 | `log.level` | `debug`, `info`, `warn`, `error` | `info` |
+| `metrics.listen` | A TCP address where the daemon also serves `GET /metrics`, read-only, with no authentication and no other route. `9464` or `":9464"` binds `127.0.0.1`; otherwise `host:port` or `[ipv6]:port`, preferably an IP literal. A taken address fails the start; on reload it is logged as `metrics.listen_failed` and the endpoint stays where it was. Applies on reload | none: no TCP endpoint |
 | `limits.max_event_depth` | Events deeper than this in a causal chain start no run; they still end a matching `wait` | `32` |
 | `limits.max_runs_per_chain` | Runs one causal chain (root event plus descendants, `each` items included) may start; past it its events start no run | `1000` |
 | `defaults.timeout` | Per-attempt wall-clock limit for tasks without `timeout` | `15m` |
