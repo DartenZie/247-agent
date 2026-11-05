@@ -155,7 +155,7 @@ other than `agent`. 404 for an unknown run.
 stderr}`. `status` is `running`, `waiting` (the run is parked in a `wait`; the attempt
 goes on when it resumes), `succeeded`, `failed`, `cancelled` or `interrupted` (a stop or
 a restart cut it short). `stdout` and `stderr` are the last 4096 characters of what the
-attempt's `shell` steps printed, with secret values replaced by `***`; a cut tail starts
+attempt's `shell` steps printed, with each secret value replaced by `[secret:<name>]`; a cut tail starts
 with `…`, and a stream that printed nothing is `null`. Other action kinds record the
 attempt with no output. 404 for an unknown run.
 

@@ -88,11 +88,12 @@ and `cmd` render to strings; `stdin` is sent verbatim when a string, else as JSO
 `result` selects the outcome: `text_stdout` (default; one trailing newline stripped),
 `json_stdout` (parse failure fails the attempt), `exit_code` (the number, never a
 failure for a non-zero exit). In the first two modes a non-zero exit is `ShellError`
-with the last 1024 characters of stderr. A spawn failure or a signal fails in every
+with the last 1024 characters of stderr; the executor replaces the run's secret values
+in every failure message before it stores one. A spawn failure or a signal fails in every
 mode. Each of stdout and stderr is kept up to 8 MiB. Whatever the outcome (success, a
 failed exit, an abort), the runner hands both to `ctx.output` before it returns or
 throws; the executor keeps the last 4096 characters of each on the attempt's
-`run_attempts` row, secrets redacted (docs/internal/store.md). Inside a `sequence` every
+`run_attempts` row, secrets redacted as `[secret:<name>]` (docs/internal/store.md). Inside a `sequence` every
 `shell` step writes to the same tail, in order. The child runs in a session and process
 group of its own (`detached`); an abort sends SIGTERM to the group, then SIGKILL to it after 5 s,
 so grandchildren that hold stdout open do not keep the attempt running. Unsandboxed, the child starts from `ctx.childEnv` plus the action's

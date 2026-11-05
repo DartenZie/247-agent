@@ -32,16 +32,23 @@ describe('OutputTail', () => {
 
   it('replaces secret values, longest first, including one split across writes', () => {
     const t = new OutputTail();
-    t.addSecrets(['hunter2', 'hunter2-long', '']);
+    t.addSecrets({ short: 'hunter2', long: 'hunter2-long', empty: '' });
     t.write('stdout', 'token=hunter2-long and hunt');
     t.write('stdout', 'er2\n');
-    expect(t.snapshot().stdout).toBe('token=*** and ***\n');
+    expect(t.snapshot().stdout).toBe('token=[secret:long] and [secret:short]\n');
+  });
+
+  it('leaves values shorter than 4 characters alone, as transcripts do', () => {
+    const t = new OutputTail();
+    t.addSecrets({ flag: 'on' });
+    t.write('stdout', 'turned on\n');
+    expect(t.snapshot().stdout).toBe('turned on\n');
   });
 
   it('redacts a secret that straddles the cut', () => {
     const secret = 'S'.repeat(40);
     const t = new OutputTail();
-    t.addSecrets([secret]);
+    t.addSecrets({ s: secret });
     // The secret starts just before the last OUTPUT_TAIL_CHARS characters.
     t.write('stdout', 'x'.repeat(100) + secret + 'y'.repeat(OUTPUT_TAIL_CHARS - 20));
     expect(t.snapshot().stdout).not.toMatch(/S/);

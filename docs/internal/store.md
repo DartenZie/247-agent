@@ -9,8 +9,8 @@ migration, or retention.
 `store/db.ts` opens the file with `better-sqlite3` and sets `journal_mode = WAL`,
 `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`. Migrations
 (`store/migrations.ts`) run in order, all pending ones in one transaction, and set
-`PRAGMA user_version` to the number applied; twelve ship, so a current database reads
-`user_version = 12`. A failed migration leaves the file at the version it had. A
+`PRAGMA user_version` to the number applied; thirteen ship, so a current database reads
+`user_version = 13`. A failed migration leaves the file at the version it had. A
 `user_version` above the number this build ships means a newer release migrated the file:
 `migrate` throws before it runs a migration, `openDatabase` closes the handle, and the
 daemon exits 1 with both numbers in the message. `store.transaction(fn)` is
@@ -115,13 +115,18 @@ DEFAULT 0`, `usd REAL`, `priced_by` with a CHECK on `table`|`provider`|`unpriced
 `finished_at`, `error`, `stdout`, `stderr`, `PRIMARY KEY (run_id, attempt)`. Written by the
 executor only (`store/attempts.ts`): a row when the attempt starts, its output tail when
 the runner returns, its end when a retry follows, the run finishes or a stop gives the
-attempt back (`interrupted`; the next start replaces the row). An attempt parked in a
-`wait` stays `waiting` with no `finished_at` and goes on, same row and start, when the
-run resumes. Recovery marks the open attempt of a run found `running` as `interrupted`.
-`stdout` and `stderr` are the last 4096 characters each stream printed
-(`executor/output-tail.ts`; a cut tail starts with `…`; `NULL` when silent), with the
-run's resolved secret values replaced by `***` before the row is written. At most
-`retry.attempts` (100) rows per run, so a run costs at most about 800 KiB of output.
+attempt back (`interrupted`; the next start replaces the row, so an attempt that a stop
+cut short after a wait loses its start and the output from before the wait). An attempt
+parked in a `wait` stays `waiting` with no `finished_at` and goes on, same row and
+start, when the run resumes. Recovery closes the open attempt of a run found `running`:
+`interrupted` when the run has attempts left and is retried, `failed` with the
+interrupted error when recovery fails the run. `stdout` and `stderr` are the last 4096
+UTF-16 code units each stream printed (`executor/output-tail.ts`; a cut tail starts with
+`…`; `NULL` when silent). Every resolved secret value of the run of 4 characters or more
+is replaced by `[secret:<name>]` before the row is written (`secrets/redact.ts`, the
+same rule as transcripts), in the output and in `error`; the executor also redacts the
+run's `runs.error`, which can quote a shell step's stderr. A run keeps at most
+`retry.attempts` (100) rows, so about 200 attempt-streams of 4096 code units each.
 
 **`llm_batches`**: `batch_id TEXT PRIMARY KEY`, `run_id`, `task`, `attempt`, `provider`,
 `model`, `structured INTEGER`, `worst_usd REAL`, `submitted_at`. Index

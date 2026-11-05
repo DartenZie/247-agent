@@ -1,10 +1,10 @@
 import type { OutputStream, RunOutput } from '../actions/types.js';
+import { redact, redactions } from '../secrets/redact.js';
 
 /** Characters of each stream an attempt keeps; a cut tail starts with `…`. */
 export const OUTPUT_TAIL_CHARS = 4096;
 
 const CUT = '…';
-const REDACTED = '***';
 
 export interface OutputSnapshot {
   stdout: string | null;
@@ -19,7 +19,7 @@ export interface OutputSnapshot {
  */
 export class OutputTail implements RunOutput {
   private readonly buf: Record<OutputStream, string>;
-  private secrets: string[] = [];
+  private secrets: [string, string][] = [];
   private keep = OUTPUT_TAIL_CHARS;
 
   /** `seed`: what an earlier pass of the same attempt stored (a resume after a wait). */
@@ -27,16 +27,11 @@ export class OutputTail implements RunOutput {
     this.buf = { stdout: seed.stdout ?? '', stderr: seed.stderr ?? '' };
   }
 
-  /** Values to redact; empty ones are ignored. */
-  addSecrets(values: Iterable<string>): void {
-    for (const v of values) {
-      if (v !== '' && !this.secrets.includes(v)) {
-        this.secrets.push(v);
-      }
-    }
-    this.secrets.sort((a, b) => b.length - a.length);
+  /** The run's resolved secrets, by name; replaced as in transcripts (`[secret:<name>]`). */
+  addSecrets(secrets: Readonly<Record<string, string>>): void {
+    this.secrets = redactions(secrets);
     // Enough that every secret starting in the kept tail is still whole in the buffer.
-    this.keep = OUTPUT_TAIL_CHARS + (this.secrets[0]?.length ?? 0);
+    this.keep = OUTPUT_TAIL_CHARS + (this.secrets[0]?.[0].length ?? 0);
   }
 
   write(stream: OutputStream, text: string): void {
@@ -66,10 +61,6 @@ export class OutputTail implements RunOutput {
   }
 
   private redact(text: string): string {
-    let out = text;
-    for (const s of this.secrets) {
-      out = out.split(s).join(REDACTED);
-    }
-    return out;
+    return redact(text, this.secrets);
   }
 }

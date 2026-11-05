@@ -131,7 +131,7 @@ paths, each permission decision as `allowed` or `refused` with the reason, usage
 how the turn stopped and the result. For a run of another action kind it prints, per
 attempt that printed something, a header `attempt <n>  <status>  <start>  took <d>  <error>`
 and then `stdout` and `stderr` with their lines indented: the last 4096 characters of
-each, secrets replaced by `***`. An attempt's output is recorded when the attempt ends,
+each, secrets replaced by `[secret:<name>]`. An attempt's output is recorded when the attempt ends,
 so `--follow` prints it once the run has finished. `--json` prints one attempt per line.
 When there is neither a transcript nor output it prints
 `no output for <run id> (<task>, <status>): it printed nothing and has no agent transcript`.

@@ -659,8 +659,8 @@ describe('the attempts of a run (#89)', () => {
         '2026-09-19T10:00:00.000Z',
         '2026-09-19T10:00:01.000Z',
         'attempt 1 refused',
-        'try 1 with ***\n',
-        'refused ***\n',
+        'try 1 with [secret:token]\n',
+        'refused [secret:token]\n',
       ],
       [
         2,
@@ -668,8 +668,8 @@ describe('the attempts of a run (#89)', () => {
         '2026-09-19T10:00:01.000Z',
         '2026-09-19T10:00:02.000Z',
         'attempt 2 refused',
-        'try 2 with ***\n',
-        'refused ***\n',
+        'try 2 with [secret:token]\n',
+        'refused [secret:token]\n',
       ],
       [
         3,
@@ -677,10 +677,45 @@ describe('the attempts of a run (#89)', () => {
         '2026-09-19T10:00:02.000Z',
         '2026-09-19T10:00:03.000Z',
         null,
-        'try 3 with ***\n',
+        'try 3 with [secret:token]\n',
         null,
       ],
     ]);
+  });
+
+  it('keeps a secret the command printed to stderr out of the run and attempt errors', async () => {
+    current = config([
+      {
+        name: 'leaky',
+        trigger: { kind: 'event', type: 'x.leaky' },
+        action: {
+          kind: 'shell',
+          cmd: ['sh', '-c', 'echo "token=$T" >&2; exit 1'],
+          env: { T: '${secrets.token}' },
+        },
+      },
+    ]);
+    bus.dispatcher.setConfig(current);
+    executor = new Executor({
+      store: env.store,
+      bus,
+      clock: env.clock,
+      log: env.log,
+      config: () => current,
+      secrets: staticSecrets({ token: 'tok-s3cr3t' }),
+      runners: { shell: runShell },
+    });
+    executor.start();
+    const trigger = publish('x.leaky');
+    bus.dispatcher.drain();
+    await executor.idle();
+    const run = env.store.runs.getByTaskAndEvent('leaky', trigger.id);
+    expect(run?.error).toBe('exit code 1: token=[secret:token]');
+    expect(attempts('leaky', trigger.id)).toMatchObject([
+      { error: 'exit code 1: token=[secret:token]', stderr: 'token=[secret:token]\n' },
+    ]);
+    expect(JSON.stringify(lifecycle())).not.toContain('tok-s3cr3t');
+    expect(JSON.stringify(env.lines)).not.toContain('tok-s3cr3t');
   });
 
   it('records a cancelled attempt with what it printed', async () => {
@@ -703,7 +738,48 @@ describe('the attempts of a run (#89)', () => {
     expect(attempts('echo', trigger.id)[0]?.finished_at).not.toBeNull();
   });
 
-  it('closes the attempt a crash left open when recovery ends or retries the run', async () => {
+  it('marks the attempt a stop gave back interrupted, then replaces it when it runs again', async () => {
+    const d = deferredRunner();
+    const ex = make({ shell: d.runner }, 1);
+    ex.start();
+    const trigger = publish('x.serial');
+    bus.dispatcher.drain();
+    await until(() => d.active() === 1);
+    await ex.stop();
+    expect(attempts('serial', trigger.id)).toMatchObject([{ attempt: 1, status: 'interrupted' }]);
+    ex.start();
+    await until(() => d.active() === 1);
+    d.finish('ok');
+    await ex.idle();
+    expect(attempts('serial', trigger.id)).toMatchObject([
+      { attempt: 1, status: 'succeeded', error: null },
+    ]);
+  });
+
+  it('marks the attempt a crash left open interrupted when recovery retries the run', async () => {
+    current = config([
+      {
+        name: 'again',
+        trigger: { kind: 'event', type: 'x.again' },
+        action: shell,
+        retry: { attempts: 2, backoff: 'fixed', base: '1ms' },
+      },
+    ]);
+    bus.dispatcher.setConfig(current);
+    const trigger = publish('x.again');
+    bus.dispatcher.drain();
+    const run = env.store.runs.getByTaskAndEvent('again', trigger.id);
+    env.store.runs.setStatus(run?.id ?? '', 'running', { started_at: 'earlier', attempt: 1 });
+    env.store.attempts.start(run?.id ?? '', 1, 'earlier');
+    make().start();
+    await executor?.idle();
+    expect(attempts('again', trigger.id)).toMatchObject([
+      { attempt: 1, status: 'interrupted', error: expect.stringMatching(/^interrupted/) as string },
+      { attempt: 2, status: 'succeeded' },
+    ]);
+  });
+
+  it('closes the attempt a crash left open as failed when recovery ends the run', async () => {
     const trigger = publish('x.go');
     bus.dispatcher.drain();
     const run = env.store.runs.getByTaskAndEvent('echo', trigger.id);

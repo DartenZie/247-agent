@@ -38,6 +38,7 @@ import {
 import type { LlmPort } from '../llm/types.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
+import { redact, redactions } from '../secrets/redact.js';
 import { SecretError, staticSecrets, type SecretsBackend } from '../secrets/secrets.js';
 import type { Store } from '../store/store.js';
 import { OutputTail } from './output-tail.js';
@@ -835,7 +836,9 @@ export class Executor {
       }
       return { ok: false, error: errorMessage(err), retryable: true };
     }
-    output.addSecrets(Object.values(secrets));
+    output.addSecrets(secrets);
+    // An error message can quote what the command printed (a shell step's stderr tail).
+    const hide = redactions(secrets);
     const timeout = task.config.timeout ?? this.defaultTimeout;
     const attemptController = new AbortController();
     const timer = setTimeout(() => {
@@ -895,7 +898,7 @@ export class Executor {
           retryable: true,
         };
       }
-      return { ok: false, error: errorMessage(err), retryable: isRetryable(err) };
+      return { ok: false, error: redact(errorMessage(err), hide), retryable: isRetryable(err) };
     } finally {
       clearTimeout(timer);
     }
