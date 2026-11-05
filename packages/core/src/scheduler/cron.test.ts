@@ -126,3 +126,126 @@ describe('CronScheduler', () => {
     expect(scheduler.list()).toEqual([]);
   });
 });
+
+describe('ticks missed while the daemon was down (#99)', () => {
+  const nightly = (over: Record<string, unknown> = {}) =>
+    config([every('backup', '0 3 * * *', { tz: 'UTC', ...over })]);
+
+  /** Stops the daemon's scheduler, lets the clock jump to `at`, and starts a new one. */
+  const restartAt = (at: string, tasks: ReturnType<typeof config>): void => {
+    scheduler.stop();
+    vi.setSystemTime(new Date(at));
+    scheduler = new CronScheduler({ bus, log: env.log, cursors: env.store.cursors });
+    scheduler.start(tasks, { checkMissed: true });
+  };
+
+  const events = () => env.store.events.listAfter(0, 50).map((e) => [e.type, e.payload]);
+
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-09-19T02:59:00.000Z'));
+    scheduler = new CronScheduler({ bus, log: env.log, cursors: env.store.cursors });
+  });
+
+  it('skips a missed tick by default but announces it with cron.missed and a warning', () => {
+    const tasks = nightly();
+    bus.dispatcher.setConfig(tasks);
+    scheduler.start(tasks, { checkMissed: true });
+    restartAt('2026-09-19T03:05:00.000Z', tasks);
+
+    expect(events()).toEqual([
+      [
+        'cron.missed',
+        {
+          task: 'backup',
+          missed: 1,
+          first_missed: '2026-09-19T03:00:00.000Z',
+          last_missed: '2026-09-19T03:00:00.000Z',
+          run: false,
+        },
+      ],
+    ]);
+    const missed = env.store.events.listAfter(0, 1)[0];
+    expect(missed?.source).toBe('scheduler');
+    expect(missed?.dedup_key).toBe('cron.missed:backup:2026-09-19T03:00:00.000Z');
+    expect(env.lines.filter((l) => l.msg === 'cron.missed')).toEqual([
+      expect.objectContaining({ level: 'warn', task: 'backup', missed: 1 }),
+    ]);
+    bus.dispatcher.drain();
+    expect(env.store.runs.listByStatus('queued')).toEqual([]);
+  });
+
+  it('with missed: run_once runs once for several missed ticks, as the last of them', () => {
+    const tasks = nightly({ missed: 'run_once' });
+    bus.dispatcher.setConfig(tasks);
+    scheduler.start(tasks, { checkMissed: true });
+    restartAt('2026-09-21T12:00:00.000Z', tasks);
+
+    expect(events()).toEqual([
+      [
+        'cron.missed',
+        {
+          task: 'backup',
+          missed: 3,
+          first_missed: '2026-09-19T03:00:00.000Z',
+          last_missed: '2026-09-21T03:00:00.000Z',
+          run: true,
+        },
+      ],
+      ['cron.tick', { task: 'backup', scheduled_at: '2026-09-21T03:00:00.000Z', catch_up: true }],
+    ]);
+    bus.dispatcher.drain();
+    const tick = env.store.events.listAfter(0, 50)[1];
+    expect(env.store.runs.listByStatus('queued').map((r) => r.event_id)).toEqual([tick?.id]);
+  });
+
+  it('reports nothing when no tick fell inside the outage', () => {
+    const tasks = nightly({ missed: 'run_once' });
+    scheduler.start(tasks, { checkMissed: true });
+    vi.setSystemTime(new Date('2026-09-19T03:00:00.000Z'));
+    vi.advanceTimersByTime(30_000); // the 03:00 tick fires while the daemon is up
+    restartAt('2026-09-20T02:00:00.000Z', tasks);
+    expect(events().map(([type]) => type)).toEqual(['cron.tick']);
+  });
+
+  it('reports nothing on the first start, for a new task, or on a reload', () => {
+    scheduler.start(nightly({ missed: 'run_once' }), { checkMissed: true });
+    // `other` joins on a reload; nothing was ever scheduled for it before.
+    vi.setSystemTime(new Date('2026-09-25T10:00:00.000Z'));
+    scheduler.reload(
+      config([
+        every('backup', '0 3 * * *', { tz: 'UTC', missed: 'run_once' }),
+        every('other', '0 3 * * *', { tz: 'UTC', missed: 'run_once' }),
+      ]),
+    );
+    expect(events()).toEqual([]);
+  });
+
+  it('does not count the time a task was absent from the config as missed', () => {
+    const tasks = nightly({ missed: 'run_once' });
+    scheduler.start(tasks, { checkMissed: true });
+    vi.setSystemTime(new Date('2026-09-20T10:00:00.000Z'));
+    scheduler.reload(config([every('m', '0 4 * * *', { tz: 'UTC' })])); // backup removed
+    vi.setSystemTime(new Date('2026-09-25T10:00:00.000Z'));
+    scheduler.reload(tasks); // backup back, while the daemon is up
+    restartAt('2026-09-25T11:00:00.000Z', tasks);
+    expect(events()).toEqual([]);
+  });
+
+  it('counts at most 1000 missed ticks', () => {
+    const tasks = config([every('poll', '* * * * *', { tz: 'UTC' })]);
+    scheduler.start(tasks, { checkMissed: true });
+    restartAt('2026-09-21T02:59:00.000Z', tasks);
+    expect(events()).toEqual([
+      [
+        'cron.missed',
+        {
+          task: 'poll',
+          missed: 1000,
+          first_missed: '2026-09-19T03:00:00.000Z',
+          last_missed: '2026-09-19T19:39:00.000Z',
+          run: false,
+        },
+      ],
+    ]);
+  });
+});

@@ -166,6 +166,7 @@ describe('labelledEventTypes', () => {
     expect([...types].sort()).toEqual([
       'approval.given',
       'budget.exceeded',
+      'cron.missed',
       'cron.tick',
       'email.received',
       'llm.batch.ended',

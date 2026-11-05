@@ -104,7 +104,8 @@ daemon starts, runs that were mid-flight are retried if their policy allows and 
 as interrupted otherwise; waiting runs keep waiting.
 
 Two things are deliberately not replayed: cron ticks missed while the daemon was down,
-and events caught in a runaway chain. Each event records how many hops it is from the
+and events caught in a runaway chain. A missed tick is announced as a `cron.missed` event,
+and a cron task with `missed: run_once` runs once at startup to make up for it. Each event records how many hops it is from the
 root of its causal chain; past a configurable depth, an event is stored but starts no
 run.
 

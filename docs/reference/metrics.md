@@ -71,7 +71,8 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 | `oa_events_undispatched` | gauge, at scrape | | events stored that the dispatcher has not processed yet |
 | `oa_runs_in_flight` | gauge, at scrape | | runs executing now |
 | `oa_runs_waiting` | gauge, at scrape | | runs parked in a wait |
-| `oa_cron_ticks_total` | counter | `task` | cron ticks published |
+| `oa_cron_ticks_total` | counter | `task` | cron ticks published, catch-up ticks included |
+| `oa_cron_missed_ticks_total` | counter | `task` | cron ticks that fell while the daemon was down, at most 1000 per outage |
 | `oa_cron_next_run_timestamp_seconds` | gauge, at scrape | `task` | Unix time of the next tick |
 | `oa_model_calls_total` | counter | `provider`, `model`, `task` | model calls ledgered: `llm`, `decide` and agent turns |
 | `oa_model_tokens_total` | counter | `provider`, `model`, `direction` (`input`, `output`, `cache_read`, `cache_write`) | tokens ledgered |
@@ -102,7 +103,7 @@ All names start with `oa_`. Histograms use the buckets 0.01, 0.05, 0.1, 0.5, 1, 
 
 Labels are bounded by the configuration, never by ids. The `type` label of
 `oa_events_published_total` is the exact type only when the daemon or a task names it:
-the daemon's own types (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
+the daemon's own types (`cron.tick`, `cron.missed`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
 `retention.workspace_kept`, every `task.<name>.succeeded`, `.failed` and `.cancelled`), every exact type in a trigger's `type` or
 `type_any`, in a `wait`'s `for.type` and in an `emit` rule. Anything else, including
 types matched only through a wildcard, is counted as `other`. The set is rebuilt on every

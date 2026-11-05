@@ -6,6 +6,7 @@ import type { Logger } from '../log.js';
 import type { EventRecord } from '../store/types.js';
 
 export const CRON_TICK = 'cron.tick';
+export const CRON_MISSED = 'cron.missed';
 export const MANUAL_RUN = 'manual.run';
 /** Published by the llm service when a call would cross a task budget or the daily cap. */
 export const BUDGET_EXCEEDED = 'budget.exceeded';
@@ -163,7 +164,7 @@ export function compileConfig(file: TasksFileConfig): CompiledConfig {
 
 /**
  * Event types that get their own `type` label on `oa_events_published_total`: the core's
- * own (`cron.tick`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
+ * own (`cron.tick`, `cron.missed`, `manual.run`, `budget.exceeded`, `llm.batch.ended`,
  * `retention.workspace_kept`, `loop.detected`, `task.<name>.succeeded|failed|cancelled`) and
  * every type a task names exactly in a trigger, a `wait` or an `emit` rule. Connectors and
  * `POST /v1/events` can publish any type, so everything else (including types only a
@@ -172,6 +173,7 @@ export function compileConfig(file: TasksFileConfig): CompiledConfig {
 export function labelledEventTypes(config: CompiledConfig): ReadonlySet<string> {
   const types = new Set<string>([
     CRON_TICK,
+    CRON_MISSED,
     MANUAL_RUN,
     BUDGET_EXCEEDED,
     LLM_BATCH_ENDED,

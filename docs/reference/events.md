@@ -47,7 +47,8 @@ a task that reports failures from looping on its own failure.
 
 | Type | Source | Dedup key | Parent | Payload |
 |---|---|---|---|---|
-| `cron.tick` | `scheduler` | `cron:<task>:<scheduled_at>` | none | `{ task, scheduled_at }` |
+| `cron.tick` | `scheduler` | `cron:<task>:<scheduled_at>` | none | `{ task, scheduled_at }`; a catch-up tick adds `catch_up: true` |
+| `cron.missed` | `scheduler` | `cron.missed:<task>:<first_missed>` | none | `{ task, missed, first_missed, last_missed, run }` |
 | `manual.run` | `manual` | none | none; the request's correlation id if given | `{ task, event: { type, payload } }` |
 | `task.<name>.succeeded` | `task:<name>` | none | the run's trigger event | `{ run_id, task, result }` |
 | `task.<name>.failed` | `task:<name>` | none | the run's trigger event | `{ run_id, task, error, attempt }` |
@@ -67,7 +68,19 @@ Examples:
 ```
 
 `scheduled_at` is the tick's boundary: a minute for a five-field schedule, a second for
-six or seven fields. Ticks missed while the daemon was down are not published.
+six or seven fields. Ticks missed while the daemon was down are not published one by one.
+At startup, each cron task with at least one missed tick publishes one `cron.missed`
+event:
+
+```json
+{ "type": "cron.missed", "source": "scheduler", "dedup_key": "cron.missed:backup:2026-10-04T03:00:00.000Z",
+  "payload": { "task": "backup", "missed": 2, "first_missed": "2026-10-04T03:00:00.000Z",
+               "last_missed": "2026-10-05T03:00:00.000Z", "run": true } }
+```
+
+`missed` counts the ticks, at most 1000; past that, `last_missed` is the 1000th.
+`run` is `true` when the task has `missed: run_once`. Such a task then gets one
+`cron.tick` for `last_missed`, with `catch_up: true` in its payload.
 
 ```json
 { "type": "manual.run", "source": "manual",
