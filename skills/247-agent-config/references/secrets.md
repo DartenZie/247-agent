@@ -23,7 +23,7 @@ grep -rhoE 'secrets\.[a-z0-9_]+' agent.yaml tasks*.yaml tasks.d connectors.d 2>/
 
 Typical names: `anthropic_api_key`, `openai_api_key`, `openrouter_api_key` (referenced
 from `providers.<name>.api_key`, resolved per model call), `imap_user`,
-`imap_pass`, `chat_token`, `chat_id`, `ftp_pass`, `github_token`.
+`imap_pass`, `chat_token`, `chat_id`, `ftp_user`, `ftp_pass`, `github_token`.
 
 ## Where secrets are allowed to flow
 
