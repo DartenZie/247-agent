@@ -91,6 +91,22 @@ export function parseConfig(raw: unknown): FtpConfig {
   };
 }
 
+/**
+ * Problems a valid config still has, for the connector to log at start: an SFTP endpoint
+ * without `host_key_fingerprint` trusts whatever key the first server to answer presents.
+ */
+export function configWarnings(config: FtpConfig): string[] {
+  const warnings: string[] = [];
+  if (config.protocol === 'sftp' && config.host_key_fingerprint === undefined) {
+    warnings.push(
+      `ftp: WARNING: no host_key_fingerprint for ${config.host}; any host key is accepted, ` +
+        'so a man-in-the-middle can read the credentials and the files. Pin the key ' +
+        '(ssh-keygen -lf on the server prints it).',
+    );
+  }
+  return warnings;
+}
+
 function defaultPort(protocol: 'sftp' | 'ftp' | 'ftps', tls: 'explicit' | 'implicit'): number {
   if (protocol === 'sftp') {
     return 22;

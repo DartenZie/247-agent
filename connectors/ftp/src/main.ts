@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { defineTool, runConnector, type JsonValue } from '@247-agent/connector-sdk';
 
-import { parseConfig } from './config.js';
+import { configWarnings, parseConfig } from './config.js';
 import { connectFtp } from './ftp.js';
 import { FileOps } from './ops.js';
 import { connectSftp } from './sftp.js';
@@ -22,6 +22,9 @@ await runConnector({
       `ftp: ${config.protocol}://${config.host}:${String(config.port)} root=${config.root}` +
         (config.protocol === 'ftps' ? ` tls=${config.tls}` : ''),
     );
+    for (const warning of configWarnings(config)) {
+      rt.log(warning);
+    }
     const ops = new FileOps(
       config,
       rt.log,

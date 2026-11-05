@@ -48,6 +48,11 @@ export interface FileClient {
   replace(from: string, to: string): Promise<void>;
   /** `mkdir -p`: creates parents, succeeds when the directory exists. */
   mkdir(path: string): Promise<void>;
+  /**
+   * Where the server says `path` really is (absolute, symlinks resolved), or `null` when
+   * it does not exist. A client that has it is confined by `confine.ts`; FTP has none.
+   */
+  realpath?(path: string): Promise<string | null>;
   close(): Promise<void>;
 }
 

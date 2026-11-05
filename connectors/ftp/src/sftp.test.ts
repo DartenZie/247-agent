@@ -98,6 +98,17 @@ function fakeSftp(files: Record<string, string> = {}, dirs: string[] = []): Fake
       fake.calls.push(`mkdir ${path} ${String(recursive ?? false)}`);
       return Promise.resolve('ok');
     },
+    realPath: (path) => {
+      fake.calls.push(`realPath ${path}`);
+      if (path === '/denied') {
+        return Promise.reject(Object.assign(new Error('permission denied'), { code: 3 }));
+      }
+      if (path === '/srv/link') {
+        return Promise.resolve('/etc');
+      }
+      // ssh2-sftp-client resolves '', not an error, for a path that does not exist.
+      return Promise.resolve(store.has(path) || dirs.includes(path) ? path : '');
+    },
     end: () => {
       fake.calls.push('end');
       return Promise.resolve(true);
@@ -185,6 +196,17 @@ describe('SftpFileClient', () => {
     expect(await client.stat('/srv/d')).toMatchObject({ name: 'd', type: 'dir' });
     expect(await client.stat('/srv/nope')).toBeNull();
     await expect(client.stat('/denied')).rejects.toThrow(/^sftp stat \/denied: permission denied/);
+  });
+
+  it('resolves a path on the server, null when it does not exist', async () => {
+    const fake = fakeSftp({ '/srv/f.txt': 'abc' }, ['/srv']);
+    const client = await connectSftp(ftpConfig(), () => fake.lib);
+    expect(await client.realpath?.('/srv/f.txt')).toBe('/srv/f.txt');
+    expect(await client.realpath?.('/srv/link')).toBe('/etc');
+    expect(await client.realpath?.('/srv/nope')).toBeNull();
+    await expect(client.realpath?.('/denied')).rejects.toThrow(
+      /^sftp realpath \/denied: permission denied/,
+    );
   });
 
   it('reads a Buffer, writes a Buffer, and forwards the rest', async () => {

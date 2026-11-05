@@ -61,7 +61,7 @@ config:
 | `password` | none | sftp needs `password` or `private_key` |
 | `private_key` | none | sftp only; the key text |
 | `passphrase` | none | sftp only |
-| `host_key_fingerprint` | none | sftp only; `SHA256:<base64>` or hex. Without it any host key is accepted |
+| `host_key_fingerprint` | none | sftp only; `SHA256:<base64>` or hex. Without it any host key is accepted, and the connector logs a warning at start |
 | `tls` | `explicit` | ftps only |
 | `reject_unauthorized` | `true` | ftps certificate check |
 | `root` | `.` | the directory every path is relative to and confined to |
@@ -71,8 +71,10 @@ config:
 | `local_roots` | `[]` | absolute local directories `sync` may read from; empty means `sync` is disabled |
 
 > [!WARNING]
-> Without `host_key_fingerprint` an SFTP connection accepts any host key. Set it for a
-> server that holds anything sensitive.
+> Without `host_key_fingerprint` an SFTP connection accepts any host key, so a
+> man-in-the-middle can read the credentials and the files. The connector then logs
+> `ftp: WARNING: no host_key_fingerprint for <host>` each time it starts. Set the
+> fingerprint for every server you use in production.
 
 ## Ops
 
@@ -128,8 +130,15 @@ correct when the remote was edited by hand. `sync` is not capped by `max_bytes`.
 - The `ops` list is the boundary. Give an agent-facing copy of the manifest only
   `[list, stat, read]`; keep `write`, `delete`, `rename` and `sync` on the manifest your
   deterministic tasks use.
-- `root` is enforced by the connector before any connection; a chrooted account on the
-  server is still the stronger guarantee. Use both.
+- `root` is enforced by the connector in two steps. Before any connection, a path that
+  is absolute or uses `..` to leave the root is refused. On SFTP, the connector then asks
+  the server where each path really leads. If a symlink under the root takes the path
+  outside the root, the op fails with a `path` error that names the real location. This
+  also applies to an op on such a symlink itself, for example `delete`. A symlink that
+  stays inside the root works as usual.
+- FTP and FTPS cannot ask the server to resolve a path, so on those protocols only the
+  first step applies and a symlink on the server can lead outside `root`. A chrooted
+  account is the stronger guarantee on every protocol. Use both.
 - `max_bytes` bounds memory. FTP cannot abort a transfer half-way, so on a server whose
   listing hides sizes a too-large file is downloaded fully and then refused.
 
