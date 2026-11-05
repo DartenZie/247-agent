@@ -86,12 +86,12 @@ Node.js 22, npm workspaces, TypeScript.
 npm install
 npm run build
 npm test
+npm run test:coverage    # optional; the report goes to coverage/
 npm run lint
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 ```
 
-`npm run test:coverage` runs the suite with coverage and writes the report to
-`coverage/`. The launchers in `bin/` work the same in a checkout and in an installed release.
+The launchers in `bin/` work the same in a checkout and in an installed release.
 `npm run test:linux` runs the suite on Debian with bubblewrap in a container, and the
 smoke rigs under `test/smoke/` exercise the real connectors and real agent programs.
 

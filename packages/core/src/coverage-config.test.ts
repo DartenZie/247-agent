@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -43,13 +43,17 @@ describe('coverage', () => {
   });
 
   it('reports every workspace package and leaves tests out', () => {
-    const include = coverage.include ?? [];
+    expect(coverage.include).toEqual(['packages/*/src/**/*.ts', 'connectors/*/src/**/*.ts']);
     for (const ws of workspaces()) {
-      expect(
-        include.some((glob) => `${ws}/src/x.ts`.startsWith(glob.slice(0, glob.indexOf('*')))),
-      ).toBe(true);
+      expect(existsSync(`${root}${ws}/src`), `${ws}/src`).toBe(true);
     }
-    expect(coverage.exclude).toContain('**/*.test.ts');
+    expect(coverage.exclude).toEqual(
+      expect.arrayContaining([
+        '**/*.test.ts',
+        '**/test-helpers.ts',
+        'packages/core/src/**/testing.ts',
+      ]),
+    );
   });
 
   it('records that CI enforces no threshold', () => {
