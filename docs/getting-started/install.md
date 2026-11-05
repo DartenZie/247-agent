@@ -112,6 +112,7 @@ Options, passed after `sh -s --` (`sh -s -- --help` prints them):
 |---|---|
 | `--version <v>` | install that release instead of the latest |
 | `--from <tarball>` | install a local tarball, such as one you built with `npm run release` |
+| `--repo <owner/name>` | download releases from that GitHub repository instead of `DartenZie/247-agent`, such as a fork |
 | `--prefix <dir>` | somewhere other than `/opt` |
 | `--bin-dir <dir>` | where to link `oa` |
 | `--no-service` | only the tree and the symlinks: no user, no `/etc`, no unit. Also for macOS and user-local installs, which then need no `sudo` |

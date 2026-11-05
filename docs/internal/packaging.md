@@ -136,7 +136,7 @@ symlink moves; the unit file is replaced, the config never touched, and the serv
 restarted unless `--no-restart`. After a start or a restart it runs the new tree's
 `share/check-service.sh` and, if the daemon is not up, exits 1 with the rollback
 command. It never rolls back by itself, because the new version may already have
-migrated `state.db`. Options: `--version`, `--from <tarball>`, `--prefix`,
+migrated `state.db`. Options: `--version`, `--from <tarball>`, `--repo`, `--prefix`,
 `--bin-dir`, `--no-service`, `--no-restart`. `uninstall.sh` removes what the installer
 put there and keeps config, state, drop-ins and the user unless `--purge`.
 

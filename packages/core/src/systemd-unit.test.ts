@@ -63,9 +63,7 @@ describe('packaging/247-agent.service', () => {
     const block = /## The unit\n[\s\S]*?```ini\n([\s\S]*?)```/.exec(doc)?.[1] ?? '';
     expect(block).toContain('[Service]');
     for (const name of ['Unit', 'Service', 'Install']) {
-      const shipped = section(unit, name);
-      shipped.delete('Documentation');
-      expect(section(block, name), name).toEqual(shipped);
+      expect(section(block, name), name).toEqual(section(unit, name));
     }
   });
 });
