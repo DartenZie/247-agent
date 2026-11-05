@@ -198,7 +198,10 @@ it at start and exits 1), whether a `transport: acp` connector really speaks ACP
 ## Reload
 
 `daemon.reload()` (`daemon.ts`), on SIGHUP or `POST /v1/reload`, re-reads `agent.yaml`,
-the manifests and the tasks files and applies them together or not at all:
+the manifests and the tasks files and applies them together or not at all. `main.ts`
+listens for SIGHUP before `startDaemon`, so a SIGHUP during startup does not end the
+process: `listenForReload` (`reload-signal.ts`) remembers it and reloads once when the
+daemon is up.
 
 1. `agent.yaml` invalid: `ok: false`, that file listed, nothing changes
    (`daemon.reload_invalid`, one error line per issue with `file`, `path`, `issue`, so a

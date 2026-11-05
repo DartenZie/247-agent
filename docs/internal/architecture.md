@@ -310,6 +310,7 @@ write to `/run/systemd/notify` ([`security.md`](security.md#systemd-notification
 ```
 packages/core/src/
   main.ts            the 247-agent-core binary: flags, OA_HOME, signals (SIGHUP reload, SIGTERM/SIGINT stop), systemd notifications
+  reload-signal.ts   SIGHUP from the start of main: deferred during startup, replayed once the daemon is up
   systemd.ts         sd_notify through systemd-notify: READY, WATCHDOG, STOPPING
   health.ts          the checks behind GET /v1/health and oa health
   daemon.ts          agent.yaml → secrets backend → manifests → core → API; reload with FIXED_KEYS
