@@ -283,6 +283,7 @@ describe('openrouter adapter: errors', () => {
     [400, 'Invalid schema'],
     [403, 'Moderation flagged'],
     [404, 'No endpoints found for nope/model'],
+    [413, 'Request entity too large'],
   ])('%s is not retryable and drops the numeric code', async (status, text) => {
     const { err } = await failure(apiError(status, text), status);
     expect(err).toBeInstanceOf(NonRetryableError);

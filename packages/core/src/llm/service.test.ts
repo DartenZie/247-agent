@@ -436,6 +436,12 @@ describe('LlmService.call: billed responses without a usable structured output',
   it.each([
     ['a truncated response', 'max_tokens', [{ type: 'text', text: '{"kind":"gen' }], 'max_tokens'],
     ['a refusal', 'refusal', [{ type: 'text', text: 'I cannot help with that.' }], 'refusal'],
+    [
+      'a context-window truncation',
+      'model_context_window_exceeded',
+      [{ type: 'text', text: '{"kind":"gen' }],
+      'context_window',
+    ],
     ['malformed JSON', 'end_turn', [{ type: 'text', text: '{oops' }], 'end'],
   ])('anthropic: ledgers %s and returns its stop reason', async (_, stop, content, want) => {
     const s = overHttp(anthropicReply(stop, content));
@@ -967,5 +973,22 @@ describe('LlmService batches', () => {
       ),
     ).toEqual({ status: 'errored', error: 'bad', retryable: false });
     expect(() => s.batchResult({ nope: true }, {}, ctxOf(r))).toThrow(NonRetryableError);
+  });
+
+  it('reads back a result truncated by the context window with its stop reason', async () => {
+    const s = withBatches();
+    const r = run();
+    await s.submitBatch(req, ctxOf(r));
+    status = {
+      status: 'succeeded',
+      response: { ...usage(1000, 100), output: null, stopReason: 'context_window' },
+    };
+    await poll(s);
+    const payload = events(LLM_BATCH_ENDED)[0]?.payload ?? null;
+    expect(payload).toMatchObject({ status: 'succeeded', stop_reason: 'context_window' });
+    expect(s.batchResult(payload, {}, ctxOf(r))).toMatchObject({
+      status: 'succeeded',
+      result: { output: null, stopReason: 'context_window' },
+    });
   });
 });

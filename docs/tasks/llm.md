@@ -121,8 +121,9 @@ event is published.
 | Outcome | Run |
 |---|---|
 | the answer was cut off at `max_tokens` | fails without retry; raise `max_tokens` or shorten the task |
+| the input and the answer filled the model's context window | fails without retry; shorten the input or ask for less |
 | the model refused the request | fails without retry |
-| the provider rejected the request: bad key, bad schema, unknown model (HTTP 400, 401, 403, 404, 422) | fails without retry |
+| the provider rejected the request: bad key, bad schema, unknown model, a request too large (HTTP 400, 401, 403, 404, 413, 422) | fails without retry |
 | a rate limit, a server error or a connection error | the attempt fails and is retried under the task's `retry` policy |
 | the answer was not valid JSON for the schema | the attempt fails and is retried |
 | the call was still waiting on the provider when the task's `timeout` ended the attempt | the attempt fails and is retried |

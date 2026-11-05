@@ -211,7 +211,7 @@ describe('anthropic adapter: response mapping', () => {
     ['max_tokens', 'max_tokens'],
     ['refusal', 'refusal'],
     ['tool_use', 'other'],
-    ['model_context_window_exceeded', 'other'],
+    ['model_context_window_exceeded', 'context_window'],
   ])('maps stop_reason %s to %s', async (from, to) => {
     const { res } = await call(message({ stop_reason: from }));
     expect(res.stopReason).toBe(to);
@@ -258,6 +258,7 @@ describe('anthropic adapter: errors', () => {
     [403, 'permission_error', 'not allowed'],
     [404, 'not_found_error', 'model: claude-nope'],
     [422, 'invalid_request_error', 'unprocessable'],
+    [413, 'request_too_large', 'Request exceeds the maximum allowed number of bytes.'],
   ])('%s is not retryable', async (status, type, text) => {
     const err = await failure(apiError(type, text), status);
     expect(err).toBeInstanceOf(NonRetryableError);

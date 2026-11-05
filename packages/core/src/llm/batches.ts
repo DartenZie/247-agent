@@ -39,7 +39,7 @@ export const BatchEndedPayload = z.object({
   provider: z.string(),
   model: z.string(),
   status: z.enum(['succeeded', 'errored', 'expired', 'canceled']),
-  stop_reason: z.enum(['end', 'max_tokens', 'refusal', 'other']).optional(),
+  stop_reason: z.enum(['end', 'max_tokens', 'context_window', 'refusal', 'other']).optional(),
   output: z.json().optional(),
   text: z.string().optional(),
   usage: Usage.optional(),

@@ -113,6 +113,13 @@ describe('runLlm', () => {
     await expect(
       runLlm({ kind: 'llm', input: 'x' }, testContext({ llm: truncated })),
     ).rejects.toThrow(/truncated at max_tokens 1024/);
+    const overflowed = fakeLlmPort({
+      defaults: { provider: 'p', model: 'm' },
+      respond: () => result({ stopReason: 'context_window', output: null, text: 'half an ans' }),
+    });
+    const plain = runLlm({ kind: 'llm', input: 'x' }, testContext({ llm: overflowed }));
+    await expect(plain).rejects.toThrow(NonRetryableError);
+    await expect(plain).rejects.toThrow(/context window/);
     const refused = fakeLlmPort({
       defaults: { provider: 'p', model: 'm' },
       respond: () => result({ stopReason: 'refusal' }),
@@ -205,6 +212,16 @@ describe('runLlm with batch: true', () => {
     await expect(
       runLlm(batched, testContext({ llm: cut, suspend, resume: ended({}) })),
     ).rejects.toThrow(/truncated at max_tokens/);
+    const overflowed = fakeLlmPort({
+      defaults: { provider: 'anthropic', model: 'm' },
+      batchResult: () => ({
+        status: 'succeeded',
+        result: result({ stopReason: 'context_window', output: null }),
+      }),
+    });
+    const p = runLlm(batched, testContext({ llm: overflowed, suspend, resume: ended({}) }));
+    await expect(p).rejects.toThrow(NonRetryableError);
+    await expect(p).rejects.toThrow(/context window/);
   });
 
   it('fails the attempt that submitted a failed batch, and resubmits on the retry', async () => {
