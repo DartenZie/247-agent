@@ -9,6 +9,8 @@ import type { SenderAuth } from './auth.js';
  * text part (or a plain-text rendering of the HTML part) cut to `max_body_chars`.
  * `auth` holds the receiving server's DKIM, SPF and DMARC verdicts, so a filter can
  * require an authenticated sender. Attachment contents are not included, only their metadata.
+ * `truncated` is also set when `max_message_bytes` cut the message itself (IMAP), and then
+ * `attachments` lists only what fits in the part that was fetched.
  */
 export interface EmailMessage {
   /** IMAP UID (number) or POP3 UIDL (string). */
@@ -28,6 +30,8 @@ export interface EmailMessage {
   references: string[];
   auth: SenderAuth;
   attachments: { filename: string | null; content_type: string; size: number }[];
+  /** Set when the message could not be parsed; the other fields are then empty. */
+  parse_error?: string;
   [key: string]: JsonValue;
 }
 

@@ -89,6 +89,7 @@ Shared by `incoming` and `outgoing`:
 | `initial` | `none` | what the first `fetch_new` without a cursor does: `none` marks everything present as seen and returns nothing; `all` returns it, `limit` at a time |
 | `limit` | `50` | the most messages one `fetch_new` returns, 1 to 1000. An op's own `limit` argument can only lower it |
 | `max_body_chars` | `100000` | `body` is cut at this length; `truncated` says so |
+| `max_message_bytes` | `10000000` | IMAP only: the most bytes of one message that are downloaded, attachments included, at least 1024. A larger message is parsed from its first `max_message_bytes` and gets `truncated: true` |
 | `authserv_id` | none | one name or a list: the authserv-id your receiving mail server writes into `Authentication-Results`. Only those headers fill `auth`; with none set, every result in `auth` is `none`. See [Trust the sender](#trust-the-sender) |
 | `delete_after_fetch` | `false` | POP3 only: delete each message from the server once a later `fetch_new` passes its batch's `last_uid` back, so only after the run that got it succeeded |
 
@@ -150,10 +151,20 @@ Each entry of `emails`:
 
 `from` is the bare, lower-cased address, so a trigger filter such as
 `payload.from == 'editor@example.com'` works. `body` is the text part, or a plain-text
-rendering of an HTML-only mail. Attachment contents are never fetched, only their names
-and sizes. A message without a `Message-ID` gets one derived from a hash of the message,
+rendering of an HTML-only mail. Attachment contents are not returned, only their names
+and sizes. Over IMAP, a message larger than `max_message_bytes` is downloaded only up to
+that size: it gets `truncated: true`, and `attachments` lists only the attachments that
+start in the downloaded part. A message without a `Message-ID` gets one derived from a hash of the message,
 so a `dedup_key` built from it still works. `auth` holds the sender authentication
 results; [Trust the sender](#trust-the-sender) explains them.
+
+A message that cannot be parsed (malformed MIME) does not fail the call. It comes back
+as an entry with its `uid`, a hash-derived `message_id`, a `parse_error` that gives
+the reason, and empty other fields. The other messages and `last_uid` are returned as
+usual, so the cursor moves past it. To drop such entries, filter on `parse_error`.
+
+A connection that drops or times out during a call fails that call with the error. The
+connector keeps running, and the next call opens a new connection.
 
 ### Trust the sender
 
