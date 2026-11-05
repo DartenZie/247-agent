@@ -25,6 +25,25 @@ export const processIo: Io = {
   },
 };
 
+/**
+ * Ends the process quietly when the reader of stdout or stderr goes away (`oa … | head`),
+ * as other command-line tools do, instead of crashing on the unhandled EPIPE. Other
+ * stream errors are rethrown.
+ */
+export function exitOnClosedPipe(
+  streams: readonly NodeJS.EventEmitter[],
+  exit: (code: number) => void,
+): void {
+  for (const stream of streams) {
+    stream.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE') {
+        throw err;
+      }
+      exit(EXIT.ok);
+    });
+  }
+}
+
 /** Exit codes: 0 ok, 1 the daemon or the run reported a failure, 2 usage. */
 export const EXIT = { ok: 0, failed: 1, usage: 2 } as const;
 

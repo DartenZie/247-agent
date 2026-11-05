@@ -16,7 +16,7 @@ works, `oa --json run hello` is an unknown command.
 
 | Code | When |
 |---|---|
-| 0 | the command did what it was asked |
+| 0 | the command did what it was asked, or the program reading its output closed the pipe (`oa events tail --follow \| head`): `oa` stops without a message |
 | 1 | the daemon or the run reported a failure: the socket is unreachable, the daemon answered an error other than 400, `run --wait` ended in any status but `succeeded`, `runs show` of a `failed` run, `reload` was refused, `health` is not `ok`, `connector restart` left the connector not `up`, `validate` found a problem |
 | 2 | usage: an unknown command or flag, a missing argument, an unreadable or invalid JSON file, no arguments at all, or the daemon answered 400 (a bad event type, pattern or `--since`) |
 
