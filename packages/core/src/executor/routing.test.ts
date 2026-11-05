@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runShell } from '../actions/shell.js';
 import { NonRetryableError, type ActionRunner, type ActionRunners } from '../actions/types.js';
@@ -395,10 +395,12 @@ describe('retry', () => {
     );
     const trigger = publish('x.state');
     bus.dispatcher.drain();
-    await new Promise((r) => setTimeout(r, 30));
-    expect(env.store.runs.getByTaskAndEvent('uses_state', trigger.id)).toMatchObject({
-      status: 'running',
-      error: 'flake',
+    // The first attempt failed and the run waits out its 10 s backoff.
+    await vi.waitFor(() => {
+      expect(env.store.runs.getByTaskAndEvent('uses_state', trigger.id)).toMatchObject({
+        status: 'running',
+        error: 'flake',
+      });
     });
     await ex.stop();
     expect(env.lines.filter((l) => l.msg === 'run.abandoned')).toHaveLength(1);

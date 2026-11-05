@@ -28,6 +28,7 @@ import {
   type Manager,
   type Transport,
 } from '../config/connector.js';
+import { systemTimer, type SetTimer } from '../clock.js';
 import { parseDuration } from '../config/duration.js';
 import type { Logger } from '../log.js';
 import { Metrics } from '../metrics.js';
@@ -62,6 +63,8 @@ export interface SupervisorOptions {
   /** What a sandboxed agent program must not see and must see (fixed for the process). */
   sandboxHost?: SandboxHost | undefined;
   metrics?: Metrics | undefined;
+  /** Schedules restarts and health checks; defaults to `systemTimer`. */
+  setTimer?: SetTimer | undefined;
 }
 
 /**
@@ -202,8 +205,10 @@ interface Managed {
   restarts: number;
   error: string | null;
   upSince: number;
-  restartTimer: NodeJS.Timeout | undefined;
-  healthTimer: NodeJS.Timeout | undefined;
+  /** Cancels the pending restart. */
+  restartTimer: (() => void) | undefined;
+  /** Cancels the pending health check. */
+  healthTimer: (() => void) | undefined;
   health: ConnectorHealth | null;
   /** Bumped by every `kill`, so a spawn still starting knows it was superseded. */
   epoch: number;
@@ -263,6 +268,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
   private netSeq = 0;
   private readonly netProxies = new Set<NetProxy>();
   private stopping = false;
+  private readonly setTimer: SetTimer;
   /** The restart in flight per connector, which a concurrent `restart` joins. */
   private readonly restarting = new Map<string, Promise<ConnectorStatus>>();
 
@@ -276,6 +282,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     this.baseEnv = opts.env ?? connectorBaseEnv(this.templateEnv);
     this.sandboxHost = opts.sandboxHost;
     this.callTimeoutMs = opts.callTimeoutMs ?? 60_000;
+    this.setTimer = opts.setTimer ?? systemTimer;
     this.agentDefaults = opts.agents?.defaults ?? AgentDefaults.parse({});
     this.agentWorkDir = opts.agents?.workDir ?? join(tmpdir(), '247-agent', 'work');
     for (const manifest of opts.manifests) {
@@ -951,7 +958,7 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
       return;
     }
     const client = m.client;
-    m.healthTimer = setTimeout(() => {
+    m.healthTimer = this.setTimer(() => {
       m.healthTimer = undefined;
       void this.checkHealth(m, client, log).then(() => {
         if (m.client === client && m.state === 'up') {
@@ -959,7 +966,6 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
         }
       });
     }, parseDuration(health.interval));
-    m.healthTimer.unref();
   }
 
   private async checkHealth(m: Managed, client: Client, log: Logger): Promise<void> {
@@ -1031,21 +1037,20 @@ export class ConnectorSupervisor implements ConnectorClients, AgentClients, Conn
     m.restarts++;
     this.metrics.connectorRestarts.inc({ connector: m.manifest.name });
     log.info('connector.restart_scheduled', { delay_ms: delay, restarts: m.restarts });
-    m.restartTimer = setTimeout(() => {
+    m.restartTimer = this.setTimer(() => {
       m.restartTimer = undefined;
       void this.spawn(m);
     }, delay);
-    m.restartTimer.unref();
   }
 
   private async kill(m: Managed): Promise<void> {
     m.epoch++;
     if (m.restartTimer !== undefined) {
-      clearTimeout(m.restartTimer);
+      m.restartTimer();
       m.restartTimer = undefined;
     }
     if (m.healthTimer !== undefined) {
-      clearTimeout(m.healthTimer);
+      m.healthTimer();
       m.healthTimer = undefined;
     }
     m.state = 'stopped';
