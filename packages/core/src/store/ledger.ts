@@ -35,7 +35,15 @@ export interface CostRow {
   priced_by: Record<PricedBy, number>;
 }
 
-const PRICED_BY: readonly PricedBy[] = ['table', 'provider', 'estimate', 'unpriced'];
+const PRICED_BY_ORDER: Record<PricedBy, number> = {
+  table: 0,
+  provider: 1,
+  estimate: 2,
+  unpriced: 3,
+};
+
+/** Every pricing source, in the order `oa cost` lists them; the record keeps it exhaustive. */
+export const PRICED_BY = Object.keys(PRICED_BY_ORDER) as readonly PricedBy[];
 
 type CostRowSql = Omit<CostRow, 'priced_by'> & Record<`priced_${PricedBy}`, number>;
 

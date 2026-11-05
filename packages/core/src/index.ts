@@ -347,6 +347,7 @@ export {
 } from './connectors/poller.js';
 export type { StateEntry, StateSnapshot } from './store/state.js';
 export type { CostGroup, CostRow, LedgerEntry, NewLedgerEntry, PricedBy } from './store/ledger.js';
+export { PRICED_BY } from './store/ledger.js';
 export type { WaitRecord, WaitOutcome } from './store/waits.js';
 export {
   createCore,

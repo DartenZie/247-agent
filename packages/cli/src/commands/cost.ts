@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 
-import type { CostGroup, CostRow, PricedBy } from '@247-agent/core';
+import { PRICED_BY, type CostGroup, type CostRow } from '@247-agent/core';
 
 import { client, EXIT, reportApiError, UsageError, type Io } from '../io.js';
 
@@ -18,8 +18,6 @@ options:
 `;
 
 const GROUPS: readonly CostGroup[] = ['task', 'model', 'provider', 'day'];
-
-const PRICED_BY: readonly PricedBy[] = ['table', 'provider', 'estimate', 'unpriced'];
 
 /** One source by name; a mix as `table:40,unpriced:1`, so a $0 row is never mistaken for a cheap one. */
 function pricedBy(counts: CostRow['priced_by']): string {

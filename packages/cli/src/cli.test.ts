@@ -376,6 +376,18 @@ describe('oa cost (#129)', () => {
     ]);
   });
 
+  it('counts several unpriced calls in the note, across groups', async () => {
+    expect(await oa('run', 'ok', '--wait')).toBe(0);
+    const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
+    const ledger = daemon.core.store.ledger;
+    ledger.insert(ledgerRow(okId, { usd: 0, priced_by: 'unpriced' }));
+    ledger.insert(ledgerRow(okId, { model: 'gpt-x', usd: 0, priced_by: 'unpriced' }));
+    out = [];
+    expect(await oa('cost', '--by', 'model')).toBe(0);
+    expect(out.slice(1, 3).map((l) => l.split(/ +/).at(-1))).toEqual(['unpriced', 'unpriced']);
+    expect(out.at(-1)).toBe('2 unpriced calls count as $0: the daemon could not price them');
+  });
+
   it('prints no unpriced note when every call was priced', async () => {
     expect(await oa('run', 'ok', '--wait')).toBe(0);
     const okId = /^succeeded (run_\w+)/.exec(out[0] ?? '')?.[1] ?? '';
