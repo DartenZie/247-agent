@@ -35,6 +35,15 @@ that lists its registered tools over an in-memory MCP transport (`listTools` fro
 manifest in `docs/examples/connectors.d/`, so a renamed or removed op fails until the
 manifest follows.
 
+`npm run test:coverage` runs the same suite with the v8 coverage provider
+(`@vitest/coverage-v8`, a dev dependency, so `npm install` is the only setup). It
+measures `src/` of every package under `packages/` and `connectors/`, leaves out the
+`*.test.ts` files and `test-helpers.ts`, prints a summary and writes an HTML report
+and `lcov.info` to `coverage/` (git ignores it). The report is written also when a
+test fails. CI enforces no coverage threshold: the report finds gaps, and a gate
+would fail a refactor that moves code without losing a test. `vitest.config.js`
+records this decision; a threshold goes in its `coverage.thresholds`.
+
 A test that needs a directory makes its own with `mkdtempSync` and deletes it in
 `afterEach`, also when the test or its setup fails. It never writes into a fixed path
 that another test file or a parallel run can share, such as the supervisor's default

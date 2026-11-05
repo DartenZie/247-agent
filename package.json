@@ -16,6 +16,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --passWithNoTests --coverage",
     "test:linux": "scripts/linux-test.sh",
     "smoke:acp": "node test/smoke/acp/run.mjs",
     "smoke:connectors": "node test/smoke/connectors/run.mjs",
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",

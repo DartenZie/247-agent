@@ -90,7 +90,8 @@ npm run lint
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 ```
 
-The launchers in `bin/` work the same in a checkout and in an installed release.
+`npm run test:coverage` runs the suite with coverage and writes the report to
+`coverage/`. The launchers in `bin/` work the same in a checkout and in an installed release.
 `npm run test:linux` runs the suite on Debian with bubblewrap in a container, and the
 smoke rigs under `test/smoke/` exercise the real connectors and real agent programs.
 

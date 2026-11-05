@@ -73,6 +73,7 @@ contracts. Open the one for what you touch; `docs/internal/README.md` is the ind
 ```
 npm install && npm run build       # tsc -b across workspaces
 npm test                           # vitest; never the network or a real model
+npm run test:coverage              # the same with v8 coverage; report in coverage/, no threshold
 npm run lint                       # eslint + prettier (prettier skips Markdown and docs/)
 node packages/cli/dist/main.js validate docs/examples/*.yaml docs/examples/connectors.d/*.yaml
 node scripts/check-docs.mjs        # links and YAML blocks in every Markdown file
